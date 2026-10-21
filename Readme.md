@@ -13,8 +13,10 @@ My language uses runtime checks to guarantee linearity instead of compile-time c
 ## What it looks like
 
 ```
+fn inc(~c) { c := c + 1 }
+fn fst(~(a, b)) { ~a }
+
 {
-    fn fst(~(a, b)) { ~a }
     let x = (1, 10)
     inc(~fst(~x))
     x
@@ -22,23 +24,25 @@ My language uses runtime checks to guarantee linearity instead of compile-time c
 
 (2, 10)
 
+fn incfst(~x) {
+    let (a, b) = ~x
+    inc(~a)
+    2
+}
+
 {
-    fn incfst(~x) {
-        let (a, b) = ~x
-        inc(~a)
-        2
-    }
     let m = (4, 10)
     (incfst(~m), m)
 }
 
 (2, (5, 10))
 
+fn alias(~x) {
+    let y = ~x
+    y := 5
+}
+
 {
-    fn alias(~x) {
-        let y = ~x
-        y := 5
-    }
     let x = 2
     (alias(~x), x)
 }
