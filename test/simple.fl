@@ -1,0 +1,43 @@
+1 + 2
+
+(fn hi(x: int) { x })(2)
+
+(1,2)
+
+(fn hi((a,b): (int,int)) { a + b  })((1,2))
+
+left(4)
+
+match left(3) {
+    left(x) => x + 2
+    right(_) => 2
+}
+
+(fn (x: a) {
+    match x {
+        left((a, b)) => a + b
+        right(c) => c + 2
+    }
+})(left((1,2)))
+
+{
+    let go = fn (x: a) {
+        match x {
+            left((a, b)) => a + b
+            right(c) => c + 2
+        }
+    }
+    // (go(left((1,2))), go(right(20)))
+    go(left((1,2)))
+}
+
+// {
+//     let fib = fn (n: int) {
+//         if n < 1 {
+//             1
+//         } else {
+//             fib(n - 1) + fib(n - 2)
+//         }
+//     }
+//     fib(10)
+// }

@@ -1,0 +1,22 @@
+{
+  "name": "ts",
+  "version": "1.0.0",
+  "description": "",
+  "keywords": [],
+  "license": "ISC",
+  "author": "",
+  "type": "module",
+  "main": "index.js",
+  "scripts": {
+    "test": "node test/lens.ts && node test/lens.fl.test.ts",
+    "self": "bun src/make.ts src/self.cst src/self-made.ts ./grammar.ts && oxfmt src/self-made.ts"
+  },
+  "dependencies": {
+    "oxfmt": "^0.73.0"
+  },
+  "devDependencies": {
+    "@types/bun": "^1.4.3",
+    "@types/node": "^26.6.5",
+    "typescript": "^7.0.2"
+  }
+}

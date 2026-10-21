@@ -1,0 +1,60 @@
+
+// unbound
+{
+    x
+}
+
+// double use
+{
+    let x = 4
+    let y = x
+    x + y
+}
+
+// not used
+{
+    let x = 4
+    let y = 2
+    x
+}
+
+// x needs to be bound at the end of the function
+{
+    fn use(~x) {
+        consume(x)
+    }
+    let x = 3
+    use(~x)
+}
+
+// `lens` form must return void
+{
+    fn passer(~a) ~{
+        lens b <- 3
+        // this should error!
+        // because it needs to return void
+        100
+    }
+    let x = 20
+    let res = {
+        let v = ~passer(~x)
+        log("v from passer", v := 10)
+        4
+    }
+    (res, x)
+}
+
+// b must be consumed
+{
+    fn passer(~a) ~{
+        lens b <- 3
+        log("Hello", 2)
+    }
+    let x = 20
+    let res = {
+        let v = ~passer(~x)
+        log("v from passer", v := 10)
+        4
+    }
+    (res, x)
+}

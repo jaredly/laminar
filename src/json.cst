@@ -1,0 +1,12 @@
+JSONValue {
+    ["[" ["," ...value:JSONValue]] -> value
+    ["[" value:JSONValue] -> [value]
+    ["{" ["," ...pair:JSONPair]] -> Object.fromEntries(pair)
+    ["{" pair:JSONPair] -> Object.fromEntries([pair])
+    ["\"" text:id] -> text.text
+    re"[0-9]+" -> +(node as Id).text
+}
+
+JSONPair {
+    [":" ["\"" key:id] value:JSONValue] -> [key.text, value]
+}

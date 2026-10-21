@@ -1,0 +1,478 @@
+// There are our behavior tests
+
+{
+    2 + 2
+}
+
+4
+
+{
+    let x = 2
+    x + 4
+}
+
+6
+
+// Expected error: didn't use x
+// {
+//     let x = 2
+//     4
+// }
+
+{
+    let x = 2
+    let m = x := 3
+    x + m
+}
+
+5
+
+{
+    let x = 2
+    let _ = x := 3
+    x + 2
+}
+
+5
+
+{
+    let (x, y) = (1, 2)
+    x + y
+}
+
+3
+
+{
+    let (x, y) = (1, 2)
+    let _ = x := 4
+    x + y
+}
+
+6
+
+{
+    let (x, y) = (1, 2)
+    x := y := x
+    x + y * 5
+}
+
+7
+
+{
+    let (x, y) = (1, 2)
+    ((x, y) := (4, 5), (x, y))
+}
+
+((1, 2), (4, 5))
+
+{
+    fn go(x) { x + 2 }
+    go(4)
+}
+
+6
+
+{
+    fn inc(~m) { m := m + 10 }
+    let x = 5
+    inc(~x)
+    // tee(inc(get('x')), 'x')
+    x
+}
+
+15
+
+{
+    fn hello(n) {
+        let m = 5
+        n + m
+    }
+    hello(3)
+}
+
+8
+
+{
+    fn inc2(~(a, b)) { a := a + 10 }
+    let x = 5
+    let y = 3
+    inc2(~(x, y))
+    x + y
+}
+
+18
+
+{
+    fn swap(~(a, b)) { a := b := a }
+    let x = 1
+    let y = 5
+    swap(~(x, y))
+    x * 5 + y
+}
+
+26
+
+{
+    fn swap(~(a, b)) { a := b := a }
+    let two = (1, 5)
+    swap(~two)
+    let (x, y) = two
+    x * 5 + y
+}
+
+26
+
+{
+    fn swap(~(a, b)) { (a, b) := (b, a) }
+    let two = (1, 5)
+    swap(~two)
+    let (x, y) = two
+    x * 5 + y
+}
+
+26
+
+{
+    fn fst(~(a, b)) { ~a }
+    let x = (1, 10)
+    let z = fst(~x) := 5
+    (x, z)
+}
+
+((5, 10), 1)
+
+{
+    fn fst(~(a, b)) { ~a }
+    let x = (1, 10)
+    inc(~fst(~x))
+    // tee2(fst(get('x')), tmp1 => outer(tmp1), 'x')
+    x
+}
+
+(2, 10)
+
+{
+    fn fst(~(a, b)) { ~a }
+    fn snd(~(a, b)) { ~b }
+    let x = (1, (10, 5))
+    inc(~fst(~snd(~x)))
+    x
+}
+
+(1, (11, 5))
+
+{
+    fn fst(~(a, b)) { ~a }
+    fn snd(~(a, b)) { ~b }
+    fn mul(~c) { c := c * 10 }
+    let x = (1, 2)
+    let y = (3, 4)
+    mul(~snd(~fst(~(x, y))))
+    (x, y)
+}
+
+((1, 20), (3,4))
+
+{
+    fn fst(~(a, b)) { ~a }
+    fn snd(~(a, b)) { ~b }
+    fn mul(~c) { c := c * 10 }
+    let x = (1, 2)
+    let y = (3, 4)
+    mul(~snd(~(x, fst(~y))))
+    (x, y)
+}
+
+((1, 2), (30,4))
+
+{
+    let a = 5
+    fn captures(x) {
+        x + a
+    }
+    a := 2
+    (a, captures(4))
+}
+
+(2, 9)
+
+{
+    let a = 5
+    fn captures(x) {
+        inc(~a)
+        x + a
+    }
+    a := 2
+    (a, captures(4))
+}
+
+(2, 10)
+
+{
+    let x = {
+        let y = 2
+        y + 3
+    }
+    x
+}
+
+5
+
+// ok y'all, this is the goodness
+{
+    fn alias(~x) {
+        let y = ~x
+        y := 5
+    }
+    let x = 2
+    (alias(~x), x)
+}
+
+(2, 5)
+
+{
+    let x = 2
+    let z = {
+        let y = ~x
+        y := 5
+    }
+    (z, x)
+}
+
+(2, 5)
+
+{
+    consume(2)
+    4
+}
+
+(2, 4)
+
+{
+    let x = 2
+    let m = {
+        let y = ~x
+        y := 4
+    }
+    (m, x)
+}
+
+(2, 4)
+
+{
+    fn dropper(a) ~{
+        lens b <- a
+        // do normal cleanup stuff
+        consume(b)
+    }
+    consume(1)
+    let v = ~dropper(5)
+    consume(2)
+    consume(v := 10)
+    consume(3)
+    4
+}
+
+((1,2,5,3,10), 4)
+
+{
+    fn dropper(a) ~{
+        lens b <- a
+        // do normal cleanup stuff
+        consume(b)
+    }
+    consume(1)
+    let res = {
+        let v = ~dropper(5)
+        consume(v := 10)
+        4
+    }
+    // v exits scope, so cleanup happens
+    consume(3)
+    res
+}
+
+((1,5,10,3), 4)
+
+//    fn passer(~a) ~{
+//        lens b <- 3
+//        // This should error!
+//        // the old value of a is being dropped
+//        // we need to assert that the end of the
+//        // outer is nothing
+//        a := b
+//        // consume(30)
+//        // do normal cleanup stuff
+//        // consume(b)
+//    }
+
+
+{
+    fn passer(~a) ~{
+        lens b <- 3
+        log("Hello", b)
+    }
+    let x = 20
+    let res = {
+        let v = ~passer(~x)
+        log("v from passer", v := 10)
+        4
+    }
+    (res, x)
+}
+
+(
+(("v from passer", 3),
+ ("Hello", 10))
+ (4, 20)
+)
+
+{
+    fn passer(~a) ~{
+        lens b <- 3
+        log("Prev a", a := b)
+    }
+    let x = 20
+    let res = {
+        let v = ~passer(~x)
+        log("v from passer", v := 10)
+        4
+    }
+    (res, x)
+}
+
+(
+(("v from passer", 3),
+ ("Prev a", 20))
+ (4, 10)
+)
+
+// {
+//     let b = 10
+//     let out = 0
+//     let result = {
+//         let x = ~{
+//             lens a <- b
+//             consume(out := a)
+//         }
+//         x := 5
+//     }
+//     (result, out)
+// }
+//
+// (10, 5)
+
+// {
+//     fn inc(~c) { c := c + 1 }
+//     fn ok(~x) ~{
+//         let (a, b) = x
+//         a
+//     }
+//     let m = (1, 2)
+//     inc(~ok(~m))
+//     m
+// }
+//
+// (2, 2)
+
+// TODO make this work
+
+{
+    fn incfst(~x) {
+        let (a, b) = ~x
+        inc(~a)
+        2
+    }
+    let m = (4, 10)
+    (incfst(~m), m)
+}
+
+(2, (5, 10))
+
+// ---------- Examples from the paper errata --------- //
+
+fn inc(~c) { c := c + 1 }
+
+{
+    let x = 3
+    inc(~x)
+    x
+}
+
+4
+
+fn fst(~(x, y)) { ~x }
+
+{
+    let x = (1, 4)
+    inc(~fst(~x))
+    x
+}
+
+(2, 4)
+
+fn incFst(~x) { inc(~fst(~x)) }
+
+{
+    let x = (1, 4)
+    incFst(~x)
+    x
+}
+
+(2, 4)
+
+fn idf(~x) { () }
+
+{
+    let x = 2
+    idf(~x)
+    x
+}
+
+2
+
+fn idl(~x) { ~x }
+
+{
+    let x = 2
+    inc(~idl(~x))
+    x
+}
+
+3
+
+fn united(~x) { ~() }
+
+{
+    let x = 2
+    let _ = {
+        let l = ~united(~x)
+        1
+    }
+    x
+}
+
+2
+
+fn makeunit(()) { ~() }
+
+{
+    let x = 2
+    let l = ~makeunit(())
+    x
+}
+
+2
+
+
+
+// {
+//     // file(string) -> handle/handle
+//     fn file(name) ~{
+//         let handle = open(name)
+//         lens final <- handle {
+//             close(final)
+//         }
+//     }
+//     let value = ~file("demo.txt")
+// }

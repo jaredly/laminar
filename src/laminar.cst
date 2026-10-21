@@ -1,0 +1,135 @@
+Pat {
+    "_" -> ({type: "drop"})
+    text:id -> ({type: "id", text: text.text})
+    ["" "~" inner:Pat] -> ({type: "lens", inner})
+    ["" name:id ["(" ...args:Pat]] -> ({type: "constructor", name: name.text, args})
+    ["(" ...items:Pat] -> ({type: "tuple", items})
+}
+
+Type {
+    text:id -> ({type: "id", text: text.text})
+    ["" "~" left:Type] -> ({type: "lens", left})
+    ["" left:Type "/" right:Type] -> ({type: "lens", left, right})
+    ["(" ...items:Type] -> ({type: "tuple", items})
+    [" " ["(" ...args:Type] "=>" body:Type] -> ({type: "fn", args, body})
+}
+
+Term {
+    ["" "~" ...lens:*Lens] -> ({type: "lens", lens})
+    linear:Linear -> linear
+}
+
+Lens {
+    text:id -> ({type: "id", text: text.text})
+    ["" one:Lens] -> one
+    ["" fn:Linear ["(" ...args:Term]] -> ({type: "apply", fn, args})
+    ["(" ...items:Lens] -> ({type: "tuple", items})
+    ["{" one:Lens] -> one
+    ["{" [" " "let" pat:Pat "=" ...value:*Term] ...body:*Lens] -> ({type: "let", pat, value, body})
+    ["{" [" " "lens" pat:Pat "<-" ...value:*Linear] ...body:*Linear] -> ({type: "aslens", pat, value, body})
+}
+
+Linear {
+    // TODO: add regex support
+    // node:re"^[0-9]+$" -> ({type: "const", value: +node.text})
+    "true" -> ({type: "const", value: true})
+    "false" -> ({type: "const", value: false})
+    text:id -> ({type: "id", text: text.text})
+    ["" one:Linear] -> one
+    ["" fn:op ...arg:*Linear] -> ({type: "apply", fn, args: [arg]})
+    ["" fn:Linear ...suffixes:**LinearOps] -> ({type: "apply", fn, suffixes})
+    ["(" ...items:Linear] -> ({type: "tuple", items})
+    ["\"" head:id ...interp:LinearInterp] -> ({type: "string", head: head.text, interp})
+    [" " "match" value:Linear ["{" ...cases:LinearCase]] -> ({type: "case", value, cases})
+
+    // Would be nice to have an Ann() fn to allow reducing these cases by half
+    [" " "fn" [": " ["" name:id ["(" ...args:FnArg]] ann:Type] body:Linear] -> ({type: "fn", name: name.text, args, ann, body})
+    [" " "fn" ["" name:id ["(" ...args:FnArg]] body:Linear] -> ({type: "fn", name: name.text, args, body})
+    [" " "fn" [": " ["(" ...args:FnArg] ann:Type] body:Linear] -> ({type: "fn", args, ann, body})
+    [" " "fn" ["(" ...args:FnArg] body:Linear] -> ({type: "fn", args, body})
+    [" " lens:Lens ":=" ...value:*Linear] -> ({type: "assign", lens, value})
+    // Hmm what's the best way for this
+    // [" " left:Linear ...ops:(op:op right:Linear)] -> ({left, ops})
+    [" " one:Linear] -> one
+}
+
+LinearOps {
+    ["" "." attr:id] -> ({type: "attr", attr: attr.text})
+    ["" ["[" index:Linear]] -> ({type: "index", index})
+    ["" ["(" ...args:Linear]] -> ({type: "apply", args})
+}
+
+/*
+
+function handleSuffixes(head, suffixes) {
+    return suffixes.reduce((head, suffix): Linear => {
+        switch (suffix.type) {
+            case "attr": return {type: "attr", target: head, attr: suffix.attr}
+            case "index": return {type: "index", index: suffix.index, target: head}
+            case "apply": return {type: "apply", fn: head, args: suffix.args}
+        }
+    }, head)
+}
+
+Ok what about something like:
+->
+
+NO actually we can just be normal. just call a helper fn.
+
+partition(left: expr, rights: {op: Id, right: expr}[], (op, left, right) -> expr) -> expr
+
+*/
+
+FnArg {
+    pat:Pat -> ({pat})
+    [": " pat:Pat typ:Type] -> ({pat, typ})
+}
+
+LinearCase {
+    [" " pat:Pat ...body:*Linear] -> ({pat, body})
+}
+
+LinearInterp {
+    ["\"" value:Linear tail:id] -> ({value, tail: tail.text})
+}
+
+
+/*
+Linear {
+    ["" ...children:*] -> parseOp(children)
+    ["\"" head:id ...interp:(value:Linear tail:id)] -> {head: head.text, interp}
+    ["{" child:Linear] -> child
+    ["{" ...block:*Block] -> block
+    ["("] -> ({type: 'const', value: null})
+    ["(" one:Linear] -> one
+    ["(" ...items:Linear] -> ({type: "tuple", items})
+    [" " one:Linear] -> one
+    [" " "match" value:Linear ["{" ...cases:LinearCase]] -> ({type: "case", value, cases})
+    // if the fncall has a no binding, then the bindings are splatted in.
+    [" " "fn" Ann(["(" ...args:FnArg]) body:FnBody] -> ({type: "fn", args, ann, body})
+    [" " lens:Lens ":=" ...value:*Linear] -> ({type: "assign", lens, value})
+    [" " left:Linear ...right:(op:op right:Linear)] -> partition(left, right)
+}
+
+FnBody {
+    ["" "~" ...lens:*Lens] -> ({type: "lens", lens})
+    ["{" one:Term] -> one
+    ["{" ...block:*Block] -> block
+    one:Linear -> Linear
+}
+
+// A fn allows optional bindings
+Ann(inner) {
+    [": " inner ann:Type]
+    inner
+}
+
+LinearCase {
+    [" " pat:Pat "=>" ...body:*Linear] -> ({pat, body})
+}
+
+Block {
+    ["{" [" " "let" pat:Pat "=" ...value:*Term] ...body:*Block] -> ({type: "let", pat, value, body})
+    ["{" value:Term ...body:*Block] => ({type: "let", pat: {type: "tuple", items: []}, value, body})
+}
+*/
