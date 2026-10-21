@@ -1,4 +1,3 @@
-
 DSL Status:
 
 - [x] self-lexer -> json.cst -> json-parser.ts
@@ -33,16 +32,16 @@ Q: more complex functions than we want inline?
 Q: wanting to reasonable parse and regurgitate js makes me think more about newlines vs commas in lists.
 
 options:
-1) lists have a 'newline' flag, which indicates whether the first break was a newline/semicolon or a comma. When printing, we check this flag. This is probably the least change right now. it continues the collapsing of separators, but in a way that js can handle for the most part.
-2) we refuse to collapse separators. We say that a ;-separated list is different from a ,-separated list, which may even be different from a \n-separated list. hmm naw it's just those two. so ;\n is collapsed to ;, ,\n still means ,, but bare \n is treated as ; for asi goodness.
-Honestly that seems like a reasonable idea.
-Q: what do we do with a single-item list? or a zero-item list? it has to default in some direction. Let's go with ,, and the parser can make different choices.
-ALSO: this means we could have a list [a,b,c;d,e,f], right? What do we do with that?
-3) we say that [a,b,c;d,e,f] is `["[", [";", [",", "a", ...]]]`
-So a `[` by itself only has a single child. it has no notion of a separator. This makes our DSL much more verbose. BUT we could pun it with `["[," ...]` or `["[;" ...]` or even `["[\n" ...]`. ooh we could also pun `["[ " ...]`. Honestly thats attractive. we could also do `["[;\n" ...]` to indicate that both are acceptable.
+
+1. lists have a 'newline' flag, which indicates whether the first break was a newline/semicolon or a comma. When printing, we check this flag. This is probably the least change right now. it continues the collapsing of separators, but in a way that js can handle for the most part.
+2. we refuse to collapse separators. We say that a ;-separated list is different from a ,-separated list, which may even be different from a \n-separated list. hmm naw it's just those two. so ;\n is collapsed to ;, ,\n still means ,, but bare \n is treated as ; for asi goodness.
+   Honestly that seems like a reasonable idea.
+   Q: what do we do with a single-item list? or a zero-item list? it has to default in some direction. Let's go with ,, and the parser can make different choices.
+   ALSO: this means we could have a list [a,b,c;d,e,f], right? What do we do with that?
+3. we say that [a,b,c;d,e,f] is `["[", [";", [",", "a", ...]]]`
+   So a `[` by itself only has a single child. it has no notion of a separator. This makes our DSL much more verbose. BUT we could pun it with `["[," ...]` or `["[;" ...]` or even `["[\n" ...]`. ooh we could also pun `["[ " ...]`. Honestly thats attractive. we could also do `["[;\n" ...]` to indicate that both are acceptable.
 
 Ok I'm leaning toward 3, as it errs on the side of expressiveness, which I like. It also feels like it can open up the door for indent-based parsing, with like a `["\n\t" ...]` or similar
-
 
 Q: comman-newline shouldn't be squished into newline
 but comma-semicolon should drop the trailing comma.
@@ -68,7 +67,6 @@ collapsing a newline after another spacer
 Trailing colon ...
 
 1,2,3:, ... does that just get dropped? sure.
-
 
 --
 

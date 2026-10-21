@@ -18,8 +18,9 @@ import {
     curly,
 } from './grammar-lexer.ts';
 import { File, FileItem, RawRule, RawOption, Pat, ListKind } from './grammar-lexer.ts';
+import { readFile } from './lexer.ts';
 
-export const grammar = new Grammar();
+export const grammar = new Grammar(readFile);
 
 grammar.add('File', [
     option(

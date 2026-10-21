@@ -169,7 +169,10 @@ export type PatResult =
 export class Grammar {
     rules: Record<string, Option[]> = {};
     fns: Record<string, Pat[]> = {};
-    constructor() {}
+    readFile: (text: string) => Node;
+    constructor(readFile: (text: string) => Node) {
+        this.readFile = readFile;
+    }
     add(name: string, rule: Option[]) {
         this.rules[name] = rule;
     }
@@ -507,6 +510,9 @@ export class Grammar {
             },
         };
     }
+    toFile(items: FileItem[], config: Config) {
+        return toFile(items, config);
+    }
 }
 
 type Config = { lib: string; types: string };
@@ -549,8 +555,9 @@ export const toFile = (items: FileItem[], config: Config) => {
     return `\
 import {Grammar, Id, Node, option, ${[...imports].join(', ')}} from "${config.lib}";
 import {${names.join(', ')}} from "${config.types}";
+import {readFile} from "./lexer.ts";
 
-export const grammar = new Grammar();
+export const grammar = new Grammar(readFile);
 
 ${chunks.join('\n\n')}
     `;

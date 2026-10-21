@@ -162,6 +162,11 @@ export const readLines = (
     }
 };
 
+export const readFile = (text: string, config = defaultConfig): Node => {
+    const lines = readLines(text, config);
+    return { type: 'list', kind: '\n', children: lines.nodes, loc: 0 };
+};
+
 const addToWrapper = (wrapper: { child?: Node }, sep: ListKind, next: Node) => {
     const level = listLevels.indexOf(sep);
     if (
