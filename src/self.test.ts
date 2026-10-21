@@ -1,12 +1,12 @@
 import { expect, it } from 'bun:test';
-import { readLine, readLines } from './lexer.ts';
+import { readFile, readLine, readLines } from './lexer.ts';
 import { grammar as self } from './self-lexer.ts';
 import { asDSL, Grammar } from './grammar-lexer.ts';
 import { readFileSync } from 'fs';
 
 const loadGrammar = (text: string) => {
     const parsed = readLines(text);
-    const grammar = new Grammar();
+    const grammar = new Grammar(readFile);
     parsed.nodes.forEach((node) => {
         const rule = self.parse('RawRule', node);
         if (rule.type === 'failure') {
@@ -193,7 +193,7 @@ it('should parse a full thing', () => {
 
 it('should parse the full shebang', () => {
     const parsed = readLines(readFileSync(import.meta.dirname + '/self.cst', 'utf-8'));
-    const grammar = new Grammar();
+    const grammar = new Grammar(readFile);
     parsed.nodes.forEach((node) => {
         const rule = self.parse('RawRule', node);
         if (rule.type === 'failure') {
@@ -211,7 +211,7 @@ it('should parse the full shebang', () => {
 
     expect(rulesText(grammar)).toEqual(rulesText(self));
 
-    const secondGrammar = new Grammar();
+    const secondGrammar = new Grammar(readFile);
     parsed.nodes.forEach((node) => {
         const rule = grammar.parse('RawRule', node);
         if (rule.type === 'failure') {

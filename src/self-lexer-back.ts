@@ -12,8 +12,9 @@ import {
     re,
 } from './grammar-lexer.ts';
 import { File, FileItem, RawRule, RawOption, Pat, WrapperKind, ListKind } from './grammar-lexer.ts';
+import { readFile } from './lexer.ts';
 
-export const grammar = new Grammar();
+export const grammar = new Grammar(readFile);
 
 function parseList(kind: Id, items: Pat[]): Pat {
     if ('{[('.includes(kind.text[0])) {
