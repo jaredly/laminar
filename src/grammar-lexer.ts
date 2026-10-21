@@ -429,12 +429,6 @@ export class Grammar {
                             return { type: 'success', bindings };
                         }
                         default: {
-                            // console.log(
-                            //     "into list pat",
-                            //     item.type,
-                            //     node.children[i].type,
-                            //     i,
-                            // );
                             const parsed = this.parsePat(item, node.children[i]);
                             if (parsed.type === 'failure') {
                                 return parsed;
@@ -516,6 +510,19 @@ export class Grammar {
 }
 
 type Config = { lib: string; types: string };
+
+export const toSyntax = (grammar: Grammar) => {
+    return Object.entries(grammar.rules)
+        .map(([name, options]) => {
+            return `${name} {${options
+                .map((option) => {
+                    return `\n    ${asSyntax(option.pat)}${option.res ? ' -> ' + (option.res + '').replace(/^.*?=>/, '').trim() : ''}`;
+                })
+                .join('')}\n}`;
+        })
+        .join('\n\n');
+};
+
 export const toFile = (items: FileItem[], config: Config) => {
     const imports = new Set<string>();
     const names: string[] = [];
@@ -600,6 +607,31 @@ export const asDSL = (pat: Pat): string => {
             return `many("${pat.name.text}", "${pat.rule.text}")`;
         case 'many-items':
             return `manyItems("${pat.name.text}", [${pat.items.map(asDSL).join(', ')}])`;
+    }
+};
+
+export const asSyntax = (pat: Pat): string => {
+    switch (pat.type) {
+        case 'regexp':
+            return `re${JSON.stringify((pat.regexp + '').slice(1, -1))}`;
+        case 'literal':
+            return `${JSON.stringify(pat.text.text)}`;
+        case 'rule':
+            return `${pat.name.text}:${pat.rule.text}`;
+        case 'wrapper':
+            if (pat.child) {
+                return `[${JSON.stringify(pat.kind.text)} ${asSyntax(pat.child)}]`;
+            } else {
+                return `[${JSON.stringify(pat.kind.text)}]`;
+            }
+        case 'list':
+            return `[${JSON.stringify(pat.kind.text)} ${pat.items.map(asSyntax).join(' ')}]`;
+        case 'rest':
+            return `...${pat.name.text}:*${pat.rule.text}`;
+        case 'many':
+            return `...${pat.name.text}:${pat.rule.text}`;
+        case 'many-items':
+            return `...${pat.name.text}:(${pat.items.map(asSyntax).join(' ')})`;
     }
 };
 
