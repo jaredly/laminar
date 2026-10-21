@@ -3,68 +3,32 @@ File {
 }
 
 FileItem {
-    rule:RawRule -> ({
-    type: "rule",
-    rule
-  })
+    rule:RawRule -> ({ type: "rule", rule })
     [" " "function" ...rest:*any] -> ({ type: "function", rest })
-    [" " "const" ...rest:*any] -> ({
-    type: "const",
-    rest
-  })
+    [" " "const" ...rest:*any] -> ({ type: "const", rest })
 }
 
 RawRule {
     [" " name:id ["{" ["\n" ...options:RawOption]]] -> ({ name, options })
-    [" " name:id ["{" option:RawOption]] -> ({
-    name,
-    options: [option]
-  })
+    [" " name:id ["{" option:RawOption]] -> ({ name, options: [option] })
 }
 
 RawOption {
     [" " pat:Pat "->" ...res:*any] -> ({ pat, res })
-    ["\"" text:id] -> ({
-    pat: { type: "literal", text }
-  })
-    ["" "re" ["\"" raw:id]] -> ({
-    pat: {
-      type: "regexp",
-      regexp: new RegExp(raw.text)
-    }
-  })
+    ["\"" text:id] -> ({ pat: { type: "literal", text } })
+    ["" "re" ["\"" raw:id]] -> ({ pat: { type: "regexp", regexp: new RegExp(raw.text) } })
 }
 
 Pat {
-    ["\"" text:id] -> ({
-    type: "literal",
-    text
-  })
+    ["\"" text:id] -> ({ type: "literal", text })
     [":" name:id rule:id] -> ({ type: "rule", name, rule })
-    ["[" [" " ["\"" kind:WrapperKind] child:Pat]] -> ({
-    type: "wrapper",
-    kind,
-    child
-  })
+    ["[" [" " ["\"" kind:WrapperKind] child:Pat]] -> ({ type: "wrapper", kind, child })
     ["[" [" " ["\"" kind:ListKind] ...items:Pat]] -> parseList(kind, items)
-    [":" ["" "..." name:id] ["" "*" rule:id]] -> ({
-    type: "rest",
-    name,
-    rule,
-    multi: !1
-  })
-    [":" ["" "..." name:id] ["" "**" rule:id]] -> ({
-    type: "rest",
-    name,
-    rule,
-    multi: !0
-  })
+    [":" ["" "..." name:id] ["" "*" rule:id]] -> ({ type: "rest", name, rule, multi: !1 })
+    [":" ["" "..." name:id] ["" "**" rule:id]] -> ({ type: "rest", name, rule, multi: !0 })
     [":" ["" "..." name:id] rule:id] -> ({ type: "many", name, rule })
     [":" ["" "..." name:id] ["(" [" " ...items:Pat]]] -> ({ type: "many-items", name, items })
-    ["" "re" ["\"" raw:id]] -> ({
-    type: "regexp",
-    regexp: new RegExp(raw.text)
-  })
+    ["" "re" ["\"" raw:id]] -> ({ type: "regexp", regexp: new RegExp(raw.text) })
 }
 
 WrapperKind {
