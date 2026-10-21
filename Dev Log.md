@@ -1,3 +1,9 @@
+
+DSL Status:
+
+- [x] self-lexer -> json.cst -> json-parser.ts
+- [ ] self-lexer -> self.cst -> self-made.ts
+
 --
 
 side quest: DSL

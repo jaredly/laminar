@@ -65,6 +65,12 @@ grammar.add('RawOption', [
     option(list('"', b('text', 'id')), ({ text }: { text: Id }): RawOption => ({
         pat: { type: 'literal', text },
     })),
+    option(squish(lit('re'), string(b('raw', 'id'))), ({ raw }: { raw: Id }): RawOption => ({
+        pat: {
+            type: 'regexp',
+            regexp: new RegExp(raw.text),
+        },
+    })),
 ]);
 
 function parseList(kind: Id, items: Pat[]): Pat {

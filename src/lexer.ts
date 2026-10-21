@@ -143,15 +143,23 @@ export const readLines = (
     text: string,
     config = defaultConfig,
 ): { nodes: Node[]; pos: (loc: number) => { line: number; char: number } } => {
-    const { node, i } = readUntilCloser(0, text, config);
-    if (i !== text.length) {
-        throw new Error(`didnt lex everyting: ${node}, ${i} ${JSON.stringify(text.slice(i))}`);
+    const pos = locLines(text.split('\n'));
+    try {
+        const { node, i } = readUntilCloser(0, text, config);
+        if (i !== text.length) {
+            throw new Error(`didnt lex everyting: ${node}, ${i} ${JSON.stringify(text.slice(i))}`);
+        }
+        if (!node) throw new Error(`nothing lexed`);
+        return {
+            nodes: node.type === 'list' && node.kind === '\n' ? node.children : [node],
+            pos,
+        };
+    } catch (err) {
+        if (err instanceof LexError) {
+            throw new Error(err.message + ' at ' + JSON.stringify(pos(err.loc)));
+        }
+        throw err;
     }
-    if (!node) throw new Error(`nothing lexed`);
-    return {
-        nodes: node.type === 'list' && node.kind === '\n' ? node.children : [node],
-        pos: locLines(text.split('\n')),
-    };
 };
 
 const addToWrapper = (wrapper: { child?: Node }, sep: ListKind, next: Node) => {
@@ -281,8 +289,14 @@ const read_ = (i: number, text: string, config: Config): void | { i: number; nod
 };
 
 const listLevels: ListKind[] = ['\n', ';', ',', ' ', ':', ''];
-const colon = listLevels.indexOf(':');
-const space = listLevels.indexOf(' ');
+
+export class LexError extends Error {
+    loc: number;
+    constructor(loc: number, message: string) {
+        super(message);
+        this.loc = loc;
+    }
+}
 
 const readUntilCloser = (
     i: number,
@@ -309,7 +323,7 @@ const readUntilCloser = (
         }
         if (i >= text.length || text[i] === closer) break;
         const next = read_(i, text, config);
-        if (!next) throw new Error('cannot read');
+        if (!next) throw new LexError(i, `cannot read until closer ` + closer);
         addToWrapper(node, listLevels[level], next.node);
         i = next.i;
     }

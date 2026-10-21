@@ -3,7 +3,7 @@
  */
 
 import { readFileSync, writeFileSync } from 'fs';
-import { toFile } from './grammar-lexer.ts';
+import { showFailure, toFile } from './grammar-lexer.ts';
 import { readLines } from './lexer.ts';
 import { grammar as self } from './self-lexer.ts';
 
@@ -19,7 +19,12 @@ const parsed = readLines(text);
 
 const file = self.parse('File', { type: 'list', kind: '\n', children: parsed.nodes, loc: 0 });
 if (file.type === 'failure') {
-    throw new Error(`Failed to parse at ${file.loc}: ${file.reason}`);
+    throw new Error(
+        `Failed to parse. ${showFailure(file.failure, (loc) => {
+            const { line, char } = parsed.pos(loc);
+            return `${line + 1}:${char}`;
+        })}`,
+    );
 }
 const full = toFile(
     file.value,

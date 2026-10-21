@@ -374,8 +374,6 @@
 //
 // (2, 2)
 
-// TODO make this work
-
 {
     fn incfst(~x) {
         let (a, b) = ~x

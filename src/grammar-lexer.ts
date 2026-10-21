@@ -1,7 +1,14 @@
-import { Id, Node, stringify, ListKind as NodeListKind, WrapperKind } from './lexer.ts';
+import {
+    Id,
+    Node,
+    stringify,
+    ListKind as NodeListKind,
+    WrapperKind as NodeWrapperKind,
+} from './lexer.ts';
 
 export type { Id, Node };
 
+export type WrapperKind = Id;
 export type ListKind = Id;
 
 export type File = FileItem[];
@@ -62,7 +69,7 @@ export const list = (kind: NodeListKind, ...items: Pat[]): Pat => ({
     kind: id(kind),
     items,
 });
-export const wrapper = (kind: WrapperKind, child?: Pat | null): Pat => ({
+export const wrapper = (kind: NodeWrapperKind, child?: Pat | null): Pat => ({
     type: 'wrapper',
     kind: id(kind),
     child,
@@ -124,6 +131,20 @@ export class ParseError extends Error {
     }
 }
 
+type Failure = { reason: string; loc: number; children?: Failure[] };
+
+export const showFailure = (failure: Failure, locToPos: (loc: number) => string): string => {
+    return (
+        `${locToPos(failure.loc)} ${failure.reason}` +
+        (failure.children
+            ? failure.children.map(
+                  (child, i) =>
+                      `\n  ${i + 1}) ` + showFailure(child, locToPos).replace(/\n/g, '\n  '),
+              )
+            : '')
+    );
+};
+
 export type ParseResult<T> =
     | {
           type: 'success';
@@ -131,9 +152,7 @@ export type ParseResult<T> =
       }
     | {
           type: 'failure';
-          reason: string;
-          loc: number;
-          // TODO: maybe path?
+          failure: Failure;
       };
 
 export type PatResult =
@@ -144,8 +163,7 @@ export type PatResult =
       }
     | {
           type: 'failure';
-          reason: string;
-          loc: number;
+          failure: Failure;
       };
 
 export class Grammar {
@@ -182,15 +200,19 @@ export class Grammar {
                     } else {
                         return {
                             type: 'failure',
-                            reason: `regexp mismatch, found ${JSON.stringify(node.text)}, expected ${pat.regexp}`,
-                            loc: node.loc,
+                            failure: {
+                                reason: `regexp mismatch, found ${JSON.stringify(node.text)}, expected ${pat.regexp}`,
+                                loc: node.loc,
+                            },
                         };
                     }
                 } else {
                     return {
                         type: 'failure',
-                        reason: 'not an id/op: ' + brief(node),
-                        loc: node.loc,
+                        failure: {
+                            reason: 'not an id/op: ' + brief(node),
+                            loc: node.loc,
+                        },
                     };
                 }
             }
@@ -201,15 +223,19 @@ export class Grammar {
                     } else {
                         return {
                             type: 'failure',
-                            reason: `literal mismatch, found ${JSON.stringify(node.text)}, expected ${JSON.stringify(pat.text.text)}`,
-                            loc: node.loc,
+                            failure: {
+                                reason: `literal mismatch, found ${JSON.stringify(node.text)}, expected ${JSON.stringify(pat.text.text)}`,
+                                loc: node.loc,
+                            },
                         };
                     }
                 } else {
                     return {
                         type: 'failure',
-                        reason: 'not an id/op: ' + brief(node),
-                        loc: node.loc,
+                        failure: {
+                            reason: 'not an id/op: ' + brief(node),
+                            loc: node.loc,
+                        },
                     };
                 }
             case 'rule': {
@@ -223,8 +249,10 @@ export class Grammar {
                     }
                     return {
                         type: 'failure',
-                        reason: `not an id, found a ${node.type}`,
-                        loc: node.loc,
+                        failure: {
+                            reason: `not an id, found a ${node.type}`,
+                            loc: node.loc,
+                        },
                     };
                 } else if (name === '*') {
                     return { type: 'success', value: node };
@@ -243,15 +271,19 @@ export class Grammar {
                 if (node.type !== 'wrapper') {
                     return {
                         type: 'failure',
-                        reason: 'not a wrapper, found a ' + brief(node),
-                        loc: node.loc,
+                        failure: {
+                            reason: 'not a wrapper, found a ' + brief(node),
+                            loc: node.loc,
+                        },
                     };
                 }
                 if (node.kind !== pat.kind.text) {
                     return {
                         type: 'failure',
-                        reason: `expected ${JSON.stringify(pat.kind.text)} wrapper, found ${JSON.stringify(node.kind)}`,
-                        loc: node.loc,
+                        failure: {
+                            reason: `expected ${JSON.stringify(pat.kind.text)} wrapper, found ${JSON.stringify(node.kind)}`,
+                            loc: node.loc,
+                        },
                     };
                 }
                 if (!node.child) {
@@ -266,15 +298,20 @@ export class Grammar {
                     }
                     return {
                         type: 'failure',
-                        reason: `wrapper has no contents`,
-                        loc: node.loc,
+                        failure: {
+                            reason: `wrapper has no contents`,
+                            loc: node.loc,
+                        },
                     };
                 }
                 if (!pat.child) {
                     return {
                         type: 'failure',
-                        reason: `wrapper has contents, expected empty`,
-                        loc: node.loc,
+                        failure: {
+                            reason: `wrapper has contents, expected empty`,
+
+                            loc: node.loc,
+                        },
                     };
                 }
                 return this.parsePat(pat.child, node.child);
@@ -283,15 +320,19 @@ export class Grammar {
                 if (node.type !== 'list') {
                     return {
                         type: 'failure',
-                        reason: 'not a list, found a ' + brief(node),
-                        loc: node.loc,
+                        failure: {
+                            reason: 'not a list, found a ' + brief(node),
+                            loc: node.loc,
+                        },
                     };
                 }
                 if (node.kind !== pat.kind.text) {
                     return {
                         type: 'failure',
-                        reason: `expected ${JSON.stringify(pat.kind.text)} list, found ${JSON.stringify(node.kind)}`,
-                        loc: node.loc,
+                        failure: {
+                            reason: `expected ${JSON.stringify(pat.kind.text)} list, found ${JSON.stringify(node.kind)}`,
+                            loc: node.loc,
+                        },
                     };
                 }
                 const bindings: Record<string, any> = {};
@@ -301,8 +342,10 @@ export class Grammar {
                     if (i >= node.children.length) {
                         return {
                             type: 'failure',
-                            reason: `ran out of items while processing ${node.kind}. ${node.children.length} total items; ${pat.items.length} pattern items`,
-                            loc: node.loc,
+                            failure: {
+                                reason: `ran out of items while processing ${node.kind}. ${node.children.length} total items; ${pat.items.length} pattern items`,
+                                loc: node.loc,
+                            },
                         };
                     }
                     switch (item.type) {
@@ -369,8 +412,10 @@ export class Grammar {
                                     if (i >= node.children.length) {
                                         return {
                                             type: 'failure',
-                                            reason: `ran out of items`,
-                                            loc: node.loc,
+                                            failure: {
+                                                reason: `ran out of items`,
+                                                loc: node.loc,
+                                            },
                                         };
                                     }
                                     const result = this.parsePat(child, node.children[i]);
@@ -403,8 +448,10 @@ export class Grammar {
                 if (i < node.children.length) {
                     return {
                         type: 'failure',
-                        reason: `Didn't parse all children`,
-                        loc: node.children[i].loc,
+                        failure: {
+                            reason: `Didn't parse all children`,
+                            loc: node.children[i].loc,
+                        },
                     };
                 }
                 if (Object.keys(bindings).length === 0) {
@@ -426,8 +473,10 @@ export class Grammar {
             } else {
                 return {
                     type: 'failure',
-                    reason: 'not an id, found ' + node.type,
-                    loc: node.loc,
+                    failure: {
+                        reason: 'not an id, found ' + node.type,
+                        loc: node.loc,
+                    },
                 };
             }
         }
@@ -457,12 +506,11 @@ export class Grammar {
         // console.log("failed on ", rule, node.type);
         return {
             type: 'failure',
-            reason:
-                `no option of rule ${rule} matched.` +
-                failures
-                    .map((f, i) => `\n ${i + 1}) ` + f.loc + ' ' + f.reason.replace(/\n/g, '\n  '))
-                    .join(''),
-            loc: node.loc,
+            failure: {
+                reason: `no option of rule ${rule} matched.`,
+                loc: node.loc,
+                children: failures.map((f) => f.failure),
+            },
         };
     }
 }

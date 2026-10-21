@@ -1,7 +1,8 @@
 import { expect, it } from 'bun:test';
-import { readLine, readLines } from './nnodes.ts';
-import { grammar as self } from './self-made.ts';
-import { asDSL, Grammar } from './grammar.ts';
+import { readLine, readLines } from './lexer.ts';
+import { grammar as self } from './self-lexer.ts';
+import { asDSL, Grammar } from './grammar-lexer.ts';
+import { readFileSync } from 'fs';
 
 const loadGrammar = (text: string) => {
     const parsed = readLines(text);
@@ -190,49 +191,8 @@ it('should parse a full thing', () => {
     });
 });
 
-const full = `\
-File {
-    ["\n" ...items:FileItem] -> items
-}
-
-FileItem {
-    rule:RawRule -> ({type: 'rule', rule})
-    [" " "function" ...rest:*any] -> ({type: "function", rest})
-    [" " "const" ...rest:*any] -> ({type: "const", rest})
-}
-
-RawRule {
-    [" " name:id ["{" ...options:RawOption]] -> ({name, options})
-}
-
-RawOption {
-    [" " pat:Pat "->" ...res:*any] -> ({pat, res})
-    ["\\"" text:id] -> ({pat: {type: 'literal', text}})
-}
-
-Pat {
-    ["\\"" text:id] -> ({type: "literal", text})
-    [": " name:id rule:id] -> ({type: "rule", name, rule})
-    ["[" [" " ["\\"" kind:ListKind] ...items:Pat]] -> ({type: "list", kind, items})
-    [": " ["" "..." name:id] ["" "*" rule:id]] -> ({type: "rest", name, rule})
-    [": " ["" "..." name:id] ["" "**" rule:id]] -> ({type: "rest", name, rule, multi: true})
-    [": " ["" "..." name:id] rule:id] -> ({type: "many", name, rule})
-    [": " ["" "..." name:id] ["(" [" " ...items:Pat]]] -> ({type: "many-items", name, items})
-}
-
-ListKind {
-    ""
-    "{"
-    "["
-    "("
-    " "
-    ": "
-    "\\""
-    "\\n"
-}`;
-
 it('should parse the full shebang', () => {
-    const parsed = readLines(full);
+    const parsed = readLines(readFileSync(import.meta.dirname + '/self.cst', 'utf-8'));
     const grammar = new Grammar();
     parsed.nodes.forEach((node) => {
         const rule = self.parse('RawRule', node);
