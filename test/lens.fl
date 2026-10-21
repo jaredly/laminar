@@ -145,7 +145,6 @@
     fn fst(~(a, b)) { ~a }
     let x = (1, 10)
     inc(~fst(~x))
-    // tee2(fst(get('x')), tmp1 => outer(tmp1), 'x')
     x
 }
 

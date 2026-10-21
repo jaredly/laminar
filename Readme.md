@@ -10,6 +10,42 @@ I have many of the constructs implemented, but not yet all. Notably, `case` and 
 
 My language uses runtime checks to guarantee linearity instead of compile-time checks. After I have the runtime working properly, I'll probably move on to doing the type checking and inference.
 
+## What it looks like
+
+```
+{
+    fn fst(~(a, b)) { ~a }
+    let x = (1, 10)
+    inc(~fst(~x))
+    x
+}
+
+(2, 10)
+
+{
+    fn incfst(~x) {
+        let (a, b) = ~x
+        inc(~a)
+        2
+    }
+    let m = (4, 10)
+    (incfst(~m), m)
+}
+
+(2, (5, 10))
+
+{
+    fn alias(~x) {
+        let y = ~x
+        y := 5
+    }
+    let x = 2
+    (alias(~x), x)
+}
+
+(2, 5)
+```
+
 ## Running the tests
 
 `pnpm test` will first compile `lens.fl` into `lens.fl.test.ts` and then run `node lens.fl.test.ts` to run the suite.
