@@ -5,7 +5,7 @@
 import { readFileSync, writeFileSync } from 'fs';
 import { showFailure, toFile } from './grammar-lexer.ts';
 import { readLines } from './lexer.ts';
-import { grammar as self } from './self-lexer.ts';
+import { grammar as self } from './self-lexer-back.ts';
 
 const [_, __, infile, outfile, types, lib = './grammar-lexer.ts'] = process.argv;
 

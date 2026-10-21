@@ -19,6 +19,17 @@ RawOption {
     ["" "re" ["\"" raw:id]] -> ({ pat: { type: "regexp", regexp: new RegExp(raw.text) } })
 }
 
+function parseList(kind: Id, items: Pat[]): Pat {
+    if ("{[(".includes(kind.text[0])) {
+        return {
+            type: "wrapper",
+            kind: { ...kind, text: kind.text[0] },
+            child: { type: "list", kind: { ...kind, text: kind.text[1] }, items },
+        };
+    }
+    return { type: "list", kind, items };
+}
+
 Pat {
     ["\"" text:id] -> ({ type: "literal", text })
     [":" name:id rule:id] -> ({ type: "rule", name, rule })
@@ -38,7 +49,7 @@ WrapperKind {
 }
 
 ListKind {
-    re"[{([][ ,;:\\n]"
+    re"[{([][ ,;:\n]"
     ","
     ";"
     ""
