@@ -23,11 +23,12 @@ Pat {
 }
 
 Type {
+    [" " arg:Type "->" body:Type] -> ({type: "fn", args: [arg], body})
     text:id -> ({type: "id", text: text.text, loc: node.loc})
     ["" "~" left:Type] -> ({type: "lens", left})
     ["" left:Type "/" right:Type] -> ({type: "lens", left, right})
     ["(," ...items:Type] -> ({type: "tuple", items})
-    [" " ["(," ...args:Type] "=>" body:Type] -> ({type: "fn", args, body})
+    // [" " ["(," ...args:Type] "=>" body:Type] -> ({type: "fn", args, body})
 }
 
 Term {

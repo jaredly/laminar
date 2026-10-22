@@ -543,7 +543,9 @@ export class Grammar {
                 }
                 const bindings: Record<string, any> = {};
                 let i = 0;
+                let n = -1;
                 for (let item of pat.items) {
+                    n++;
                     // childPath = [...childPath, ':list-item'];
                     // console.log(`LIST ITEM ${i}`, item);
                     if (i >= node.children.length) {
@@ -697,7 +699,13 @@ export class Grammar {
                         default: {
                             const parsed = this.parsePat(item, node.children[i], childPath);
                             if (parsed.type === 'failure') {
-                                return parsed;
+                                return {
+                                    ...parsed,
+                                    failure: {
+                                        ...parsed.failure,
+                                        reason: `list item ${n}: ` + parsed.failure.reason,
+                                    },
+                                };
                             }
                             Object.assign(bindings, parsed.bindings);
                             i++;

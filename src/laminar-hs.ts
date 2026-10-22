@@ -108,17 +108,26 @@ grammar.add('Pat', [
 
 grammar.add('Type', [
     // Type:1
+    option(
+        list(' ', b('arg', 'Type'), lit('->'), b('body', 'Type')),
+        ({ arg, body, node }: { arg: Type; body: Type; node: Node }): Type => ({
+            type: 'fn',
+            args: [arg],
+            body,
+        }),
+    ),
+    // Type:2
     option(b('text', 'id'), ({ text, node }: { text: Id; node: Node }): Type => ({
         type: 'id',
         text: text.text,
         loc: node.loc,
     })),
-    // Type:2
+    // Type:3
     option(
         list('', lit('~'), b('left', 'Type')),
         ({ left, node }: { left: Type; node: Node }): Type => ({ type: 'lens', left }),
     ),
-    // Type:3
+    // Type:4
     option(
         list('', b('left', 'Type'), lit('/'), b('right', 'Type')),
         ({ left, right, node }: { left: Type; right: Type; node: Node }): Type => ({
@@ -127,19 +136,10 @@ grammar.add('Type', [
             right,
         }),
     ),
-    // Type:4
+    // Type:5
     option(
         wrapper('(', list(',', many('items', 'Type'))),
         ({ items, node }: { items: Type[]; node: Node }): Type => ({ type: 'tuple', items }),
-    ),
-    // Type:5
-    option(
-        list(' ', wrapper('(', list(',', many('args', 'Type'))), lit('=>'), b('body', 'Type')),
-        ({ args, body, node }: { args: Type[]; body: Type; node: Node }): Type => ({
-            type: 'fn',
-            args,
-            body,
-        }),
     ),
 ]);
 

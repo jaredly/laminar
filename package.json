@@ -11,7 +11,7 @@
     "test": "node test/lens.ts && node test/lens.fl.test.ts",
     "self": "bun src/make.ts src/self.cst src/self-lexer.ts ./grammar-lexer.ts ./grammar-lexer.ts && oxfmt src/self-lexer.ts",
     "laminar-parser": "bun src/make.ts src/laminar.cst src/laminar-parser.ts ./ast.ts ./grammar-lexer.ts && oxfmt src/laminar-parser.ts",
-    "laminar-hs": "bun src/make.ts src/laminar-hs.cst src/laminar-hs.ts ./ast.ts ./grammar-lexer.ts && oxfmt src/laminar-hs.ts && bun test/lens.ts"
+    "laminar-hs": "bun src/make.ts src/laminar-hs.cst src/laminar-hs.ts ./ast.ts ./grammar-lexer.ts && oxfmt src/laminar-hs.ts"
   },
   "dependencies": {
     "oxfmt": "^0.73.0"
