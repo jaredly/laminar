@@ -1,75 +1,105 @@
+@config {
+    reserved: [let lens ~ <- = := case :: => _]
+}
+
+File {
+    ["\n" ...linears:Linear] -> linears
+    linear:Linear -> [linear]
+}
+
 Pat {
     "_" -> ({type: "drop"})
-    text:id -> ({type: "id", text: text.text})
+    text:id -> ({type: "id", text: text.text, loc: node.loc})
     ["" "~" inner:Pat] -> ({type: "lens", inner})
-    ["" name:id ["(" ...args:Pat]] -> ({type: "constructor", name: name.text, args})
-    ["(" ...items:Pat] -> ({type: "tuple", items})
+    ["" name:id ["(," ...args:Pat]] -> ({type: "constructor", name: name.text, args})
+    ["(," ...items:Pat] -> ({type: "tuple", items})
+    ["("] -> ({type: "tuple", items: []})
 }
 
 Type {
-    text:id -> ({type: "id", text: text.text})
+    text:id -> ({type: "id", text: text.text, loc: node.loc})
     ["" "~" left:Type] -> ({type: "lens", left})
     ["" left:Type "/" right:Type] -> ({type: "lens", left, right})
-    ["(" ...items:Type] -> ({type: "tuple", items})
-    [" " ["(" ...args:Type] "=>" body:Type] -> ({type: "fn", args, body})
+    ["(," ...items:Type] -> ({type: "tuple", items})
+    [" " ["(," ...args:Type] "=>" body:Type] -> ({type: "fn", args, body})
 }
 
 Term {
+    [" " one:Term] -> one
     ["" "~" ...lens:*Lens] -> ({type: "lens", lens})
+    ["{" ["" "~" ...lens:*Lens]] -> ({type: "lens", lens})
     linear:Linear -> linear
 }
 
 Lens {
-    text:id -> ({type: "id", text: text.text})
+    text:id -> ({type: "id", text: text.text, loc: node.loc})
     ["" one:Lens] -> one
-    ["" fn:Linear ["(" ...args:Term]] -> ({type: "apply", fn, args})
-    ["(" ...items:Lens] -> ({type: "tuple", items})
+    ["" fn:Linear ["(," ...args:Term]] -> ({type: "apply", fn, args})
+    ["(," ...items:Lens] -> ({type: "tuple", items})
     ["{" one:Lens] -> one
-    ["{" [" " "let" pat:Pat "=" ...value:*Term] ...body:*Lens] -> ({type: "let", pat, value, body})
-    ["{" [" " "lens" pat:Pat "<-" ...value:*Linear] ...body:*Linear] -> ({type: "aslens", pat, value, body})
+    ["("] -> ({type: "tuple", items: []})
+    ["{\n" [" " "let" pat:Pat "=" ...value:*Term] ...body:*Lens] -> ({type: "let", pat, value, body})
+    ["{\n" [" " "lens" pat:Pat "<-" ...value:*Linear] ...body:*Linear] -> ({type: "aslens", pat, value, body})
+    ["{\n" one:Lens] -> one
+    ["{\n" value:Term ...body:*Lens] -> ({type: "let", pat: {type: "drop"}, value, body})
+}
+
+import {partition} from "./laminar-helpers.ts"
+
+Op {
+    re"^[+-]$"
 }
 
 Linear {
-    // TODO: add regex support
-    // node:re"^[0-9]+$" -> ({type: "const", value: +node.text})
-    "true" -> ({type: "const", value: true})
-    "false" -> ({type: "const", value: false})
-    text:id -> ({type: "id", text: text.text})
+    re"^[0-9]+$" -> ({type: "const", value: +(node as Id).text, loc: node.loc})
+    re"true|false" -> ({type: "const", value: (node as Id).text === "true", loc: node.loc})
+    text:id -> ({type: "id", text: text.text, loc: node.loc})
+    ["\"" text:id] -> ({type: "string", head: text.text, interp: [], loc: node.loc})
     ["" one:Linear] -> one
-    ["" fn:op ...arg:*Linear] -> ({type: "apply", fn, args: [arg]})
-    ["" fn:Linear ...suffixes:**LinearOps] -> ({type: "apply", fn, suffixes})
-    ["(" ...items:Linear] -> ({type: "tuple", items})
-    ["\"" head:id ...interp:LinearInterp] -> ({type: "string", head: head.text, interp})
-    [" " "match" value:Linear ["{" ...cases:LinearCase]] -> ({type: "case", value, cases})
+    ["" fn:Op ...arg:*Linear] -> ({type: "apply", fn, args: [arg],loc:node.loc})
+    ["" target:Linear ...suffixes:**LinearOps] -> handleSuffixes(target, suffixes)
+    ["(," ...items:Linear] -> ({type: "tuple", items,loc:node.loc})
+    ["("] -> ({type: "tuple", items: [], loc: node.loc})
+    ["\"" head:id ...interp:**LinearInterp] -> ({type: "string", head: head.text, interp,loc:node.loc})
+    [" " "match" value:Linear ["{" ...cases:LinearCase]] -> ({type: "case", value, cases,loc:node.loc})
 
-    // Would be nice to have an Ann() fn to allow reducing these cases by half
-    [" " "fn" [": " ["" name:id ["(" ...args:FnArg]] ann:Type] body:Linear] -> ({type: "fn", name: name.text, args, ann, body})
-    [" " "fn" ["" name:id ["(" ...args:FnArg]] body:Linear] -> ({type: "fn", name: name.text, args, body})
-    [" " "fn" [": " ["(" ...args:FnArg] ann:Type] body:Linear] -> ({type: "fn", args, ann, body})
-    [" " "fn" ["(" ...args:FnArg] body:Linear] -> ({type: "fn", args, body})
-    [" " lens:Lens ":=" ...value:*Linear] -> ({type: "assign", lens, value})
-    // Hmm what's the best way for this
-    // [" " left:Linear ...ops:(op:op right:Linear)] -> ({left, ops})
+    /* Would be nice to have an Ann() fn to allow reducing these cases by half */
+    [" " "fn" [":" ["" name:id ["(," ...args:FnArg]] ann:Type] body:Term] -> ({type: "fn", name: name.text, args, ann, body,loc:node.loc})
+    [" " "fn" ["" name:id ["(," ...args:FnArg]] body:Term] -> ({type: "fn", name: name.text, args, body,loc:node.loc})
+    [" " "fn" [":" ["(," ...args:FnArg] ann:Type] body:Term] -> ({type: "fn", args, ann, body,loc:node.loc})
+    [" " "fn" ["(," ...args:FnArg] body:Term] -> ({type: "fn", args, body,loc:node.loc})
+    [" " lens:Lens ":=" ...value:*Linear] -> ({type: "assign", lens, value,loc:node.loc})
+    [" " left:Linear ...right:(op:op right:Linear)] -> partition(left, right)
     [" " one:Linear] -> one
+    ["\n" one:Linear] -> one
+
+    ["{\n" [" " "let" pat:Pat "=" ...value:*Term] ...body:*Linear] -> ({type: "let", pat, value, body,loc:node.loc})
+    ["\n" [" " "let" pat:Pat "=" ...value:*Term] ...body:*Linear] -> ({type: "let", pat, value, body,loc:node.loc})
+    ["{" one:Linear] -> one
+    ["{\n" one:Linear] -> one
+    ["{\n" value:Linear ...body:*Linear] -> ({type: "let", pat: {type: "drop"}, value, body,loc:node.loc})
+    ["\n" value:Linear ...body:*Linear] -> ({type: "let", pat: {type: "drop"}, value, body,loc:node.loc})
 }
 
 LinearOps {
-    ["" "." attr:id] -> ({type: "attr", attr: attr.text})
-    ["" ["[" index:Linear]] -> ({type: "index", index})
-    ["" ["(" ...args:Linear]] -> ({type: "apply", args})
+    // ["" "." attr:id] -> ({type: "attr", attr: attr.text})
+    // ["" ["[" index:Linear]] -> ({type: "index", index})
+    ["" ["(," ...args:Term]] -> ({type: "apply", args})
+}
+
+function handleSuffixes(head: Linear, suffixes: LinearOps[]): Linear {
+    return suffixes.reduce((head, suffix): Linear => {
+        switch (suffix.type) {
+            // case "attr": return {type: "attr", target: head, attr: suffix.attr,loc:head.loc}
+            // case "index": return {type: "index", index: suffix.index, target: head,loc:head.loc}
+            case "apply": return {type: "apply", fn: head, args: suffix.args,loc:head.loc}
+        }
+        throw new Error("bad suffix" + JSON.stringify(suffix))
+    }, head)
 }
 
 /*
 
-function handleSuffixes(head, suffixes) {
-    return suffixes.reduce((head, suffix): Linear => {
-        switch (suffix.type) {
-            case "attr": return {type: "attr", target: head, attr: suffix.attr}
-            case "index": return {type: "index", index: suffix.index, target: head}
-            case "apply": return {type: "apply", fn: head, args: suffix.args}
-        }
-    }, head)
-}
 
 Ok what about something like:
 ->
@@ -82,7 +112,7 @@ partition(left: expr, rights: {op: Id, right: expr}[], (op, left, right) -> expr
 
 FnArg {
     pat:Pat -> ({pat})
-    [": " pat:Pat typ:Type] -> ({pat, typ})
+    [":" pat:Pat typ:Type] -> ({pat, typ})
 }
 
 LinearCase {
@@ -107,7 +137,7 @@ Linear {
     [" " "match" value:Linear ["{" ...cases:LinearCase]] -> ({type: "case", value, cases})
     // if the fncall has a no binding, then the bindings are splatted in.
     [" " "fn" Ann(["(" ...args:FnArg]) body:FnBody] -> ({type: "fn", args, ann, body})
-    [" " lens:Lens ":=" ...value:*Linear] -> ({type: "assign", lens, value})
+    [" " lens:Lens "<-" ...value:*Linear] -> ({type: "assign", lens, value})
     [" " left:Linear ...right:(op:op right:Linear)] -> partition(left, right)
 }
 

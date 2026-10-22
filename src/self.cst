@@ -1,3 +1,6 @@
+@config {
+}
+
 File {
     ["\n" ...items:FileItem] -> items
 }
@@ -6,11 +9,31 @@ FileItem {
     rule:RawRule -> ({ type: "rule", rule })
     [" " "function" ...rest:*any] -> ({ type: "function", rest })
     [" " "const" ...rest:*any] -> ({ type: "const", rest })
+    [" " "import" ...rest:*any] -> ({ type: "import", rest })
+    [" " ["" "@" "config"] ["{\n" ...config:ConfigItem]] -> ({type: "config", values: Object.fromEntries(config)})
+    [" " ["" "@" "config"] ["{"]] -> ({type: "config", values: {}})
+}
+
+ConfigItem:[string, ConfigValue] {
+    [":" name:id value:ConfigValue] -> [name.text, value]
+}
+
+ConfigValue {
+    ["[ " ...values:ConfigValue] -> values
+    id:id -> id.text
+    op:op -> op.text
+    num:re"^[0-9]+$" -> +num.text
+    ["\"" text:id] -> text.text
 }
 
 RawRule {
-    [" " name:id ["{" ["\n" ...options:RawOption]]] -> ({ name, options })
-    [" " name:id ["{" option:RawOption]] -> ({ name, options: [option] })
+    [" " name:RuleName ["{" ["\n" ...options:RawOption]]] -> ({ name, options })
+    [" " name:RuleName ["{" option:RawOption]] -> ({ name, options: [option] })
+}
+
+RuleName:{name:Id,ann?:Node} {
+    name:id -> ({name})
+    [":" name:id ann:any] -> ({name, ann})
 }
 
 RawOption {
@@ -33,8 +56,10 @@ function parseList(kind: Id, items: Pat[]): Pat {
 Pat {
     ["\"" text:id] -> ({ type: "literal", text })
     [":" name:id rule:id] -> ({ type: "rule", name, rule })
+    [":" name:id ["" "re" ["\"" raw:id]]] -> ({ type: "rule", name, rule: {type: "regex", rx: new RegExp(raw.text)} })
     ["[" [" " ["\"" kind:WrapperKind] child:Pat]] -> ({ type: "wrapper", kind, child })
     ["[" [" " ["\"" kind:ListKind] ...items:Pat]] -> parseList(kind, items)
+    ["[" ["\"" kind:WrapperKind]] -> ({type: "wrapper", kind})
     [":" ["" "..." name:id] ["" "*" rule:id]] -> ({ type: "rest", name, rule, multi: !1 })
     [":" ["" "..." name:id] ["" "**" rule:id]] -> ({ type: "rest", name, rule, multi: !0 })
     [":" ["" "..." name:id] rule:id] -> ({ type: "many", name, rule })
@@ -42,13 +67,13 @@ Pat {
     ["" "re" ["\"" raw:id]] -> ({ type: "regexp", regexp: new RegExp(raw.text) })
 }
 
-WrapperKind {
+WrapperKind:Id {
     "{"
     "("
     "["
 }
 
-ListKind {
+ListKind:Id {
     re"[{([][ ,;:\n]"
     ","
     ";"

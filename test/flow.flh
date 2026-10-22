@@ -1,0 +1,259 @@
+
+// --------------------
+// Flow functions and lens terms
+// --------------------
+// This section shows some basic examples of using flow typing
+// to perform manipulations of linear types that would otherwise
+// need to be done using explicit threading of values.
+// In this language, a line break between two terms `t1` and `t2`
+// means the same thing as `let () = t1 in t2`.
+// --------------------
+
+// ~a means the same as a/a,
+// so this has type `Int/Int -> ()`, modifying the integer it was passed in place.
+inc :: ~Int -> ()
+inc ~x = x := x + 1
+
+fst :: (a, b)/(a', b) -> a/a'
+fst ~(x, y) = ~x
+
+incFst :: ~(Int, a) -> ()
+incFst ~x = inc ~(fst ~x)
+
+idf :: ~a -> ()
+idf ~x = ()
+
+idl :: a/b -> a/b
+idl ~x = ~x
+
+united :: ~a -> ~()
+united ~x = ~()
+
+swap :: (a,b)/(c,d) -> (b,a)/(d,c)
+swap ~(x, y) = ~(y, x)
+
+united' :: ~a -> ()
+united' ~x = ()
+
+makeunit :: () -> ~()
+makeunit () = ~()
+
+fcomp :: (b/b' -> c/c') -> (a/a' -> b/b') -> a/a' -> c/c'
+fcomp g f ~x = ~(g ~(f ~x))
+
+take :: a/() -> a
+take ~a = a := ()
+
+map :: (a -> b) -> a/b -> ()
+map f ~x = x := f x
+
+unmap :: (a/b -> ()) -> a -> b
+unmap f x = f ~x; x
+
+over :: (a -> b) -> (c/d -> a/b) -> c -> d
+over f g x = {
+  map f ~(g ~x)
+  x
+}
+
+join :: (a/a' -> b/b') -> (c/c' -> d/d') -> (a,c)/(a',c') -> (b,d)/(b',d')
+join f g ~(x, y) = ~(f ~x, g ~y)
+
+funcurry :: (a/a' -> b/b' -> c/c') -> (a, b)/(a', b') -> c/c'
+funcurry f ~(x, y) = ~(f ~x ~y)
+
+swapPair :: (a, b)/(b, a) -> ()
+swapPair ~(x, y) = y := x := y
+
+// --------------------
+// Prelude
+// --------------------
+// The functions in this section are defined without function bodies.
+// They are implemented in Linear Haskell in `linear-base` or the prelude `FlowPrelude.hs`.
+// --------------------
+
+// In Linear Haskell, these actually have typeclass constraints on `a`.
+putStrLn :: String -> ~World -> ()
+print :: a -> ~World -> ()
+dup :: ~a -> a
+consume :: a -> ()
+
+// These file-management functions use built-in types for the real-world and file handles.
+openFile :: String -> ~World -> Handle
+truncateFile :: String -> ~World -> Handle
+readFile :: ~(World, Handle) -> String
+writeFile :: String -> ~(World, Handle) -> ()
+closeFile :: Handle -> ~World -> ()
+
+// --------------------
+// Stack-based evaluator
+// --------------------
+// In this section, we use flow typing to implement a stack-based evaluator.
+// We use flow parameters to model the state of the stack.
+// Instructions are integers (push the number to the stack)
+// or characters that have an effect on the stack, such as adding the top two numbers
+// or printing the topmost number.
+// --------------------
+
+// Pop an element from a list in-place.
+pop :: ~(List Int) -> Int
+pop ~xs = case xs of
+  y:ys ->
+    xs := ys
+    y
+
+// Push an element onto a list in-place.
+push :: Int -> ~(List Int) -> ()
+push x ~xs = xs := x:xs
+
+exec :: List (Either Int Char) -> ~(List Int, World) -> ()
+exec is ~(stk, w) = case is of
+  [] -> ()
+  (Left n):is ->
+    push n ~stk
+    exec is ~(stk, w)
+  (Right '+'):is ->
+    push (pop ~stk + pop ~stk) ~stk
+    exec is ~(stk, w)
+  (Right '-'):is ->
+    push (pop ~stk - pop ~stk) ~stk
+    exec is ~(stk, w)
+  (Right '*'):is ->
+    push (pop ~stk * pop ~stk) ~stk
+    exec is ~(stk, w)
+  (Right '/'):is ->
+    push (pop ~stk / pop ~stk) ~stk
+    exec is ~(stk, w)
+  (Right 'p'):is ->
+    // 'p' means "print".
+    print (pop ~stk) ~w
+    exec is ~(stk, w)
+  (Right 'd'):is ->
+    // 'd' means "duplicate".
+    let x = pop ~stk
+    push (dup ~x) ~stk
+    push x ~stk
+    exec is ~(stk, w)
+  (Right x):is ->
+    putStrLn "Unrecognised operation:" ~w
+    print x ~w
+    exec is ~(stk, w)
+
+execDemo :: ~World -> ()
+execDemo ~w =
+  let stack = []
+  // A program to evaluate (2 + 6)^2 and print the result.
+  // Here, 'd' means "duplicate the top element of the stack",
+  // and 'p' means "print the top element of the stack".
+  let instrs = [Left 2, Left 6, Right '+', Right 'd', Right '*', Right 'p']
+  exec instrs ~(stack, w)
+  putStrLn "Final stack was:" ~w
+  print stack ~w
+
+// --------------------
+// Examples from "From Linearity to Borrowing", Wagner et al.
+// (https://dl.acm.org/doi/10.1145/3764117)
+// --------------------
+
+// First we need to establish some basic functions on lists.
+
+not :: Bool -> Bool
+not b = case b of {
+  True -> False
+  False -> True
+}
+
+// Consumes the input.
+length' :: List String -> Int
+length' xs = case xs of {
+  [] -> 0
+  (y:ys) -> consume y; 1 + length' ys
+}
+
+length :: ~List a -> Int
+length ~xs = case ~xs of
+  [] -> 0
+  (y:ys) -> 1 + length ~ys
+
+split :: Char -> String -> (String, String)
+split c xs = case xs of
+  [] ->
+    consume c
+    ([], [])
+  (x:xs) -> case dup ~x == dup ~c of
+    True ->
+      consume x
+      consume c
+      ([], xs)
+    False ->
+      let (y, z) = split c xs
+      (x:y, z)
+
+splitMany :: Char -> String -> List String
+splitMany c xs = case split (dup ~c) xs of {
+  (word, "") -> {
+    consume c
+    [word]
+}
+  (word, tail) -> word : splitMany c tail
+}
+
+words :: String -> List String
+words = splitMany " "
+
+lines :: String -> List String
+lines = splitMany "\n"
+
+fileWords :: ~(World, Handle) -> Int
+fileWords ~(w, f) = length' (words (readFile ~(w, f)))
+
+fileLines :: ~(World, Handle) -> Int
+fileLines ~(w, f) = length' (lines (readFile ~(w, f)))
+
+avg :: ~World -> ()
+avg ~w = {
+  let f = openFile "flow.fl" ~w
+  putStrLn "This source file has the following average number of words per line:" ~w
+  print (fileWords ~(w, f) / fileLines ~(w, f)) ~w
+  closeFile f ~w
+}
+
+// --------------------
+// Examples from "Capturing Types", Boruch-Gruszecki et al.
+// (https://dl.acm.org/doi/pdf/10.1145/3618003)
+// --------------------
+
+// This is the usingFile combinator from "Capturing Types".
+// Since this compiler targets Linear Haskell, we can't implement
+// the `withFile` combinator from our paper exactly as written,
+// since we have to take into account the state of the real world here.
+usingFile :: String -> (~(World, Handle) -> a) -> ~World -> a
+usingFile x f ~w = {
+  let h = truncateFile x ~w
+  let a = f ~(w, h)
+  closeFile h ~w
+  a
+}
+
+fileDemo :: ~World -> ()
+fileDemo = usingFile "out.txt" (writeFile "Hello, world!")
+
+goodFileUsage :: String -> ~World -> ()
+goodFileUsage s = usingFile "good.txt" (writeFile s)
+
+// This is an example of bad resource usage from "Capturing Types".
+// In flow typing, this doesn't compile, as expected
+// (uncomment to see the compiler's error messages).
+// badFileUsage :: String -> ~World -> ()
+// badFileUsage s ~w = usingFile "good.txt" (\~(w, f) -> \() -> writeFile s ~(w, f)) ~w ()
+
+// --------------------
+// Main function
+// Uncomment one of the lines below to run one of the included demos.
+// --------------------
+
+main :: ~World -> ()
+main = execDemo
+// main = avg
+// main = fileDemo
+// main = goodFileUsage "This program uses files correctly."

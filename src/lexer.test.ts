@@ -1,5 +1,5 @@
 import { it, expect } from 'bun:test';
-import { compact, read, stringify } from './lexer.ts';
+import { compact, read, readFile, stringify } from './lexer.ts';
 
 it('should do a basic', () => {
     expect(read('hello')).toEqual({ type: 'id', text: 'hello', loc: 0 });
@@ -31,6 +31,43 @@ it('should ignore newlines between elemesn', () => {
     ).toEqual(['[,', '0', '2', '3']);
 });
 
+it('should handle comments and newlines', () => {
+    expect(compact(read(`[0//hello\n1]`))).toEqual(['[\n', '0', '1']);
+});
+
+it('should handle comments and newlines', () => {
+    expect(compact(read(`[0\n//hello\n1]`))).toEqual(['[\n', '0', '1']);
+});
+
+const cr = (t: string) => compact(readFile(t).node);
+
+it('idk', () => {
+    expect(cr(`one\ntwo\nthree: four five six`)).toEqual([
+        '\n',
+        'one',
+        'two',
+        [' ', [':', 'three', 'four'], 'five', 'six'],
+    ]);
+});
+
+it('should lex this right', () => {
+    expect(
+        cr(`2\n\n(
+(("v from passer", 3),
+ ("Hello", 10)),
+ (4, 20)
+)`),
+    ).toEqual([
+        '\n',
+        '2',
+        [
+            '(,',
+            ['(,', ['(,', ['"', 'v from passer'], '3'], ['(,', ['"', 'Hello'], '10']],
+            ['(,', '4', '20'],
+        ],
+    ]);
+});
+
 it('should count newlines within elemesn', () => {
     expect(compact(read(`[0,2,3\n4,5,6]`))).toEqual([
         '[\n',
@@ -44,6 +81,15 @@ it('should correctly nest spacers', () => {
         '(;',
         [',', ['', '1', '.', '2'], '3'],
         [':', '4', '5'],
+    ]);
+});
+
+it('should allow := ops', () => {
+    expect(compact(read(`[x:2, x: -2, x:=2]`))).toEqual([
+        '[,',
+        [':', 'x', '2'],
+        [':', 'x', ['', '-', '2']],
+        ['', 'x', ':=', '2'],
     ]);
 });
 
@@ -173,7 +219,7 @@ it('should do a wrapper with multi list kind', () => {
                 },
               ],
               "kind": ",",
-              "loc": 9,
+              "loc": 7,
               "type": "list",
             },
           ],
@@ -251,7 +297,7 @@ it('three levels deep', () => {
                           },
                         ],
                         "kind": "",
-                        "loc": 13,
+                        "loc": 12,
                         "type": "list",
                       },
                       {
@@ -266,7 +312,7 @@ it('three levels deep', () => {
                       },
                     ],
                     "kind": " ",
-                    "loc": 16,
+                    "loc": 12,
                     "type": "list",
                   },
                   {
@@ -276,7 +322,7 @@ it('three levels deep', () => {
                   },
                 ],
                 "kind": ",",
-                "loc": 21,
+                "loc": 12,
                 "type": "list",
               },
               {

@@ -1,8 +1,7 @@
 import { Grammar, Id, Node, option, wrapper, many, list, b, re } from './grammar-lexer.ts';
 import { JSONValue, JSONPair } from './json.ts';
-import { readFile } from './lexer.ts';
 
-export const grammar = new Grammar(readFile);
+export const grammar = new Grammar();
 
 grammar.add('JSONValue', [
     option(

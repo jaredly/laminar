@@ -14,19 +14,23 @@ export type List = Node & { type: 'list' };
 export type Op = Node & { type: 'op' };
 
 type Compact = string | Compact[];
-export const compact = (node: Node): Compact => {
+export const compact = (node: Node, loc = false): Compact => {
     if (node.type === 'wrapper') {
         if (node.child?.type === 'list' && node.child.kind !== '') {
-            return [node.kind + node.child.kind, ...node.child.children.map(compact)];
+            return [
+                ...(loc ? [node.loc + ''] : []),
+                node.kind + node.child.kind,
+                ...node.child.children.map((c) => compact(c, loc)),
+            ];
         }
     }
     return node.type === 'list'
-        ? [node.kind, ...node.children.map(compact)]
+        ? [...(loc ? [node.loc + ''] : []), node.kind, ...node.children.map((c) => compact(c, loc))]
         : node.type === 'wrapper'
           ? node.child
-              ? [node.kind, compact(node.child)]
-              : [node.kind]
-          : node.text;
+              ? [...(loc ? [node.loc + ''] : []), node.kind, compact(node.child, loc)]
+              : [...(loc ? [node.loc + ''] : []), node.kind]
+          : (loc ? node.loc + ':' : '') + node.text;
 };
 
 const fail = (msg: string) => {
@@ -83,13 +87,15 @@ export const stringify = (node: Node, indent = 0): string => {
 };
 
 const idrx = /[0-9a-zA-Z_']+/y;
-const oprx = /[-+/~=*!@:#$%^&<>?.]+/y;
+const oprx = /[-+/~=*!@:#$%^&<>?.|]+/y;
+const aftercolon = /[=]+/y;
 const lineCommentrx = /\s*\/\/[^\n]*\n/y;
 const multiCommentrx = /\s*\/\*.+?\*\//sy;
 
 type Config = {
     id: RegExp;
     op: RegExp;
+    aftercolon: RegExp;
     quotes: string;
     lineComment?: RegExp;
     multiComment?: RegExp;
@@ -98,6 +104,7 @@ type Config = {
 export const defaultConfig: Config = {
     id: idrx,
     op: oprx,
+    aftercolon: aftercolon,
     quotes: `"'`,
     lineComment: lineCommentrx,
     multiComment: multiCommentrx,
@@ -162,9 +169,16 @@ export const readLines = (
     }
 };
 
-export const readFile = (text: string, config = defaultConfig): Node => {
+export const readFile = (
+    text: string,
+    config = defaultConfig,
+): { node: Node; raw: string; pos: (loc: number) => { line: number; char: number } } => {
     const lines = readLines(text, config);
-    return { type: 'list', kind: '\n', children: lines.nodes, loc: 0 };
+    return {
+        node: { type: 'list', kind: '\n', children: lines.nodes, loc: 0 },
+        pos: lines.pos,
+        raw: text,
+    };
 };
 
 const addToWrapper = (wrapper: { child?: Node }, sep: ListKind, next: Node) => {
@@ -205,7 +219,7 @@ const addToWrapper = (wrapper: { child?: Node }, sep: ListKind, next: Node) => {
                 type: 'list',
                 kind: sep,
                 children: [lastChild, next],
-                loc: next.loc,
+                loc: lastChild.loc,
             };
             return;
         }
@@ -228,12 +242,14 @@ export type ListKind = ' ' | ': ' | '' | '\n' | '"' | ',' | ';';
 
 */
 
-const skipComments = (i: number, text: string, config: Config) => {
+const skipComments = (i: number, text: string, config: Config): [number, boolean] => {
+    let lineComments = false;
     while (i < text.length) {
         if (config.lineComment) {
             config.lineComment.lastIndex = i;
             const lc = config.lineComment.exec(text);
             if (lc) {
+                lineComments = true;
                 i += lc[0].length;
                 continue;
             }
@@ -248,7 +264,7 @@ const skipComments = (i: number, text: string, config: Config) => {
         }
         break;
     }
-    return i;
+    return [i, lineComments];
 };
 
 const readId = (i: number, text: string, config: Config): void | { i: number; node: Node } => {
@@ -293,7 +309,7 @@ const read_ = (i: number, text: string, config: Config): void | { i: number; nod
     }
 };
 
-const listLevels: ListKind[] = ['\n', ';', ',', ' ', ':', ''];
+export const listLevels: ListKind[] = ['\n', ';', ',', ' ', ':', ''];
 
 export class LexError extends Error {
     loc: number;
@@ -313,10 +329,20 @@ const readUntilCloser = (
     let node: { child?: Node } = {};
     // let node: Wrapper = { type: 'wrapper', kind: wrapper, loc: i };
     while (i < text.length && text[i] !== closer) {
-        i = skipComments(i, text, config);
+        let lc;
+        [i, lc] = skipComments(i, text, config);
         if (i >= text.length || text[i] === closer) break;
         let level = listLevels.length - 1;
+        if (lc) {
+            level = listLevels.indexOf('\n');
+        }
         while (listLevels.includes(text[i] as '')) {
+            if (text[i] === ':') {
+                config.aftercolon.lastIndex = i + 1;
+                if (config.aftercolon.exec(text)) {
+                    break; // allow : to be at the start of operators
+                }
+            }
             if (level === listLevels.length - 2 && text[i] === ' ') {
                 // ignore the whitespace if we have a colon already
             } else if (level < listLevels.length - 1 && text[i] === '\n') {
@@ -324,7 +350,7 @@ const readUntilCloser = (
             } else {
                 level = Math.min(level, listLevels.indexOf(text[i] as ''));
             }
-            i = skipComments(i + 1, text, config);
+            i = skipComments(i + 1, text, config)[0];
         }
         if (i >= text.length || text[i] === closer) break;
         const next = read_(i, text, config);

@@ -1,22 +1,35 @@
 import { expect, it } from 'bun:test';
-import { readFile, readLine, readLines } from './lexer.ts';
+import { read, readFile, readLine, readLines } from './lexer.ts';
 import { grammar as self } from './self-lexer.ts';
-import { asDSL, Grammar } from './grammar-lexer.ts';
+import { asDSL, Grammar, RawRule } from './grammar-lexer.ts';
 import { readFileSync } from 'fs';
 
 const loadGrammar = (text: string) => {
     const parsed = readLines(text);
-    const grammar = new Grammar(readFile);
+    const grammar = new Grammar();
     parsed.nodes.forEach((node) => {
-        const rule = self.parse('RawRule', node);
+        const rule = self.parse<RawRule>('RawRule', node);
         if (rule.type === 'failure') {
             expect(rule).toMatchObject({ type: 'success' });
             return;
         }
-        grammar.addRaw(rule.value.name.text, rule.value.options);
+        if (!rule.value.name.name.text) {
+            console.log(rule.value.name);
+        }
+        grammar.addRaw(rule.value.name.name.text, rule.value.options);
     });
     return grammar;
 };
+
+it.only('should rx rule', () => {
+    const grammar = loadGrammar(`
+Value {
+    name:re"[0-9]" -> +name.text
+    other:id -> other.text
+}`);
+    expect(grammar.parse('Value', read('12'))).toMatchObject({ value: 12 });
+    expect(grammar.parse('Value', read('hi'))).toMatchObject({ value: 'hi' });
+});
 
 it('should double parse', () => {
     const grammar = loadGrammar(`
@@ -193,14 +206,14 @@ it('should parse a full thing', () => {
 
 it('should parse the full shebang', () => {
     const parsed = readLines(readFileSync(import.meta.dirname + '/self.cst', 'utf-8'));
-    const grammar = new Grammar(readFile);
+    const grammar = new Grammar();
     parsed.nodes.forEach((node) => {
-        const rule = self.parse('RawRule', node);
+        const rule = self.parse<RawRule>('RawRule', node);
         if (rule.type === 'failure') {
             expect(rule).toMatchObject({ type: 'success' });
             return;
         }
-        grammar.addRaw(rule.value.name.text, rule.value.options);
+        grammar.addRaw(rule.value.name.name.text, rule.value.options);
     });
 
     const rulesText = (grammar: Grammar) => {
@@ -211,9 +224,9 @@ it('should parse the full shebang', () => {
 
     expect(rulesText(grammar)).toEqual(rulesText(self));
 
-    const secondGrammar = new Grammar(readFile);
+    const secondGrammar = new Grammar();
     parsed.nodes.forEach((node) => {
-        const rule = grammar.parse('RawRule', node);
+        const rule = grammar.parse<RawRule>('RawRule', node);
         if (rule.type === 'failure') {
             expect(rule).toMatchObject({ type: 'success' });
             return;
@@ -221,7 +234,7 @@ it('should parse the full shebang', () => {
         if (!rule.value) {
             console.log(rule);
         }
-        secondGrammar.addRaw(rule.value.name.text, rule.value.options);
+        secondGrammar.addRaw(rule.value.name.name.text, rule.value.options);
     });
 
     expect(rulesText(secondGrammar)).toEqual(rulesText(self));

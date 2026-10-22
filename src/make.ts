@@ -3,30 +3,32 @@
  */
 
 import { readFileSync, writeFileSync } from 'fs';
+import { File, findDeepest, showDeepest, showFailure, toFile } from './grammar-lexer.ts';
+import { grammar as self } from './self-lexer.ts';
+import { readFile } from './lexer.ts';
 
-const [_, __, grammar, infile, outfile, types, lib = './grammar.ts'] = process.argv;
+const [_, __, infile, outfile, types, lib = './grammar.ts'] = process.argv;
 
-if (!grammar || !infile || !outfile || !types) {
+if (!infile || !outfile || !types) {
     console.error(`Usage: make.ts grammar infile outfile types`);
     process.exit(1);
 }
 
-const self = require(grammar).grammar;
 const text = readFileSync(infile, 'utf-8');
+const { node, pos } = readFile(text);
 
-const file = self.parse('File', self.readFile(text));
+const file = self.parse<File>('File', node);
 if (file.type === 'failure') {
-    throw new Error(`Failed to parse at ${file.loc}: ${file.reason}`);
+    const locToPos = (loc: number) => {
+        const { line, char } = pos(loc);
+        return `${line + 1}:${char}`;
+    };
+    let text = `Failed to parse at ${showFailure(file.failure, locToPos)}`;
+    const deepest = findDeepest(file.failure);
+    if (deepest) {
+        text += '\n' + showDeepest(deepest, self, text, locToPos);
+    }
+    throw new Error(text);
 }
-const full = self.toFile(
-    file.value,
-    // parsed.nodes.map((node) => {
-    //     const result = self.parse('RawRule', node);
-    //     if (result.type === 'failure') {
-    //         throw new Error(`failed to parse rule at ${result.loc}: ` + result.reason);
-    //     }
-    //     return result.value;
-    // }),
-    { lib, types },
-);
+const full = toFile(file.value, { lib, types });
 writeFileSync(outfile, full);

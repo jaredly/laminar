@@ -1,7 +1,41 @@
 DSL Status:
 
 - [x] self-lexer -> json.cst -> json-parser.ts
-- [ ] self-lexer -> self.cst -> self-made.ts
+- [x] self-lexer -> self.cst -> self-lexer.ts
+- [x] laminar.cst yes please
+- [ ] configs so we can specify "reserved words"
+    - [ ] actually use it
+- [-] make it so I can put a type annotation after a rule name to simplify things
+    - [x] last mile
+    - [ ] ooh turns out I might want to be able to have 'more complex colons'
+        - like `?:` for example. this would also be like a config option.
+        - or `::`
+        - anddddd do we want to be able to specify the `listOrder`? like precedence stuff?
+        - and what list types can collapse into others?
+- [ ] allow more rule types in more places, like regex inline
+- [x] regex inline thx (id only tho, not op...)
+- [ ] allow double duty `{\n;`, means that if both \n and ; show up in the same list, we merge, and \n wins
+
+Q: what about indentation
+seems like it might be a thing.
+I kinda want to be able to parse the haskellish stuff.
+BUT not enough to actually do it.
+
+Q: so, what about "reserved words". Seems like I ought to support that.
+so like, `id` and `op` would match anything that's not a reserved word. Pretty simple.
+
+How to declare?
+-> some pragma of some sort?
+-> like `@reserve {}`
+-> then we could have other pragmas for other config stuff.
+-> could also have like toml frontmatter or something
+--> OOH it could be an error to do an explicit match on something that's not reserved?
+    YEAH that sounds great. (but you could turn it off)
+    ALTERNATIVELY we could just use all the explicit matches to infer what's reserved?
+    -> hmmmm my have a default for that? Some languages will want to be a little squirly.
+    -> hm yeah let's have you list things out, and then WARN if you match on something that's not reserved?
+    -> let's have a "nonreserved:" for things that you will match on, but aren't reserved. I like that. then we can error on violation.
+    -> could be nice to have a script that spits out all your reserved words
 
 --
 

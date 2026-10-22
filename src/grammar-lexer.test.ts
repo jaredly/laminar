@@ -1,10 +1,10 @@
 import { b, Grammar, Id, list, lit, many, option, re, wrapper } from './grammar-lexer.ts';
 import { it, expect } from 'bun:test';
-import { compact, read, readFile } from './lexer.ts';
+import { compact, read } from './lexer.ts';
 
 type JSONValue = { [key: string]: JSONValue } | string | JSONValue[] | number | null;
 
-const grammar = new Grammar(readFile);
+const grammar = new Grammar();
 
 grammar.add('JSONValue', [
     option(

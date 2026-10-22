@@ -1,5 +1,5 @@
 import { builtins } from '../test/runtime.ts';
-import { free, names } from './flowparse.ts';
+import { free, names } from './ast.ts';
 import type { Term, Pat, Lens } from './ast.ts';
 
 let id0 = 0;
@@ -173,6 +173,7 @@ export const _toTS = (ctx: Ctx, expr: Term | Lens, tail: Tail = null): string =>
         case 'aslens': {
             throw new Error('cant actually support lenses here');
         }
+        case 'op':
         case 'id':
             if (expr.text === '~') {
                 throw new Error('bad tilde ~');
@@ -196,12 +197,13 @@ export const _toTS = (ctx: Ctx, expr: Term | Lens, tail: Tail = null): string =>
             return `[${expr.items.map((item) => toTS(ctx, item)).join(', ')}]`;
         case 'apply':
             if (expr.args.length !== 1) {
-                if (expr.fn.type === 'id' && builtins[expr.fn.text]) {
+                if ((expr.fn.type === 'id' || expr.fn.type === 'op') && builtins[expr.fn.text]) {
                     return (
                         toTS(ctx, expr.fn) +
                         `(${expr.args.map((arg) => toTS(ctx, arg)).join(', ')})`
                     );
                 }
+                console.log('The args', expr.args, expr.fn);
                 throw new Error('no multi args uet');
             }
             // NOTE: here we need to know if its a lens

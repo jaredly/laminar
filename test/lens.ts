@@ -1,10 +1,20 @@
 import { readFileSync, writeFileSync } from 'fs';
-import { parseLinear } from '../src/flowparse.ts';
 import { type Ctx, resetId0, toTS } from '../src/flowtots.ts';
-import { readLines } from '../src/nnodes.ts';
+import { Node, readFile, readLines } from '../src/lexer.ts';
+import { Linear } from '../src/ast.ts';
+import { grammar } from '../src/laminar-parser.ts';
+import {
+    Failure,
+    findDeepest,
+    ParseResult,
+    showDeepest,
+    showFailure,
+    showFull,
+    showPos,
+} from '../src/grammar-lexer.ts';
 
-const error = readLines(readFileSync(import.meta.dirname + '/errors.fl', 'utf-8'));
-const good = readLines(readFileSync(import.meta.dirname + '/lens.fl', 'utf-8'));
+const error = readFile(readFileSync(import.meta.dirname + '/errors.fl', 'utf-8'));
+const good = readFile(readFileSync(import.meta.dirname + '/lens.fl', 'utf-8'));
 let result = `
 import assert from "assert";
 import * as $ from "./runtime.ts";
@@ -17,18 +27,35 @@ const expect = (m:any) => ({
 
 `;
 
+const parseFile = (node: Node): ParseResult<Linear[]> => {
+    return grammar.parse('File', node);
+};
+
 const fns = [];
 const topNames: string[] = [];
 const pairs = [];
-for (let i = 0; i < good.nodes.length; i++) {
-    const node = parseLinear(good.nodes[i]);
+
+const file = parseFile(good.node);
+if (file.type === 'failure') {
+    const locToPos = (loc: number) => showPos(good.pos(loc));
+    console.error(showFailure(file.failure, locToPos));
+    const deepest = findDeepest(file.failure);
+    if (deepest) {
+        console.error(showDeepest(deepest, grammar, good.raw, locToPos));
+    }
+    writeFileSync('parse-failure.log', showFull(file.failure, grammar, good.raw, locToPos));
+    process.exit(1);
+}
+
+for (let i = 0; i < file.value.length; i++) {
+    const node = file.value[i];
     if (node.type === 'fn' && node.name) {
-        fns.push({ ...node, loc: good.nodes[i].loc });
+        fns.push(node);
         topNames.push(node.name);
     } else {
-        const expected = parseLinear(good.nodes[i + 1]);
+        const expected = file.value[i + 1];
         i++;
-        pairs.push({ node, expected, loc: good.nodes[i - 1].loc });
+        pairs.push({ node, expected });
     }
 }
 
@@ -42,22 +69,27 @@ fns.forEach((fn) => {
     }
 });
 
-pairs.forEach(({ node, expected, loc }, i) => {
+pairs.forEach(({ node, expected }, i) => {
     resetId0();
-    const at = good.pos(loc);
     result += `
-it("Item ${i} at test/lens.fl:${at.line + 1}:${at.char}", () => {
+it("Item ${i} at test/lens.fl:${showPos(good.pos(node.loc))}", () => {
     const result = $.run((gamma) => {\n${toTS(ctx, node, {})}\n});
     expect(result).toEqual(${toTS(ctx, expected)});
 })
 `;
 });
 
-for (let i = 0; i < error.nodes.length; i++) {
+const errorFile = parseFile(error.node);
+if (errorFile.type === 'failure') {
+    console.error(showFailure(errorFile.failure, (loc) => showPos(error.pos(loc))));
+    console.log('stopping');
+    process.exit(1);
+}
+
+for (let i = 0; i < errorFile.value.length; i++) {
     resetId0();
-    const node = error.nodes[i];
-    const exp = parseLinear(node);
-    const at = error.pos(node.loc);
+    const exp = errorFile.value[i];
+    const at = error.pos(exp.loc);
     result += `
 it("Error ${i} at test/errors.fl:${at.line + 1}:${at.char}", () => {
     expect(() => $.run((gamma) => {\n${toTS(ctx, exp, {})}\n})).toThrow();

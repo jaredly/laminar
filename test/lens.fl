@@ -1,6 +1,17 @@
 // There are our behavior tests
 
 {
+    10
+    log
+    true
+    "one"
+    log("Hello", 3)
+    "One${10}"
+}
+
+(("Hello", 3), "One10")
+
+{
     2 + 2
 }
 
@@ -322,7 +333,7 @@
 
 (
 (("v from passer", 3),
- ("Hello", 10))
+ ("Hello", 10)),
  (4, 20)
 )
 
@@ -342,7 +353,7 @@
 
 (
 (("v from passer", 3),
- ("Prev a", 20))
+ ("Prev a", 20)),
  (4, 10)
 )
 
