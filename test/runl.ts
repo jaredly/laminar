@@ -1,8 +1,9 @@
 import { readFileSync, writeFileSync } from 'fs';
-import { Linear } from '../src/ast.ts';
+import { File, Linear } from '../src/ast.ts';
 import { type Ctx, resetId0, toTS } from '../src/flowtots.ts';
 import {
     findDeepest,
+    Grammar,
     ParseResult,
     showDeepest,
     showFailure,
@@ -13,15 +14,6 @@ import { grammar as grammarhs } from '../src/laminar-hs.ts';
 import { grammar } from '../src/laminar-parser.ts';
 import { Node, readFile } from '../src/lexer.ts';
 
-const [_, __, name] = process.argv;
-
-if (!name.match(/\.flh?$/)) {
-    console.error(`Wrong file extension. fl or flh`);
-    process.exit(2);
-}
-
-const parser = name.endsWith('.fl') ? grammar : grammarhs;
-
 const TOP = `
 import assert from "assert";
 import * as $ from "./runtime.ts";
@@ -31,21 +23,20 @@ const expect = (m:any) => ({
     toThrow() {assert.throws(m)},
     toEqual(n:any) { assert.deepStrictEqual(m, n) }
 })
-
 `;
 
-const parseFile = (node: Node): ParseResult<Linear[]> => {
-    return parser.parse('File', node);
+const parseFile = (node: Node, parser: Grammar): ParseResult<File> => {
+    return parser.parse<File>('File', node);
 };
 
-const runGood = (name: string) => {
+export const runGood = (name: string, parser: Grammar) => {
     const good = readFile(readFileSync(name, 'utf-8'));
 
     const fns = [];
     const topNames: string[] = [];
     const pairs = [];
 
-    const file = parseFile(good.node);
+    const file = parseFile(good.node, parser);
     if (file.type === 'failure') {
         const locToPos = (loc: number) => showPos(good.pos(loc));
         console.error(showFailure(file.failure, locToPos));
@@ -62,8 +53,13 @@ const runGood = (name: string) => {
         if (node.type === 'fn' && node.name) {
             fns.push(node);
             topNames.push(node.name);
+        } else if (node.type === 'decl') {
+            // ignore for now
         } else {
             const expected = file.value[i + 1];
+            if (expected.type === 'decl') {
+                throw new Error(`no expected, found a declaration`);
+            }
             i++;
             pairs.push({ node, expected });
         }
@@ -73,7 +69,7 @@ const runGood = (name: string) => {
     const ctx: Ctx = { globals: topNames };
     fns.forEach((fn) => {
         try {
-            result += `$.addFn(${JSON.stringify(fn.name)}, ${toTS(ctx, { ...fn, name: null })});`;
+            result += `$.addFn(${JSON.stringify(fn.name)}, ${toTS(ctx, { ...fn, name: null })});\n\n`;
         } catch (err) {
             console.log(good.pos(fn.loc));
             throw err;
@@ -83,21 +79,23 @@ const runGood = (name: string) => {
     pairs.forEach(({ node, expected }, i) => {
         resetId0();
         result += `
-it("Item ${i} at test/lens.fl:${showPos(good.pos(node.loc))}", () => {
+it("Item ${i} at ${name}:${showPos(good.pos(node.loc))}", () => {
     const result = $.run((gamma) => {\n${toTS(ctx, node, {})}\n});
     expect(result).toEqual(${toTS(ctx, expected)});
 })
 `;
     });
 
-    writeFileSync(name + '.test.ts', result);
+    const out = name + '.test.ts';
+    writeFileSync(out, result);
+    return out;
 };
 
-const runError = (name: string) => {
+export const runError = (name: string, parser: Grammar) => {
     const error = readFile(readFileSync(name, 'utf-8'));
     let result = TOP;
 
-    const errorFile = parseFile(error.node);
+    const errorFile = parseFile(error.node, parser);
     if (errorFile.type === 'failure') {
         console.error(showFailure(errorFile.failure, (loc) => showPos(error.pos(loc))));
         console.log('stopping');
@@ -107,19 +105,38 @@ const runError = (name: string) => {
     for (let i = 0; i < errorFile.value.length; i++) {
         resetId0();
         const exp = errorFile.value[i];
+        if (exp.type === 'decl') {
+            continue;
+        }
         const at = error.pos(exp.loc);
         result += `
-it("Error ${i} at test/errors.fl:${at.line + 1}:${at.char}", () => {
+it("Error ${i} at ${name}:${at.line + 1}:${at.char}", () => {
     expect(() => $.run((gamma) => {\n${toTS({ globals: [] }, exp, {})}\n})).toThrow();
 })
 `;
     }
 
-    writeFileSync(name + '.test.ts', result);
+    const out = name + '.test.ts';
+    writeFileSync(out, result);
+    return out;
 };
 
-if (name.includes('.errors.')) {
-    runError(name);
-} else {
-    runGood(name);
+export const runFile = (name: string) => {
+    resetId0();
+    console.log('Running file', name);
+    if (!name.match(/\.flh?$/)) {
+        throw new Error(`Wrong file extension. fl or flh`);
+    }
+    const parser = name.endsWith('.fl') ? grammar : grammarhs;
+
+    if (name.includes('.errors.')) {
+        return runError(name, parser);
+    } else {
+        return runGood(name, parser);
+    }
+};
+
+if (import.meta.main) {
+    const [_, __, name] = process.argv;
+    runFile(name);
 }

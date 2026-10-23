@@ -3,8 +3,13 @@
 }
 
 File {
-    ["\n" ...linears:Linear] -> linears
-    linear:Linear -> [linear]
+    ["\n" ...items:FileItem] -> items
+    item:FileItem -> [item]
+}
+
+FileItem {
+    [" " name:id "::" ...ann:*Type] -> ({type: "decl", name, ann})
+    linear:Linear -> linear
 }
 
 Pat {
@@ -21,6 +26,7 @@ Type {
     ["" "~" left:Type] -> ({type: "lens", left})
     ["" left:Type "/" right:Type] -> ({type: "lens", left, right})
     ["(," ...items:Type] -> ({type: "tuple", items})
+    ["("] -> ({type: "tuple", items: []})
     [" " ["(," ...args:Type] "=>" body:Type] -> ({type: "fn", args, body})
 }
 
@@ -36,6 +42,7 @@ Lens {
     ["" one:Lens] -> one
     ["" fn:Linear ["(," ...args:Term]] -> ({type: "apply", fn, args})
     ["(," ...items:Lens] -> ({type: "tuple", items})
+    ["("] -> ({type: "tuple", items: []})
     ["{" one:Lens] -> one
     ["("] -> ({type: "tuple", items: []})
     ["{\n" [" " "let" pat:Pat "=" ...value:*Term] ...body:*Lens] -> ({type: "let", pat, value, body})
@@ -46,17 +53,13 @@ Lens {
 
 import {partition} from "./laminar-helpers.ts"
 
-Op {
-    re"^[+-]$"
-}
-
 Linear {
     re"^[0-9]+$" -> ({type: "const", value: +(node as Id).text, loc: node.loc})
     re"true|false" -> ({type: "const", value: (node as Id).text === "true", loc: node.loc})
     text:id -> ({type: "id", text: text.text, loc: node.loc})
     ["\"" text:id] -> ({type: "string", head: text.text, interp: [], loc: node.loc})
     ["" one:Linear] -> one
-    ["" fn:Op ...arg:*Linear] -> ({type: "apply", fn, args: [arg],loc:node.loc})
+    ["" fn:re"^[+-]$" ...arg:*Linear] -> ({type: "apply", fn, args: [arg],loc:node.loc})
     ["" target:Linear ...suffixes:**LinearOps] -> handleSuffixes(target, suffixes)
     ["(," ...items:Linear] -> ({type: "tuple", items,loc:node.loc})
     ["("] -> ({type: "tuple", items: [], loc: node.loc})

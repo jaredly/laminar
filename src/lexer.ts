@@ -88,7 +88,7 @@ export const stringify = (node: Node, indent = 0): string => {
 
 const idrx = /[0-9a-zA-Z_']+/y;
 const oprx = /[-+/~=*!@:#$%^&<>?.|]+/y;
-const aftercolon = /[=]+/y;
+const aftercolon = /[=:]+/y;
 const lineCommentrx = /\s*\/\/[^\n]*\n/y;
 const multiCommentrx = /\s*\/\*.+?\*\//sy;
 
@@ -343,11 +343,17 @@ const readUntilCloser = (
                     break; // allow : to be at the start of operators
                 }
             }
+            // between whitespace and colon, colon always wins
             if (level === listLevels.length - 2 && text[i] === ' ') {
                 // ignore the whitespace if we have a colon already
+            } else if (level === listLevels.indexOf(' ') && text[i] === ':') {
+                level = listLevels.indexOf(':');
             } else if (level < listLevels.length - 1 && text[i] === '\n') {
                 // ignore newline if we alreayd have another sep
             } else {
+                if (text[i] === ':' && level < listLevels.indexOf(':')) {
+                    throw new Error(`refusing to drop colon`);
+                }
                 level = Math.min(level, listLevels.indexOf(text[i] as ''));
             }
             i = skipComments(i + 1, text, config)[0];

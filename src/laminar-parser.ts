@@ -8,18 +8,18 @@ import {
     list,
     b,
     lit,
-    wrapper,
     rest,
+    wrapper,
     re,
     manyItems,
 } from './grammar-lexer.ts';
 import {
     File,
+    FileItem,
     Pat,
     Type,
     Term,
     Lens,
-    Op,
     Linear,
     LinearOps,
     FnArg,
@@ -28,19 +28,34 @@ import {
 } from './ast.ts';
 
 export const grammar = new Grammar({
-    reserved: ['let', 'lens', '~', '<-', '=', ':=', 'case', '=>', '_'],
+    reserved: ['let', 'lens', '~', '<-', '=', ':=', 'case', '::', '=>', '_'],
 });
 
 grammar.add('File', [
     // File:1
     option(
-        list('\n', many('linears', 'Linear')),
-        ({ linears, node }: { linears: Linear[]; node: Node }): File => linears,
+        list('\n', many('items', 'FileItem')),
+        ({ items, node }: { items: FileItem[]; node: Node }): File => items,
     ),
     // File:2
-    option(b('linear', 'Linear'), ({ linear, node }: { linear: Linear; node: Node }): File => [
-        linear,
-    ]),
+    option(b('item', 'FileItem'), ({ item, node }: { item: FileItem; node: Node }): File => [item]),
+]);
+
+grammar.add('FileItem', [
+    // FileItem:1
+    option(
+        list(' ', b('name', 'id'), lit('::'), rest('ann', 'Type', false)),
+        ({ name, ann, node }: { name: Id; ann: Type; node: Node }): FileItem => ({
+            type: 'decl',
+            name,
+            ann,
+        }),
+    ),
+    // FileItem:2
+    option(
+        b('linear', 'Linear'),
+        ({ linear, node }: { linear: Linear; node: Node }): FileItem => linear,
+    ),
 ]);
 
 grammar.add('Pat', [
@@ -102,6 +117,8 @@ grammar.add('Type', [
         ({ items, node }: { items: Type[]; node: Node }): Type => ({ type: 'tuple', items }),
     ),
     // Type:5
+    option(wrapper('(', null), ({ node }: { node: Node }): Type => ({ type: 'tuple', items: [] })),
+    // Type:6
     option(
         list(' ', wrapper('(', list(',', many('args', 'Type'))), lit('=>'), b('body', 'Type')),
         ({ args, body, node }: { args: Type[]; body: Type; node: Node }): Type => ({
@@ -156,10 +173,12 @@ grammar.add('Lens', [
         ({ items, node }: { items: Lens[]; node: Node }): Lens => ({ type: 'tuple', items }),
     ),
     // Lens:5
-    option(wrapper('{', b('one', 'Lens')), ({ one, node }: { one: Lens; node: Node }): Lens => one),
-    // Lens:6
     option(wrapper('(', null), ({ node }: { node: Node }): Lens => ({ type: 'tuple', items: [] })),
+    // Lens:6
+    option(wrapper('{', b('one', 'Lens')), ({ one, node }: { one: Lens; node: Node }): Lens => one),
     // Lens:7
+    option(wrapper('(', null), ({ node }: { node: Node }): Lens => ({ type: 'tuple', items: [] })),
+    // Lens:8
     option(
         wrapper(
             '{',
@@ -176,7 +195,7 @@ grammar.add('Lens', [
             body,
         }),
     ),
-    // Lens:8
+    // Lens:9
     option(
         wrapper(
             '{',
@@ -198,12 +217,12 @@ grammar.add('Lens', [
             node: Node;
         }): Lens => ({ type: 'aslens', pat, value, body }),
     ),
-    // Lens:9
+    // Lens:10
     option(
         wrapper('{', list('\n', b('one', 'Lens'))),
         ({ one, node }: { one: Lens; node: Node }): Lens => one,
     ),
-    // Lens:10
+    // Lens:11
     option(
         wrapper('{', list('\n', b('value', 'Term'), rest('body', 'Lens', false))),
         ({ value, body, node }: { value: Term; body: Lens; node: Node }): Lens => ({
@@ -216,11 +235,6 @@ grammar.add('Lens', [
 ]);
 
 import { partition } from './laminar-helpers.ts';
-
-grammar.add('Op', [
-    // Op:1
-    option(re(/^[+-]$/)),
-]);
 
 grammar.add('Linear', [
     // Linear:1
@@ -255,8 +269,8 @@ grammar.add('Linear', [
     ),
     // Linear:6
     option(
-        list('', b('fn', 'Op'), rest('arg', 'Linear', false)),
-        ({ fn, arg, node }: { fn: Op; arg: Linear; node: Node }): Linear => ({
+        list('', b('fn', /^[+-]$/), rest('arg', 'Linear', false)),
+        ({ fn, arg, node }: { fn: Id; arg: Linear; node: Node }): Linear => ({
             type: 'apply',
             fn,
             args: [arg],

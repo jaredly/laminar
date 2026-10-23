@@ -50,6 +50,11 @@ fn alias(~x) {
 (2, 5)
 ```
 
+## Language Gotchas
+
+- if you call a lens function as a normal function, I don't currently have a way to stop you.
+
+
 ## Running the tests
 
 `pnpm test` will first compile `lens.fl` into `lens.fl.test.ts` and then run `node lens.fl.test.ts` to run the suite.

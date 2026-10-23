@@ -48,7 +48,7 @@ const dataToExpr = (data: Data<Linear> | Linear): Linear => {
 // This is probably the same algorithm as the simple precedence parser
 // https://en.wikipedia.org/wiki/Simple_precedence_parser
 export const partition = (left: Linear, rights: { op: Id; right: Linear }[]): Linear => {
-    console.log(left, rights);
+    // console.log(left, rights);
     let data: Data<Linear> | Linear = left;
     rights.forEach(({ op, right }) => {
         data = add(data, op, right);

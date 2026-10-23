@@ -29,7 +29,7 @@ import {
 } from './ast.ts';
 
 export const grammar = new Grammar({
-    reserved: ['let', 'lens', '~', '<-', '=', ':=', 'case', '=>', '_'],
+    reserved: ['let', 'lens', '~', '<-', '=', ':=', 'case', '::', '=>', '_'],
 });
 
 grammar.add('File', [
@@ -141,6 +141,8 @@ grammar.add('Type', [
         wrapper('(', list(',', many('items', 'Type'))),
         ({ items, node }: { items: Type[]; node: Node }): Type => ({ type: 'tuple', items }),
     ),
+    // Type:6
+    option(wrapper('(', null), ({ node }: { node: Node }): Type => ({ type: 'tuple', items: [] })),
 ]);
 
 grammar.add('Term', [

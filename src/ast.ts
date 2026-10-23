@@ -13,7 +13,8 @@ export type Type =
     | { type: 'tuple'; items: Type[] }
     | { type: 'fn'; args: Type[]; body: Type };
 
-export type File = Linear[];
+export type File = FileItem[];
+export type FileItem = Linear | { type: 'decl'; name: Id; ann: Type };
 
 export type Lens =
     | Id

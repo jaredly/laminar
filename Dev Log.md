@@ -1,3 +1,8 @@
+
+haskelly syntax ... will take a bit of rejiggering
+
+---
+
 DSL Status:
 
 - [x] self-lexer -> json.cst -> json-parser.ts

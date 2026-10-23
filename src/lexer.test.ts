@@ -1,8 +1,14 @@
 import { it, expect } from 'bun:test';
-import { compact, read, readFile, stringify } from './lexer.ts';
+import { compact, read, readFile, readLine, stringify } from './lexer.ts';
 
 it('should do a basic', () => {
     expect(read('hello')).toEqual({ type: 'id', text: 'hello', loc: 0 });
+});
+
+it('shouldnt swallow multiple things', () => {
+    expect(compact(readLine('inc : x\n'))).toEqual([':', 'inc', 'x']);
+    expect(compact(readLine('inc: x\n'))).toEqual([':', 'inc', 'x']);
+    expect(compact(readLine('inc :: x\n'))).toEqual([' ', 'inc', '::', 'x']);
 });
 
 it('should do a wrapper', () => {
