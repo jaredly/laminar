@@ -1,5 +1,21 @@
+Next steps on laminar:
+-> update their flow.fl to my syntax
+-> with tests
+-> and comments explaining it all
+
+Once I have all of their tests passing, I can make the followup "here's what linear/flow looks and acts like" because I can be confident in my understanding.
+
+MULTI ARG:
+Big question: about about allowing multiple lenses?
+Basically, behind the scenes we would conceptually represent that as a tuple of lenses.
+ALTHOUGH we can achieve the same thing by explicitly using a tuple of lenses in the moment, so why bother with the charade?
+ok.
+SO I just need to support 'multiple non-lens args', with the one on the end might be a lens arg.
+
+---
 
 haskelly syntax ... will take a bit of rejiggering
+(postponing for now)
 
 ---
 
@@ -8,8 +24,8 @@ DSL Status:
 - [x] self-lexer -> json.cst -> json-parser.ts
 - [x] self-lexer -> self.cst -> self-lexer.ts
 - [x] laminar.cst yes please
-- [ ] configs so we can specify "reserved words"
-    - [ ] actually use it
+- [x] configs so we can specify "reserved words"
+    - [x] actually use it
 - [-] make it so I can put a type annotation after a rule name to simplify things
     - [x] last mile
     - [ ] ooh turns out I might want to be able to have 'more complex colons'
@@ -17,6 +33,7 @@ DSL Status:
         - or `::`
         - anddddd do we want to be able to specify the `listOrder`? like precedence stuff?
         - and what list types can collapse into others?
+        - [ ] ignoring this for now
 - [ ] allow more rule types in more places, like regex inline
 - [x] regex inline thx (id only tho, not op...)
 - [ ] allow double duty `{\n;`, means that if both \n and ; show up in the same list, we merge, and \n wins
@@ -35,12 +52,12 @@ How to declare?
 -> then we could have other pragmas for other config stuff.
 -> could also have like toml frontmatter or something
 --> OOH it could be an error to do an explicit match on something that's not reserved?
-    YEAH that sounds great. (but you could turn it off)
-    ALTERNATIVELY we could just use all the explicit matches to infer what's reserved?
-    -> hmmmm my have a default for that? Some languages will want to be a little squirly.
-    -> hm yeah let's have you list things out, and then WARN if you match on something that's not reserved?
-    -> let's have a "nonreserved:" for things that you will match on, but aren't reserved. I like that. then we can error on violation.
-    -> could be nice to have a script that spits out all your reserved words
+YEAH that sounds great. (but you could turn it off)
+ALTERNATIVELY we could just use all the explicit matches to infer what's reserved?
+-> hmmmm my have a default for that? Some languages will want to be a little squirly.
+-> hm yeah let's have you list things out, and then WARN if you match on something that's not reserved?
+-> let's have a "nonreserved:" for things that you will match on, but aren't reserved. I like that. then we can error on violation.
+-> could be nice to have a script that spits out all your reserved words
 
 --
 

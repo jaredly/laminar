@@ -46,9 +46,10 @@ it('Error 3 at /Users/jared/clone/exploration/laminar/ts/test/basic.errors.fl:23
                 gamma,
                 $.recv(
                     gamma,
-                    (arg: any) =>
+                    (arg0: any) =>
                         $.wrap((gamma) => {
-                            $.recv(gamma, arg, 'x');
+                            $.recv(gamma, arg0, 'x');
+
                             return [$.get(gamma, 'consume')($.get(gamma, 'x')), $.back(gamma, 'x')];
                         }, 'x'),
                     'use',
@@ -68,9 +69,10 @@ it('Error 4 at /Users/jared/clone/exploration/laminar/ts/test/basic.errors.fl:32
                 gamma,
                 $.recv(
                     gamma,
-                    (arg: any) =>
+                    (arg0: any) =>
                         $.wrap((gamma) => {
-                            $.recv(gamma, arg, 'a');
+                            $.recv(gamma, arg0, 'a');
+
                             return [
                                 3,
                                 (res: any) => {
@@ -119,9 +121,10 @@ it('Error 5 at /Users/jared/clone/exploration/laminar/ts/test/basic.errors.fl:49
                 gamma,
                 $.recv(
                     gamma,
-                    (arg: any) =>
+                    (arg0: any) =>
                         $.wrap((gamma) => {
-                            $.recv(gamma, arg, 'a');
+                            $.recv(gamma, arg0, 'a');
+
                             return [
                                 3,
                                 (res: any) => {

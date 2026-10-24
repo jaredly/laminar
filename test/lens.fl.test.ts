@@ -10,17 +10,19 @@ const expect = (m: any) => ({
         assert.deepStrictEqual(m, n);
     },
 });
-$.addFn('inc', (arg: any) =>
+$.addFn('inc', (arg0: any) =>
     $.wrap((gamma) => {
-        $.recv(gamma, arg, 'c');
+        $.recv(gamma, arg0, 'c');
+
         return [$.recv(gamma, $.get(gamma, '+')($.get(gamma, 'c'), 1), 'c'), $.back(gamma, 'c')];
     }, 'c'),
 );
 
-$.addFn('fst', (arg: any) =>
+$.addFn('fst', (arg0: any) =>
     $.wrap(
         (gamma) => {
-            $.recv(gamma, arg, ['x', 'y']);
+            $.recv(gamma, arg0, ['x', 'y']);
+
             return [
                 $.get(gamma, 'x'),
                 (recv: any) => {
@@ -33,9 +35,10 @@ $.addFn('fst', (arg: any) =>
     ),
 );
 
-$.addFn('incFst', (arg: any) =>
+$.addFn('incFst', (arg0: any) =>
     $.wrap((gamma) => {
-        $.recv(gamma, arg, 'x');
+        $.recv(gamma, arg0, 'x');
+
         return [
             $.tee2(
                 gamma,
@@ -50,16 +53,18 @@ $.addFn('incFst', (arg: any) =>
     }, 'x'),
 );
 
-$.addFn('idf', (arg: any) =>
+$.addFn('idf', (arg0: any) =>
     $.wrap((gamma) => {
-        $.recv(gamma, arg, 'x');
+        $.recv(gamma, arg0, 'x');
+
         return [[], $.back(gamma, 'x')];
     }, 'x'),
 );
 
-$.addFn('idl', (arg: any) =>
+$.addFn('idl', (arg0: any) =>
     $.wrap((gamma) => {
-        $.recv(gamma, arg, 'x');
+        $.recv(gamma, arg0, 'x');
+
         return [
             $.get(gamma, 'x'),
             (recv: any) => {
@@ -70,9 +75,10 @@ $.addFn('idl', (arg: any) =>
     }, 'x'),
 );
 
-$.addFn('united', (arg: any) =>
+$.addFn('united', (arg0: any) =>
     $.wrap((gamma) => {
-        $.recv(gamma, arg, 'x');
+        $.recv(gamma, arg0, 'x');
+
         return [
             [],
             (recv: any) => {
@@ -83,9 +89,10 @@ $.addFn('united', (arg: any) =>
     }, 'x'),
 );
 
-$.addFn('makeunit', (arg: any) =>
+$.addFn('makeunit', (arg0: any) =>
     $.wrap((gamma) => {
-        $.recv(gamma, arg, []);
+        $.recv(gamma, arg0, []);
+
         return [
             [],
             (recv: any) => {
@@ -184,9 +191,10 @@ it('Item 9 at /Users/jared/clone/exploration/laminar/ts/test/lens.fl:80:4', () =
             gamma,
             $.recv(
                 gamma,
-                (arg: any) =>
+                (arg0: any) =>
                     $.wrap((gamma) => {
-                        $.recv(gamma, arg, 'x');
+                        $.recv(gamma, arg0, 'x');
+
                         return $.get(gamma, '+')($.get(gamma, 'x'), 2);
                     }, []),
                 'go',
@@ -204,9 +212,10 @@ it('Item 10 at /Users/jared/clone/exploration/laminar/ts/test/lens.fl:87:4', () 
             gamma,
             $.recv(
                 gamma,
-                (arg: any) =>
+                (arg0: any) =>
                     $.wrap((gamma) => {
-                        $.recv(gamma, arg, 'm');
+                        $.recv(gamma, arg0, 'm');
+
                         return [
                             $.recv(gamma, $.get(gamma, '+')($.get(gamma, 'm'), 10), 'm'),
                             $.back(gamma, 'm'),
@@ -229,9 +238,10 @@ it('Item 11 at /Users/jared/clone/exploration/laminar/ts/test/lens.fl:97:4', () 
             gamma,
             $.recv(
                 gamma,
-                (arg: any) =>
+                (arg0: any) =>
                     $.wrap((gamma) => {
-                        $.recv(gamma, arg, 'n');
+                        $.recv(gamma, arg0, 'n');
+
                         $.recv(gamma, 5, 'm');
                         return $.get(gamma, '+')($.get(gamma, 'n'), $.get(gamma, 'm'));
                     }, []),
@@ -250,10 +260,11 @@ it('Item 12 at /Users/jared/clone/exploration/laminar/ts/test/lens.fl:107:4', ()
             gamma,
             $.recv(
                 gamma,
-                (arg: any) =>
+                (arg0: any) =>
                     $.wrap(
                         (gamma) => {
-                            $.recv(gamma, arg, ['a', 'b']);
+                            $.recv(gamma, arg0, ['a', 'b']);
+
                             return [
                                 $.recv(gamma, $.get(gamma, '+')($.get(gamma, 'a'), 10), 'a'),
                                 $.back(gamma, ['a', 'b']),
@@ -283,10 +294,11 @@ it('Item 13 at /Users/jared/clone/exploration/laminar/ts/test/lens.fl:117:4', ()
             gamma,
             $.recv(
                 gamma,
-                (arg: any) =>
+                (arg0: any) =>
                     $.wrap(
                         (gamma) => {
-                            $.recv(gamma, arg, ['a', 'b']);
+                            $.recv(gamma, arg0, ['a', 'b']);
+
                             return [
                                 $.recv(gamma, $.recv(gamma, $.get(gamma, 'a'), 'b'), 'a'),
                                 $.back(gamma, ['a', 'b']),
@@ -316,10 +328,11 @@ it('Item 14 at /Users/jared/clone/exploration/laminar/ts/test/lens.fl:127:4', ()
             gamma,
             $.recv(
                 gamma,
-                (arg: any) =>
+                (arg0: any) =>
                     $.wrap(
                         (gamma) => {
-                            $.recv(gamma, arg, ['a', 'b']);
+                            $.recv(gamma, arg0, ['a', 'b']);
+
                             return [
                                 $.recv(gamma, $.recv(gamma, $.get(gamma, 'a'), 'b'), 'a'),
                                 $.back(gamma, ['a', 'b']),
@@ -345,10 +358,11 @@ it('Item 15 at /Users/jared/clone/exploration/laminar/ts/test/lens.fl:137:4', ()
             gamma,
             $.recv(
                 gamma,
-                (arg: any) =>
+                (arg0: any) =>
                     $.wrap(
                         (gamma) => {
-                            $.recv(gamma, arg, ['a', 'b']);
+                            $.recv(gamma, arg0, ['a', 'b']);
+
                             return [
                                 $.recv(gamma, [$.get(gamma, 'b'), $.get(gamma, 'a')], ['a', 'b']),
                                 $.back(gamma, ['a', 'b']),
@@ -374,10 +388,11 @@ it('Item 16 at /Users/jared/clone/exploration/laminar/ts/test/lens.fl:147:4', ()
             gamma,
             $.recv(
                 gamma,
-                (arg: any) =>
+                (arg0: any) =>
                     $.wrap(
                         (gamma) => {
-                            $.recv(gamma, arg, ['a', 'b']);
+                            $.recv(gamma, arg0, ['a', 'b']);
+
                             return [
                                 $.get(gamma, 'a'),
                                 (recv: any) => {
@@ -414,10 +429,11 @@ it('Item 17 at /Users/jared/clone/exploration/laminar/ts/test/lens.fl:156:4', ()
             gamma,
             $.recv(
                 gamma,
-                (arg: any) =>
+                (arg0: any) =>
                     $.wrap(
                         (gamma) => {
-                            $.recv(gamma, arg, ['a', 'b']);
+                            $.recv(gamma, arg0, ['a', 'b']);
+
                             return [
                                 $.get(gamma, 'a'),
                                 (recv: any) => {
@@ -456,10 +472,11 @@ it('Item 18 at /Users/jared/clone/exploration/laminar/ts/test/lens.fl:165:4', ()
             gamma,
             $.recv(
                 gamma,
-                (arg: any) =>
+                (arg0: any) =>
                     $.wrap(
                         (gamma) => {
-                            $.recv(gamma, arg, ['a', 'b']);
+                            $.recv(gamma, arg0, ['a', 'b']);
+
                             return [
                                 $.get(gamma, 'a'),
                                 (recv: any) => {
@@ -478,10 +495,11 @@ it('Item 18 at /Users/jared/clone/exploration/laminar/ts/test/lens.fl:165:4', ()
             gamma,
             $.recv(
                 gamma,
-                (arg: any) =>
+                (arg0: any) =>
                     $.wrap(
                         (gamma) => {
-                            $.recv(gamma, arg, ['a', 'b']);
+                            $.recv(gamma, arg0, ['a', 'b']);
+
                             return [
                                 $.get(gamma, 'b'),
                                 (recv: any) => {
@@ -527,10 +545,11 @@ it('Item 19 at /Users/jared/clone/exploration/laminar/ts/test/lens.fl:175:4', ()
             gamma,
             $.recv(
                 gamma,
-                (arg: any) =>
+                (arg0: any) =>
                     $.wrap(
                         (gamma) => {
-                            $.recv(gamma, arg, ['a', 'b']);
+                            $.recv(gamma, arg0, ['a', 'b']);
+
                             return [
                                 $.get(gamma, 'a'),
                                 (recv: any) => {
@@ -549,10 +568,11 @@ it('Item 19 at /Users/jared/clone/exploration/laminar/ts/test/lens.fl:175:4', ()
             gamma,
             $.recv(
                 gamma,
-                (arg: any) =>
+                (arg0: any) =>
                     $.wrap(
                         (gamma) => {
-                            $.recv(gamma, arg, ['a', 'b']);
+                            $.recv(gamma, arg0, ['a', 'b']);
+
                             return [
                                 $.get(gamma, 'b'),
                                 (recv: any) => {
@@ -571,9 +591,10 @@ it('Item 19 at /Users/jared/clone/exploration/laminar/ts/test/lens.fl:175:4', ()
             gamma,
             $.recv(
                 gamma,
-                (arg: any) =>
+                (arg0: any) =>
                     $.wrap((gamma) => {
-                        $.recv(gamma, arg, 'c');
+                        $.recv(gamma, arg0, 'c');
+
                         return [
                             $.recv(gamma, $.get(gamma, '*')($.get(gamma, 'c'), 10), 'c'),
                             $.back(gamma, 'c'),
@@ -618,10 +639,11 @@ it('Item 20 at /Users/jared/clone/exploration/laminar/ts/test/lens.fl:187:4', ()
             gamma,
             $.recv(
                 gamma,
-                (arg: any) =>
+                (arg0: any) =>
                     $.wrap(
                         (gamma) => {
-                            $.recv(gamma, arg, ['a', 'b']);
+                            $.recv(gamma, arg0, ['a', 'b']);
+
                             return [
                                 $.get(gamma, 'a'),
                                 (recv: any) => {
@@ -640,10 +662,11 @@ it('Item 20 at /Users/jared/clone/exploration/laminar/ts/test/lens.fl:187:4', ()
             gamma,
             $.recv(
                 gamma,
-                (arg: any) =>
+                (arg0: any) =>
                     $.wrap(
                         (gamma) => {
-                            $.recv(gamma, arg, ['a', 'b']);
+                            $.recv(gamma, arg0, ['a', 'b']);
+
                             return [
                                 $.get(gamma, 'b'),
                                 (recv: any) => {
@@ -662,9 +685,10 @@ it('Item 20 at /Users/jared/clone/exploration/laminar/ts/test/lens.fl:187:4', ()
             gamma,
             $.recv(
                 gamma,
-                (arg: any) =>
+                (arg0: any) =>
                     $.wrap((gamma) => {
-                        $.recv(gamma, arg, 'c');
+                        $.recv(gamma, arg0, 'c');
+
                         return [
                             $.recv(gamma, $.get(gamma, '*')($.get(gamma, 'c'), 10), 'c'),
                             $.back(gamma, 'c'),
@@ -711,10 +735,11 @@ it('Item 21 at /Users/jared/clone/exploration/laminar/ts/test/lens.fl:198:0', ()
             $.recv(
                 gamma,
                 (
-                    (outer0) => (arg: any) =>
+                    (outer0) => (arg0: any) =>
                         $.wrap(
                             (gamma) => {
-                                $.recv(gamma, arg, 'x');
+                                $.recv(gamma, arg0, 'x');
+
                                 return $.get(gamma, '+')($.get(gamma, 'x'), $.get(gamma, 'a'));
                             },
                             [],
@@ -739,10 +764,11 @@ it('Item 22 at /Users/jared/clone/exploration/laminar/ts/test/lens.fl:209:0', ()
             $.recv(
                 gamma,
                 (
-                    (outer0) => (arg: any) =>
+                    (outer0) => (arg0: any) =>
                         $.wrap(
                             (gamma) => {
-                                $.recv(gamma, arg, 'x');
+                                $.recv(gamma, arg0, 'x');
+
                                 $.recv(
                                     gamma,
                                     $.tee(gamma, $.get(gamma, 'inc')($.back(gamma, 'a')), 'a'),
@@ -785,9 +811,10 @@ it('Item 24 at /Users/jared/clone/exploration/laminar/ts/test/lens.fl:233:4', ()
             gamma,
             $.recv(
                 gamma,
-                (arg: any) =>
+                (arg0: any) =>
                     $.wrap((gamma) => {
-                        $.recv(gamma, arg, 'x');
+                        $.recv(gamma, arg0, 'x');
+
                         $.recv(gamma, $.back(gamma, 'x'), 'y');
                         const res0 = $.recv(gamma, 5, 'y');
                         $.recv(gamma, $.back(gamma, 'y'), 'x');
@@ -853,9 +880,10 @@ it('Item 28 at /Users/jared/clone/exploration/laminar/ts/test/lens.fl:273:4', ()
             gamma,
             $.recv(
                 gamma,
-                (arg: any) =>
+                (arg0: any) =>
                     $.wrap((gamma) => {
-                        $.recv(gamma, arg, 'a');
+                        $.recv(gamma, arg0, 'a');
+
                         return [
                             $.get(gamma, 'a'),
                             (res: any) => {
@@ -895,9 +923,10 @@ it('Item 29 at /Users/jared/clone/exploration/laminar/ts/test/lens.fl:289:4', ()
             gamma,
             $.recv(
                 gamma,
-                (arg: any) =>
+                (arg0: any) =>
                     $.wrap((gamma) => {
-                        $.recv(gamma, arg, 'a');
+                        $.recv(gamma, arg0, 'a');
+
                         return [
                             $.get(gamma, 'a'),
                             (res: any) => {
@@ -941,9 +970,10 @@ it('Item 30 at /Users/jared/clone/exploration/laminar/ts/test/lens.fl:321:4', ()
             gamma,
             $.recv(
                 gamma,
-                (arg: any) =>
+                (arg0: any) =>
                     $.wrap((gamma) => {
-                        $.recv(gamma, arg, 'a');
+                        $.recv(gamma, arg0, 'a');
+
                         return [
                             3,
                             (res: any) => {
@@ -997,9 +1027,10 @@ it('Item 31 at /Users/jared/clone/exploration/laminar/ts/test/lens.fl:341:4', ()
             gamma,
             $.recv(
                 gamma,
-                (arg: any) =>
+                (arg0: any) =>
                     $.wrap((gamma) => {
-                        $.recv(gamma, arg, 'a');
+                        $.recv(gamma, arg0, 'a');
+
                         return [
                             3,
                             (res: any) => {
@@ -1060,9 +1091,10 @@ it('Item 32 at /Users/jared/clone/exploration/laminar/ts/test/lens.fl:389:4', ()
             gamma,
             $.recv(
                 gamma,
-                (arg: any) =>
+                (arg0: any) =>
                     $.wrap((gamma) => {
-                        $.recv(gamma, arg, 'x');
+                        $.recv(gamma, arg0, 'x');
+
                         $.recv(gamma, $.back(gamma, 'x'), ['a', 'b']);
                         $.recv(
                             gamma,

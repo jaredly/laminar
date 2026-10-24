@@ -88,6 +88,7 @@ LinearOps {
     // ["" "." attr:id] -> ({type: "attr", attr: attr.text})
     // ["" ["[" index:Linear]] -> ({type: "index", index})
     ["" ["(," ...args:Term]] -> ({type: "apply", args})
+    ["" ["("]] -> ({type: "apply", args: []})
 }
 
 function handleSuffixes(head: Linear, suffixes: LinearOps[]): Linear {

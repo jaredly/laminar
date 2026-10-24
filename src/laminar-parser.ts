@@ -515,6 +515,11 @@ grammar.add('LinearOps', [
         list('', wrapper('(', list(',', many('args', 'Term')))),
         ({ args, node }: { args: Term[]; node: Node }): LinearOps => ({ type: 'apply', args }),
     ),
+    // LinearOps:2
+    option(list('', wrapper('(', null)), ({ node }: { node: Node }): LinearOps => ({
+        type: 'apply',
+        args: [],
+    })),
 ]);
 
 function handleSuffixes(head: Linear, suffixes: LinearOps[]): Linear {

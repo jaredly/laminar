@@ -53,7 +53,7 @@ fn alias(~x) {
 ## Language Gotchas
 
 - if you call a lens function as a normal function, I don't currently have a way to stop you.
-
+  -> but I can fix that. mark functions, and verify on call.
 
 ## Running the tests
 

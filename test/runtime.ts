@@ -63,6 +63,7 @@ export const builtins: Record<string, (...args: any[]) => any> = {
     '+': (a, b) => a + b,
     '*': (a, b) => a * b,
     '-': (a, b) => a - b,
+    drop: (x) => {},
     consume: (x) => {
         consumed.push(x);
     },
@@ -132,3 +133,7 @@ export const tee2 = (
     recv(scope, next(get(scope, tmp)), as);
     return final;
 };
+
+// lens function call verification
+// WAIT maybe I can lean on typescript for this.
+// oh nope. because of my scope magic.

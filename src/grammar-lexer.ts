@@ -567,7 +567,7 @@ export class Grammar {
                     return {
                         type: 'failure',
                         failure: {
-                            reason: `wrong number of items while processing ${node.kind}. ${node.children.length} total items; ${pat.items.length} pattern items`,
+                            reason: `wrong number of items while processing ${node.kind}. ${node.children.length} total items; ${pat.items.length} pattern items. ${pat.items.map((i) => i.type)}`,
                             loc: node.loc,
                             path,
                         },
@@ -579,17 +579,19 @@ export class Grammar {
                 for (let item of pat.items) {
                     n++;
                     // console.log(`LIST ITEM ${i}`, item);
-                    if (i >= node.children.length) {
+                    if (i >= node.children.length && !isSpread(item)) {
                         return {
                             type: 'failure',
                             failure: {
-                                reason: `ran out of items while processing ${node.kind}. ${node.children.length} total items; ${pat.items.length} pattern items`,
+                                reason: `ran out of items while processing ${node.kind}. ${node.children.length} total items; ${pat.items.length} pattern items. ${pat.items.map((i) => i.type)}`,
                                 loc: node.loc,
                                 path,
                             },
                         };
                     }
-                    path = [...path, ':list-item:' + n + ':' + item.type, node.children[i].loc];
+                    if (i < node.children.length) {
+                        path = [...path, ':list-item:' + n + ':' + item.type, node.children[i].loc];
+                    }
                     switch (item.type) {
                         case 'rest': {
                             if (item.multi) {
