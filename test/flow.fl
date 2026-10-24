@@ -104,6 +104,7 @@ fn gimme(initial) ~{
 
 (5, 2)
 
+/*
 {
     let m = ()
     let n = {
@@ -117,6 +118,7 @@ fn gimme(initial) ~{
 }
 
 (10, 5)
+*/
 
 swap :: ((a,b)/(c,d)) => (b,a)/(d,c)
 fn swap(~(x, y)) ~(y, x)

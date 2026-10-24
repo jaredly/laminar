@@ -59,7 +59,7 @@ for (let i = 0; i < file.value.length; i++) {
     }
 }
 
-const ctx: Ctx = { globals: topNames };
+const ctx: Ctx = { globals: topNames, scopes: [] };
 fns.forEach((fn) => {
     try {
         result += `$.addFn(${JSON.stringify(fn.name)}, ${toTS(ctx, { ...fn, name: null })});`;

@@ -45,7 +45,9 @@ type Tail = null | {
     lensBack?: (string | { lens: string; pat: string })[];
 };
 
-export type Ctx = { globals: string[] };
+export type Ctx = { globals: string[]; scopes: Set<string>[] };
+
+const withScope = (ctx: Ctx, set: Set<string>): Ctx => ({ ...ctx, scopes: [set, ...ctx.scopes] });
 
 // export const linearToTS = (ctx: Ctx, lin: Linear, tail: Tail = null) => {
 //     switch (lin.type) {
@@ -88,10 +90,10 @@ export const letLens = (
     // }];`;
     const bound = names(lens.pat);
     const freeNames = free(lens.body).filter((t) => !bound.includes(t));
-    const result = `$.recv(gamma, ${toTS(ctx, lens.value)}, ${patAs(pat)});\n${toTS(ctx, body, {
+    const result = `${recv(ctx, toTS(ctx, lens.value), pat)};\n${toTS(ctx, body, {
         ...tail,
         lensBack: [
-            `$.wrap((gamma) => {$.recv(gamma, $.back(gamma, ${patAs(pat)}), ${patAs(lens.pat)});\n${toTS(ctx, lens.body, { lensCaptured: '' })};\n$.checkUnused(gamma, ${tail?.lensCaptured ?? '[]'});}, ${JSON.stringify(freeNames)});`,
+            `$.wrap((gamma) => {${recv(ctx, back(ctx, pat), lens.pat)};\n${toTS(ctx, lens.body, { lensCaptured: '' })};\n$.checkUnused(gamma, ${tail?.lensCaptured ?? '[]'});}, ${JSON.stringify(freeNames)});`,
             ...(tail?.lensBack ?? []),
         ],
     })}`;
@@ -110,7 +112,7 @@ export const letToTS = (ctx: Ctx, expr: Term & { type: 'let' }, tail: Tail = nul
                 ...tail,
                 lensBack: [{ lens: name, pat: patAs(expr.pat) }, ...(tail?.lensBack ?? [])],
             };
-            return `$.recv(gamma, $.back(gamma, ${name}), ${patAs(expr.pat)});\n${toTS(ctx, expr.body, ntail)}`;
+            return `${recv(ctx, back(ctx, name), expr.pat)};\n${toTS(ctx, expr.body, ntail)}`;
         });
         return tail
             ? isWrapped
@@ -120,19 +122,27 @@ export const letToTS = (ctx: Ctx, expr: Term & { type: 'let' }, tail: Tail = nul
               ? result
               : `(() => {${result}})()`;
     }
-    const result = `$.recv(gamma, ${toTS(ctx, expr.value)}, ${patAs(expr.pat)});\n${toTS(ctx, expr.body, tail ?? {})}`;
+    const result = `${recv(ctx, toTS(ctx, expr.value), expr.pat)};\n${toTS(ctx, expr.body, tail ?? {})}`;
     return tail ? result : `(() => {${result}})()`;
+};
+
+export const back = (ctx: Ctx, name: string | Pat) => {
+    return `$.back(gamma, ${typeof name === 'string' ? name : patAs(name)})`;
+};
+
+export const recv = (ctx: Ctx, name: string, pat: null | string | Pat) => {
+    return `$.recv(gamma, ${name}, ${pat === null ? '[]' : typeof pat === 'string' ? pat : patAs(pat)});`;
 };
 
 export const tailToTS = (ctx: Ctx, expr: Term | Lens, tail: NonNullable<Tail>): string => {
     if (expr.type === 'lens') {
         if (expr.lens.type === 'aslens') {
             return `return [${toTS(ctx, expr.lens.value)}, (res: any) => {
-                            $.recv(gamma, res, ${patAs(expr.lens.pat)});
+                            ${recv(ctx, 'res', expr.lens.pat)}
                             ${toTS(ctx, expr.lens.body, { lensCaptured: '' })};
                             // assert that all values have been used (except lenscaptured)
                             $.checkUnused(gamma, ${tail.lensCaptured ?? '[]'});
-                            ${tail.lensCaptured ? `return $.back(gamma, ${tail.lensCaptured});` : ''}
+                            ${tail.lensCaptured ? `return ${back(ctx, tail.lensCaptured)};` : ''}
                         }];`;
         }
         /*
@@ -148,14 +158,15 @@ export const tailToTS = (ctx: Ctx, expr: Term | Lens, tail: NonNullable<Tail>): 
     }
     let vbl: string | null = null;
     let pre = '';
+    // lensBack consists of the 'cleanups that need to happen right before
     if (tail?.lensBack) {
         vbl = `res` + nextId();
         pre = `const ${vbl} = ${expr.type === 'lens' ? _toTS(ctx, expr.lens) : _toTS(ctx, expr)};\n`;
-        tail.lensBack.forEach((back) => {
-            if (typeof back === 'string') {
-                pre += back;
+        tail.lensBack.forEach((lback) => {
+            if (typeof lback === 'string') {
+                pre += lback;
             } else {
-                pre += `$.recv(gamma, $.back(gamma, ${back.pat}), ${back.lens})\n`;
+                pre += recv(ctx, back(ctx, lback.pat), lback.lens) + `\n`;
             }
         });
     }
@@ -167,7 +178,9 @@ export const tailToTS = (ctx: Ctx, expr: Term | Lens, tail: NonNullable<Tail>): 
                 throw new Error(`lens <- block must have a linear body; found a lens`);
             }
             // assert that expr has void return value
-            return pre + `$.recv(gamma, ${_toTS(ctx, expr)}, [])`;
+            // Q: should we do `let v = _toTS(ctx, expr)` and THEN do the `pre`?
+            // like our expr might do things that would impact our lensBacks, right?
+            return pre + recv(ctx, _toTS(ctx, expr), null);
         }
         if (expr.type === 'lens') {
             return (
