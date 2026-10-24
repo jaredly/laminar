@@ -63,39 +63,45 @@ export type Ctx = { globals: string[] };
 //     }
 // };
 
-export const letToTS = (ctx: Ctx, expr: Linear & { type: 'let' }, tail: Tail = null): string => {
+export const letLens = (
+    ctx: Ctx,
+    lens: Lens & { type: 'aslens' },
+    pat: Pat,
+    body: Term,
+    tail: Tail,
+): string => {
+    // let pat = toTS(expr.value.lens.value)
+    // let _res = [body]
+    // [cleanup(back(pat))]
+    // return result
+    // STOPSHIP we need to get the used vbls out of scope so they're there for cleanup time
+    // return `return [${toTS(expr.value.lens.value)}, (res: any) => {
+    //     $.recv(gamma, res, ${patAs(expr.value.lens.pat)});
+    //     ${toTS(expr.value.lens.body, { lensCaptured: "" })};
+    //     // assert that all values have been used (except lenscaptured)
+    //     $.checkUnused(gamma, ${tail?.lensCaptured ?? "[]"});
+    //     ${
+    //         tail?.lensCaptured
+    //             ? `return $.back(gamma, ${tail.lensCaptured});`
+    //             : ""
+    //     }
+    // }];`;
+    const bound = names(lens.pat);
+    const freeNames = free(lens.body).filter((t) => !bound.includes(t));
+    const result = `$.recv(gamma, ${toTS(ctx, lens.value)}, ${patAs(pat)});\n${toTS(ctx, body, {
+        ...tail,
+        lensBack: [
+            `$.wrap((gamma) => {$.recv(gamma, $.back(gamma, ${patAs(pat)}), ${patAs(lens.pat)});\n${toTS(ctx, lens.body, { lensCaptured: '' })};\n$.checkUnused(gamma, ${tail?.lensCaptured ?? '[]'});}, ${JSON.stringify(freeNames)});`,
+            ...(tail?.lensBack ?? []),
+        ],
+    })}`;
+    return tail ? result : `(() => {${result}})()`;
+};
+
+export const letToTS = (ctx: Ctx, expr: Term & { type: 'let' }, tail: Tail = null): string => {
     if (expr.value.type === 'lens') {
         if (expr.value.lens.type === 'aslens') {
-            // let pat = toTS(expr.value.lens.value)
-            // let _res = [body]
-            // [cleanup(back(pat))]
-            // return result
-            // STOPSHIP we need to get the used vbls out of scope so they're there for cleanup time
-            // return `return [${toTS(expr.value.lens.value)}, (res: any) => {
-            //     $.recv(gamma, res, ${patAs(expr.value.lens.pat)});
-            //     ${toTS(expr.value.lens.body, { lensCaptured: "" })};
-            //     // assert that all values have been used (except lenscaptured)
-            //     $.checkUnused(gamma, ${tail?.lensCaptured ?? "[]"});
-            //     ${
-            //         tail?.lensCaptured
-            //             ? `return $.back(gamma, ${tail.lensCaptured});`
-            //             : ""
-            //     }
-            // }];`;
-            const bound = names(expr.value.lens.pat);
-            const freeNames = free(expr.value.lens.body).filter((t) => !bound.includes(t));
-            const result = `$.recv(gamma, ${toTS(ctx, expr.value.lens.value)}, ${patAs(expr.pat)});\n${toTS(
-                ctx,
-                expr.body,
-                {
-                    ...tail,
-                    lensBack: [
-                        `$.wrap((gamma) => {$.recv(gamma, $.back(gamma, ${patAs(expr.pat)}), ${patAs(expr.value.lens.pat)});\n${toTS(ctx, expr.value.lens.body, { lensCaptured: '' })};\n$.checkUnused(gamma, ${tail?.lensCaptured ?? '[]'});}, ${JSON.stringify(freeNames)});`,
-                        ...(tail?.lensBack ?? []),
-                    ],
-                },
-            )}`;
-            return tail ? result : `(() => {${result}})()`;
+            return letLens(ctx, expr.value.lens, expr.pat, expr.body, tail);
         }
         let isWrapped = false;
         const result = lensToTs(ctx, expr.value.lens, (name, wrapped) => {
@@ -118,7 +124,7 @@ export const letToTS = (ctx: Ctx, expr: Linear & { type: 'let' }, tail: Tail = n
     return tail ? result : `(() => {${result}})()`;
 };
 
-export const tailToTS = (ctx: Ctx, expr: Term | Lens, tail: NonNullable<Tail>): string => {
+export const tailToTS = (ctx: Ctx, expr: Term, tail: NonNullable<Tail>): string => {
     if (expr.type === 'lens') {
         if (expr.lens.type === 'aslens') {
             return `return [${toTS(ctx, expr.lens.value)}, (res: any) => {
@@ -129,6 +135,17 @@ export const tailToTS = (ctx: Ctx, expr: Term | Lens, tail: NonNullable<Tail>): 
                             ${tail.lensCaptured ? `return $.back(gamma, ${tail.lensCaptured});` : ''}
                         }];`;
         }
+
+        /*
+        let isWrapped = false;
+        const result = lensToTs(ctx, expr.lens, (name, wrapped) => {
+            isWrapped = wrapped;
+            return `$.recv(gamma, $.back(gamma, ${name}), ${patAs(expr.pat)});\n${toTS(ctx, expr.body, ntail)}`;
+        });
+        return isWrapped
+                ? 'return ' + result
+                : result
+                */
     }
     let vbl: string | null = null;
     let pre = '';
@@ -148,7 +165,7 @@ export const tailToTS = (ctx: Ctx, expr: Term | Lens, tail: NonNullable<Tail>): 
         // we're in a `lens <-` block
         if (tail.lensCaptured === '') {
             if (expr.type === 'lens') {
-                throw new Error(`lens <- block has linear body`);
+                throw new Error(`lens <- block must have a linear body; found a lens`);
             }
             // assert that expr has void return value
             return pre + `$.recv(gamma, ${_toTS(ctx, expr)}, [])`;
@@ -252,16 +269,6 @@ export const _toTS = (ctx: Ctx, expr: Term | Lens, tail: Tail = null): string =>
             const suffix = captures.length
                 ? `, ${outer}))({${captures.map((name) => `${name}: $.get(gamma, "${name}")`).join(',')}})`
                 : ')';
-            // if (!expr.args.length) {
-            //     return withRecv(
-            //         expr.name,
-            //         prefix +
-            //             `() => $.wrap((gamma) => {
-            //         ${toTS(ctx, expr.body, {})}
-            //         }, []` +
-            //             suffix,
-            //     );
-            // }
 
             const lastArg = expr.args[expr.args.length - 1];
 
@@ -271,17 +278,22 @@ export const _toTS = (ctx: Ctx, expr: Term | Lens, tail: Tail = null): string =>
                 }
             });
 
+            const bindings = expr.args
+                .map(
+                    (arg, i) =>
+                        `$.recv(gamma, arg${i}, ${patAs(arg.pat.type === 'lens' ? arg.pat.inner : arg.pat)});\n`,
+                )
+                .join('');
+            const body = toTS(ctx, expr.body, {
+                lensCaptured: lastArg?.pat.type === 'lens' ? patAs(lastArg.pat.inner) : null,
+            });
+
             return withRecv(
                 expr.name,
                 prefix +
                     `(${expr.args.map((_, i) => `arg${i}: any`).join(', ')}) => $.wrap((gamma) => {
-    ${expr.args
-        .map(
-            (arg, i) =>
-                `$.recv(gamma, arg${i}, ${patAs(arg.pat.type === 'lens' ? arg.pat.inner : arg.pat)});\n`,
-        )
-        .join('')}
-    ${toTS(ctx, expr.body, { lensCaptured: lastArg?.pat.type === 'lens' ? patAs(lastArg.pat.inner) : null })}
+    ${bindings}
+    ${body}
 }, ${lastArg?.pat.type === 'lens' ? patAs(lastArg.pat.inner) : '[]'}` +
                     suffix,
             );

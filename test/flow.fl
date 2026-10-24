@@ -201,7 +201,30 @@ fn unmap(f, x) {
 
 6
 
+{
+    let a = (1, 2)
+    let m = {
+        let x = ~swap(~a)
+        5
+    }
+    (m, a)
+}
+
+(5, (1,2))
+
+
 /*
+m = swap(a)
+
+
+fn swap2(~v) ~swap(~v)
+fn swap2(arg) {
+    recv("v", arg)
+    return [value, newValue => {
+    }];
+}
+
+
 fn swap2(~v) ~swap(~v)
 
 fcomp :: ((b/b') => c/c', (a/a') => b/b', a/a') => c/c'

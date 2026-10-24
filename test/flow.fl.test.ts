@@ -441,3 +441,26 @@ it('Item 15 at /Users/jared/clone/exploration/laminar/ts/test/flow.fl:199:4', ()
     });
     expect(result).toEqual(6);
 });
+
+it('Item 16 at /Users/jared/clone/exploration/laminar/ts/test/flow.fl:204:0', () => {
+    const result = $.run((gamma) => {
+        $.recv(gamma, [1, 2], 'a');
+        $.recv(
+            gamma,
+            $.tee2(
+                gamma,
+                $.get(gamma, 'swap')($.back(gamma, 'a')),
+                (tmp0) => {
+                    $.recv(gamma, $.back(gamma, tmp0), 'x');
+                    const res1 = 5;
+                    $.recv(gamma, $.back(gamma, 'x'), tmp0);
+                    return res1;
+                },
+                'a',
+            ),
+            'm',
+        );
+        return [$.get(gamma, 'm'), $.get(gamma, 'a')];
+    });
+    expect(result).toEqual([5, [1, 2]]);
+});

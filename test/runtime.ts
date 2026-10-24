@@ -121,16 +121,31 @@ export const tee = (scope: Scope, [a, b]: [any, any], c: Names) => {
     recv(scope, b, c);
     return a;
 };
+
+/**
+ * Given
+ * - the result of a lens function [value, completion],
+ * - and a target (continuation)
+ * - and `as`, the name to bind the result of the completion to
+ * 1. bind `value` to a tmp vbl
+ * 2. call the continuation with the tmp vbl
+ * 3. call the completion with the new contents of the tmp vbl
+ * 4. bind the result of the completion to `as`
+ * 5. return the result of the continuation
+ *
+ * Roughly speaking, it's "call target with value, while handling the
+ * completion that has to happen after the target execution finishes"
+ */
 export const tee2 = (
     scope: Scope,
-    [value, next]: [any, any],
-    target: (names: Names) => void,
+    [value, completion]: [any, any],
+    continuation: (names: Names) => void,
     as: Names,
 ) => {
     const tmp = genid();
     recv(scope, value, tmp);
-    let final = target(tmp);
-    recv(scope, next(get(scope, tmp)), as);
+    let final = continuation(tmp);
+    recv(scope, completion(get(scope, tmp)), as);
     return final;
 };
 
