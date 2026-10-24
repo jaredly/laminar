@@ -14,7 +14,7 @@ const expect = (m: any) => ({
 it('Error 0 at /Users/jared/clone/exploration/laminar/ts/test/basic.errors.fl:4:4', () => {
     expect(() =>
         $.run((gamma) => {
-            return $.get(gamma, 'x');
+            return $.back(gamma, 'x');
         }),
     ).toThrow();
 });
@@ -23,8 +23,8 @@ it('Error 1 at /Users/jared/clone/exploration/laminar/ts/test/basic.errors.fl:8:
     expect(() =>
         $.run((gamma) => {
             $.recv(gamma, 4, 'x');
-            $.recv(gamma, $.get(gamma, 'x'), 'y');
-            return $.get(gamma, '+')($.get(gamma, 'x'), $.get(gamma, 'y'));
+            $.recv(gamma, $.back(gamma, 'x'), 'y');
+            return $.back(gamma, '+')($.back(gamma, 'x'), $.back(gamma, 'y'));
         }),
     ).toThrow();
 });
@@ -34,7 +34,7 @@ it('Error 2 at /Users/jared/clone/exploration/laminar/ts/test/basic.errors.fl:15
         $.run((gamma) => {
             $.recv(gamma, 4, 'x');
             $.recv(gamma, 2, 'y');
-            return $.get(gamma, 'x');
+            return $.back(gamma, 'x');
         }),
     ).toThrow();
 });
@@ -50,14 +50,17 @@ it('Error 3 at /Users/jared/clone/exploration/laminar/ts/test/basic.errors.fl:23
                         $.wrap((gamma) => {
                             $.recv(gamma, arg0, 'x');
 
-                            return [$.get(gamma, 'consume')($.get(gamma, 'x')), $.back(gamma, 'x')];
+                            return [
+                                $.back(gamma, 'consume')($.back(gamma, 'x')),
+                                $.back(gamma, 'x'),
+                            ];
                         }, 'x'),
                     'use',
                 ),
                 $.drop,
             );
             $.recv(gamma, 3, 'x');
-            return $.tee(gamma, $.get(gamma, 'use')($.back(gamma, 'x')), 'x');
+            return $.tee(gamma, $.back(gamma, 'use')($.back(gamma, 'x')), 'x');
         }),
     ).toThrow();
 });
@@ -93,12 +96,12 @@ it('Error 4 at /Users/jared/clone/exploration/laminar/ts/test/basic.errors.fl:32
                 gamma,
                 $.tee2(
                     gamma,
-                    $.get(gamma, 'passer')($.back(gamma, 'x')),
+                    $.back(gamma, 'passer')($.back(gamma, 'x')),
                     (tmp0) => {
                         $.recv(gamma, $.back(gamma, tmp0), 'v');
                         $.recv(
                             gamma,
-                            $.get(gamma, 'log')(`v from passer`, $.recv(gamma, 10, 'v')),
+                            $.back(gamma, 'log')(`v from passer`, $.recv(gamma, 10, 'v')),
                             $.drop,
                         );
                         const res1 = 4;
@@ -109,7 +112,7 @@ it('Error 4 at /Users/jared/clone/exploration/laminar/ts/test/basic.errors.fl:32
                 ),
                 'res',
             );
-            return [$.get(gamma, 'res'), $.get(gamma, 'x')];
+            return [$.back(gamma, 'res'), $.back(gamma, 'x')];
         }),
     ).toThrow();
 });
@@ -129,7 +132,7 @@ it('Error 5 at /Users/jared/clone/exploration/laminar/ts/test/basic.errors.fl:49
                                 3,
                                 (res: any) => {
                                     $.recv(gamma, res, 'b');
-                                    $.recv(gamma, $.get(gamma, 'log')(`Hello`, 2), []);
+                                    $.recv(gamma, $.back(gamma, 'log')(`Hello`, 2), []);
                                     // assert that all values have been used (except lenscaptured)
                                     $.checkUnused(gamma, 'a');
                                     return $.back(gamma, 'a');
@@ -145,12 +148,12 @@ it('Error 5 at /Users/jared/clone/exploration/laminar/ts/test/basic.errors.fl:49
                 gamma,
                 $.tee2(
                     gamma,
-                    $.get(gamma, 'passer')($.back(gamma, 'x')),
+                    $.back(gamma, 'passer')($.back(gamma, 'x')),
                     (tmp0) => {
                         $.recv(gamma, $.back(gamma, tmp0), 'v');
                         $.recv(
                             gamma,
-                            $.get(gamma, 'log')(`v from passer`, $.recv(gamma, 10, 'v')),
+                            $.back(gamma, 'log')(`v from passer`, $.recv(gamma, 10, 'v')),
                             $.drop,
                         );
                         const res1 = 4;
@@ -161,7 +164,7 @@ it('Error 5 at /Users/jared/clone/exploration/laminar/ts/test/basic.errors.fl:49
                 ),
                 'res',
             );
-            return [$.get(gamma, 'res'), $.get(gamma, 'x')];
+            return [$.back(gamma, 'res'), $.back(gamma, 'x')];
         }),
     ).toThrow();
 });

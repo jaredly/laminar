@@ -93,12 +93,20 @@ export const letLens = (
     const result = `${recv(ctx, toTS(ctx, lens.value), pat)};\n${toTS(ctx, body, {
         ...tail,
         lensBack: [
-            `$.wrap((gamma) => {${recv(ctx, back(ctx, pat), lens.pat)};\n${toTS(ctx, lens.body, { lensCaptured: '' })};\n$.checkUnused(gamma, ${tail?.lensCaptured ?? '[]'});}, ${JSON.stringify(freeNames)});`,
+            wrap(
+                ctx,
+                (ctx) =>
+                    `${recv(ctx, back(ctx, pat), lens.pat)};\n${toTS(ctx, lens.body, { lensCaptured: '' })};\n$.checkUnused(gamma, ${tail?.lensCaptured ?? '[]'});`,
+                JSON.stringify(freeNames),
+            ),
             ...(tail?.lensBack ?? []),
         ],
     })}`;
     return tail ? result : `(() => {${result}})()`;
 };
+
+const wrap = (ctx: Ctx, inner: (ctx: Ctx) => string, freeNames: string, outer?: string): string =>
+    `$.wrap((gamma) => {${inner(ctx)}}, ${freeNames}${outer ? ', ' + outer : ''})`;
 
 export const letToTS = (ctx: Ctx, expr: Term & { type: 'let' }, tail: Tail = null): string => {
     if (expr.value.type === 'lens') {
@@ -282,8 +290,8 @@ export const _toTS = (ctx: Ctx, expr: Term | Lens, tail: Tail = null): string =>
             const outer = captures.length ? `outer${nextId()}` : '';
             const prefix = captures.length ? `((${outer}) => ` : '';
             const suffix = captures.length
-                ? `, ${outer}))({${captures.map((name) => `${name}: ${back(ctx, JSON.stringify(name))}`).join(',')}})`
-                : ')';
+                ? `)({${captures.map((name) => `${name}: ${back(ctx, JSON.stringify(name))}`).join(',')}})`
+                : '';
 
             const lastArg = expr.args[expr.args.length - 1];
 
@@ -308,10 +316,12 @@ export const _toTS = (ctx: Ctx, expr: Term | Lens, tail: Tail = null): string =>
                 ctx,
                 expr.name,
                 prefix +
-                    `(${expr.args.map((_, i) => `arg${i}: any`).join(', ')}) => $.wrap((gamma) => {
-    ${bindings}
-    ${body}
-}, ${lastArg?.pat.type === 'lens' ? patAs(lastArg.pat.inner) : '[]'}` +
+                    `(${expr.args.map((_, i) => `arg${i}: any`).join(', ')}) => ${wrap(
+                        ctx,
+                        (ctx) => `${bindings}\n${body}`,
+                        lastArg?.pat.type === 'lens' ? patAs(lastArg.pat.inner) : '[]',
+                        outer,
+                    )}` +
                     suffix,
             );
         }
