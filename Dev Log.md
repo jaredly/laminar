@@ -6,6 +6,8 @@ Thought being:
     SO: `lensToTS` gives me names that know what scopes they're in.
     `let` adds things to ctx.scopes.
 
+OK so we should do new wraps for let value blocks too ... any block gets its own scope, really. but let scopes can access higher scopes, while function blocks ... probably shouldn't.
+
 ---
 
 Next steps on laminar:

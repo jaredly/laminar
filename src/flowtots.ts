@@ -321,8 +321,9 @@ export const _toTS = (ctx: Ctx, expr: Term | Lens, tail: Tail = null): string =>
                 prefix +
                     `(${expr.args.map((_, i) => `arg${i}: any`).join(', ')}) => ${wrap(
                         ctx,
-                        (ctx) =>
-                            `${expr.args
+                        (ctx) => {
+                            captures.forEach((name) => ctx.scopes[0].add(name));
+                            return `${expr.args
                                 .map((arg, i) => {
                                     names(arg.pat).forEach((name) => {
                                         ctx.scopes[0].add(name);
@@ -339,7 +340,8 @@ export const _toTS = (ctx: Ctx, expr: Term | Lens, tail: Tail = null): string =>
                             ${toTS(ctx, expr.body, {
                                 lensCaptured:
                                     lastArg?.pat.type === 'lens' ? patAs(lastArg.pat.inner) : null,
-                            })}`,
+                            })}`;
+                        },
                         lastArg?.pat.type === 'lens' ? names(lastArg.pat.inner) : [],
                         outer,
                     )}` +
