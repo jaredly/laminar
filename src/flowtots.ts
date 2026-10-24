@@ -124,7 +124,7 @@ export const letToTS = (ctx: Ctx, expr: Term & { type: 'let' }, tail: Tail = nul
     return tail ? result : `(() => {${result}})()`;
 };
 
-export const tailToTS = (ctx: Ctx, expr: Term, tail: NonNullable<Tail>): string => {
+export const tailToTS = (ctx: Ctx, expr: Term | Lens, tail: NonNullable<Tail>): string => {
     if (expr.type === 'lens') {
         if (expr.lens.type === 'aslens') {
             return `return [${toTS(ctx, expr.lens.value)}, (res: any) => {
@@ -135,7 +135,6 @@ export const tailToTS = (ctx: Ctx, expr: Term, tail: NonNullable<Tail>): string 
                             ${tail.lensCaptured ? `return $.back(gamma, ${tail.lensCaptured});` : ''}
                         }];`;
         }
-
         /*
         let isWrapped = false;
         const result = lensToTs(ctx, expr.lens, (name, wrapped) => {
@@ -251,13 +250,16 @@ export const _toTS = (ctx: Ctx, expr: Term | Lens, tail: Tail = null): string =>
             return toTS(ctx, expr.fn) + `(${expr.args.map((arg) => toTS(ctx, arg)).join(', ')})`;
         case 'assign': {
             const { lens, value } = expr;
-            if (lens.type === 'apply') {
-                if (lens.args.length !== 1) throw new Error('mutli arg');
-                const inner = lens.args[0];
-                if (inner.type !== 'lens') throw new Error('lens arg must lens');
-                return `$.tee2(gamma, ${toTS(ctx, lens.fn)}(${toTS(ctx, inner.lens)}), tmp => $.recv(gamma, ${toTS(ctx, value)}, tmp), ${lensAs(inner.lens)})`;
-            }
-            return `$.recv(gamma, ${toTS(ctx, value)}, ${lensAs(lens)})`;
+            return lensToTs(ctx, lens, (name, wrapped) => {
+                return (wrapped ? 'return ' : '') + `$.recv(gamma, ${toTS(ctx, value)}, ${name})`;
+            });
+            // if (lens.type === 'apply') {
+            //     if (lens.args.length !== 1) throw new Error('mutli arg');
+            //     const inner = lens.args[0];
+            //     if (inner.type !== 'lens') throw new Error('lens arg must lens');
+            //     return `$.tee2(gamma, ${toTS(ctx, lens.fn)}(${toTS(ctx, inner.lens)}), tmp => $.recv(gamma, ${toTS(ctx, value)}, tmp), ${lensAs(inner.lens)})`;
+            // }
+            // return `$.recv(gamma, ${toTS(ctx, value)}, ${lensAs(lens)})`;
         }
         case 'fn': {
             const named = new Set(expr.args.flatMap((arg) => names(arg.pat)));

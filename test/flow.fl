@@ -104,6 +104,20 @@ fn gimme(initial) ~{
 
 (5, 2)
 
+{
+    let m = ()
+    let n = {
+        let ok = ~{
+            lens b <- 5
+            m := b
+        }
+        ok := 10
+    }
+    (m, n)
+}
+
+(10, 5)
+
 swap :: ((a,b)/(c,d)) => (b,a)/(d,c)
 fn swap(~(x, y)) ~(y, x)
 
@@ -214,6 +228,29 @@ fn unmap(f, x) {
 
 
 /*
+swap((x,y)) -> [(y,x), (y',x') -> {
+    (y,x) = (y',x')
+    return (x,y)
+}]
+
+tee2([value, next], target, as) {
+    tmp <- value
+    let final = target(tmp)
+    as <- next(get(tmp))
+    return final
+}
+
+let m = {
+    let x = ~swap(~a)
+    5
+}
+
+tee2(swap(a), tmp => {
+
+}, 'a')
+
+
+
 m = swap(a)
 
 

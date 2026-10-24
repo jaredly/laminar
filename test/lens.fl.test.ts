@@ -412,8 +412,10 @@ it('Item 16 at /Users/jared/clone/exploration/laminar/ts/test/lens.fl:147:4', ()
             gamma,
             $.tee2(
                 gamma,
-                $.get(gamma, 'fst')($.get(gamma, 'x')),
-                (tmp) => $.recv(gamma, 5, tmp),
+                $.get(gamma, 'fst')($.back(gamma, 'x')),
+                (tmp0) => {
+                    return $.recv(gamma, 5, tmp0);
+                },
                 'x',
             ),
             'z',
