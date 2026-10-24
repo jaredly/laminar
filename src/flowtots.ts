@@ -95,22 +95,30 @@ export const letLens = (
         lensBack: [
             wrap(
                 ctx,
-                (ctx) =>
-                    `${recv(ctx, back(ctx, pat), lens.pat)};\n${toTS(ctx, lens.body, { lensCaptured: '' })};\n$.checkUnused(${gamma(ctx)}, ${tail?.lensCaptured ?? '[]'});`,
-                JSON.stringify(freeNames),
-            ),
+                (ctx1) =>
+                    `${recv(ctx1, back(ctx, pat), lens.pat)};
+                    ${toTS(ctx1, lens.body, { lensCaptured: '' })};
+                    $.checkUnused(${gamma(ctx1)}, ${tail?.lensCaptured ?? '[]'});`,
+                freeNames,
+            ) + ';',
             ...(tail?.lensBack ?? []),
         ],
     })}`;
     return tail ? result : `(() => {${result}})()`;
 };
 
-const wrap = (ctx: Ctx, inner: (ctx: Ctx) => string, freeNames: string, outer?: string): string => {
+const wrap = (
+    ctx: Ctx,
+    inner: (ctx: Ctx) => string,
+    freeNames: string[],
+    outer?: string,
+): string => {
     ctx = { ...ctx, scopes: [new Set(), ...ctx.scopes] };
-    return `$.wrap((${gamma(ctx)}) => {${inner(ctx)}}, ${freeNames}${outer ? ', ' + outer : ''})`;
+    return `$.wrap((${gamma(ctx)}) => {${inner(ctx)}}, ${JSON.stringify(freeNames)}${outer ? ', ' + outer : ''})`;
 };
 
 export const letToTS = (ctx: Ctx, expr: Term & { type: 'let' }, tail: Tail = null): string => {
+    names(expr.pat).forEach((name) => ctx.scopes[0].add(name));
     if (expr.value.type === 'lens') {
         if (expr.value.lens.type === 'aslens') {
             return letLens(ctx, expr.value.lens, expr.pat, expr.body, tail);
@@ -321,11 +329,12 @@ export const _toTS = (ctx: Ctx, expr: Term | Lens, tail: Tail = null): string =>
                                             arg.pat.type === 'lens' ? arg.pat.inner : arg.pat,
                                         ) + `;\n`,
                                 )
-                                .join('')}\n${toTS(ctx, expr.body, {
+                                .join('')}
+                            ${toTS(ctx, expr.body, {
                                 lensCaptured:
                                     lastArg?.pat.type === 'lens' ? patAs(lastArg.pat.inner) : null,
                             })}`,
-                        lastArg?.pat.type === 'lens' ? patAs(lastArg.pat.inner) : '[]',
+                        lastArg?.pat.type === 'lens' ? names(lastArg.pat.inner) : [],
                         outer,
                     )}` +
                     suffix,

@@ -136,7 +136,7 @@ export const free = (expr: Term | Lens): string[] => {
             throw new Error('nop');
         }
         case 'assign': {
-            return free(expr.value);
+            return free(expr.value).concat(free(expr.lens));
         }
     }
 };

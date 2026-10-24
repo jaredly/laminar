@@ -1,3 +1,13 @@
+
+Ok so I'm diving into multi-scoping.
+Thought being:
+-> what if, instead of passing around the gamma number (via ctx.scopes.length),
+    -> we had the /names themselves/ know which scope they belonged to.
+    SO: `lensToTS` gives me names that know what scopes they're in.
+    `let` adds things to ctx.scopes.
+
+---
+
 Next steps on laminar:
 -> update their flow.fl to my syntax
 -> with tests

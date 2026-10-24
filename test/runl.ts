@@ -66,7 +66,7 @@ export const runGood = (name: string, parser: Grammar) => {
     }
     let result = TOP;
 
-    const ctx: Ctx = { globals: topNames, scopes: [] };
+    const ctx: Ctx = { globals: topNames, scopes: [new Set()] };
     fns.forEach((fn) => {
         try {
             result += `$.addFn(${JSON.stringify(fn.name)}, ${toTS(ctx, { ...fn, name: null })});\n\n`;
@@ -80,7 +80,7 @@ export const runGood = (name: string, parser: Grammar) => {
         resetId0();
         result += `
 it("Item ${i} at ${name}:${showPos(good.pos(node.loc))}", () => {
-    const result = $.run((gamma0) => {\n${toTS(ctx, node, {})}\n});
+    const result = $.run((gamma1) => {\n${toTS(ctx, node, {})}\n});
     expect(result).toEqual(${toTS(ctx, expected)});
 })
 `;
@@ -111,7 +111,7 @@ export const runError = (name: string, parser: Grammar) => {
         const at = error.pos(exp.loc);
         result += `
 it("Error ${i} at ${name}:${at.line + 1}:${at.char}", () => {
-    expect(() => $.run((gamma0) => {\n${toTS({ globals: [], scopes: [] }, exp, {})}\n})).toThrow();
+    expect(() => $.run((gamma1) => {\n${toTS({ globals: [], scopes: [new Set()] }, exp, {})}\n})).toThrow();
 })
 `;
     }
