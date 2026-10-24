@@ -229,7 +229,7 @@ export const _toTS = (ctx: Ctx, expr: Term | Lens, tail: Tail = null): string =>
             if (expr.text === '~') {
                 throw new Error('bad tilde ~');
             }
-            return `$.get(gamma, "${expr.text}")`;
+            return back(ctx, JSON.stringify(expr.text));
         case 'const':
             return expr.value + '';
         case 'string': {
