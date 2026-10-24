@@ -96,7 +96,7 @@ export const letLens = (
             wrap(
                 ctx,
                 (ctx) =>
-                    `${recv(ctx, back(ctx, pat), lens.pat)};\n${toTS(ctx, lens.body, { lensCaptured: '' })};\n$.checkUnused(gamma, ${tail?.lensCaptured ?? '[]'});`,
+                    `${recv(ctx, back(ctx, pat), lens.pat)};\n${toTS(ctx, lens.body, { lensCaptured: '' })};\n$.checkUnused(${gamma(ctx)}, ${tail?.lensCaptured ?? '[]'});`,
                 JSON.stringify(freeNames),
             ),
             ...(tail?.lensBack ?? []),
@@ -105,8 +105,10 @@ export const letLens = (
     return tail ? result : `(() => {${result}})()`;
 };
 
-const wrap = (ctx: Ctx, inner: (ctx: Ctx) => string, freeNames: string, outer?: string): string =>
-    `$.wrap((gamma) => {${inner(ctx)}}, ${freeNames}${outer ? ', ' + outer : ''})`;
+const wrap = (ctx: Ctx, inner: (ctx: Ctx) => string, freeNames: string, outer?: string): string => {
+    ctx = { ...ctx, scopes: [new Set(), ...ctx.scopes] };
+    return `$.wrap((${gamma(ctx)}) => {${inner(ctx)}}, ${freeNames}${outer ? ', ' + outer : ''})`;
+};
 
 export const letToTS = (ctx: Ctx, expr: Term & { type: 'let' }, tail: Tail = null): string => {
     if (expr.value.type === 'lens') {
@@ -134,12 +136,14 @@ export const letToTS = (ctx: Ctx, expr: Term & { type: 'let' }, tail: Tail = nul
     return tail ? result : `(() => {${result}})()`;
 };
 
+const gamma = (ctx: Ctx) => `gamma${ctx.scopes.length}`;
+
 export const back = (ctx: Ctx, name: string | Pat) => {
-    return `$.back(gamma, ${typeof name === 'string' ? name : patAs(name)})`;
+    return `$.back(${gamma(ctx)}, ${typeof name === 'string' ? name : patAs(name)})`;
 };
 
 export const recv = (ctx: Ctx, name: string, pat: null | string | Pat) => {
-    return `$.recv(gamma, ${name}, ${pat === null ? '[]' : typeof pat === 'string' ? pat : patAs(pat)})`;
+    return `$.recv(${gamma(ctx)}, ${name}, ${pat === null ? '[]' : typeof pat === 'string' ? pat : patAs(pat)})`;
 };
 
 export const tailToTS = (ctx: Ctx, expr: Term | Lens, tail: NonNullable<Tail>): string => {
@@ -149,7 +153,7 @@ export const tailToTS = (ctx: Ctx, expr: Term | Lens, tail: NonNullable<Tail>): 
                             ${recv(ctx, 'res', expr.lens.pat)}
                             ${toTS(ctx, expr.lens.body, { lensCaptured: '' })};
                             // assert that all values have been used (except lenscaptured)
-                            $.checkUnused(gamma, ${tail.lensCaptured ?? '[]'});
+                            $.checkUnused(${gamma(ctx)}, ${tail.lensCaptured ?? '[]'});
                             ${tail.lensCaptured ? `return ${back(ctx, tail.lensCaptured)};` : ''}
                         }];`;
         }
@@ -262,7 +266,7 @@ export const _toTS = (ctx: Ctx, expr: Term | Lens, tail: Tail = null): string =>
                     lastArg.lens,
                     (name, wrapped) =>
                         (wrapped ? 'return ' : '') +
-                        `$.tee(gamma, ${toTS(ctx, expr.fn)}(${expr.args
+                        `$.tee(${gamma(ctx)}, ${toTS(ctx, expr.fn)}(${expr.args
                             .slice(0, -1)
                             .map((arg) => toTS(ctx, arg) + ', ')
                             .join('')}${back(ctx, name)}), ${name})`,
@@ -301,24 +305,26 @@ export const _toTS = (ctx: Ctx, expr: Term | Lens, tail: Tail = null): string =>
                 }
             });
 
-            const bindings = expr.args
-                .map(
-                    (arg, i) =>
-                        recv(ctx, 'arg' + i, arg.pat.type === 'lens' ? arg.pat.inner : arg.pat) +
-                        `;\n`,
-                )
-                .join('');
-            const body = toTS(ctx, expr.body, {
-                lensCaptured: lastArg?.pat.type === 'lens' ? patAs(lastArg.pat.inner) : null,
-            });
-
             return withRecv(
                 ctx,
                 expr.name,
                 prefix +
                     `(${expr.args.map((_, i) => `arg${i}: any`).join(', ')}) => ${wrap(
                         ctx,
-                        (ctx) => `${bindings}\n${body}`,
+                        (ctx) =>
+                            `${expr.args
+                                .map(
+                                    (arg, i) =>
+                                        recv(
+                                            ctx,
+                                            'arg' + i,
+                                            arg.pat.type === 'lens' ? arg.pat.inner : arg.pat,
+                                        ) + `;\n`,
+                                )
+                                .join('')}\n${toTS(ctx, expr.body, {
+                                lensCaptured:
+                                    lastArg?.pat.type === 'lens' ? patAs(lastArg.pat.inner) : null,
+                            })}`,
                         lastArg?.pat.type === 'lens' ? patAs(lastArg.pat.inner) : '[]',
                         outer,
                     )}` +
@@ -367,14 +373,14 @@ const lensToTs = (
         const arg = lens.args[0];
         if (arg.type !== 'lens') {
             // throw new TSError(arg, "expect lens arg");
-            return `$.tee2(gamma, ${toTS(ctx, lens.fn)}(${toTS(ctx, arg)}), ${id} => {${outer(id, true)}}, [])`;
+            return `$.tee2(${gamma(ctx)}, ${toTS(ctx, lens.fn)}(${toTS(ctx, arg)}), ${id} => {${outer(id, true)}}, [])`;
         }
         return lensToTs(
             ctx,
             arg.lens,
             (inner, wrapped) =>
                 (wrapped ? 'return ' : '') +
-                `$.tee2(gamma, ${toTS(ctx, lens.fn)}(${back(ctx, inner)}), ${id} => {${outer(id, true)}}, ${inner})`,
+                `$.tee2(${gamma(ctx)}, ${toTS(ctx, lens.fn)}(${back(ctx, inner)}), ${id} => {${outer(id, true)}}, ${inner})`,
         );
     }
 
