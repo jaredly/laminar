@@ -77,6 +77,7 @@ export const runGood = (name: string, parser: Grammar) => {
     });
 
     pairs.forEach(({ node, expected }, i) => {
+        // console.log('Processing', i, showPos(good.pos(node.loc)));
         resetId0();
         result += `
 it("Item ${i} at ${name}:${showPos(good.pos(node.loc))}", () => {

@@ -14,12 +14,14 @@ export class TSError extends Error {
     }
 }
 
-export const lensAs = (lens: Lens): string => {
+type Names = string | Names[];
+
+export const lensAs = (lens: Lens): Names => {
     switch (lens.type) {
         case 'id':
-            return JSON.stringify(lens.text);
+            return lens.text;
         case 'tuple':
-            return `[${lens.items.map(lensAs).join(', ')}]`;
+            return lens.items.map(lensAs);
         default:
             throw new TSError(lens, `complex lens sorry for as: ${lens.type}`);
     }
@@ -206,7 +208,7 @@ export const tailToTS = (ctx: Ctx, expr: Term | Lens, tail: NonNullable<Tail>): 
             return (
                 pre +
                 `return [${vbl ?? _toTS(ctx, expr.lens)}, (recv: any) => {
-                ${recv(ctx, 'recv', lensAs(expr.lens))};
+                ${recv(ctx, 'recv', JSON.stringify(lensAs(expr.lens)))};
             return ${back(ctx, tail.lensCaptured)}
         }];`
             );
@@ -219,7 +221,7 @@ export const tailToTS = (ctx: Ctx, expr: Term | Lens, tail: NonNullable<Tail>): 
         return (
             pre +
             `return [${vbl ?? _toTS(ctx, expr.lens)}, (recv: any) => {
-        ${recv(ctx, 'recv', lensAs(expr.lens))};
+        ${recv(ctx, 'recv', JSON.stringify(lensAs(expr.lens)))};
         return null // this should be right I think
     }];`
         );
@@ -321,14 +323,18 @@ export const _toTS = (ctx: Ctx, expr: Term | Lens, tail: Tail = null): string =>
                         ctx,
                         (ctx) =>
                             `${expr.args
-                                .map(
-                                    (arg, i) =>
+                                .map((arg, i) => {
+                                    names(arg.pat).forEach((name) => {
+                                        ctx.scopes[0].add(name);
+                                    });
+                                    return (
                                         recv(
                                             ctx,
                                             'arg' + i,
                                             arg.pat.type === 'lens' ? arg.pat.inner : arg.pat,
-                                        ) + `;\n`,
-                                )
+                                        ) + `;\n`
+                                    );
+                                })
                                 .join('')}
                             ${toTS(ctx, expr.body, {
                                 lensCaptured:
@@ -372,8 +378,11 @@ const lensToTs = (
     }
 
     if (lens.type === 'id') {
+        if (!ctx.scopes[0].has(lens.text)) {
+            throw new Error('not in scope ' + lens.text);
+        }
         const names = lensAs(lens);
-        return outer(names, false);
+        return outer(JSON.stringify(names), false);
     }
 
     if (lens.type === 'apply') {

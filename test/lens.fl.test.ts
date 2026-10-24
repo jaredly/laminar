@@ -804,44 +804,7 @@ it('Item 21 at /Users/jared/clone/exploration/laminar/ts/test/lens.fl:198:0', ()
     expect(result).toEqual([2, 9]);
 });
 
-it('Item 22 at /Users/jared/clone/exploration/laminar/ts/test/lens.fl:209:0', () => {
-    const result = $.run((gamma1) => {
-        $.recv(gamma1, 5, 'a');
-        $.recv(
-            gamma1,
-            $.recv(
-                gamma1,
-                (
-                    (outer0) => (arg0: any) =>
-                        $.wrap(
-                            (gamma2) => {
-                                $.recv(gamma2, arg0, 'x');
-
-                                $.recv(
-                                    gamma2,
-                                    $.tee(gamma2, $.back(gamma2, 'inc')($.back(gamma2, 'a')), 'a'),
-                                    $.drop,
-                                );
-                                return $.back(gamma2, '+')(
-                                    $.back(gamma2, 'x'),
-                                    $.back(gamma2, 'a'),
-                                );
-                            },
-                            [],
-                            outer0,
-                        )
-                )({ a: $.back(gamma1, 'a') }),
-                'captures',
-            ),
-            $.drop,
-        );
-        $.recv(gamma1, $.recv(gamma1, 2, 'a'), $.drop);
-        return [$.back(gamma1, 'a'), $.back(gamma1, 'captures')(4)];
-    });
-    expect(result).toEqual([2, 10]);
-});
-
-it('Item 23 at /Users/jared/clone/exploration/laminar/ts/test/lens.fl:221:0', () => {
+it('Item 22 at /Users/jared/clone/exploration/laminar/ts/test/lens.fl:223:0', () => {
     const result = $.run((gamma1) => {
         $.recv(
             gamma1,
@@ -856,7 +819,7 @@ it('Item 23 at /Users/jared/clone/exploration/laminar/ts/test/lens.fl:221:0', ()
     expect(result).toEqual(5);
 });
 
-it('Item 24 at /Users/jared/clone/exploration/laminar/ts/test/lens.fl:233:4', () => {
+it('Item 23 at /Users/jared/clone/exploration/laminar/ts/test/lens.fl:235:4', () => {
     const result = $.run((gamma1) => {
         $.recv(
             gamma1,
@@ -887,7 +850,7 @@ it('Item 24 at /Users/jared/clone/exploration/laminar/ts/test/lens.fl:233:4', ()
     expect(result).toEqual([2, 5]);
 });
 
-it('Item 25 at /Users/jared/clone/exploration/laminar/ts/test/lens.fl:243:0', () => {
+it('Item 24 at /Users/jared/clone/exploration/laminar/ts/test/lens.fl:245:0', () => {
     const result = $.run((gamma1) => {
         $.recv(gamma1, 2, 'x');
         $.recv(
@@ -905,7 +868,7 @@ it('Item 25 at /Users/jared/clone/exploration/laminar/ts/test/lens.fl:243:0', ()
     expect(result).toEqual([2, 5]);
 });
 
-it('Item 26 at /Users/jared/clone/exploration/laminar/ts/test/lens.fl:255:4', () => {
+it('Item 25 at /Users/jared/clone/exploration/laminar/ts/test/lens.fl:257:4', () => {
     const result = $.run((gamma1) => {
         $.recv(gamma1, $.back(gamma1, 'consume')(2), $.drop);
         return 4;
@@ -913,7 +876,7 @@ it('Item 26 at /Users/jared/clone/exploration/laminar/ts/test/lens.fl:255:4', ()
     expect(result).toEqual([2, 4]);
 });
 
-it('Item 27 at /Users/jared/clone/exploration/laminar/ts/test/lens.fl:261:0', () => {
+it('Item 26 at /Users/jared/clone/exploration/laminar/ts/test/lens.fl:263:0', () => {
     const result = $.run((gamma1) => {
         $.recv(gamma1, 2, 'x');
         $.recv(
@@ -931,7 +894,7 @@ it('Item 27 at /Users/jared/clone/exploration/laminar/ts/test/lens.fl:261:0', ()
     expect(result).toEqual([2, 4]);
 });
 
-it('Item 28 at /Users/jared/clone/exploration/laminar/ts/test/lens.fl:273:4', () => {
+it('Item 27 at /Users/jared/clone/exploration/laminar/ts/test/lens.fl:275:4', () => {
     const result = $.run((gamma1) => {
         $.recv(
             gamma1,
@@ -974,7 +937,7 @@ it('Item 28 at /Users/jared/clone/exploration/laminar/ts/test/lens.fl:273:4', ()
     expect(result).toEqual([[1, 2, 5, 3, 10], 4]);
 });
 
-it('Item 29 at /Users/jared/clone/exploration/laminar/ts/test/lens.fl:289:4', () => {
+it('Item 28 at /Users/jared/clone/exploration/laminar/ts/test/lens.fl:291:4', () => {
     const result = $.run((gamma1) => {
         $.recv(
             gamma1,
@@ -1021,7 +984,7 @@ it('Item 29 at /Users/jared/clone/exploration/laminar/ts/test/lens.fl:289:4', ()
     expect(result).toEqual([[1, 5, 10, 3], 4]);
 });
 
-it('Item 30 at /Users/jared/clone/exploration/laminar/ts/test/lens.fl:321:4', () => {
+it('Item 29 at /Users/jared/clone/exploration/laminar/ts/test/lens.fl:323:4', () => {
     const result = $.run((gamma1) => {
         $.recv(
             gamma1,
@@ -1085,7 +1048,7 @@ it('Item 30 at /Users/jared/clone/exploration/laminar/ts/test/lens.fl:321:4', ()
     ]);
 });
 
-it('Item 31 at /Users/jared/clone/exploration/laminar/ts/test/lens.fl:341:4', () => {
+it('Item 30 at /Users/jared/clone/exploration/laminar/ts/test/lens.fl:343:4', () => {
     const result = $.run((gamma1) => {
         $.recv(
             gamma1,
@@ -1152,7 +1115,7 @@ it('Item 31 at /Users/jared/clone/exploration/laminar/ts/test/lens.fl:341:4', ()
     ]);
 });
 
-it('Item 32 at /Users/jared/clone/exploration/laminar/ts/test/lens.fl:389:4', () => {
+it('Item 31 at /Users/jared/clone/exploration/laminar/ts/test/lens.fl:391:4', () => {
     const result = $.run((gamma1) => {
         $.recv(
             gamma1,
@@ -1188,7 +1151,7 @@ it('Item 32 at /Users/jared/clone/exploration/laminar/ts/test/lens.fl:389:4', ()
     expect(result).toEqual([2, [5, 10]]);
 });
 
-it('Item 33 at /Users/jared/clone/exploration/laminar/ts/test/lens.fl:404:0', () => {
+it('Item 32 at /Users/jared/clone/exploration/laminar/ts/test/lens.fl:406:0', () => {
     const result = $.run((gamma1) => {
         $.recv(gamma1, 3, 'x');
         $.recv(gamma1, $.tee(gamma1, $.back(gamma1, 'inc')($.back(gamma1, 'x')), 'x'), $.drop);
@@ -1197,7 +1160,7 @@ it('Item 33 at /Users/jared/clone/exploration/laminar/ts/test/lens.fl:404:0', ()
     expect(result).toEqual(4);
 });
 
-it('Item 34 at /Users/jared/clone/exploration/laminar/ts/test/lens.fl:414:0', () => {
+it('Item 33 at /Users/jared/clone/exploration/laminar/ts/test/lens.fl:416:0', () => {
     const result = $.run((gamma1) => {
         $.recv(gamma1, [1, 4], 'x');
         $.recv(
@@ -1217,7 +1180,7 @@ it('Item 34 at /Users/jared/clone/exploration/laminar/ts/test/lens.fl:414:0', ()
     expect(result).toEqual([2, 4]);
 });
 
-it('Item 35 at /Users/jared/clone/exploration/laminar/ts/test/lens.fl:424:0', () => {
+it('Item 34 at /Users/jared/clone/exploration/laminar/ts/test/lens.fl:426:0', () => {
     const result = $.run((gamma1) => {
         $.recv(gamma1, [1, 4], 'x');
         $.recv(gamma1, $.tee(gamma1, $.back(gamma1, 'incFst')($.back(gamma1, 'x')), 'x'), $.drop);
@@ -1226,7 +1189,7 @@ it('Item 35 at /Users/jared/clone/exploration/laminar/ts/test/lens.fl:424:0', ()
     expect(result).toEqual([2, 4]);
 });
 
-it('Item 36 at /Users/jared/clone/exploration/laminar/ts/test/lens.fl:434:0', () => {
+it('Item 35 at /Users/jared/clone/exploration/laminar/ts/test/lens.fl:436:0', () => {
     const result = $.run((gamma1) => {
         $.recv(gamma1, 2, 'x');
         $.recv(gamma1, $.tee(gamma1, $.back(gamma1, 'idf')($.back(gamma1, 'x')), 'x'), $.drop);
@@ -1235,7 +1198,7 @@ it('Item 36 at /Users/jared/clone/exploration/laminar/ts/test/lens.fl:434:0', ()
     expect(result).toEqual(2);
 });
 
-it('Item 37 at /Users/jared/clone/exploration/laminar/ts/test/lens.fl:444:0', () => {
+it('Item 36 at /Users/jared/clone/exploration/laminar/ts/test/lens.fl:446:0', () => {
     const result = $.run((gamma1) => {
         $.recv(gamma1, 2, 'x');
         $.recv(
@@ -1255,7 +1218,7 @@ it('Item 37 at /Users/jared/clone/exploration/laminar/ts/test/lens.fl:444:0', ()
     expect(result).toEqual(3);
 });
 
-it('Item 38 at /Users/jared/clone/exploration/laminar/ts/test/lens.fl:454:0', () => {
+it('Item 37 at /Users/jared/clone/exploration/laminar/ts/test/lens.fl:456:0', () => {
     const result = $.run((gamma1) => {
         $.recv(gamma1, 2, 'x');
         $.recv(
@@ -1278,7 +1241,7 @@ it('Item 38 at /Users/jared/clone/exploration/laminar/ts/test/lens.fl:454:0', ()
     expect(result).toEqual(2);
 });
 
-it('Item 39 at /Users/jared/clone/exploration/laminar/ts/test/lens.fl:467:0', () => {
+it('Item 38 at /Users/jared/clone/exploration/laminar/ts/test/lens.fl:469:0', () => {
     const result = $.run((gamma1) => {
         $.recv(gamma1, 2, 'x');
         return $.tee2(
