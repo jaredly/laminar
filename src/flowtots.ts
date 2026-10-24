@@ -186,7 +186,7 @@ export const tailToTS = (ctx: Ctx, expr: Term | Lens, tail: NonNullable<Tail>): 
             return (
                 pre +
                 `return [${vbl ?? _toTS(ctx, expr.lens)}, (recv: any) => {
-            $.recv(gamma, recv, ${lensAs(expr.lens)});
+                ${recv(ctx, 'recv', lensAs(expr.lens))};
             return $.back(gamma, ${tail.lensCaptured})
         }];`
             );
