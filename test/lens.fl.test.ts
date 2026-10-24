@@ -747,7 +747,7 @@ it('Item 21 at /Users/jared/clone/exploration/laminar/ts/test/lens.fl:198:0', ()
                             [],
                             outer0,
                         )
-                )({ a: $.get(gamma, 'a') }),
+                )({ a: $.back(gamma, 'a') }),
                 'captures',
             ),
             $.drop,
@@ -781,7 +781,7 @@ it('Item 22 at /Users/jared/clone/exploration/laminar/ts/test/lens.fl:209:0', ()
                             [],
                             outer0,
                         )
-                )({ a: $.get(gamma, 'a') }),
+                )({ a: $.back(gamma, 'a') }),
                 'captures',
             ),
             $.drop,

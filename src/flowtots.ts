@@ -131,7 +131,7 @@ export const back = (ctx: Ctx, name: string | Pat) => {
 };
 
 export const recv = (ctx: Ctx, name: string, pat: null | string | Pat) => {
-    return `$.recv(gamma, ${name}, ${pat === null ? '[]' : typeof pat === 'string' ? pat : patAs(pat)});`;
+    return `$.recv(gamma, ${name}, ${pat === null ? '[]' : typeof pat === 'string' ? pat : patAs(pat)})`;
 };
 
 export const tailToTS = (ctx: Ctx, expr: Term | Lens, tail: NonNullable<Tail>): string => {
@@ -187,11 +187,11 @@ export const tailToTS = (ctx: Ctx, expr: Term | Lens, tail: NonNullable<Tail>): 
                 pre +
                 `return [${vbl ?? _toTS(ctx, expr.lens)}, (recv: any) => {
                 ${recv(ctx, 'recv', lensAs(expr.lens))};
-            return $.back(gamma, ${tail.lensCaptured})
+            return ${back(ctx, tail.lensCaptured)}
         }];`
             );
         }
-        return pre + `return [${vbl ?? _toTS(ctx, expr)}, $.back(gamma, ${tail.lensCaptured})]`;
+        return pre + `return [${vbl ?? _toTS(ctx, expr)}, ${back(ctx, tail.lensCaptured)}]`;
     }
     // the only possiblity here is that
     // you're returning a null lens
@@ -199,7 +199,7 @@ export const tailToTS = (ctx: Ctx, expr: Term | Lens, tail: NonNullable<Tail>): 
         return (
             pre +
             `return [${vbl ?? _toTS(ctx, expr.lens)}, (recv: any) => {
-        $.recv(gamma, recv, ${lensAs(expr.lens)});
+        ${recv(ctx, 'recv', lensAs(expr.lens))};
         return null // this should be right I think
     }];`
         );
@@ -243,7 +243,7 @@ export const _toTS = (ctx: Ctx, expr: Term | Lens, tail: Tail = null): string =>
             );
         }
         case 'let':
-            return `$.recv(gamma, ${toTS(ctx, expr.value)}, ${patAs(expr.pat)});\n${toTS(ctx, expr.body, tail)}`;
+            return recv(ctx, toTS(ctx, expr.value), expr.pat) + `;\n${toTS(ctx, expr.body, tail)}`;
         case 'tuple':
             return `[${expr.items.map((item) => toTS(ctx, item)).join(', ')}]`;
         case 'apply':
@@ -257,14 +257,14 @@ export const _toTS = (ctx: Ctx, expr: Term | Lens, tail: Tail = null): string =>
                         `$.tee(gamma, ${toTS(ctx, expr.fn)}(${expr.args
                             .slice(0, -1)
                             .map((arg) => toTS(ctx, arg) + ', ')
-                            .join('')}$.back(gamma, ${name})), ${name})`,
+                            .join('')}${back(ctx, name)}), ${name})`,
                 );
             }
             return toTS(ctx, expr.fn) + `(${expr.args.map((arg) => toTS(ctx, arg)).join(', ')})`;
         case 'assign': {
             const { lens, value } = expr;
             return lensToTs(ctx, lens, (name, wrapped) => {
-                return (wrapped ? 'return ' : '') + `$.recv(gamma, ${toTS(ctx, value)}, ${name})`;
+                return (wrapped ? 'return ' : '') + recv(ctx, toTS(ctx, value), name);
             });
             // if (lens.type === 'apply') {
             //     if (lens.args.length !== 1) throw new Error('mutli arg');
@@ -282,7 +282,7 @@ export const _toTS = (ctx: Ctx, expr: Term | Lens, tail: Tail = null): string =>
             const outer = captures.length ? `outer${nextId()}` : '';
             const prefix = captures.length ? `((${outer}) => ` : '';
             const suffix = captures.length
-                ? `, ${outer}))({${captures.map((name) => `${name}: $.get(gamma, "${name}")`).join(',')}})`
+                ? `, ${outer}))({${captures.map((name) => `${name}: ${back(ctx, JSON.stringify(name))}`).join(',')}})`
                 : ')';
 
             const lastArg = expr.args[expr.args.length - 1];
@@ -296,7 +296,8 @@ export const _toTS = (ctx: Ctx, expr: Term | Lens, tail: Tail = null): string =>
             const bindings = expr.args
                 .map(
                     (arg, i) =>
-                        `$.recv(gamma, arg${i}, ${patAs(arg.pat.type === 'lens' ? arg.pat.inner : arg.pat)});\n`,
+                        recv(ctx, 'arg' + i, arg.pat.type === 'lens' ? arg.pat.inner : arg.pat) +
+                        `;\n`,
                 )
                 .join('');
             const body = toTS(ctx, expr.body, {
@@ -304,6 +305,7 @@ export const _toTS = (ctx: Ctx, expr: Term | Lens, tail: Tail = null): string =>
             });
 
             return withRecv(
+                ctx,
                 expr.name,
                 prefix +
                     `(${expr.args.map((_, i) => `arg${i}: any`).join(', ')}) => $.wrap((gamma) => {
@@ -323,8 +325,8 @@ export const _toTS = (ctx: Ctx, expr: Term | Lens, tail: Tail = null): string =>
     }
 };
 
-const withRecv = (name: string | null | undefined, defn: string) =>
-    name ? `$.recv(gamma, ${defn}, ${JSON.stringify(name)})` : defn;
+const withRecv = (ctx: Ctx, name: string | null | undefined, defn: string) =>
+    name ? recv(ctx, defn, JSON.stringify(name)) : defn;
 
 const lensToTs = (
     ctx: Ctx,
@@ -362,7 +364,7 @@ const lensToTs = (
             arg.lens,
             (inner, wrapped) =>
                 (wrapped ? 'return ' : '') +
-                `$.tee2(gamma, ${toTS(ctx, lens.fn)}($.back(gamma, ${inner})), ${id} => {${outer(id, true)}}, ${inner})`,
+                `$.tee2(gamma, ${toTS(ctx, lens.fn)}(${back(ctx, inner)}), ${id} => {${outer(id, true)}}, ${inner})`,
         );
     }
 
