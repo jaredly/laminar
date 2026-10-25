@@ -104,6 +104,11 @@ fn gimme(initial) ~{
 
 (5, 2)
 
+/*
+This should fail, but doesn't.
+In my next rewrite, I'll have a more
+principled stance on variables.
+but right now I don't.
 // pollution
 {
     let a = 1
@@ -115,6 +120,7 @@ fn gimme(initial) ~{
 }
 
 (1, 3, 2)
+*/
 
 /*
 {
@@ -240,8 +246,10 @@ fn unmap(f, x) {
 
 (5, (1,2))
 
+// fn swap2(~v) ~swap(~v)
 
 /*
+
 swap((x,y)) -> [(y,x), (y',x') -> {
     (y,x) = (y',x')
     return (x,y)
@@ -268,7 +276,6 @@ tee2(swap(a), tmp => {
 m = swap(a)
 
 
-fn swap2(~v) ~swap(~v)
 fn swap2(arg) {
     recv("v", arg)
     return [value, newValue => {

@@ -328,23 +328,7 @@ it('Item 6 at /Users/jared/clone/exploration/laminar/ts/test/flow.fl:96:0', () =
     expect(result).toEqual([5, 2]);
 });
 
-it('Item 7 at /Users/jared/clone/exploration/laminar/ts/test/flow.fl:108:0', () => {
-    const result = $.run((gamma1) => {
-        $.recv(gamma1, 1, 'a');
-        $.recv(
-            gamma1,
-            (() => {
-                $.recv(gamma1, 2, 'c');
-                return 3;
-            })(),
-            'b',
-        );
-        return [$.back(gamma1, 'a'), $.back(gamma1, 'b'), $.back(gamma1, 'c')];
-    });
-    expect(result).toEqual([1, 3, 2]);
-});
-
-it('Item 8 at /Users/jared/clone/exploration/laminar/ts/test/flow.fl:138:0', () => {
+it('Item 7 at /Users/jared/clone/exploration/laminar/ts/test/flow.fl:144:0', () => {
     const result = $.run((gamma1) => {
         $.recv(gamma1, [1, 2], 'x');
         $.recv(
@@ -367,7 +351,7 @@ it('Item 8 at /Users/jared/clone/exploration/laminar/ts/test/flow.fl:138:0', () 
     expect(result).toEqual([1, 3]);
 });
 
-it('Item 9 at /Users/jared/clone/exploration/laminar/ts/test/flow.fl:151:0', () => {
+it('Item 8 at /Users/jared/clone/exploration/laminar/ts/test/flow.fl:157:0', () => {
     const result = $.run((gamma1) => {
         $.recv(gamma1, [1, 2], 'x');
         $.recv(
@@ -387,7 +371,7 @@ it('Item 9 at /Users/jared/clone/exploration/laminar/ts/test/flow.fl:151:0', () 
     expect(result).toEqual([1, 3]);
 });
 
-it('Item 10 at /Users/jared/clone/exploration/laminar/ts/test/flow.fl:163:0', () => {
+it('Item 9 at /Users/jared/clone/exploration/laminar/ts/test/flow.fl:169:0', () => {
     const result = $.run((gamma1) => {
         $.recv(gamma1, 1, 'x');
         $.recv(gamma1, $.tee(gamma1, $.back(gamma1, "united'")($.back(gamma1, 'x')), 'x'), $.drop);
@@ -396,7 +380,7 @@ it('Item 10 at /Users/jared/clone/exploration/laminar/ts/test/flow.fl:163:0', ()
     expect(result).toEqual(1);
 });
 
-it('Item 11 at /Users/jared/clone/exploration/laminar/ts/test/flow.fl:174:0', () => {
+it('Item 10 at /Users/jared/clone/exploration/laminar/ts/test/flow.fl:180:0', () => {
     const result = $.run((gamma1) => {
         $.recv(gamma1, 1, 'x');
         return $.tee2(
@@ -414,7 +398,7 @@ it('Item 11 at /Users/jared/clone/exploration/laminar/ts/test/flow.fl:174:0', ()
     expect(result).toEqual(1);
 });
 
-it('Item 12 at /Users/jared/clone/exploration/laminar/ts/test/flow.fl:185:0', () => {
+it('Item 11 at /Users/jared/clone/exploration/laminar/ts/test/flow.fl:191:0', () => {
     const result = $.run((gamma1) => {
         $.recv(gamma1, 1, 'x');
         $.recv(gamma1, $.tee(gamma1, $.back(gamma1, 'take')($.back(gamma1, 'x')), 'x'), $.drop);
@@ -423,7 +407,7 @@ it('Item 12 at /Users/jared/clone/exploration/laminar/ts/test/flow.fl:185:0', ()
     expect(result).toEqual([]);
 });
 
-it('Item 13 at /Users/jared/clone/exploration/laminar/ts/test/flow.fl:198:0', () => {
+it('Item 12 at /Users/jared/clone/exploration/laminar/ts/test/flow.fl:204:0', () => {
     const result = $.run((gamma1) => {
         $.recv(gamma1, 10, 'x');
         $.recv(
@@ -440,7 +424,7 @@ it('Item 13 at /Users/jared/clone/exploration/laminar/ts/test/flow.fl:198:0', ()
     expect(result).toEqual(20);
 });
 
-it('Item 14 at /Users/jared/clone/exploration/laminar/ts/test/flow.fl:207:4', () => {
+it('Item 13 at /Users/jared/clone/exploration/laminar/ts/test/flow.fl:213:4', () => {
     const result = $.run((gamma1) => {
         $.recv(
             gamma1,
@@ -459,7 +443,7 @@ it('Item 14 at /Users/jared/clone/exploration/laminar/ts/test/flow.fl:207:4', ()
     expect(result).toEqual(4);
 });
 
-it('Item 15 at /Users/jared/clone/exploration/laminar/ts/test/flow.fl:214:4', () => {
+it('Item 14 at /Users/jared/clone/exploration/laminar/ts/test/flow.fl:220:4', () => {
     const result = $.run((gamma1) => {
         $.recv(
             gamma1,
@@ -485,14 +469,14 @@ it('Item 15 at /Users/jared/clone/exploration/laminar/ts/test/flow.fl:214:4', ()
     expect(result).toEqual([2, 7]);
 });
 
-it('Item 16 at /Users/jared/clone/exploration/laminar/ts/test/flow.fl:227:4', () => {
+it('Item 15 at /Users/jared/clone/exploration/laminar/ts/test/flow.fl:233:4', () => {
     const result = $.run((gamma1) => {
         return $.back(gamma1, 'unmap')($.back(gamma1, 'inc'), 5);
     });
     expect(result).toEqual(6);
 });
 
-it('Item 17 at /Users/jared/clone/exploration/laminar/ts/test/flow.fl:232:0', () => {
+it('Item 16 at /Users/jared/clone/exploration/laminar/ts/test/flow.fl:238:0', () => {
     const result = $.run((gamma1) => {
         $.recv(gamma1, [1, 2], 'a');
         $.recv(

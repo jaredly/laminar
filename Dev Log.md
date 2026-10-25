@@ -8,6 +8,25 @@ Thought being:
 
 OK so we should do new wraps for let value blocks too ... any block gets its own scope, really. but let scopes can access higher scopes, while function blocks ... probably shouldn't.
 
+Ok here's a comprehensive strategy:
+-> if `a` is a lens, then we can deal with an outer scope
+-> if `a` is not a lens, then it must have been moved into this scope.
+
+Function bodies can only receive moves.
+
+(btw in their impl, toplevel fns can be called any number of times, but local fns are linear variables)
+
+So my question ... I'm like "how do you make a local function that can be called multiple times",
+or maybe "what is the type-level distinction between a toplevel defn and a local defn", and can you
+promote a local defn?
+
+
+I ... think I might need to rewrite the whole tots generation stuff.
+I want it to be a lot more ... concerted, now that I mostly know what's going on.
+
+BUT actually before I solve the scope stuff, I can do more of these demos.
+
+
 ---
 
 Next steps on laminar:
