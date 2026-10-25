@@ -68,6 +68,7 @@ export const runGood = (name: string, parser: Grammar) => {
 
     const ctx: Ctx = { globals: topNames, scopes: [new Set()] };
     fns.forEach((fn) => {
+        // console.log(good.pos(fn.loc));
         try {
             result += `$.addFn(${JSON.stringify(fn.name)}, ${toTS(ctx, { ...fn, name: null })});\n\n`;
         } catch (err) {

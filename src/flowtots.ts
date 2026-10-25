@@ -119,6 +119,34 @@ const wrap = (
     return `$.wrap((${gamma(ctx)}) => {${inner(ctx)}}, ${JSON.stringify(freeNames)}${outer ? ', ' + outer : ''})`;
 };
 
+export const bodyToTS = (ctx: Ctx, body: Term, lensPat?: Pat | null) => {
+    if (body.type === 'lens') {
+        if (body.lens.type === 'id') {
+            return `return [${back(ctx, JSON.stringify(body.lens.text))}, (recv: any) => {
+                ${recv(ctx, 'recv', JSON.stringify(body.lens.text))}
+                return ${lensPat ? back(ctx, patAs(lensPat)) : 'null'}
+            }]`;
+        }
+        // let isWrapped = false;
+        // const result = lensToTs(ctx, body.lens, (name, wrapped) => {
+        //     isWrapped = wrapped;
+        //     const tail: Tail = { lensCaptured: lensPat ? patAs(lensPat) : null, };
+        //     return toTS(ctx, body, tail)
+        // });
+        // return tail
+        //     ? isWrapped
+        //         ? 'return ' + result
+        //         : result
+        //     : isWrapped
+        //       ? result
+        //       : `(() => {${result}})()`;
+    }
+
+    return toTS(ctx, body, {
+        lensCaptured: lensPat ? patAs(lensPat) : null,
+    });
+};
+
 export const letToTS = (ctx: Ctx, expr: Term & { type: 'let' }, tail: Tail = null): string => {
     names(expr.pat).forEach((name) => ctx.scopes[0].add(name));
     if (expr.value.type === 'lens') {
@@ -323,6 +351,13 @@ export const _toTS = (ctx: Ctx, expr: Term | Lens, tail: Tail = null): string =>
                         ctx,
                         (ctx) => {
                             captures.forEach((name) => ctx.scopes[0].add(name));
+
+                            const body = bodyToTS(
+                                ctx,
+                                expr.body,
+                                lastArg?.pat.type === 'lens' ? lastArg.pat.inner : null,
+                            );
+
                             return `${expr.args
                                 .map((arg, i) => {
                                     names(arg.pat).forEach((name) => {
@@ -337,10 +372,7 @@ export const _toTS = (ctx: Ctx, expr: Term | Lens, tail: Tail = null): string =>
                                     );
                                 })
                                 .join('')}
-                            ${toTS(ctx, expr.body, {
-                                lensCaptured:
-                                    lastArg?.pat.type === 'lens' ? patAs(lastArg.pat.inner) : null,
-                            })}`;
+                            ${body}`;
                         },
                         lastArg?.pat.type === 'lens' ? names(lastArg.pat.inner) : [],
                         outer,
@@ -380,9 +412,9 @@ const lensToTs = (
     }
 
     if (lens.type === 'id') {
-        if (!ctx.scopes[0].has(lens.text)) {
-            throw new Error('not in scope ' + lens.text);
-        }
+        // if (!ctx.scopes[0].has(lens.text)) {
+        //     throw new Error('not in scope ' + lens.text);
+        // }
         const names = lensAs(lens);
         return outer(JSON.stringify(names), false);
     }
