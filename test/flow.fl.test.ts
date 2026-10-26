@@ -209,6 +209,18 @@ $.addFn('unmap', (arg0: any, arg1: any) =>
     }, []),
 );
 
+$.addFn('swap2', (arg0: any) =>
+    $.wrap(
+        (gamma2) => {
+            $.recv(gamma2, arg0, 'v');
+
+            const [one, two] = $.back(gamma2, 'swap')($.back(gamma2, 'v'));
+            return [one, two];
+        },
+        ['v'],
+    ),
+);
+
 it('Item 0 at /Users/jared/clone/exploration/laminar/ts/test/flow.fl:17:0', () => {
     const result = $.run((gamma1) => {
         $.recv(gamma1, 5, 'x');
@@ -497,4 +509,31 @@ it('Item 16 at /Users/jared/clone/exploration/laminar/ts/test/flow.fl:238:0', ()
         return [$.back(gamma1, 'm'), $.back(gamma1, 'a')];
     });
     expect(result).toEqual([5, [1, 2]]);
+});
+
+it('Item 17 at /Users/jared/clone/exploration/laminar/ts/test/flow.fl:251:0', () => {
+    const result = $.run((gamma1) => {
+        $.recv(gamma1, [1, 2], 'x');
+        $.recv(
+            gamma1,
+            $.tee2(
+                gamma1,
+                $.back(gamma1, 'swap2')($.back(gamma1, 'x')),
+                (tmp1) => {
+                    return $.tee2(
+                        gamma1,
+                        $.back(gamma1, 'fst')($.back(gamma1, tmp1)),
+                        (tmp0) => {
+                            return $.tee(gamma1, $.back(gamma1, 'inc')($.back(gamma1, tmp0)), tmp0);
+                        },
+                        tmp1,
+                    );
+                },
+                'x',
+            ),
+            $.drop,
+        );
+        return $.back(gamma1, 'x');
+    });
+    expect(result).toEqual([1, 3]);
 });

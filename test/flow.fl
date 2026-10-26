@@ -246,44 +246,17 @@ fn unmap(f, x) {
 
 (5, (1,2))
 
-// fn swap2(~v) ~swap(~v)
+fn swap2(~v) ~swap(~v)
+
+{
+    let x = (1,2)
+    inc(~fst(~swap2(~x)))
+    x
+}
+
+(1,3)
 
 /*
-
-swap((x,y)) -> [(y,x), (y',x') -> {
-    (y,x) = (y',x')
-    return (x,y)
-}]
-
-tee2([value, next], target, as) {
-    tmp <- value
-    let final = target(tmp)
-    as <- next(get(tmp))
-    return final
-}
-
-let m = {
-    let x = ~swap(~a)
-    5
-}
-
-tee2(swap(a), tmp => {
-
-}, 'a')
-
-
-
-m = swap(a)
-
-
-fn swap2(arg) {
-    recv("v", arg)
-    return [value, newValue => {
-    }];
-}
-
-
-fn swap2(~v) ~swap(~v)
 
 fcomp :: ((b/b') => c/c', (a/a') => b/b', a/a') => c/c'
 fn fcomp(g, f, ~x) { ~g(~f(~x)) }

@@ -121,25 +121,25 @@ const wrap = (
 
 export const bodyToTS = (ctx: Ctx, body: Term, lensPat?: Pat | null) => {
     if (body.type === 'lens') {
-        if (body.lens.type === 'id') {
-            return `return [${back(ctx, JSON.stringify(body.lens.text))}, (recv: any) => {
-                ${recv(ctx, 'recv', JSON.stringify(body.lens.text))}
-                return ${lensPat ? back(ctx, patAs(lensPat)) : 'null'}
-            }]`;
+        if (body.lens.type === 'aslens') {
+            const lensCaptured = lensPat ? patAs(lensPat) : null;
+            return `return [${toTS(ctx, body.lens.value)}, (res: any) => {
+                            ${recv(ctx, 'res', body.lens.pat)}
+                            ${toTS(ctx, body.lens.body, { lensCaptured: '' })};
+                            // assert that all values have been used (except lenscaptured)
+                            $.checkUnused(${gamma(ctx)}, ${lensCaptured ?? '[]'});
+                            ${lensCaptured ? `return ${back(ctx, lensCaptured)};` : ''}
+                        }];`;
         }
-        // let isWrapped = false;
-        // const result = lensToTs(ctx, body.lens, (name, wrapped) => {
-        //     isWrapped = wrapped;
-        //     const tail: Tail = { lensCaptured: lensPat ? patAs(lensPat) : null, };
-        //     return toTS(ctx, body, tail)
-        // });
-        // return tail
-        //     ? isWrapped
-        //         ? 'return ' + result
-        //         : result
-        //     : isWrapped
-        //       ? result
-        //       : `(() => {${result}})()`;
+        if (body.lens.type === 'apply') {
+            if (body.lens.args.length === 1) {
+                const arg = body.lens.args[0];
+                // ummm ok time to figure out more complex ones too
+                if (arg.type === 'lens' && arg.lens.type === 'id') {
+                    return `const [one, two] = ${toTS(ctx, body.lens.fn)}(${back(ctx, JSON.stringify(arg.lens.text))});\nreturn [one ,two];`;
+                }
+            }
+        }
     }
 
     return toTS(ctx, body, {
@@ -436,5 +436,5 @@ const lensToTs = (
         );
     }
 
-    throw new Error('not support lens');
+    throw new Error('not support lens: ' + lens.type);
 };

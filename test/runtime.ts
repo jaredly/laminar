@@ -101,7 +101,8 @@ export const recv = (gamma: Scope, value: any, names: Names | typeof drop): any 
             if (Array.isArray(value) && value.every((v) => v == null)) return;
             throw new Error(`Unused value ${JSON.stringify(value)}`);
         }
-        if (!Array.isArray(value)) throw new Error('expected tuple');
+        if (!Array.isArray(value))
+            throw new Error(`expected tuple: ${JSON.stringify({ value, names })}`);
         if (value.length !== names.length) throw new Error(`arrays dont match length`);
         return names.map((name, i) => recv(gamma, value[i], name));
     } else {
@@ -144,7 +145,9 @@ export const tee2 = (
 ) => {
     const tmp = genid();
     recv(scope, value, tmp);
+    console.log('calling completion');
     let final = continuation(tmp);
+    console.log('called completion', tmp);
     recv(scope, completion(get(scope, tmp)), as);
     return final;
 };
