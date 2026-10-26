@@ -36,6 +36,7 @@ export type LinearOps =
 export type Op = { type: 'op'; text: string; loc: Loc };
 export type FnArg = { pat: Pat; typ?: Type };
 export type LinearInterp = { value: Linear; tail: string };
+
 export type Linear =
     | Id
     | Op
@@ -61,6 +62,37 @@ export type Linear =
     | { type: 'tuple'; items: Linear[]; loc: Loc }
     | { type: 'constructor'; name: string; args: Linear[]; loc: Loc }
     | { type: 'case'; value: Term; cases: { pat: Pat; body: Linear }[]; loc: Loc };
+
+export type Stmt =
+    | Expr
+    | { type: 'let'; pat: Pat; value: Expr; loc: Loc }
+    // | { type: 'expr'; expr: Expr }
+    // | { type: 'block'; items: Stmt[] }
+    | { type: 'return'; value: Expr };
+
+export type Expr =
+    | Id
+    | Op
+    | { type: 'iffe'; block: Stmt[] }
+    | { type: 'const'; value: number | boolean | null; loc: Loc }
+    | {
+          type: 'string';
+          head: string;
+          interp: { value: Expr; tail: string }[];
+          loc: Loc;
+      }
+    | {
+          type: 'fn';
+          name?: string | null;
+          args: FnArg[];
+          ann?: Type | null;
+          body: Expr | Stmt[];
+          loc: Loc;
+      }
+    | { type: 'apply'; fn: Expr; args: Expr[]; isLens?: boolean; loc: Loc }
+    | { type: 'tuple'; items: Expr[]; loc: Loc };
+// | { type: 'constructor'; name: string; args: Simpler[]; loc: Loc }
+// | { type: 'case'; value: Simpler; cases: { pat: Pat; body: Simpler }[]; loc: Loc };
 
 export const names = (pat: Pat): string[] => {
     switch (pat.type) {
