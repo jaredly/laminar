@@ -12,7 +12,16 @@ const l = (raw: string) => {
         expect(lin).toMatchObject({ type: 'success' });
         return;
     }
-    const expr = linearToExpr({ scope: {}, counter: { current: 0 } }, lin.value);
+    const expr = linearToExpr(
+        {
+            scope: {
+                inc: 0,
+                fst: 0,
+            },
+            counter: { current: 0 },
+        },
+        lin.value,
+    );
     return sexpr(expr);
 };
 
@@ -109,7 +118,7 @@ const pairs = [
     [
         `{let m = (1,2)\ninc(~fst(~m))\nm}`,
         `iffe{
-            let m0=5;
+            let m0=(1,2);
             let _=iffe{
                 let (t1,c2)=fst0(m0)
             }{
@@ -119,6 +128,11 @@ const pairs = [
             }{swap(m0,c2(t1))}
         }{m0}{}`,
     ],
+    // NEXT UP:
+    // - (tuples of lenses)
+    // - let x = ~lens
+    //
+    //
     // [
     //     `{let m = (1,2)\ninc(~fst(~m))\nm}`,
     //     `iffe{

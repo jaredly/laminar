@@ -7,7 +7,7 @@ Let's make this happen.
 
 */
 
-import { Expr, Idd, Linear, Pat, Patd, Stmt, Swap } from './ast.ts';
+import { Expr, Idd, Lens, Linear, Pat, Patd, Stmt, Swap } from './ast.ts';
 
 type Ctx = { scope: Record<string, number>; counter: { current: number } };
 
@@ -167,11 +167,54 @@ export const linearToExpr = (ctx: Ctx, lin: Linear): Expr => {
             };
         }
         case 'apply':
+            const last = lin.args[lin.args.length - 1];
+            if (last?.type === 'lens') {
+                return lensToExpr(ctx, last.lens, (tmp: Idd): Expr => {
+                    const rid = ctx.counter.current++;
+                    const lid = ctx.counter.current++;
+                    return {
+                        type: 'iffe',
+                        block: [
+                            {
+                                type: 'let',
+                                pat: {
+                                    type: 'tuple',
+                                    items: [
+                                        { type: 'idd', text: 'r', id: rid, loc: -1 },
+                                        { type: 'idd', text: 'l', id: lid, loc: -1 },
+                                    ],
+                                },
+                                loc: -1,
+                                value: {
+                                    ...lin,
+                                    fn: linearToExpr(ctx, lin.fn),
+                                    args: lin.args.map((arg, i) => {
+                                        if (i === lin.args.length - 1) return tmp;
+                                        if (arg.type === 'lens') throw 5;
+                                        return linearToExpr(ctx, arg);
+                                    }),
+                                },
+                            },
+                        ],
+                        result: { type: 'idd', text: 'r', id: rid, loc: -1 },
+                        cleanup: [
+                            {
+                                type: 'swap',
+                                id: tmp,
+                                value: { type: 'idd', text: 'l', id: lid, loc: -1 },
+                                loc: -1,
+                            },
+                        ],
+                        loc: -1,
+                    };
+                });
+            }
+
             return {
                 ...lin,
                 fn: linearToExpr(ctx, lin.fn),
                 args: lin.args.map((arg) => {
-                    if (arg.type === 'lens') throw 4;
+                    if (arg.type === 'lens') throw new Error('only last can be lens');
                     return linearToExpr(ctx, arg);
                 }),
             };
@@ -193,5 +236,70 @@ export const linearToExpr = (ctx: Ctx, lin: Linear): Expr => {
         case 'constructor':
         case 'case':
             throw new Error('not support yet ' + lin.type);
+    }
+};
+
+export const lensToExpr = (ctx: Ctx, lens: Lens, inner: (name: Idd) => Expr): Expr => {
+    switch (lens.type) {
+        case 'id': {
+            const id = ctx.scope[lens.text];
+            if (id == null) throw new Error(`unbound ${lens.text}`);
+            return inner({ ...lens, type: 'idd', id });
+        }
+        case 'apply': {
+            const last = lens.args[lens.args.length - 1];
+            if (last?.type !== 'lens') throw new Error('not yet nolens at end');
+            return lensToExpr(ctx, last.lens, (tmp): Expr => {
+                const tid = ctx.counter.current++;
+                const cid = ctx.counter.current++;
+                return {
+                    type: 'iffe',
+                    block: [
+                        {
+                            type: 'let',
+                            pat: {
+                                type: 'tuple',
+                                items: [
+                                    { type: 'idd', text: 't', id: tid, loc: -1 },
+                                    { type: 'idd', text: 'c', id: cid, loc: -1 },
+                                ],
+                            },
+                            value: {
+                                type: 'apply',
+                                fn: linearToExpr(ctx, lens.fn),
+                                args: lens.args.map((arg, i) => {
+                                    if (i === lens.args.length - 1) return tmp;
+                                    if (arg.type === 'lens')
+                                        throw new Error('only last can be lens');
+                                    return linearToExpr(ctx, arg);
+                                }),
+                                loc: -1,
+                            },
+                            loc: -1,
+                        },
+                    ],
+                    result: inner({ type: 'idd', id: tid, text: 't', loc: -1 }),
+                    cleanup: [
+                        {
+                            type: 'swap',
+                            id: tmp,
+                            value: {
+                                type: 'apply',
+                                fn: { type: 'idd', id: cid, text: 'c', loc: -1 },
+                                args: [{ type: 'idd', id: tid, text: 't', loc: -1 }],
+                                loc: -1,
+                            },
+                            loc: -1,
+                        },
+                    ],
+                    loc: -1,
+                };
+            });
+        }
+        case 'tuple':
+        case 'aslens':
+        case 'let':
+        case 'case':
+            throw new Error('not yet');
     }
 };

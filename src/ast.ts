@@ -100,7 +100,7 @@ export type Expr =
           body: Expr | Stmt[];
           loc: Loc;
       }
-    | { type: 'apply'; fn: Expr; args: Expr[]; isLens?: boolean; loc: Loc }
+    | { type: 'apply'; fn: Expr; args: Expr[]; loc: Loc }
     | { type: 'tuple'; items: Expr[]; loc: Loc };
 // | { type: 'constructor'; name: string; args: Simpler[]; loc: Loc }
 // | { type: 'case'; value: Simpler; cases: { pat: Pat; body: Simpler }[]; loc: Loc };

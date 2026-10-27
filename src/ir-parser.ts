@@ -119,6 +119,13 @@ grammar.add('Expr', [
     ),
     // Expr:12
     option(list('', b('one', 'Expr')), ({ one, node }: { one: Expr; node: Node }): Expr => one),
+    // Expr:13
+    option(b('id', 'id'), ({ id, node }: { id: Id; node: Node }): Expr => ({
+        type: 'idd',
+        text: id.text,
+        id: 0,
+        loc: node.loc,
+    })),
 ]);
 
 grammar.add('Block', [

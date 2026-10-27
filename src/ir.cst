@@ -11,6 +11,7 @@ Expr {
     ["(," ...items:Expr] -> ({type: "tuple", items, loc: node.loc})
     ["" fn:Expr ["(," ...args:Expr]] -> ({type: "apply", fn, args,loc:node.loc})
     ["" one:Expr] -> one
+    id:id -> ({type: "idd", text: id.text, id: 0, loc: node.loc})
 }
 
 Block:Stmt[] {
