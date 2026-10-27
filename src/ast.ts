@@ -1,10 +1,20 @@
 export type Id = { type: 'id'; text: string; loc: Loc };
+
+// pat w/ debruijn
+export type Patd =
+    | Idd
+    | { type: 'drop' }
+    | { type: 'tuple'; items: Patd[] }
+    | { type: 'constructor'; name: string; args: Patd[] }
+    | { type: 'lens'; inner: Patd };
+
 export type Pat =
     | Id
-    | { type: 'drop' }
-    | { type: 'tuple'; items: Pat[] }
-    | { type: 'constructor'; name: string; args: Pat[] }
-    | { type: 'lens'; inner: Pat };
+    | { type: 'drop'; loc: Loc }
+    | { type: 'tuple'; items: Pat[]; loc: Loc }
+    | { type: 'constructor'; name: string; args: Pat[]; loc: Loc }
+    | { type: 'lens'; inner: Pat; loc: Loc };
+
 export type Loc = number;
 
 export type Type =
@@ -65,15 +75,18 @@ export type Linear =
 
 export type Stmt =
     | Expr
-    | { type: 'let'; pat: Pat; value: Expr; loc: Loc }
+    | { type: 'let'; pat: Patd; value: Expr; loc: Loc }
     // | { type: 'expr'; expr: Expr }
     // | { type: 'block'; items: Stmt[] }
-    | { type: 'return'; value: Expr };
+    | { type: 'return'; value: Expr; loc: Loc };
 
+export type Idd = { type: 'idd'; text: string; id: number; loc: Loc };
+
+export type Swap = { type: 'swap'; id: Idd; value: Expr; loc: Loc };
 export type Expr =
-    | Id
-    | Op
-    | { type: 'iffe'; block: Stmt[] }
+    | Idd
+    | Swap
+    | { type: 'iffe'; block: Stmt[]; result: Expr; cleanup: Swap[]; loc: Loc }
     | { type: 'const'; value: number | boolean | null; loc: Loc }
     | {
           type: 'string';
@@ -83,9 +96,7 @@ export type Expr =
       }
     | {
           type: 'fn';
-          name?: string | null;
-          args: FnArg[];
-          ann?: Type | null;
+          args: Patd[];
           body: Expr | Stmt[];
           loc: Loc;
       }

@@ -1,15 +1,8 @@
 import { readFileSync, writeFileSync } from 'fs';
 import { File, Linear } from '../src/ast.ts';
 import { type Ctx, resetId0, toTS } from '../src/flowtots.ts';
-import {
-    findDeepest,
-    Grammar,
-    ParseResult,
-    showDeepest,
-    showFailure,
-    showFull,
-    showPos,
-} from '../src/grammar-lexer.ts';
+import { Grammar, ParseResult } from '../src/grammar-lexer.ts';
+import { findDeepest, showDeepest, showFailure, showFull, showPos } from '../src/debugFailures.ts';
 import { grammar as grammarhs } from '../src/laminar-hs.ts';
 import { grammar } from '../src/laminar-parser.ts';
 import { Node, readFile } from '../src/lexer.ts';

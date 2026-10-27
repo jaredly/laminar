@@ -1,0 +1,45 @@
+Expr {
+    id:Idd -> id
+    swap:Swap -> swap
+    ["" "iffe" ["{;" ...block:Stmt] ["{" result:Expr] ["{;" ...cleanup:Swap]] -> ({type: "iffe", block, cleanup, result, loc: node.loc})
+    num:re"\\d+" -> ({type: "const", value: +num.text, loc: num.loc})
+    "true" -> ({type: "const", value: true, loc: node.loc})
+    "false" -> ({type: "const", value: false, loc: node.loc})
+    ["\"" head:id ...interp:(value:Expr tail:id)] -> ({type:"string",head:head.text, interp:interp.map(({value,tail})=> ({value, tail: tail.text})), loc:node.loc})
+    ["" ["(," ...args:Patd] "=>" body:Block] -> ({type: "fn", args, body, loc: node.loc})
+    ["" ["(," ...args:Patd] "=>" body:Expr] -> ({type: "fn", args, body, loc: node.loc})
+    ["(," ...items:Expr] -> ({type: "tuple", items, loc: node.loc})
+    ["" one:Expr] -> one
+}
+
+Block:Stmt[] {
+    ["{;" ...stmts:Stmt] -> stmts
+}
+
+Stmt {
+    [" " "let" ["" pat:Patd "=" ...value:*Expr]] -> ({type: "let", pat, value, loc: node.loc})
+    [" " "return" value:Expr] -> ({type: "return", value, loc: node.loc})
+    expr:Expr -> expr
+}
+
+Patd {
+    id:Idd -> id
+    "_" -> ({type: "drop"})
+    ["(," ...items:Patd] -> ({type: "tuple", items})
+}
+
+Swap {
+    ["" "swap" ["(," id:Idd value:Expr]] -> ({type: "swap", id, value, loc: node.loc})
+}
+
+Idd {
+    id:re"^[a-zA-Z_]+\\d+$" -> {
+        let num = id.text.match(new RegExp("\\d+$"))!;
+        return {
+            type: "idd",
+            id: +num[0],
+            text: id.text.slice(0, -num[0].length),
+            loc: id.loc,
+        }
+    }
+}

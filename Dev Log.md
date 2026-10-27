@@ -1,4 +1,13 @@
 
+Let's try using an IR.
+-> ok let's talk about unique variables.
+debruijn indices yo. maybe I guess.
+IR gonna have:
+-> a human name that it was known by, maybe
+-> a unique index
+
+---
+
 Ok so I'm diving into multi-scoping.
 Thought being:
 -> what if, instead of passing around the gamma number (via ctx.scopes.length),

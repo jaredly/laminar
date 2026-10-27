@@ -3,7 +3,8 @@
  */
 
 import { readFileSync, writeFileSync } from 'fs';
-import { showFailure, toFile, toSyntax } from './grammar-lexer.ts';
+import { toFile, toSyntax } from './grammar-lexer.ts';
+import { showFailure } from './debugFailures.ts';
 import { readLines } from './lexer.ts';
 import { grammar as self } from './self-lexer-back.ts';
 
