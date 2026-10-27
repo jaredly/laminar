@@ -108,6 +108,16 @@ grammar.add('Expr', [
         }),
     ),
     // Expr:11
+    option(
+        list('', b('fn', 'Expr'), wrapper('(', list(',', many('args', 'Expr')))),
+        ({ fn, args, node }: { fn: Expr; args: Expr[]; node: Node }): Expr => ({
+            type: 'apply',
+            fn,
+            args,
+            loc: node.loc,
+        }),
+    ),
+    // Expr:12
     option(list('', b('one', 'Expr')), ({ one, node }: { one: Expr; node: Node }): Expr => one),
 ]);
 

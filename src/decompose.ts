@@ -125,7 +125,7 @@ export const linearToExpr = (ctx: Ctx, lin: Linear): Expr => {
             const cleanup: Swap[] = [];
             let lest: Stmt;
             if (lin.value.type === 'lens') {
-                if (lin.value.lens.type === 'id' && lin.pat.type === 'id') {
+                if (lin.value.lens.type === 'id') {
                     lest = {
                         type: 'let',
                         pat,

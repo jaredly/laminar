@@ -66,6 +66,89 @@ const pairs = [
         };
         }{x0}{}`,
     ],
+    [
+        `{
+        let m = (1,2)
+        let n = {
+            let (x,y) = ~m
+            x := 2
+            y := 4
+        }
+        (m,n)
+        }`,
+        `iffe{
+            let m0=(1,2);
+            let n1=iffe{
+                let (x2,y3)=m0;
+                let _=swap(x2,2)
+            }{swap(y3,4)}{
+                swap(m0,(x2,y3))
+            }
+        }{(m0,n1)}{}`,
+    ],
+    // [
+    //     `{
+    //         let m = 5
+    //         (inc(~m),m)
+    //     }`,
+    //     `iffe{
+    //         let m0=5
+    //     }{(inc(m0){m0},m0)}{}`
+    // ],
+    [
+        `{
+            let m = 5
+            (inc(~m),m)
+        }`,
+        `iffe{
+            let m0=5
+        }{(iffe{
+            let (r1,l2)=inc0(m0)
+        }{r1}{swap(m0,l2)},m0)}{}`,
+    ],
+    [
+        `{let m = (1,2)\ninc(~fst(~m))\nm}`,
+        `iffe{
+            let m0=5;
+            let _=iffe{
+                let (t1,c2)=fst0(m0)
+            }{
+                iffe{
+                    let (r3,l4)=inc0(t1)
+                }{r3}{swap(t1,l4)}
+            }{swap(m0,c2(t1))}
+        }{m0}{}`,
+    ],
+    // [
+    //     `{let m = (1,2)\ninc(~fst(~m))\nm}`,
+    //     `iffe{
+    //         let m0=5;
+    //         let _=iffe{
+    //             let (t1,c2)=fst0(m0);
+    //             let (r2,l4)=inc0(t1);
+    //             swap(m0,c2(l4))
+    //         }{r2}{}
+    //     }{m0}{}`,
+    // ],
+    // [
+    //     `{
+    //         let m = (1,2)
+    //         {
+    //             let x=~fst(~m)
+    //             x := 2
+    //         }
+    //         m
+    //     }`,
+    //     `iffe{
+    //         let m0=(1,2)
+    //         let _=iffe{
+    //             let (x1,c2)=fst(m0)
+    //         }{swap(x1,2)}{
+    //             swap(m0,c2(x1))
+    //         }
+    //     }{m0}{}
+    //     `
+    // ]
 ];
 
 /*

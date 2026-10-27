@@ -9,6 +9,7 @@ Expr {
     ["" ["(," ...args:Patd] "=>" body:Block] -> ({type: "fn", args, body, loc: node.loc})
     ["" ["(," ...args:Patd] "=>" body:Expr] -> ({type: "fn", args, body, loc: node.loc})
     ["(," ...items:Expr] -> ({type: "tuple", items, loc: node.loc})
+    ["" fn:Expr ["(," ...args:Expr]] -> ({type: "apply", fn, args,loc:node.loc})
     ["" one:Expr] -> one
 }
 
