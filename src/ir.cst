@@ -61,6 +61,7 @@ Block:Stmt[] {
 
 Stmt {
     [" " "let" ["" pat:Patd "=" ...value:*Expr]] -> ({type: "let", pat, value, loc: node.loc})
+    [" " "let" pat:Patd "=" ...value:*Expr] -> ({type: "let", pat, value, loc: node.loc})
     // [" " "return" value:Expr] -> ({type: "return", value, loc: node.loc})
     expr:Expr -> expr
 }
@@ -70,6 +71,7 @@ Patd {
     id:Idd -> id
     "_" -> ({type: "drop", loc: node.loc, id: null})
     ["(," ...items:Patd] -> ({type: "tuple", items, loc: node.loc})
+    ["" name:re"^[A-Z]" ["(," ...args:Patd]] -> ({type: "constructor", name: name.text, args, loc: node.loc})
 
     ["["] -> ({type: "constructor", name: "nil",args:[], loc: node.loc})
     ["[," ...items:Patd] -> pcons([...items, ({type: "constructor", name: "nil",args:[], loc: node.loc})], node.loc)

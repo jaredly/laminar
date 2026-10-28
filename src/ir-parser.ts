@@ -313,6 +313,16 @@ grammar.add('Stmt', [
         }),
     ),
     // Stmt:2
+    option(
+        list(' ', lit('let'), b('pat', 'Patd'), lit('='), rest('value', 'Expr', false)),
+        ({ pat, value, node }: { pat: Patd; value: Expr; node: Node }): Stmt => ({
+            type: 'let',
+            pat,
+            value,
+            loc: node.loc,
+        }),
+    ),
+    // Stmt:3
     option(b('expr', 'Expr'), ({ expr, node }: { expr: Expr; node: Node }): Stmt => expr),
 ]);
 
@@ -341,13 +351,23 @@ grammar.add('Patd', [
         }),
     ),
     // Patd:5
+    option(
+        list('', b('name', /^[A-Z]/), wrapper('(', list(',', many('args', 'Patd')))),
+        ({ name, args, node }: { name: Id; args: Patd[]; node: Node }): Patd => ({
+            type: 'constructor',
+            name: name.text,
+            args,
+            loc: node.loc,
+        }),
+    ),
+    // Patd:6
     option(wrapper('[', null), ({ node }: { node: Node }): Patd => ({
         type: 'constructor',
         name: 'nil',
         args: [],
         loc: node.loc,
     })),
-    // Patd:6
+    // Patd:7
     option(
         wrapper('[', list(',', many('items', 'Patd'))),
         ({ items, node }: { items: Patd[]; node: Node }): Patd =>
@@ -356,7 +376,7 @@ grammar.add('Patd', [
                 node.loc,
             ),
     ),
-    // Patd:7
+    // Patd:8
     option(
         wrapper('[', list(',', many('items', 'Patd'), list('', lit('...'), b('tail', 'Patd')))),
         ({ items, tail, node }: { items: Patd[]; tail: Patd; node: Node }): Patd =>

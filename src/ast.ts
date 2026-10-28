@@ -33,6 +33,7 @@ export type Lens =
     | { type: 'let'; pat: Pat; value: Term; body: Lens; loc: Loc }
     | { type: 'apply'; fn: Linear; args: Term[]; loc: Loc }
     | { type: 'tuple'; items: Lens[]; loc: Loc }
+    | { type: 'constructor'; name: string; args: Lens[]; loc: Loc }
     | { type: 'case'; value: Term; cases: { pat: Pat; body: Lens }[]; loc: Loc };
 
 export type Term = Linear | { type: 'lens'; lens: Lens };

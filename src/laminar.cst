@@ -60,9 +60,11 @@ Term {
 }
 
 Lens {
+    text:re"^[A-Z]" -> ({type: "constructor", name: text.text, args: [], loc: text.loc})
     text:id -> ({type: "id", text: text.text, loc: node.loc})
     ["" one:Lens] -> one
     [" " one:Lens] -> one
+    ["" fn:re"^[A-Z]" ["(," ...args:Lens]] -> ({type: "constructor", name: fn.text, args, loc: fn.loc})
     ["" fn:Linear ["(," ...args:Term]] -> ({type: "apply", fn, args, loc: node.loc})
     ["(," ...items:Lens] -> items.length === 1 ? items[0] : ({type: "tuple", items, loc: node.loc})
     ["("] -> ({type: "tuple", items: [], loc: node.loc})
@@ -80,9 +82,12 @@ import {partition} from "./laminar-helpers.ts"
 Linear {
     re"^[0-9]+$" -> ({type: "const", value: +(node as Id).text, loc: node.loc})
     re"true|false" -> ({type: "const", value: (node as Id).text === "true", loc: node.loc})
+    text:re"^[A-Z]" -> ({type: "constructor", name: text.text, args: [], loc: text.loc})
     text:id -> ({type: "id", text: text.text, loc: node.loc})
+
     ["\"" text:id] -> ({type: "string", head: text.text, interp: [], loc: node.loc})
     ["" one:Linear] -> one
+    ["" fn:re"^[A-Z]" ["(," ...args:Linear]] -> ({type: "constructor", name: fn.text, args, loc: fn.loc})
     ["" fn:re"^[+-]$" ...arg:*Linear] -> ({type: "apply", fn, args: [arg],loc:node.loc})
     ["" target:Linear ...suffixes:**LinearOps] -> handleSuffixes(target, suffixes)
     ["(," ...items:Linear] -> ({type: "tuple", items,loc:node.loc})

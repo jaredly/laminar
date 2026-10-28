@@ -73,7 +73,9 @@ export const evalExpr = (ctx: Ctx, expr: Expr): any => {
                 }
                 return items;
             }
-            throw new Error(`unknown constructor ${expr.name}`);
+            if (!expr.args.length) return { type: expr.name };
+            return { type: expr.name, args: expr.args.map((expr) => evalExpr(ctx, expr)) };
+            // throw new Error(`unknown constructor ${expr.name}`);
         }
         case 'case': {
             const value = evalExpr(ctx, expr.value);

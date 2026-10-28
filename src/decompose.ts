@@ -91,7 +91,7 @@ const subScope = (ctx: Ctx) => ({ ...ctx, scope: { ...ctx.scope } });
 export const sstmt = (stmt: Stmt): string => {
     switch (stmt.type) {
         case 'let':
-            return `let ${spat(stmt.pat)}=${sexpr(stmt.value)}`;
+            return `let ${spat(stmt.pat)} = ${sexpr(stmt.value)}`;
         // case 'return':
         //     return `return ${sexpr(stmt.value)}`;
         default:

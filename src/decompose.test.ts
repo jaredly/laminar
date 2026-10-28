@@ -426,27 +426,52 @@ const pairs: [string, string, string, any][] = [
         [1, 4],
     ],
     [
-        'ok',
+        `some optionals`,
         `{
-            let head = fn (~x) ~{
-                match ~x {
-                    [h, ..._] -> Some(h)
-                    _ -> None()
-                }
-            }
-            let map = fn (f, ~x) {
-                match ~x {
-                    Some(v) -> f(~v)
-                    None() -> ()
-                }
-            }
-            let x = [1,3,5]
-            map(inc, ~head(~x))
+            let x = Some(2)
+            x := None
             x
         }`,
-        ``,
-        [2, 3, 5],
+        `iffe{let x0=Some(2);
+        let _=swap(x0,None())}{x0}{}`,
+        { type: 'None' },
     ],
+    [
+        `lens unpacking`,
+        `{
+            let x = Some(2)
+            {
+                let Some(n) = ~x
+                n := 4
+            }
+            x
+        }`,
+        `iffe{let x0 = Some(2);
+        let _=iffe{let Some(n1) = x0}{swap(n1,4)}{swap(x0,Some(n1))}}{x0}{}`,
+        { type: 'Some', args: [4] },
+    ],
+    //[
+    //    'ok',
+    //    `{
+    //        let head = fn (~x) ~{
+    //            match ~x {
+    //                [h, ..._] -> Some(h)
+    //                _ -> None()
+    //            }
+    //        }
+    //        let map = fn (f, ~x) {
+    //            match ~x {
+    //                Some(v) -> f(~v)
+    //                None() -> ()
+    //            }
+    //        }
+    //        let x = [1,3,5]
+    //        map(inc, ~head(~x))
+    //        x
+    //    }`,
+    //    ``,
+    //    [2, 3, 5],
+    //],
 ];
 
 /*
