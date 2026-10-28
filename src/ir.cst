@@ -1,37 +1,83 @@
 Expr {
     id:Idd -> id
+    id:id -> ({type: "idd", text: id.text, id: -1, loc: id.loc})
+    id:op -> ({type: "idd", text: id.text, id: -1, loc: id.loc})
     swap:Swap -> swap
     ["" "iffe" ["{;" ...block:Stmt] ["{" result:Expr] ["{;" ...cleanup:Swap]] -> ({type: "iffe", block, cleanup, result, loc: node.loc})
+    ["" "iffe" ["{\n" ...block:Stmt] ["{" result:Expr] ["{;" ...cleanup:Swap]] -> ({type: "iffe", block, cleanup, result, loc: node.loc})
     num:re"\\d+" -> ({type: "const", value: +num.text, loc: num.loc})
     "true" -> ({type: "const", value: true, loc: node.loc})
     "false" -> ({type: "const", value: false, loc: node.loc})
     ["\"" head:id ...interp:(value:Expr tail:id)] -> ({type:"string",head:head.text, interp:interp.map(({value,tail})=> ({value, tail: tail.text})), loc:node.loc})
-    ["" ["(," ...args:Patd] "=>" body:Block] -> ({type: "fn", args, body, loc: node.loc})
-    ["" ["(," ...args:Patd] "=>" body:Expr] -> ({type: "fn", args, body, loc: node.loc})
+    ["" ["(," ...args:Patd] "=>" ...body:*Block] -> ({type: "fn", args, body: bodyIffe(body), loc: node.loc})
+    ["" ["(," ...args:Patd] "=>" ...body:*Expr] -> ({type: "fn", args, body, loc: node.loc})
     ["(," ...items:Expr] -> ({type: "tuple", items, loc: node.loc})
     ["" fn:Expr ["(," ...args:Expr]] -> ({type: "apply", fn, args,loc:node.loc})
     ["" one:Expr] -> one
     id:id -> ({type: "idd", text: id.text, id: 0, loc: node.loc})
+
+    ["["] -> ({type: "constructor", name: "nil",args:[], loc: node.loc})
+    ["[," ...items:Expr] -> econs([...items, ({type: "constructor", name: "nil",args:[], loc: node.loc})], node.loc)
+    ["[," ...items:Expr ["" "..." tail:Expr]] -> econs([...items, tail], node.loc)
+
+    [" " "match" value:Expr ["{\n" ...cases:Case]] -> ({type: "case", value, cases,loc:node.loc})
+    [" " "match" value:Expr ["{;" ...cases:Case]] -> ({type: "case", value, cases,loc:node.loc})
+    [" " "match" value:Expr ["{" kase:Case]] -> ({type: "case", value, cases: [kase],loc:node.loc})
+    [" " one:Expr] -> one
+    [";" one:Expr] -> one
+}
+
+Case:{pat:Patd,body:Expr} {
+    [" " pat:Patd "->" ...body:*Expr] -> ({pat, body})
+}
+
+function econs(items:Expr[], loc:number) {
+    let last = items[items.length - 1]
+    for (let i=items.length-2;i>=0;i--) {
+        last = {type:"constructor",name:"cons",args:[items[i], last],loc}
+    }
+    return last
+}
+
+function pcons(items:Patd[], loc:number) {
+    let last = items[items.length - 1]
+    for (let i=items.length-2;i>=0;i--) {
+        last = {type:"constructor",name:"cons",args:[items[i], last],loc}
+    }
+    return last
+}
+
+
+function bodyIffe(body:Stmt[]):Expr {
+    let last = body[body.length - 1]
+    if (!body.length || last.type === "let") return {type: "iffe", block:body, result: {type: "tuple",items:[],loc:-1},cleanup:[],loc:-1}
+    return {type: "iffe", block: body.slice(0, -1), result: last,cleanup:[],loc:-1}
 }
 
 Block:Stmt[] {
     ["{;" ...stmts:Stmt] -> stmts
+    ["{\n" ...stmts:Stmt] -> stmts
 }
 
 Stmt {
     [" " "let" ["" pat:Patd "=" ...value:*Expr]] -> ({type: "let", pat, value, loc: node.loc})
-    [" " "return" value:Expr] -> ({type: "return", value, loc: node.loc})
+    // [" " "return" value:Expr] -> ({type: "return", value, loc: node.loc})
     expr:Expr -> expr
 }
 
 Patd {
+    id:re"^_\\d+$" -> ({type: "drop", loc: node.loc, id: +id.text.slice(1)})
     id:Idd -> id
-    "_" -> ({type: "drop"})
-    ["(," ...items:Patd] -> ({type: "tuple", items})
+    "_" -> ({type: "drop", loc: node.loc, id: null})
+    ["(," ...items:Patd] -> ({type: "tuple", items, loc: node.loc})
+
+    ["["] -> ({type: "constructor", name: "nil",args:[], loc: node.loc})
+    ["[," ...items:Patd] -> pcons([...items, ({type: "constructor", name: "nil",args:[], loc: node.loc})], node.loc)
+    ["[," ...items:Patd ["" "..." tail:Patd]] -> pcons([...items, tail], node.loc)
 }
 
 Swap {
-    ["" "swap" ["(," id:Idd value:Expr]] -> ({type: "swap", id, value, loc: node.loc})
+    ["" "swap" ["(," pat:Patd value:Expr]] -> ({type: "swap", pat, value, loc: node.loc})
 }
 
 Idd {

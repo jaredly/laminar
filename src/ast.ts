@@ -3,16 +3,17 @@ export type Id = { type: 'id'; text: string; loc: Loc };
 // pat w/ debruijn
 export type Patd =
     | Idd
-    | { type: 'drop' }
-    | { type: 'tuple'; items: Patd[] }
-    | { type: 'constructor'; name: string; args: Patd[] }
-    | { type: 'lens'; inner: Patd };
+    | { type: 'drop'; id: number | null; loc: Loc }
+    | { type: 'tuple'; items: Patd[]; loc: Loc }
+    | { type: 'constructor'; name: string; args: Patd[]; loc: Loc };
+// NOTE: No lenses
 
 export type Pat =
     | Id
     | { type: 'drop'; loc: Loc }
     | { type: 'tuple'; items: Pat[]; loc: Loc }
     | { type: 'constructor'; name: string; args: Pat[]; loc: Loc }
+    // | { type: 'list'; items: Pat[]; tail?: Pat; loc: Loc }
     | { type: 'lens'; inner: Pat; loc: Loc };
 
 export type Loc = number;
@@ -28,20 +29,21 @@ export type FileItem = Linear | { type: 'decl'; name: Id; ann: Type };
 
 export type Lens =
     | Id
-    | { type: 'aslens'; pat: Pat; value: Linear; body: Linear }
-    | { type: 'let'; pat: Pat; value: Term; body: Lens }
-    | { type: 'apply'; fn: Linear; args: Term[] }
-    | { type: 'tuple'; items: Lens[] }
-    | { type: 'case'; value: Term; cases: { pat: Pat; body: Lens }[] };
+    | { type: 'aslens'; pat: Pat; value: Linear; body: Linear; loc: Loc }
+    | { type: 'let'; pat: Pat; value: Term; body: Lens; loc: Loc }
+    | { type: 'apply'; fn: Linear; args: Term[]; loc: Loc }
+    | { type: 'tuple'; items: Lens[]; loc: Loc }
+    | { type: 'case'; value: Term; cases: { pat: Pat; body: Lens }[]; loc: Loc };
 
 export type Term = Linear | { type: 'lens'; lens: Lens };
 
 export type LinearCase = { pat: Pat; body: Linear };
+export type LensCase = { pat: Pat; body: Lens };
 
 export type LinearOps =
     // | { type: 'attr'; attr: string }
     // | { type: 'index'; index: Linear }
-    { type: 'apply'; args: Linear[] };
+    { type: 'apply'; args: Term[] };
 
 export type Op = { type: 'op'; text: string; loc: Loc };
 export type FnArg = { pat: Pat; typ?: Type };
@@ -73,16 +75,14 @@ export type Linear =
     | { type: 'constructor'; name: string; args: Linear[]; loc: Loc }
     | { type: 'case'; value: Term; cases: { pat: Pat; body: Linear }[]; loc: Loc };
 
-export type Stmt =
-    | Expr
-    | { type: 'let'; pat: Patd; value: Expr; loc: Loc }
-    // | { type: 'expr'; expr: Expr }
-    // | { type: 'block'; items: Stmt[] }
-    | { type: 'return'; value: Expr; loc: Loc };
+export type Stmt = Expr | { type: 'let'; pat: Patd; value: Expr; loc: Loc };
+// | { type: 'expr'; expr: Expr }
+// | { type: 'block'; items: Stmt[] }
+// | { type: 'return'; value: Expr; loc: Loc };
 
 export type Idd = { type: 'idd'; text: string; id: number; loc: Loc };
 
-export type Swap = { type: 'swap'; id: Idd; value: Expr; loc: Loc };
+export type Swap = { type: 'swap'; pat: Patd; value: Expr; loc: Loc };
 export type Expr =
     | Idd
     | Swap
@@ -97,13 +97,13 @@ export type Expr =
     | {
           type: 'fn';
           args: Patd[];
-          body: Expr | Stmt[];
+          body: Expr;
           loc: Loc;
       }
     | { type: 'apply'; fn: Expr; args: Expr[]; loc: Loc }
-    | { type: 'tuple'; items: Expr[]; loc: Loc };
-// | { type: 'constructor'; name: string; args: Simpler[]; loc: Loc }
-// | { type: 'case'; value: Simpler; cases: { pat: Pat; body: Simpler }[]; loc: Loc };
+    | { type: 'tuple'; items: Expr[]; loc: Loc }
+    | { type: 'constructor'; name: string; args: Expr[]; loc: Loc }
+    | { type: 'case'; value: Expr; cases: { pat: Patd; body: Expr }[]; loc: Loc };
 
 export const names = (pat: Pat): string[] => {
     switch (pat.type) {
@@ -111,6 +111,8 @@ export const names = (pat: Pat): string[] => {
             return [pat.text];
         case 'drop':
             return [];
+        // case 'list':
+        //     return pat.items.flatMap(names).concat(pat.tail ? names(pat.tail) : []);
         case 'tuple':
             return pat.items.flatMap(names);
         case 'constructor':

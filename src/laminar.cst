@@ -12,13 +12,35 @@ FileItem {
     linear:Linear -> linear
 }
 
+function pcons(items:Pat[], loc:number) {
+    let last = items[items.length - 1]
+    for (let i=items.length-2;i>=0;i--) {
+        last = {type:"constructor",name:"cons",args:[items[i], last],loc}
+    }
+    return last
+}
+
+function econs(items:Linear[], loc:number) {
+    let last = items[items.length - 1]
+    for (let i=items.length-2;i>=0;i--) {
+        last = {type:"constructor",name:"cons",args:[items[i], last],loc}
+    }
+    return last
+}
+
 Pat {
-    "_" -> ({type: "drop"})
+    "_" -> ({type: "drop", loc: node.loc})
     text:id -> ({type: "id", text: text.text, loc: node.loc})
-    ["" "~" inner:Pat] -> ({type: "lens", inner})
-    ["" name:id ["(," ...args:Pat]] -> ({type: "constructor", name: name.text, args})
-    ["(," ...items:Pat] -> ({type: "tuple", items})
-    ["("] -> ({type: "tuple", items: []})
+    ["" "~" inner:Pat] -> ({type: "lens", inner, loc: node.loc})
+    ["" name:id ["(," ...args:Pat]] -> ({type: "constructor", name: name.text, args, loc: node.loc})
+    ["(," ...items:Pat] -> items.length === 1 ? items[0] : ({type: "tuple", items, loc: node.loc})
+    ["("] -> ({type: "tuple", items: [], loc: node.loc})
+    ["["] -> ({type: "constructor", name: "nil",args:[], loc: node.loc})
+    ["[," ...items:Pat] -> pcons([...items, ({type: "constructor", name: "nil",args:[], loc: node.loc})], node.loc)
+    ["[," ...items:Pat ["" "..." tail:Pat]] -> pcons([...items, tail], node.loc)
+    // [":" head:id tail:id] -> ({type: "pcons", head, tail, loc: node.loc})
+    // ["[," ...items:Pat] -> ({type: "list", items, tail: null, loc: node.loc})
+    // ["[," ...items:Pat ["" "..." tail:Pat]] -> ({type: "list", items, tail, loc: node.loc})
 }
 
 Type {
@@ -40,15 +62,17 @@ Term {
 Lens {
     text:id -> ({type: "id", text: text.text, loc: node.loc})
     ["" one:Lens] -> one
-    ["" fn:Linear ["(," ...args:Term]] -> ({type: "apply", fn, args})
-    ["(," ...items:Lens] -> ({type: "tuple", items})
-    ["("] -> ({type: "tuple", items: []})
+    [" " one:Lens] -> one
+    ["" fn:Linear ["(," ...args:Term]] -> ({type: "apply", fn, args, loc: node.loc})
+    ["(," ...items:Lens] -> items.length === 1 ? items[0] : ({type: "tuple", items, loc: node.loc})
+    ["("] -> ({type: "tuple", items: [], loc: node.loc})
     ["{" one:Lens] -> one
-    ["("] -> ({type: "tuple", items: []})
-    ["{\n" [" " "let" pat:Pat "=" ...value:*Term] ...body:*Lens] -> ({type: "let", pat, value, body})
-    ["{\n" [" " "lens" pat:Pat "<-" ...value:*Linear] ...body:*Linear] -> ({type: "aslens", pat, value, body})
+    ["("] -> ({type: "tuple", items: [], loc: node.loc})
+    ["{\n" [" " "let" pat:Pat "=" ...value:*Term] ...body:*Lens] -> ({type: "let", pat, value, body, loc: node.loc})
+    ["{\n" [" " "lens" pat:Pat "<-" ...value:*Linear] ...body:*Linear] -> ({type: "aslens", pat, value, body, loc: node.loc})
     ["{\n" one:Lens] -> one
-    ["{\n" value:Term ...body:*Lens] -> ({type: "let", pat: {type: "drop"}, value, body})
+    ["{\n" value:Term ...body:*Lens] -> ({type: "let", pat: {type: "drop", loc:node.loc}, value, body, loc: node.loc})
+    [" " "match" value:Term ["{\n" ...cases:LensCase]] -> ({type: "case", value, cases,loc:node.loc})
 }
 
 import {partition} from "./laminar-helpers.ts"
@@ -64,7 +88,11 @@ Linear {
     ["(," ...items:Linear] -> ({type: "tuple", items,loc:node.loc})
     ["("] -> ({type: "tuple", items: [], loc: node.loc})
     ["\"" head:id ...interp:**LinearInterp] -> ({type: "string", head: head.text, interp,loc:node.loc})
-    [" " "match" value:Linear ["{" ...cases:LinearCase]] -> ({type: "case", value, cases,loc:node.loc})
+    [" " "match" value:Term ["{\n" ...cases:LinearCase]] -> ({type: "case", value, cases,loc:node.loc})
+
+    ["["] -> ({type: "constructor", name: "nil",args:[], loc: node.loc})
+    ["[," ...items:Linear] -> econs([...items, ({type: "constructor", name: "nil",args:[], loc: node.loc})], node.loc)
+    ["[," ...items:Linear ["" "..." tail:Linear]] -> econs([...items, tail], node.loc)
 
     /* Would be nice to have an Ann() fn to allow reducing these cases by half */
     [" " "fn" [":" ["" name:id ["(," ...args:FnArg]] ann:Type] body:Term] -> ({type: "fn", name: name.text, args, ann, body,loc:node.loc})
@@ -80,8 +108,8 @@ Linear {
     ["\n" [" " "let" pat:Pat "=" ...value:*Term] ...body:*Linear] -> ({type: "let", pat, value, body,loc:node.loc})
     ["{" one:Linear] -> one
     ["{\n" one:Linear] -> one
-    ["{\n" value:Linear ...body:*Linear] -> ({type: "let", pat: {type: "drop"}, value, body,loc:node.loc})
-    ["\n" value:Linear ...body:*Linear] -> ({type: "let", pat: {type: "drop"}, value, body,loc:node.loc})
+    ["{\n" value:Linear ...body:*Linear] -> ({type: "let", pat: {type: "drop", loc:node.loc}, value, body,loc:node.loc})
+    ["\n" value:Linear ...body:*Linear] -> ({type: "let", pat: {type: "drop", loc:node.loc}, value, body,loc:node.loc})
 }
 
 LinearOps {
@@ -102,25 +130,17 @@ function handleSuffixes(head: Linear, suffixes: LinearOps[]): Linear {
     }, head)
 }
 
-/*
-
-
-Ok what about something like:
-->
-
-NO actually we can just be normal. just call a helper fn.
-
-partition(left: expr, rights: {op: Id, right: expr}[], (op, left, right) -> expr) -> expr
-
-*/
-
 FnArg {
     pat:Pat -> ({pat})
     [":" pat:Pat typ:Type] -> ({pat, typ})
 }
 
 LinearCase {
-    [" " pat:Pat ...body:*Linear] -> ({pat, body})
+    [" " pat:Pat "->" ...body:*Linear] -> ({pat, body})
+}
+
+LensCase {
+    [" " pat:Pat "->" ...body:*Lens] -> ({pat, body})
 }
 
 LinearInterp {
@@ -138,7 +158,7 @@ Linear {
     ["(" one:Linear] -> one
     ["(" ...items:Linear] -> ({type: "tuple", items})
     [" " one:Linear] -> one
-    [" " "match" value:Linear ["{" ...cases:LinearCase]] -> ({type: "case", value, cases})
+    [" " "match" value:Linear ["{\n" ...cases:LinearCase]] -> ({type: "case", value, cases})
     // if the fncall has a no binding, then the bindings are splatted in.
     [" " "fn" Ann(["(" ...args:FnArg]) body:FnBody] -> ({type: "fn", args, ann, body})
     [" " lens:Lens "<-" ...value:*Linear] -> ({type: "assign", lens, value})

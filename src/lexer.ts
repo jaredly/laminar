@@ -133,7 +133,7 @@ export const readLine = (text: string, config = defaultConfig): Node => {
     return result.node;
 };
 
-const locLines =
+export const locLines =
     (lines: string[]) =>
     (loc: number): { line: number; char: number } => {
         for (let i = 0; i < lines.length; i++) {
@@ -145,6 +145,8 @@ const locLines =
         }
         return { line: lines.length, char: loc };
     };
+
+export const showPos = ({ line, char }: { line: number; char: number }) => line + 1 + ':' + char;
 
 export const readLines = (
     text: string,

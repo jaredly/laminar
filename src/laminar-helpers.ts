@@ -1,8 +1,9 @@
 import { Linear, Id } from './ast.ts';
+import { Op } from './lexer.ts';
 type Data<Expr> = {
     type: 'tmp';
     left: Expr | Data<Expr>;
-    op: Id;
+    op: Op;
     prec: number;
     right: Expr | Data<Expr>;
 };
@@ -16,7 +17,7 @@ precedence.forEach((row, i) => {
 
 const add = <Expr extends { type: string }>(
     data: Data<Expr> | Expr,
-    op: Id,
+    op: Op,
     right: Expr,
 ): Data<Expr> => {
     const prec = opprec[op.text];
@@ -47,7 +48,7 @@ const dataToExpr = (data: Data<Linear> | Linear): Linear => {
 
 // This is probably the same algorithm as the simple precedence parser
 // https://en.wikipedia.org/wiki/Simple_precedence_parser
-export const partition = (left: Linear, rights: { op: Id; right: Linear }[]): Linear => {
+export const partition = (left: Linear, rights: { op: Op; right: Linear }[]): Linear => {
     // console.log(left, rights);
     let data: Data<Linear> | Linear = left;
     rights.forEach(({ op, right }) => {

@@ -285,7 +285,7 @@ export class Grammar {
                     return {
                         type: 'failure',
                         failure: {
-                            reason: `not an id, found a ${node.type}`,
+                            reason: `not an id, found a ${brief(node)}`,
                             loc: node.loc,
                             path,
                         },
@@ -312,7 +312,7 @@ export class Grammar {
                     return {
                         type: 'failure',
                         failure: {
-                            reason: `not an id, found a ${node.type}`,
+                            reason: `not an id, found a ${brief(node)}`,
                             loc: node.loc,
                             path,
                         },
@@ -327,7 +327,7 @@ export class Grammar {
                     return {
                         type: 'failure',
                         failure: {
-                            reason: `not an op, found a ${node.type}`,
+                            reason: `not an op, found a ${brief(node)}`,
                             loc: node.loc,
                             path,
                         },
