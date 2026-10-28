@@ -511,6 +511,7 @@ const pairs: [string, string, string, any][] = [
             // so like:
             // [] -> @(None, fn (m) {match m { Some(v) -> [v]; None -> [] }})
             // yeah that could be really interesting.
+            // This only makes sense for ... a function return value context.
             head(~x) := Some(3)
             x
         }`,
