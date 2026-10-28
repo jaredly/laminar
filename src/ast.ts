@@ -185,3 +185,16 @@ export const free = (expr: Term | Lens): string[] => {
         }
     }
 };
+
+export const patdBinds = (pat: Patd) => {
+    switch (pat.type) {
+        case 'idd':
+            return true;
+        case 'drop':
+            return false;
+        case 'tuple':
+            return pat.items.some(patdBinds);
+        case 'constructor':
+            return pat.args.some(patdBinds);
+    }
+};

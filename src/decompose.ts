@@ -82,7 +82,7 @@ we can replace all of the lenses with, like, lambda functions. right?
 */
 
 import { subscribe } from 'diagnostics_channel';
-import { Expr, Idd, Lens, Linear, Pat, Patd, Stmt, Swap } from './ast.ts';
+import { Expr, Idd, Lens, Linear, Pat, Patd, patdBinds, Stmt, Swap } from './ast.ts';
 
 type Ctx = { scope: Record<string, number>; counter: { current: number } };
 
@@ -102,7 +102,7 @@ export const sstmt = (stmt: Stmt): string => {
 export const spat = (pat: Patd): string => {
     switch (pat.type) {
         case 'idd':
-            return pat.text + pat.id;
+            return pat.id === -1 ? pat.text : pat.text + pat.id;
         case 'drop':
             return '_' + (pat.id ?? '');
         case 'tuple':
@@ -115,7 +115,7 @@ export const spat = (pat: Patd): string => {
                     .concat(list.tail ? ['...' + spat(list.tail)] : [])
                     .join(',')}]`;
             }
-            return `CONSTR`;
+            return `${pat.name}(${pat.args.map(spat).join(',')})`;
         // case 'lens':
         //     return '~' + spat(pat.inner);
     }
@@ -654,13 +654,22 @@ export const lensToExpr = (ctx: Ctx, lens: Lens, inner: (name: Patd) => Expr): E
                                     return {
                                         pat: cpat,
                                         body: lensToExpr(sub, body, (bpat): Expr => {
+                                            const hasBindings = patdBinds(bpat);
                                             return {
                                                 type: 'tuple',
                                                 items: [
                                                     patdToExpr(bpat),
                                                     {
                                                         type: 'fn',
-                                                        args: [bpat],
+                                                        args: [
+                                                            hasBindings
+                                                                ? bpat
+                                                                : {
+                                                                      type: 'drop',
+                                                                      id: null,
+                                                                      loc: -1,
+                                                                  },
+                                                        ],
                                                         body: patdToExpr(cpat),
                                                         loc: lens.loc,
                                                     },

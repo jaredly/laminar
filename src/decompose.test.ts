@@ -7,32 +7,6 @@ import { linearToExpr, sexpr } from './decompose.ts';
 import { evalExpr } from './eval.ts';
 import { findDeepest, showDeepest, showFailure } from './debugFailures.ts';
 
-const l = (raw: string) => {
-    const node = readLine(raw + '\n');
-    const lin = grammar.parse<Linear>('Linear', node);
-    if (lin.type !== 'success') {
-        // expect(lin).toMatchObject({ type: 'success' });
-        const pos = locLines(raw.split('\n'));
-        const deepest = findDeepest(lin.failure);
-        console.log(showDeepest(deepest!, grammar, raw, (n) => showPos(pos(n))));
-        expect(lin.failure.reason).toEqual(null);
-        throw 1;
-    }
-    return linearToExpr(
-        {
-            scope: {
-                inc: -1,
-                fst: -1,
-                log: -1,
-                '+': -1,
-                newlens: 0,
-            },
-            counter: { current: 0 },
-        },
-        lin.value,
-    );
-};
-
 const pairs: [string, string, string, any][] = [
     ['num', '1', '1', 1],
     ['null', '()', '()', null],
@@ -281,7 +255,7 @@ const pairs: [string, string, string, any][] = [
         `iffe{
             let m0=2;
             let _=iffe{
-                let (t1,c2)=newlens0()
+                let (t1,c2)=newlens()
             }{swap(t1,4)}{swap((),c2(t1))}
         }{m0}{}`,
         2,
@@ -451,6 +425,28 @@ const pairs: [string, string, string, any][] = [
         swap(x1,c3(t2))}}{x1}{}`,
         [1, 4],
     ],
+    [
+        'ok',
+        `{
+            let head = fn (~x) ~{
+                match ~x {
+                    [h, ..._] -> Some(h)
+                    _ -> None()
+                }
+            }
+            let map = fn (f, ~x) {
+                match ~x {
+                    Some(v) -> f(~v)
+                    None() -> ()
+                }
+            }
+            let x = [1,3,5]
+            map(inc, ~head(~x))
+            x
+        }`,
+        ``,
+        [2, 3, 5],
+    ],
 ];
 
 /*
@@ -486,7 +482,37 @@ const builtins = {
     log: (v: any) => {
         log.push(v);
     },
+    Some: (v: number) => ({ type: 'Some', args: [v] }),
+    None: () => ({ type: 'None' }),
     newlens: () => [5, () => void 0],
+};
+
+const l = (raw: string) => {
+    const node = readLine(raw + '\n');
+    const lin = grammar.parse<Linear>('Linear', node);
+    if (lin.type !== 'success') {
+        // expect(lin).toMatchObject({ type: 'success' });
+        const pos = locLines(raw.split('\n'));
+        const deepest = findDeepest(lin.failure);
+        console.log(showDeepest(deepest!, grammar, raw, (n) => showPos(pos(n))));
+        expect(lin.failure.reason).toEqual('');
+        throw 1;
+    }
+    return linearToExpr(
+        {
+            scope: {
+                inc: -1,
+                fst: -1,
+                log: -1,
+                '+': -1,
+                Some: -1,
+                None: -1,
+                newlens: -1,
+            },
+            counter: { current: 0 },
+        },
+        lin.value,
+    );
 };
 
 it.each(pairs)('input / output %p', (_name, one, out, result) => {
