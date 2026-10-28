@@ -79,12 +79,19 @@ grammar.add('Pat', [
     // Pat:1
     option(lit('_'), ({ node }: { node: Node }): Pat => ({ type: 'drop', loc: node.loc })),
     // Pat:2
+    option(b('name', /^[A-Z]/), ({ name, node }: { name: Id; node: Node }): Pat => ({
+        type: 'constructor',
+        name: name.text,
+        args: [],
+        loc: node.loc,
+    })),
+    // Pat:3
     option(b('text', 'id'), ({ text, node }: { text: Id; node: Node }): Pat => ({
         type: 'id',
         text: text.text,
         loc: node.loc,
     })),
-    // Pat:3
+    // Pat:4
     option(
         list('', lit('~'), b('inner', 'Pat')),
         ({ inner, node }: { inner: Pat; node: Node }): Pat => ({
@@ -93,7 +100,7 @@ grammar.add('Pat', [
             loc: node.loc,
         }),
     ),
-    // Pat:4
+    // Pat:5
     option(
         list('', b('name', 'id'), wrapper('(', list(',', many('args', 'Pat')))),
         ({ name, args, node }: { name: Id; args: Pat[]; node: Node }): Pat => ({
@@ -103,26 +110,26 @@ grammar.add('Pat', [
             loc: node.loc,
         }),
     ),
-    // Pat:5
+    // Pat:6
     option(
         wrapper('(', list(',', many('items', 'Pat'))),
         ({ items, node }: { items: Pat[]; node: Node }): Pat =>
             items.length === 1 ? items[0] : { type: 'tuple', items, loc: node.loc },
     ),
-    // Pat:6
+    // Pat:7
     option(wrapper('(', null), ({ node }: { node: Node }): Pat => ({
         type: 'tuple',
         items: [],
         loc: node.loc,
     })),
-    // Pat:7
+    // Pat:8
     option(wrapper('[', null), ({ node }: { node: Node }): Pat => ({
         type: 'constructor',
         name: 'nil',
         args: [],
         loc: node.loc,
     })),
-    // Pat:8
+    // Pat:9
     option(
         wrapper('[', list(',', many('items', 'Pat'))),
         ({ items, node }: { items: Pat[]; node: Node }): Pat =>
@@ -131,7 +138,7 @@ grammar.add('Pat', [
                 node.loc,
             ),
     ),
-    // Pat:9
+    // Pat:10
     option(
         wrapper('[', list(',', many('items', 'Pat'), list('', lit('...'), b('tail', 'Pat')))),
         ({ items, tail, node }: { items: Pat[]; tail: Pat; node: Node }): Pat =>

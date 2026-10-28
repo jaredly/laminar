@@ -450,28 +450,76 @@ const pairs: [string, string, string, any][] = [
         let _=iffe{let Some(n1) = x0}{swap(n1,4)}{swap(x0,Some(n1))}}{x0}{}`,
         { type: 'Some', args: [4] },
     ],
-    //[
-    //    'ok',
-    //    `{
-    //        let head = fn (~x) ~{
-    //            match ~x {
-    //                [h, ..._] -> Some(h)
-    //                _ -> None()
-    //            }
-    //        }
-    //        let map = fn (f, ~x) {
-    //            match ~x {
-    //                Some(v) -> f(~v)
-    //                None() -> ()
-    //            }
-    //        }
-    //        let x = [1,3,5]
-    //        map(inc, ~head(~x))
-    //        x
-    //    }`,
-    //    ``,
-    //    [2, 3, 5],
-    //],
+    [
+        'case as lens fn body',
+        `{
+            let head = fn (~x) ~{
+                match ~x {
+                // conceptually,
+                // I want a way to update h
+                // but if I send this out into the world,
+                // and you give me the wrong thing back,
+                // then ... I ignore it?
+                // that does seem like the more sound thing to do.
+                    [h, ..._] -> Some(h)
+                    _ -> None
+                }
+            }
+            let apply = fn (f, ~x) {
+                match ~x {
+                    Some(v) -> f(~v)
+                    None -> ()
+                }
+            }
+            let x = [1,3,5]
+            apply(inc, ~head(~x))
+            x
+        }`,
+        `iffe{
+            let head0 = (x12)=>iffe{
+                let (t13,c14) = (match x12 {
+                    [h15,..._16] -> (Some(h15),(Some(h15))=>[h15, ..._16])
+                    _17 -> (None(),(_)=>_17)
+                })
+            }{(t13,(t13)=>iffe{swap(x12,c14(t13))}{x12}{})}{};
+            let apply1 = (f7,x8)=>((match x8 {Some(v9) -> iffe{let (r10,l11) = f7(v9)}{r10}{swap(v9,l11);
+            swap(x8,Some(v9))}
+            None() -> iffe{}{()}{swap(x8,None())}}),x8);
+            let x2 = [1, 3, 5];
+            let _ = iffe{let (t3,c4) = head0(x2);
+            let (r5,l6) = apply1(inc,t3)}{r5}{swap(t3,l6);
+            swap(x2,c4(t3))}
+        }{x2}{}`,
+        [2, 3, 5],
+    ],
+    [
+        'case as lens fn body',
+        `{
+            let head = fn (~x) ~{
+                match ~x {
+                    [h, ..._] -> Some(h)
+                    _ -> None
+                }
+            }
+            let x = [1,3,5]
+            // I could imagine someone wanting to be able to
+            // "add a head" to something without a head, using
+            // this kind of an assign.
+            // And it really should be doable, right?
+            // it would mean ... having some kind of primitive
+            // for doing the lensing yourself.
+            // so like:
+            // [] -> @(None, fn (m) {match m { Some(v) -> [v]; None -> [] }})
+            // yeah that could be really interesting.
+            head(~x) := Some(3)
+            x
+        }`,
+        `iffe{let head0 = (x4)=>iffe{let (t5,c6) = (match x4 {[h7,..._8] -> (Some(h7),(Some(h7))=>[h7, ..._8])
+        _9 -> (None(),(_)=>_9)})}{(t5,(t5)=>iffe{swap(x4,c6(t5))}{x4}{})}{};
+        let x1 = [1, 3, 5];
+        let _ = iffe{let (t2,c3) = head0(x1)}{swap(t2,Some(3))}{swap(x1,c3(t2))}}{x1}{}`,
+        [3, 3, 5],
+    ],
 ];
 
 /*
@@ -543,11 +591,13 @@ const l = (raw: string) => {
 it.each(pairs)('input / output %p', (_name, one, out, result) => {
     const oneExpr = l(one);
 
-    let evalErr;
-    // try {
-    // } catch (err) {
-    //     evalErr = err;
-    // }
+    log = [];
+    if (result === Function) {
+        expect(evalExpr({ scope: {}, builtins }, oneExpr)).toBeInstanceOf(Function);
+    } else {
+        const got = evalExpr({ scope: {}, builtins }, oneExpr);
+        expect(log.length ? [got, log] : got).toEqual(result);
+    }
 
     if (out != '') {
         const ot = ir.parse<Expr>('Expr', readLine(out + '\n'));
@@ -564,13 +614,6 @@ it.each(pairs)('input / output %p', (_name, one, out, result) => {
     } else {
         // if (evalErr) throw evalErr;
         expect(sexpr(oneExpr)).toEqual('');
-    }
-    log = [];
-    if (result === Function) {
-        expect(evalExpr({ scope: {}, builtins }, oneExpr)).toBeInstanceOf(Function);
-    } else {
-        const got = evalExpr({ scope: {}, builtins }, oneExpr);
-        expect(log.length ? [got, log] : got).toEqual(result);
     }
 });
 

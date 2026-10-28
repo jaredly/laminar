@@ -513,8 +513,8 @@ export const linearToExpr = (ctx: Ctx, lin: Linear): Expr => {
                 };
             });
         }
-        // throw new Error('not support yet ' + lin.type);
     }
+    throw new Error('not support yet ' + (lin as any).type);
 };
 
 export const lensToExpr = (ctx: Ctx, lens: Lens, inner: (name: Patd) => Expr): Expr => {
@@ -523,6 +523,15 @@ export const lensToExpr = (ctx: Ctx, lens: Lens, inner: (name: Patd) => Expr): E
             const id = ctx.scope[lens.text];
             if (id == null) throw new Error(`unbound ${lens.text}`);
             return inner({ ...lens, type: 'idd', id });
+        }
+        case 'constructor': {
+            let next = (i: number, args: Patd[]): Expr => {
+                if (i === lens.args.length) {
+                    return inner({ type: 'constructor', name: lens.name, args, loc: lens.loc });
+                }
+                return lensToExpr(ctx, lens.args[i], (name) => next(i + 1, [...args, name]));
+            };
+            return next(0, []);
         }
         case 'tuple': {
             let next = (i: number, items: Patd[]): Expr => {
@@ -711,4 +720,5 @@ export const lensToExpr = (ctx: Ctx, lens: Lens, inner: (name: Patd) => Expr): E
         case 'let':
             throw new Error('not yet');
     }
+    throw new Error('not support yet ' + (lens as any).type);
 };

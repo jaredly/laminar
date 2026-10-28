@@ -30,6 +30,7 @@ function econs(items:Linear[], loc:number) {
 
 Pat {
     "_" -> ({type: "drop", loc: node.loc})
+    name:re"^[A-Z]" -> ({type: "constructor", name: name.text, args: [], loc: node.loc})
     text:id -> ({type: "id", text: text.text, loc: node.loc})
     ["" "~" inner:Pat] -> ({type: "lens", inner, loc: node.loc})
     ["" name:id ["(," ...args:Pat]] -> ({type: "constructor", name: name.text, args, loc: node.loc})

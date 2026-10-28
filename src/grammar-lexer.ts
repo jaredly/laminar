@@ -450,7 +450,9 @@ export class Grammar {
                     };
                 }
                 const hasSpread = pat.items.some(isSpread);
-                const minCount = pat.items.filter((n) => !isSpread(n));
+                const minCount = pat.items.filter(
+                    (n) => !isSpread(n) || (n.type === 'rest' && !n.multi),
+                );
                 if (hasSpread) {
                     if (minCount.length > node.children.length) {
                         return {
