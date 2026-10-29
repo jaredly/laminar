@@ -1,33 +1,48 @@
 import { it, expect } from 'bun:test';
-import { locLines, readLine, showPos } from './lexer.ts';
+import { locLines, readFile, readLine, showPos } from './lexer.ts';
 import { grammar } from './laminar-parser.ts';
 import { grammar as ir } from './ir-parser.ts';
-import { Expr, Linear } from './ast.ts';
+import { Expr, File, Linear } from './ast.ts';
 import { linearToExpr, sexpr } from './decompose.ts';
 import { evalExpr } from './eval.ts';
-import { findDeepest, showDeepest, showFailure } from './debugFailures.ts';
+import { findDeepest, showDeepest } from './debugFailures.ts';
 
-const pairs: [string, string, string, any][] = [
-    ['num', '1', '1', 1],
-    ['null', '()', '()', null],
-    ['fn', 'fn hi(x) 20', '(x0)=>20', Function],
-    ['let', '{let x = 2\nx}', 'iffe{let x0=2}{x0}{}', 2],
-    ['tuple', '(1, 2)', '(1,2)', [1, 2]],
+type TestCase = {
+    name: string;
+    source: string;
+    ir: string;
+    defns?: { source: string; ir: Record<string, string> };
+    result: any;
+};
+
+const t = (name: string, source: string, ir: string, result: any): TestCase => ({
+    name,
+    source,
+    ir,
+    result,
+});
+
+const pairs: TestCase[] = [
+    t('num', '1', '1', 1),
+    t('null', '()', '()', null),
+    t('fn', 'fn hi(x) 20', '(x0)=>20', Function),
+    t('let', '{let x = 2\nx}', 'iffe{let x0=2}{x0}{}', 2),
+    t('tuple', '(1, 2)', '(1,2)', [1, 2]),
     // ['log(10)', 'log(10)'],
-    ['string', '"A string ${5}"', '"A string ${5}"', 'A string 5'],
-    ['tuple let', '{let (x,y) = (1,2)\nx}', 'iffe{let (x0,y1)=(1,2)}{x0}{}', 1],
-    ['block', '{5\n2}', 'iffe{let _=5}{2}{}', 2],
-    ['shadow', '{let x = 2\nlet x = 3\nx}', 'iffe{let x0=2;let x1=3}{x1}{}', 3],
+    t('string', '"A string ${5}"', '"A string ${5}"', 'A string 5'),
+    t('tuple let', '{let (x,y) = (1,2)\nx}', 'iffe{let (x0,y1)=(1,2)}{x0}{}', 1),
+    t('block', '{5\n2}', 'iffe{let _=5}{2}{}', 2),
+    t('shadow', '{let x = 2\nlet x = 3\nx}', 'iffe{let x0=2;let x1=3}{x1}{}', 3),
     //['x := 2', 'iffe{let x0=2}{x0}{}'],
-    ['swap', '{let x = 2\nx := 3\nx}', 'iffe{let x0=2;let _=swap(x0,3)}{x0}{}', 3],
-    [
+    t('swap', '{let x = 2\nx := 3\nx}', 'iffe{let x0=2;let _=swap(x0,3)}{x0}{}', 3),
+    t(
         'block',
         '{let x = 1\n{let x = 2\n3}\nx}',
         `iffe{let x0=1;let _=iffe{let x1=2}{3}{}}{x0}{}`,
         1,
-    ],
+    ),
     // *** Assignments to local variables ***
-    [
+    t(
         'assign local',
         `{
         let x = 1
@@ -37,10 +52,12 @@ const pairs: [string, string, string, any][] = [
         }
         x
     }`,
-        `iffe{let x0=1;let _=iffe{let y1=x0}{swap(y1,2)}{swap(x0,y1)}}{x0}{}`,
+        `iffe{
+        let x0=1;
+        let _=iffe{let y1=x0}{swap(y1,2)}{swap(x0,y1)}}{x0}{}`,
         2,
-    ],
-    [
+    ),
+    t(
         'assign 2 local',
         `{
         let x = 1
@@ -66,8 +83,8 @@ const pairs: [string, string, string, any][] = [
         };
         }{(a1,x0)}{}`,
         [4, 2],
-    ],
-    [
+    ),
+    t(
         'assign 2 tuple',
         `{
         let m = (1,5)
@@ -88,9 +105,9 @@ const pairs: [string, string, string, any][] = [
             }
         }{(m0,n1)}{}`,
         [[2, 4], 5],
-    ],
+    ),
     // *** Function calls with lenses ***
-    [
+    t(
         'inc',
         `{
             let m = 5
@@ -102,8 +119,8 @@ const pairs: [string, string, string, any][] = [
             let (r1,l2)=inc(m0)
         }{r1}{swap(m0,l2)},m0)}{}`,
         [null, 6],
-    ],
-    [
+    ),
+    t(
         'inc fst',
         `{
             let m = (1,5)
@@ -123,9 +140,9 @@ const pairs: [string, string, string, any][] = [
             }
         }{m0}{}`,
         [2, 5],
-    ],
+    ),
     // *** Tuples of lenses
-    [
+    t(
         'inc fst tuple',
         `{let a = 1\nlet b = 5\ninc(~fst(~(a,b)))\n(a,b)}`,
         `iffe{
@@ -140,8 +157,8 @@ const pairs: [string, string, string, any][] = [
             }
         }{(a0,b1)}{}`,
         [2, 5],
-    ],
-    [
+    ),
+    t(
         'assign let tuple',
         `{
             let x = 1
@@ -160,8 +177,8 @@ const pairs: [string, string, string, any][] = [
             }{swap((x0,y1),m2)}
         }{(x0,y1)}{}`,
         [4, 5],
-    ],
-    [
+    ),
+    t(
         'inc fst tuple',
         `{
             let a = (1,2)
@@ -188,8 +205,8 @@ const pairs: [string, string, string, any][] = [
             [2, 2],
             [5, 6],
         ],
-    ],
-    [
+    ),
+    t(
         'aslens',
         `{
             let x = 2
@@ -218,8 +235,8 @@ const pairs: [string, string, string, any][] = [
             let _=log("after")
         }{x0}{}`,
         [10, ['before', 2, 'after']],
-    ],
-    [
+    ),
+    t(
         'assign tuple',
         `{let x = 1
         let y = 2
@@ -231,8 +248,8 @@ const pairs: [string, string, string, any][] = [
             let _=swap((x0,y1),(4,5))
         }{(x0,y1)}{}`,
         [4, 5],
-    ],
-    [
+    ),
+    t(
         'assign fst',
         `{let m = (1,2)
           let n = fst(~m) := 5
@@ -246,8 +263,8 @@ const pairs: [string, string, string, any][] = [
             }
         }{(m0,n1)}{}`,
         [[5, 2], 1],
-    ],
-    [
+    ),
+    t(
         'lensfn no args',
         `{let m = 2
           newlens() := 4
@@ -259,8 +276,8 @@ const pairs: [string, string, string, any][] = [
             }{swap(t1,4)}{swap((),c2(t1))}
         }{m0}{}`,
         2,
-    ],
-    [
+    ),
+    t(
         'lens fn arg',
         `{
             let inc2 = fn (~x) { x := x + 1 }
@@ -276,8 +293,8 @@ const pairs: [string, string, string, any][] = [
             }{r2}{swap(y1,l3)}
         }{y1}{}`,
         5,
-    ],
-    [
+    ),
+    t(
         'lens fn res',
         `{
             let fst2 = fn (~(a, b)) { ~a }
@@ -286,7 +303,7 @@ const pairs: [string, string, string, any][] = [
             m
         }`,
         `iffe{
-            let fst20=((a6,b7))=>(a6,(a6)=>iffe{}{(a6,b7)}{});
+            let fst20 = ((a6,b7))=>(a6,(back8)=>iffe{swap(a6,back8)}{(a6,b7)}{});
             let m1=(3,5);
             let _=iffe{
                 let (t2,c3)=fst20(m1);
@@ -297,9 +314,9 @@ const pairs: [string, string, string, any][] = [
             }
         }{m1}{}`,
         [4, 5],
-    ],
-    [
-        'lens fn res',
+    ),
+    t(
+        'lens fn res 2',
         `{
             let fst2 = fn (~(a,b)) { ~fst(~a) }
             let m = ((3,5),6)
@@ -307,7 +324,8 @@ const pairs: [string, string, string, any][] = [
             m
         }`,
         `iffe{
-            let fst20=((a6,b7))=>iffe{let (t8,c9)=fst(a6)}{(t8,(t8)=>iffe{swap(a6,c9(t8))}{(a6,b7)}{})}{};
+        let fst20 = ((a6,b7))=>iffe{let (t8,c9) = fst(a6)}{(t8,(back10)=>iffe{swap(t8,back10);
+        swap(a6,c9(t8))}{(a6,b7)}{})}{};
             let m1=((3,5),6);
             let _=iffe{
                 let (t2,c3)=fst20(m1);
@@ -318,11 +336,11 @@ const pairs: [string, string, string, any][] = [
             }
         }{m1}{}`,
         [[4, 5], 6],
-    ],
-    ['list nil', `[]`, `[]`, []],
-    ['list numbers', `[1,2,3]`, `[1,2,3]`, [1, 2, 3]],
-    ['list spread', `[1,2,...[4,5]]`, `[1,2,...[4,5]]`, [1, 2, 4, 5]],
-    [
+    ),
+    t('list nil', `[]`, `[]`, []),
+    t('list numbers', `[1,2,3]`, `[1,2,3]`, [1, 2, 3]),
+    t('list spread', `[1,2,...[4,5]]`, `[1,2,...[4,5]]`, [1, 2, 4, 5]),
+    t(
         'match list',
         `{
             match [1] {
@@ -337,8 +355,8 @@ const pairs: [string, string, string, any][] = [
             [a1, ...b2] -> 7
         }`,
         2,
-    ],
-    [
+    ),
+    t(
         'change first element',
         `{
             let x = [1,3,5]
@@ -359,8 +377,8 @@ const pairs: [string, string, string, any][] = [
             })
         }{x0}{}`,
         [2, 3, 5],
-    ],
-    [
+    ),
+    t(
         'change first element, preserving blanks',
         `{
             let x = [1,3,5]
@@ -383,8 +401,8 @@ const pairs: [string, string, string, any][] = [
             })
         }{x0}{}`,
         [2, 3, 5],
-    ],
-    [
+    ),
+    t(
         'change head',
         `{
             let x = [1,2,3]
@@ -395,15 +413,15 @@ const pairs: [string, string, string, any][] = [
         }`,
         `iffe{
             let x0=[1,2,3]
-            let _=iffe{
-                let (t1,c2)=(match x0 {
-                    [h3, ..._4] -> (h3, (h3)=>[h3,..._4])
+            let _ = iffe{
+                let (t1,c2) = (match x0 {
+                    [h3,..._4] -> (h3,(back5)=>iffe{swap(h3,back5)}{[h3, ..._4]}{})
                 })
             }{swap(t1,5)}{swap(x0,c2(t1))}
         }{x0}{}`,
         [5, 2, 3],
-    ],
-    [
+    ),
+    t(
         'change snd fn',
         `{
             let snd = fn (~x) ~{
@@ -415,17 +433,15 @@ const pairs: [string, string, string, any][] = [
             inc(~snd(~x))
             x
         }`,
-        `iffe{let snd0=(x6)=>iffe{
-        let (t7,c8)=(match x6 {
-            [_9,h10,..._11] -> (h10,(h10)=>[_9, h10, ..._11])
-        })}{(t7,(t7)=>iffe{swap(x6,c8(t7))}{x6}{})}{};
+        `iffe{let snd0 = (x6)=>iffe{let (t7,c8) = (match x6 {[_9,h10,..._11] -> (h10,(back12)=>iffe{swap(h10,back12)}{[_9, h10, ..._11]}{})})}{(t7,(back13)=>iffe{swap(t7,back13);
+        swap(x6,c8(t7))}{x6}{})}{};
         let x1=[1, 3];
         let _=iffe{let (t2,c3)=snd0(x1);
         let (r4,l5)=inc(t2)}{r4}{swap(t2,l5);
         swap(x1,c3(t2))}}{x1}{}`,
         [1, 4],
-    ],
-    [
+    ),
+    t(
         `some optionals`,
         `{
             let x = Some(2)
@@ -435,8 +451,8 @@ const pairs: [string, string, string, any][] = [
         `iffe{let x0=Some(2);
         let _=swap(x0,None())}{x0}{}`,
         { type: 'None' },
-    ],
-    [
+    ),
+    t(
         `lens unpacking`,
         `{
             let x = Some(2)
@@ -449,106 +465,159 @@ const pairs: [string, string, string, any][] = [
         `iffe{let x0 = Some(2);
         let _=iffe{let Some(n1) = x0}{swap(n1,4)}{swap(x0,Some(n1))}}{x0}{}`,
         { type: 'Some', args: [4] },
-    ],
-    [
-        'case as lens fn body',
-        `{
-            let head = fn (~x) ~{
+    ),
+    {
+        name: 'case as lens fn body',
+        defns: {
+            source: `
+            fn head(~x) ~{
                 match ~x {
-                // conceptually,
-                // I want a way to update h
-                // but if I send this out into the world,
-                // and you give me the wrong thing back,
-                // then ... I ignore it?
-                // that does seem like the more sound thing to do.
-                    [h, ..._] -> Some(h)
-                    _ -> None
+                    [h, ...rest] -> @(Some(h), fn (opt) (match opt { None -> [];Some(h) -> [h, ...rest]}))
+                    h -> @(None, fn (opt) (match opt { None -> h;Some(h) -> [h]}))
                 }
             }
-            let apply = fn (f, ~x) {
+            fn apply(f, ~x) {
                 match ~x {
                     Some(v) -> f(~v)
                     None -> ()
                 }
             }
+            `,
+            ir: {
+                head: `(x0)=>iffe{let (t1,c2) = (match x0 {[h3,...rest4] -> (Some(h3),(opt5)=>(match opt5 {None() -> []
+                Some(h6) -> [h6, ...rest4]}))
+                h7 -> (None(),(opt8)=>(match opt8 {None() -> h7
+                Some(h9) -> [h9]}))})}{(t1,(back10)=>iffe{swap(t1,back10);
+                swap(x0,c2(t1))}{x0}{})}{}`,
+                apply: `(f11,x12)=>((match x12 {Some(v13) -> iffe{let (r14,l15) = f11(v13)}{r14}{swap(v13,l15);
+                swap(x12,Some(v13))}
+                None() -> iffe{}{()}{swap(x12,None())}}),x12)`,
+            },
+        },
+        source: `{
             let x = [1,3,5]
             apply(inc, ~head(~x))
             x
         }`,
-        `iffe{
-            let head0 = (x12)=>iffe{
-                let (t13,c14) = (match x12 {
-                    [h15,..._16] -> (Some(h15),(Some(h15))=>[h15, ..._16])
-                    _17 -> (None(),(_)=>_17)
-                })
-            }{(t13,(t13)=>iffe{swap(x12,c14(t13))}{x12}{})}{};
-            let apply1 = (f7,x8)=>((match x8 {Some(v9) -> iffe{let (r10,l11) = f7(v9)}{r10}{swap(v9,l11);
-            swap(x8,Some(v9))}
-            None() -> iffe{}{()}{swap(x8,None())}}),x8);
-            let x2 = [1, 3, 5];
-            let _ = iffe{let (t3,c4) = head0(x2);
-            let (r5,l6) = apply1(inc,t3)}{r5}{swap(t3,l6);
-            swap(x2,c4(t3))}
-        }{x2}{}`,
-        [2, 3, 5],
-    ],
-    [
-        'case as lens fn body',
-        `{
-            let head = fn (~x) ~{
-                match ~x {
-                    [h, ..._] -> Some(h)
-                    _ -> None
-                }
-            }
+        ir: `iffe{let x16 = [1, 3, 5];
+        let _ = iffe{let (t17,c18) = head(x16);
+        let (r19,l20) = apply(inc,t17)}{r19}{swap(t17,l20);
+        swap(x16,c18(t17))}}{x16}{}`,
+        result: [2, 3, 5],
+    },
+    {
+        name: 'case as lens fn body 2',
+        defns: {
+            source: `
+                fn head(~x) ~{
+                    match ~x {
+                        [h, ...rest] -> @(Some(h), fn (opt) (match opt { None -> [];Some(h) -> [h, ...rest]}))
+                        h -> @(None, fn (opt) (match opt { None -> h;Some(h) -> [h]}))
+                    }
+                }`,
+            ir: {
+                head: `(x0)=>iffe{
+                    let (t1,c2) = (match x0 {
+                        [h3,...rest4] -> (Some(h3),(opt5)=>(
+                            match opt5 {None() -> []
+                            Some(h6) -> [h6, ...rest4]
+                        }))
+                        h7 -> (None(),(opt8)=>(
+                            match opt8 {None() -> h7
+                            Some(h9) -> [h9]}))})}{(t1,(back10)=>iffe{swap(t1,back10);
+                            swap(x0,c2(t1))}{x0}{})}{}`,
+            },
+        },
+        source: `{
             let x = [1,3,5]
-            // I could imagine someone wanting to be able to
-            // "add a head" to something without a head, using
-            // this kind of an assign.
-            // And it really should be doable, right?
-            // it would mean ... having some kind of primitive
-            // for doing the lensing yourself.
-            // so like:
-            // [] -> @(None, fn (m) {match m { Some(v) -> [v]; None -> [] }})
-            // yeah that could be really interesting.
-            // This only makes sense for ... a function return value context.
             head(~x) := Some(3)
+            let y = []
+            head(~y) := Some(4)
+            (x,y)
+        }`,
+        ir: `iffe{let x11 = [1, 3, 5];
+        let _ = iffe{let (t15,c16) = head(x11)}{swap(t15,Some(3))}{swap(x11,c16(t15))};
+        let y12 = [];
+        let _ = iffe{let (t13,c14) = head(y12)}{swap(t13,Some(4))}{swap(y12,c14(t13))}}{(x11,y12)}{}`,
+        result: [[3, 3, 5], [4]],
+    },
+    // NEXT: manual lensing in fn bodies
+    {
+        name: 'manual fn body',
+        defns: {
+            source: `
+            fn leftShifted(~x) ~(@(x + 2, fn (x) { x - 2 }))
+            `,
+            ir: {
+                leftShifted: `(x0)=>(+(x0,2),(x1)=>(-(x1,2)))`,
+            },
+        },
+        source: `{
+            let x = 4
+            leftShifted(~x) := 5
+            let y = 10
+            inc(~leftShifted(~y))
+            (x, y)
+        }`,
+        ir: `iffe{let x2 = 4;
+        let _ = iffe{let (t8,c9) = leftShifted(x2)}{swap(t8,5)}{swap(x2,c9(t8))};
+        let y3 = 10;
+        let _ = iffe{let (t4,c5) = leftShifted(y3);
+        let (r6,l7) = inc(t4)}{r6}{swap(t4,l7);
+        swap(y3,c5(t4))}}{(x2,y3)}{}`,
+        result: [3, 11],
+    },
+    {
+        name: 'lens match with linear value',
+        defns: {
+            source: `
+            fn f(side, ~(a, b)) ~(match side {
+                Left -> a
+                Right -> b
+            })
+            `,
+            ir: {
+                f: `(side0,(a1,b2))=>iffe{let (t3,c4) = (match side0 {Left() -> (a1,(back5)=>iffe{swap(a1,back5)}{Left()}{})
+                    Right() -> (b2,(back6)=>iffe{swap(b2,back6)}{Right()}{})})}{(t3,(back7)=>iffe{swap(t3,back7);
+                    swap(_,c4(t3))}{(a1,b2)}{})}{}`,
+            },
+        },
+        source: `{
+            let x = (1,5)
+            f(Left, ~x) := 10
+            f(Right, ~x) := 20
             x
         }`,
-        `iffe{let head0 = (x4)=>iffe{let (t5,c6) = (match x4 {[h7,..._8] -> (Some(h7),(Some(h7))=>[h7, ..._8])
-        _9 -> (None(),(_)=>_9)})}{(t5,(t5)=>iffe{swap(x4,c6(t5))}{x4}{})}{};
-        let x1 = [1, 3, 5];
-        let _ = iffe{let (t2,c3) = head0(x1)}{swap(t2,Some(3))}{swap(x1,c3(t2))}}{x1}{}`,
-        [3, 3, 5],
-    ],
+        ir: `iffe{let x8 = (1,5);
+        let _ = iffe{let (t11,c12) = f(Left(),x8)}{swap(t11,10)}{swap(x8,c12(t11))};
+        let _ = iffe{let (t9,c10) = f(Right(),x8)}{swap(t9,20)}{swap(x8,c10(t9))}}{x8}{}`,
+        result: [10, 20],
+    },
 ];
 
-/*
-
-let x = 1
-{
-    let y = ~x
-    y := 2
-}
-x
-
-
-
-
-
-
-let m = (1, 2)
-{
-    let (x, y) = ~m
-    x := 2
-}
-m
-
-*/
+const l = (raw: string, builtins: string[], counter: { current: number }) => {
+    const node = readLine(raw + '\n');
+    const lin = grammar.parse<Linear>('Linear', node);
+    if (lin.type !== 'success') {
+        const pos = locLines(raw.split('\n'));
+        const deepest = findDeepest(lin.failure);
+        console.log(showDeepest(deepest!, grammar, raw, (n) => showPos(pos(n))));
+        expect(lin.failure.reason).toEqual('');
+        throw 1;
+    }
+    return linearToExpr(
+        {
+            scope: Object.fromEntries(builtins.map((name) => [name, -1])),
+            counter,
+        },
+        lin.value,
+    );
+};
 
 let log: any[] = [];
 const builtins = {
     '+': (a: number, b: number) => a + b,
+    '-': (a: number, b: number) => a - b,
     fst: ([a, b]: [any, any]) => {
         return [a, (a: any) => [a, b]];
     },
@@ -561,63 +630,83 @@ const builtins = {
     newlens: () => [5, () => void 0],
 };
 
-const l = (raw: string) => {
-    const node = readLine(raw + '\n');
-    const lin = grammar.parse<Linear>('Linear', node);
-    if (lin.type !== 'success') {
-        // expect(lin).toMatchObject({ type: 'success' });
-        const pos = locLines(raw.split('\n'));
-        const deepest = findDeepest(lin.failure);
-        console.log(showDeepest(deepest!, grammar, raw, (n) => showPos(pos(n))));
-        expect(lin.failure.reason).toEqual('');
-        throw 1;
-    }
-    return linearToExpr(
-        {
-            scope: {
-                inc: -1,
-                fst: -1,
-                log: -1,
-                '+': -1,
-                Some: -1,
-                None: -1,
-                newlens: -1,
-            },
-            counter: { current: 0 },
-        },
-        lin.value,
-    );
-};
+it.each(pairs)('input / output $name', ({ source, ir: irSource, defns, result }) => {
+    const globals: Record<string, any> = { ...builtins };
+    const counter = { current: 0 };
+    if (defns) {
+        const file = readFile(defns.source);
+        const result = grammar.parse<File>('File', file.node);
+        if (result.type === 'failure') {
+            const deepest = findDeepest(result.failure);
+            console.log(showDeepest(deepest!, ir, irSource, (n) => showPos(file.pos(n))));
+            expect(result.failure.reason).toEqual('');
+            return;
+        }
+        const defnIR: Record<string, string> = {};
+        const existingIR: Record<string, string> = {};
 
-it.each(pairs)('input / output %p', (_name, one, out, result) => {
-    const oneExpr = l(one);
+        result.value.forEach((item) => {
+            if (item.type !== 'fn') {
+                throw new Error(`defns should only contain function declarations`);
+            }
+            if (!item.name) throw new Error('defn functions must be named');
+            const expr = linearToExpr(
+                {
+                    counter,
+                    scope: Object.fromEntries(Object.keys(globals).map((name) => [name, -1])),
+                },
+                item,
+            );
+            {
+                const ot = ir.parse<Expr>('Expr', readLine(defns.ir[item.name] + '\n'));
+                if (ot.type !== 'success') {
+                    const pos = locLines(irSource.split('\n'));
+                    const deepest = findDeepest(ot.failure);
+                    console.log(showDeepest(deepest!, ir, irSource, (n) => showPos(pos(n))));
+                    expect(ot.failure.reason).toEqual('');
+                    return;
+                }
+                // expect(sexpr(expr)).toEqual();
+                existingIR[item.name] = sexpr(ot.value);
+            }
+            defnIR[item.name] = sexpr(expr);
+            globals[item.name] = evalExpr({ builtins, scopes: [{}] }, expr);
+        });
+        expect(defnIR).toEqual(existingIR);
+    }
+
+    const oneExpr = l(source, Object.keys(globals), counter);
+
+    let outText = '';
+
+    if (irSource != '') {
+        const ot = ir.parse<Expr>('Expr', readLine(irSource + '\n'));
+        if (ot.type !== 'success') {
+            const pos = locLines(irSource.split('\n'));
+            const deepest = findDeepest(ot.failure);
+            console.log(showDeepest(deepest!, ir, irSource, (n) => showPos(pos(n))));
+            expect(ot.failure.reason).toEqual('');
+            return;
+        }
+        outText = sexpr(ot.value);
+    }
+    // expect(sexpr(oneExpr)).toEqual(outText);
 
     log = [];
     if (result === Function) {
-        expect(evalExpr({ scope: {}, builtins }, oneExpr)).toBeInstanceOf(Function);
+        expect(evalExpr({ scopes: [{}], builtins: globals }, oneExpr)).toBeInstanceOf(Function);
+        expect(sexpr(oneExpr)).toEqual(outText);
     } else {
-        const got = evalExpr({ scope: {}, builtins }, oneExpr);
-        expect(log.length ? [got, log] : got).toEqual(result);
-    }
-
-    if (out != '') {
-        const ot = ir.parse<Expr>('Expr', readLine(out + '\n'));
-        if (ot.type !== 'success') {
-            const pos = locLines(out.split('\n'));
-            const deepest = findDeepest(ot.failure);
-            console.log(showDeepest(deepest!, ir, out, (n) => showPos(pos(n))));
-            expect(ot.failure.reason).toEqual(null);
-            // expect(showFailure(ot.failure, (n) => showPos(pos(n)))).toEqual('');
-            return;
+        const got = evalExpr({ scopes: [{}], builtins: globals }, oneExpr);
+        const myText = sexpr(oneExpr);
+        if (myText !== outText) {
+            console.log('----');
+            console.log(myText);
+            console.log('----');
         }
-        expect(sexpr(oneExpr)).toEqual(sexpr(ot.value));
-        // if (evalErr) throw evalErr;
-    } else {
-        // if (evalErr) throw evalErr;
-        expect(sexpr(oneExpr)).toEqual('');
+        expect({
+            result: log.length ? [got, log] : got,
+            text: myText,
+        }).toEqual({ result, text: outText });
     }
 });
-
-// it('ok', () => {
-//     expect(l('1')).toEqual('1');
-// });

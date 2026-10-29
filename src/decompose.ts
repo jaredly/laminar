@@ -18,24 +18,23 @@ lin(lin)
 ()
 lens := lin
 let pat = ~lens in lin
-
 fn(pat) => ~lens
-
--> easy
 Left(lin)
 Right(lin)
 case lin
     Left(pat) -> lin
     Right(pat) -> lin
+case ~lens
+    Left(pat) -> lin
+    Right(pat) -> lin
+
+-> easy
 lin & lin // SPLIT
 fst(lin)
 snd(lin)
 
 -> hard
 unlens lens in lin
-case ~lens
-    Left(pat) -> lin
-    Right(pat) -> lin
 false(term) ???
 true(lin)
 promote??discard??copy??derelict??
@@ -54,9 +53,9 @@ vbl : A/A'
 lin(lin) : A/A'
 lin(~lens) : A/A'
 aslens vbl <- lin in lin : A/A'
-
-Some(lens) : Option(A)/Option(A')
-None : Option(A)/Option(A')
+case ~lens
+    Left(pat) -> lens
+    Right(pat) -> lens
 
 -> easier
 () : ()/A'
@@ -65,9 +64,6 @@ None : Option(A)/Option(A')
 let pat = lin in lens
 let pat = ~lens in lens
 case lin
-    Left(pat) -> lens
-    Right(pat) -> lens
-case ~lens
     Left(pat) -> lens
     Right(pat) -> lens
 false(term)
@@ -243,6 +239,7 @@ export const patdToExpr = (pat: Patd): Expr => {
         case 'idd':
             return pat;
         case 'drop':
+            if (pat.id == null) throw new Error(`drop not initialized with an id`);
             return { type: 'idd', text: '_', id: pat.id, loc: pat.loc };
         case 'tuple':
             return { ...pat, items: pat.items.map(patdToExpr) };
@@ -340,27 +337,40 @@ export const linearToExpr = (ctx: Ctx, lin: Linear): Expr => {
                             : patToPatd(sub, a.pat, false),
                     );
                     const block: Stmt[] = [];
-                    const body = lensToExpr(sub, lin.body.lens, (pat): Expr => {
-                        return {
-                            type: 'tuple',
-                            items: [
-                                patdToExpr(pat),
-                                {
-                                    type: 'fn',
-                                    args: [pat],
-                                    body: {
-                                        type: 'iffe',
-                                        block,
-                                        result: patdToExpr(args[args.length - 1]),
-                                        cleanup: [],
-                                        loc: lin.loc,
-                                    },
-                                    loc: lin.loc,
-                                },
-                            ],
-                            loc: lin.loc,
-                        };
-                    });
+                    const body =
+                        lin.body.lens.type === 'manual'
+                            ? {
+                                  type: 'tuple' as const,
+                                  items: [
+                                      linearToExpr(sub, lin.body.lens.frontend),
+                                      linearToExpr(sub, lin.body.lens.backend),
+                                  ],
+                                  loc: lin.body.lens.loc,
+                              }
+                            : lensToExpr(sub, lin.body.lens, (pat): Expr => {
+                                  const id = ctx.counter.current++;
+                                  const iid: Idd = { type: 'idd', id, text: 'back', loc: -1 };
+                                  block.push({ type: 'swap', pat, value: iid, loc: -1 });
+                                  return {
+                                      type: 'tuple',
+                                      items: [
+                                          patdToExpr(pat),
+                                          {
+                                              type: 'fn',
+                                              args: [iid],
+                                              body: {
+                                                  type: 'iffe',
+                                                  block,
+                                                  result: patdToExpr(args[args.length - 1]),
+                                                  cleanup: [],
+                                                  loc: lin.loc,
+                                              },
+                                              loc: lin.loc,
+                                          },
+                                      ],
+                                      loc: lin.loc,
+                                  };
+                              });
                     const pushCleanupInside = (expr: Expr) => {
                         if (expr.type === 'iffe') {
                             block.push(...expr.cleanup);
@@ -519,20 +529,23 @@ export const linearToExpr = (ctx: Ctx, lin: Linear): Expr => {
 
 export const lensToExpr = (ctx: Ctx, lens: Lens, inner: (name: Patd) => Expr): Expr => {
     switch (lens.type) {
+        case 'manual': {
+            throw new Error(`manual lenses only allowed in certain contexts`);
+        }
         case 'id': {
             const id = ctx.scope[lens.text];
             if (id == null) throw new Error(`unbound ${lens.text}`);
             return inner({ ...lens, type: 'idd', id });
         }
-        case 'constructor': {
-            let next = (i: number, args: Patd[]): Expr => {
-                if (i === lens.args.length) {
-                    return inner({ type: 'constructor', name: lens.name, args, loc: lens.loc });
-                }
-                return lensToExpr(ctx, lens.args[i], (name) => next(i + 1, [...args, name]));
-            };
-            return next(0, []);
-        }
+        // case 'constructor': {
+        //     let next = (i: number, args: Patd[]): Expr => {
+        //         if (i === lens.args.length) {
+        //             return inner({ type: 'constructor', name: lens.name, args, loc: lens.loc });
+        //         }
+        //         return lensToExpr(ctx, lens.args[i], (name) => next(i + 1, [...args, name]));
+        //     };
+        //     return next(0, []);
+        // }
         case 'tuple': {
             let next = (i: number, items: Patd[]): Expr => {
                 if (i === lens.items.length) {
@@ -639,8 +652,7 @@ export const lensToExpr = (ctx: Ctx, lens: Lens, inner: (name: Patd) => Expr): E
         case 'case': {
             const tid = ctx.counter.current++;
             const cid = ctx.counter.current++;
-            if (lens.value.type !== 'lens') throw 9;
-            return lensToExpr(ctx, lens.value.lens, (mpat) =>
+            const finish = (tmp?: Patd) =>
                 collapseIffe({
                     type: 'iffe',
                     block: [
@@ -656,36 +668,66 @@ export const lensToExpr = (ctx: Ctx, lens: Lens, inner: (name: Patd) => Expr): E
                             },
                             value: {
                                 type: 'case',
-                                value: patdToExpr(mpat),
+                                value: tmp
+                                    ? patdToExpr(tmp)
+                                    : linearToExpr(ctx, lens.value as Linear),
                                 cases: lens.cases.map(({ pat, body }) => {
                                     const sub = subScope(ctx);
                                     const cpat = patToPatd(sub, pat, true);
                                     return {
                                         pat: cpat,
-                                        body: lensToExpr(sub, body, (bpat): Expr => {
-                                            const hasBindings = patdBinds(bpat);
-                                            return {
-                                                type: 'tuple',
-                                                items: [
-                                                    patdToExpr(bpat),
-                                                    {
-                                                        type: 'fn',
-                                                        args: [
-                                                            hasBindings
-                                                                ? bpat
-                                                                : {
-                                                                      type: 'drop',
-                                                                      id: null,
+                                        body:
+                                            body.type === 'manual'
+                                                ? {
+                                                      type: 'tuple',
+                                                      items: [
+                                                          linearToExpr(sub, body.frontend),
+                                                          linearToExpr(sub, body.backend),
+                                                      ],
+                                                      loc: lens.loc,
+                                                  }
+                                                : lensToExpr(sub, body, (bpat): Expr => {
+                                                      const hasBindings = patdBinds(bpat);
+                                                      const id = ctx.counter.current++;
+                                                      return {
+                                                          type: 'tuple',
+                                                          items: [
+                                                              patdToExpr(bpat),
+                                                              {
+                                                                  type: 'fn',
+                                                                  args: [
+                                                                      {
+                                                                          type: 'idd',
+                                                                          id,
+                                                                          loc: -1,
+                                                                          text: 'back',
+                                                                      },
+                                                                  ],
+                                                                  body: collapseIffe({
+                                                                      type: 'iffe',
+                                                                      result: patdToExpr(cpat),
                                                                       loc: -1,
-                                                                  },
-                                                        ],
-                                                        body: patdToExpr(cpat),
-                                                        loc: lens.loc,
-                                                    },
-                                                ],
-                                                loc: lens.loc,
-                                            };
-                                        }),
+                                                                      block: [
+                                                                          {
+                                                                              type: 'swap',
+                                                                              value: {
+                                                                                  type: 'idd',
+                                                                                  id,
+                                                                                  loc: -1,
+                                                                                  text: 'back',
+                                                                              },
+                                                                              pat: bpat,
+                                                                              loc: -1,
+                                                                          },
+                                                                      ],
+                                                                      cleanup: [],
+                                                                  }),
+                                                                  loc: lens.loc,
+                                                              },
+                                                          ],
+                                                          loc: lens.loc,
+                                                      };
+                                                  }),
                                     };
                                 }),
                                 // args: lens.args.map((arg, i) => {
@@ -703,7 +745,7 @@ export const lensToExpr = (ctx: Ctx, lens: Lens, inner: (name: Patd) => Expr): E
                     cleanup: [
                         {
                             type: 'swap',
-                            pat: mpat,
+                            pat: tmp ?? { type: 'drop', loc: -1, id: null }, // { type: 'tuple', items: [], loc: -1 },
                             value: {
                                 type: 'apply',
                                 fn: { type: 'idd', id: cid, text: 'c', loc: -1 },
@@ -714,8 +756,9 @@ export const lensToExpr = (ctx: Ctx, lens: Lens, inner: (name: Patd) => Expr): E
                         },
                     ],
                     loc: -1,
-                }),
-            );
+                });
+            if (lens.value.type !== 'lens') return finish();
+            return lensToExpr(ctx, lens.value.lens, finish);
         }
         case 'let':
             throw new Error('not yet');

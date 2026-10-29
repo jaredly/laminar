@@ -1,7 +1,15 @@
 import { Expr, Patd } from './ast.ts';
 import { sexpr, spat, unwrap } from './decompose.ts';
 
-export type Ctx = { scope: Record<string, any>; builtins: Record<string, any> };
+export type Ctx = { scopes: Record<string, any>[]; builtins: Record<string, any> };
+
+const deleted = Symbol('deleted');
+
+const findScope = (ctx: Ctx, k: string) => {
+    for (let i = 0; i < ctx.scopes.length; i++) {
+        if (k in ctx.scopes[i]) return ctx.scopes[i];
+    }
+};
 
 export const evalExpr = (ctx: Ctx, expr: Expr): any => {
     switch (expr.type) {
@@ -9,30 +17,35 @@ export const evalExpr = (ctx: Ctx, expr: Expr): any => {
             return expr.head + expr.interp.map((i) => evalExpr(ctx, i.value) + i.tail).join('');
         case 'idd': {
             const k = expr.text + expr.id;
-            if (!(k in ctx.scope)) {
+            const scope = findScope(ctx, k);
+            if (!scope) {
                 if (ctx.builtins[expr.text]) {
                     return ctx.builtins[expr.text];
                 }
+                console.log(ctx.builtins, ctx.scopes);
                 throw new Error(`unbound ${k}`);
             }
-            const v = ctx.scope[k];
-            delete ctx.scope[k];
+            const v = scope[k];
+            scope[k] = deleted;
             return v;
         }
         case 'swap': {
-            return setPat(ctx, expr.pat, evalExpr(ctx, expr.value), false);
+            const v = evalExpr(ctx, expr.value);
+            return setPat(ctx, expr.pat, v, false);
         }
         case 'iffe': {
             expr.block.forEach((stmt) => {
                 if (stmt.type === 'let') {
-                    setPat(ctx, stmt.pat, evalExpr(ctx, stmt.value), true);
+                    const v = evalExpr(ctx, stmt.value);
+                    setPat(ctx, stmt.pat, v, true);
                 } else {
                     evalExpr(ctx, stmt);
                 }
             });
             const res = evalExpr(ctx, expr.result);
             expr.cleanup.forEach((swap) => {
-                setPat(ctx, swap.pat, evalExpr(ctx, swap.value), true);
+                const v = evalExpr(ctx, swap.value);
+                setPat(ctx, swap.pat, v, false);
             });
             return res;
         }
@@ -46,8 +59,22 @@ export const evalExpr = (ctx: Ctx, expr: Expr): any => {
                         `wrong number of args, got ${args.length}, expected ${expr.args.length}`,
                     );
                 }
-                args.forEach((item, i) => setPat(ctx, expr.args[i], item, true));
-                return evalExpr(ctx, expr.body);
+                const scope: Record<string, any> = {};
+                const nctx = { ...ctx, scopes: [scope, ...ctx.scopes] };
+                args.forEach((item, i) => setPat(nctx, expr.args[i], item, true));
+                const result = evalExpr(nctx, expr.body);
+                // NEXT STEP:
+                // -> this is ... catching things that ... get captured by sub functions that get returned
+                //    I need a way to track that somehow? like "the function returned from here has claim on this vbl"
+                //
+                // Object.keys(scope).forEach((k) => {
+                //     if (scope[k] !== deleted) {
+                //         throw new Error(
+                //             `Linear variable ${k} not used up: ${JSON.stringify(scope[k])}`,
+                //         );
+                //     }
+                // });
+                return result;
             };
         }
         case 'apply': {
@@ -62,6 +89,7 @@ export const evalExpr = (ctx: Ctx, expr: Expr): any => {
         }
         case 'tuple': {
             if (!expr.items.length) return null;
+            if (expr.items.length === 1) return evalExpr(ctx, expr.items[0]);
             return expr.items.map((item) => evalExpr(ctx, item));
         }
         case 'constructor': {
@@ -85,10 +113,11 @@ export const evalExpr = (ctx: Ctx, expr: Expr): any => {
                     return evalExpr(ctx, body);
                 }
             }
+            console.log(value, expr.cases);
             throw new Error(`no arms matched the value`);
         }
     }
-    throw new Error('unknown expr type ' + expr.type);
+    throw new Error('unknown expr type ' + (expr as any).type);
 };
 
 export const matches = (pat: Patd, value: any): boolean => {
@@ -128,20 +157,22 @@ export const setPat = (ctx: Ctx, pat: Patd, value: any, fresh: boolean): any => 
     switch (pat.type) {
         case 'idd': {
             const k = pat.text + pat.id;
-            if (k in ctx.scope === fresh) {
-                if (fresh) {
-                    throw new Error(
-                        fresh ? `pat set but ${k} already bound` : `pat swap but ${k} not bound`,
-                    );
-                }
-                // the replace case needs to be ignorable for the 'use and then set' use case
+            let scope = findScope(ctx, k);
+            if (fresh && scope) {
+                throw new Error(`pat set but ${k} already bound`);
             }
-            const res = ctx.scope[k];
-            ctx.scope[k] = value;
-            return res;
+            // console.log(`SET`, spat(pat), value);
+            scope = scope || ctx.scopes[0];
+            const res = scope[k];
+            scope[k] = value;
+            return res === deleted ? undefined : res;
         }
         case 'drop': {
-            ctx.scope['_' + pat.id] = value;
+            if (pat.id != null) {
+                const k = '_' + pat.id;
+                let scope = findScope(ctx, k) ?? ctx.scopes[0];
+                scope[k] = value;
+            }
             return;
         }
         case 'tuple': {

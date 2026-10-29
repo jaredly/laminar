@@ -1,4 +1,31 @@
 
+When trying out a lens match with no lens arg, I'm realizing I'm missing something.
+
+
+let f = fn (side, ~(a, b)) ~(match side {
+    Left -> a
+    Right -> b
+})
+my match expects to flow back up through the case pattern, but that's not right
+OH But actually its fine? we can just ignore it.
+So: a funny thing with me only having one scope ever ... calling the cleanup function, the fn arg is allowed to overwrite the containing scope vbl.
+This seems like ... something I should fix.
+-> have a different arg to the fn
+-> then do a swap(pat, vbl)
+-> yeah that feels better.
+-> and then I can do real scope management, which is very important
+
+---
+
+A note about lens unions: they can't work.
+like `let some = (~x) => ~Some(x)`
+Because if the value you get on the backend is `None`, you can't get an `x` out of it, and you're toast. The original x is gone, has been given away.
+Now you could do a manual `let some = (default, ~x) => @(Some(x), opt => match opt { Some(x) -> x; None -> default })`, but that's you doing it yourself.
+
+Noice. Ok so the manual route is validated.
+
+---
+
 Let's try using an IR.
 -> ok let's talk about unique variables.
 debruijn indices yo. maybe I guess.

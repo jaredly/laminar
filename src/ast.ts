@@ -29,12 +29,13 @@ export type FileItem = Linear | { type: 'decl'; name: Id; ann: Type };
 
 export type Lens =
     | Id
+    | { type: 'manual'; frontend: Linear; backend: Linear; loc: Loc }
     | { type: 'aslens'; pat: Pat; value: Linear; body: Linear; loc: Loc }
     | { type: 'let'; pat: Pat; value: Term; body: Lens; loc: Loc }
     | { type: 'apply'; fn: Linear; args: Term[]; loc: Loc }
     | { type: 'tuple'; items: Lens[]; loc: Loc }
-    | { type: 'constructor'; name: string; args: Lens[]; loc: Loc }
     | { type: 'case'; value: Term; cases: { pat: Pat; body: Lens }[]; loc: Loc };
+// Note: constructor cannot be a sound lens.
 
 export type Term = Linear | { type: 'lens'; lens: Lens };
 
@@ -130,6 +131,9 @@ export const free = (expr: Term | Lens): string[] => {
             const bound = names(expr.pat);
             const two = free(expr.body);
             return one.concat(two.filter((t) => !one.includes(t) && !bound.includes(t)));
+        }
+        case 'manual': {
+            return free(expr.frontend).concat(free(expr.backend));
         }
         case 'string': {
             let res: string[] = [];
