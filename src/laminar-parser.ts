@@ -90,7 +90,7 @@ grammar.add('Pat', [
         list('', b('one', /^[0-9]+$/), lit('.'), b('two', /^[0-9]+$/)),
         ({ one, two, node }: { one: Id; two: Id; node: Node }): Pat => ({
             type: 'number',
-            value: !(one.text + '.' + two.text),
+            value: +(one.text + '.' + two.text),
             loc: node.loc,
         }),
     ),
@@ -395,7 +395,7 @@ grammar.add('Linear', [
         list('', b('one', /^[0-9]+$/), lit('.'), b('two', /^[0-9]+$/)),
         ({ one, two, node }: { one: Id; two: Id; node: Node }): Linear => ({
             type: 'number',
-            value: !(one.text + '.' + two.text),
+            value: +(one.text + '.' + two.text),
             loc: node.loc,
         }),
     ),

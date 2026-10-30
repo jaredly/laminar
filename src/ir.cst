@@ -5,6 +5,7 @@ Expr {
     swap:Swap -> swap
     ["" "block" ["{;" ...block:Stmt] ["{" result:Expr] ["{;" ...cleanup:Swap]] -> ({type: "block", block, cleanup, result, loc: node.loc})
     ["" "block" ["{\n" ...block:Stmt] ["{" result:Expr] ["{;" ...cleanup:Swap]] -> ({type: "block", block, cleanup, result, loc: node.loc})
+    ["" one:re"^[0-9]+$" "." two:re"^[0-9]+$"] -> ({type: "const", value: +(one.text + '.' + two.text), loc: node.loc})
     num:re"\\d+" -> ({type: "const", value: +num.text, loc: num.loc})
     "true" -> ({type: "const", value: true, loc: node.loc})
     "false" -> ({type: "const", value: false, loc: node.loc})

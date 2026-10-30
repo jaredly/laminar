@@ -78,24 +78,33 @@ grammar.add('Expr', [
         }): Expr => ({ type: 'block', block, cleanup, result, loc: node.loc }),
     ),
     // Expr:7
+    option(
+        list('', b('one', /^[0-9]+$/), lit('.'), b('two', /^[0-9]+$/)),
+        ({ one, two, node }: { one: Id; two: Id; node: Node }): Expr => ({
+            type: 'const',
+            value: +(one.text + '.' + two.text),
+            loc: node.loc,
+        }),
+    ),
+    // Expr:8
     option(b('num', /\d+/), ({ num, node }: { num: Id; node: Node }): Expr => ({
         type: 'const',
         value: +num.text,
         loc: num.loc,
     })),
-    // Expr:8
+    // Expr:9
     option(lit('true'), ({ node }: { node: Node }): Expr => ({
         type: 'const',
         value: true,
         loc: node.loc,
     })),
-    // Expr:9
+    // Expr:10
     option(lit('false'), ({ node }: { node: Node }): Expr => ({
         type: 'const',
         value: false,
         loc: node.loc,
     })),
-    // Expr:10
+    // Expr:11
     option(
         list('"', b('head', 'id'), manyItems('interp', [b('value', 'Expr'), b('tail', 'id')])),
         ({
@@ -113,7 +122,7 @@ grammar.add('Expr', [
             loc: node.loc,
         }),
     ),
-    // Expr:11
+    // Expr:12
     option(
         list(
             '',
@@ -128,7 +137,7 @@ grammar.add('Expr', [
             loc: node.loc,
         }),
     ),
-    // Expr:12
+    // Expr:13
     option(
         list(
             '',
@@ -143,7 +152,7 @@ grammar.add('Expr', [
             loc: node.loc,
         }),
     ),
-    // Expr:13
+    // Expr:14
     option(
         wrapper('(', list(',', many('items', 'Expr'))),
         ({ items, node }: { items: Expr[]; node: Node }): Expr => ({
@@ -152,7 +161,7 @@ grammar.add('Expr', [
             loc: node.loc,
         }),
     ),
-    // Expr:14
+    // Expr:15
     option(
         list('', b('fn', 'Expr'), wrapper('(', list(',', many('args', 'Expr')))),
         ({ fn, args, node }: { fn: Expr; args: Expr[]; node: Node }): Expr => ({
@@ -162,23 +171,23 @@ grammar.add('Expr', [
             loc: node.loc,
         }),
     ),
-    // Expr:15
-    option(list('', b('one', 'Expr')), ({ one, node }: { one: Expr; node: Node }): Expr => one),
     // Expr:16
+    option(list('', b('one', 'Expr')), ({ one, node }: { one: Expr; node: Node }): Expr => one),
+    // Expr:17
     option(b('id', 'id'), ({ id, node }: { id: Id; node: Node }): Expr => ({
         type: 'idd',
         text: id.text,
         id: 0,
         loc: node.loc,
     })),
-    // Expr:17
+    // Expr:18
     option(wrapper('[', null), ({ node }: { node: Node }): Expr => ({
         type: 'constructor',
         name: 'nil',
         args: [],
         loc: node.loc,
     })),
-    // Expr:18
+    // Expr:19
     option(
         wrapper('[', list(',', many('items', 'Expr'))),
         ({ items, node }: { items: Expr[]; node: Node }): Expr =>
@@ -187,7 +196,7 @@ grammar.add('Expr', [
                 node.loc,
             ),
     ),
-    // Expr:19
+    // Expr:20
     option(
         wrapper(
             '[',
@@ -196,7 +205,7 @@ grammar.add('Expr', [
         ({ items, tail, node }: { items: Expr[]; tail: Expr; node: Node }): Expr =>
             econs([...items, tail], node.loc),
     ),
-    // Expr:20
+    // Expr:21
     option(
         list(
             ' ',
@@ -214,7 +223,7 @@ grammar.add('Expr', [
             node: Node;
         }): Expr => ({ type: 'case', value, cases, loc: node.loc }),
     ),
-    // Expr:21
+    // Expr:22
     option(
         list(' ', lit('match'), b('value', 'Expr'), wrapper('{', list(';', many('cases', 'Case')))),
         ({
@@ -227,7 +236,7 @@ grammar.add('Expr', [
             node: Node;
         }): Expr => ({ type: 'case', value, cases, loc: node.loc }),
     ),
-    // Expr:22
+    // Expr:23
     option(
         list(' ', lit('match'), b('value', 'Expr'), wrapper('{', b('kase', 'Case'))),
         ({
@@ -240,9 +249,9 @@ grammar.add('Expr', [
             node: Node;
         }): Expr => ({ type: 'case', value, cases: [kase], loc: node.loc }),
     ),
-    // Expr:23
-    option(list(' ', b('one', 'Expr')), ({ one, node }: { one: Expr; node: Node }): Expr => one),
     // Expr:24
+    option(list(' ', b('one', 'Expr')), ({ one, node }: { one: Expr; node: Node }): Expr => one),
+    // Expr:25
     option(list(';', b('one', 'Expr')), ({ one, node }: { one: Expr; node: Node }): Expr => one),
 ]);
 

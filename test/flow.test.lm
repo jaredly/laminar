@@ -943,6 +943,15 @@ ir-> block{
     let _ = block{let (r1, l2) = avg("example.txt", w0)}{r1}{swap(w0, l2)}
 }{logs()}{}
 
+{
+    let x = 3.4 + 1.2
+    x
+}
+
+4.6
+
+ir-> block{let x0 = +(3.4, 1.2)}{x0}{}
+
 /*
 
 // --------------------

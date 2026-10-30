@@ -31,7 +31,7 @@ function econs(items:Linear[], loc:number) {
 Pat {
     "_" -> ({type: "drop", loc: node.loc})
     bool:re"true|false" -> ({type: "bool", loc: node.loc, value: bool.text === 'true'})
-    ["" one:re"^[0-9]+$" "." two:re"^[0-9]+$"] -> ({type: "number", value: !(one.text + '.' + two.text), loc: node.loc})
+    ["" one:re"^[0-9]+$" "." two:re"^[0-9]+$"] -> ({type: "number", value: +(one.text + '.' + two.text), loc: node.loc})
     re"^[0-9]+$" -> ({type: "number", value: +(node as Id).text, loc: node.loc})
     name:re"^[A-Z]" -> ({type: "constructor", name: name.text, args: [], loc: node.loc})
     text:id -> ({type: "id", text: text.text, loc: node.loc})
@@ -87,7 +87,7 @@ Lens {
 import {partition} from "./laminar-helpers.ts"
 
 Linear {
-    ["" one:re"^[0-9]+$" "." two:re"^[0-9]+$"] -> ({type: "number", value: !(one.text + '.' + two.text), loc: node.loc})
+    ["" one:re"^[0-9]+$" "." two:re"^[0-9]+$"] -> ({type: "number", value: +(one.text + '.' + two.text), loc: node.loc})
     re"^[0-9]+$" -> ({type: "number", value: +(node as Id).text, loc: node.loc})
     re"true|false" -> ({type: "bool", value: (node as Id).text === "true", loc: node.loc})
     text:re"^[A-Z]" -> ({type: "constructor", name: text.text, args: [], loc: text.loc})
