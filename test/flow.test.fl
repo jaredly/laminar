@@ -443,16 +443,54 @@ ir-> iffe{
     }
 }{x0}{}
 
+fcomp :: ((b/b') => c/c', (a/a') => b/b', a/a') => c/c'
+fn fcomp(g, f, ~x) {~g(~f(~x))}
+
+ir-> (g0, f1, x2)=>iffe{
+    let (t3, c4) = f1(x2);
+    let (t5, c6) = g0(t3)
+}{
+    (
+        t5, (back7)=>iffe{
+            swap(t5, back7);
+            swap(t3, c6(t5));
+            swap(x2, c4(t3))
+        }{x2}{}
+    )
+}{}
+
+{
+    let x = ((1, 2), 3)
+    fcomp(fst, fst, ~x) := 5
+    x
+}
+
+((5, 2), 3)
+
+ir-> iffe{
+    let x0 = ((1, 2), 3);
+    let _ = iffe{let (t1, c2) = fcomp(fst, fst, x0)}{swap(t1, 5)}{swap(x0, c2(t1))}
+}{x0}{}
+
+over :: (((a) => b), ((c/d) => a/b), c) => d
+fn over(f, g, x) {
+    map(f, ~g(~x))
+    x
+}
+
+ir-> (f0, g1, x2)=>iffe{
+    let _ = iffe{
+        let (t3, c4) = g1(x2);
+        let (r5, l6) = map(f0, t3)
+    }{r5}{
+        swap(t3, l6);
+        swap(x2, c4(t3))
+    }
+}{x2}{}
+
+// TODO make an over example
 /*
 
-fcomp :: ((b/b') => c/c', (a/a') => b/b', a/a') => c/c'
-fn fcomp(g, f, ~x) { ~g(~f(~x)) }
-
-over :: (a -> b) -> (c/d -> a/b) -> c -> d
-over f g x = {
-  map f ~(g ~x)
-  x
-}
 
 join :: (a/a' -> b/b') -> (c/c' -> d/d') -> (a,c)/(a',c') -> (b,d)/(b',d')
 join f g ~(x, y) = ~(f ~x, g ~y)
