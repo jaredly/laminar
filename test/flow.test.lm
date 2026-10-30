@@ -610,40 +610,138 @@ ir-> block{
     let _ = block{let (r1, l2) = push(5, x0)}{r1}{swap(x0, l2)}
 }{x0}{}
 
+// Making sure match on string works
+{
+    let x = "Hello"
+    match x {
+        "One" -> 5
+        "Hello" -> 10
+    }
+}
+
+10
+
+ir-> block{let x0 = "Hello"}{
+    (
+        match x0 {
+            "One" -> 5
+            "Hello" -> 10
+        }
+    )
+}{}
+
+// exec :: List (Either Int Char) -> ~(List Int, World) -> ()
+fn exec(is, ~(stk, w)) (
+    match is {
+        [] -> ()
+        [Left(n), ...is] -> {
+            push(n, ~stk)
+            exec(is, ~(stk, w))
+        }
+        [Right("+"), ...is] -> {
+            push(pop(~stk) + pop(~stk), ~stk)
+            exec(is, ~(stk, w))
+        }
+        [Right("-"), ...is] -> {
+            push(pop(~stk) - pop(~stk), ~stk)
+            exec(is, ~(stk, w))
+        }
+        [Right("*"), ...is] -> {
+            push(pop(~stk) * pop(~stk), ~stk)
+            exec(is, ~(stk, w))
+        }
+        [Right("/"), ...is] -> {
+            push(pop(~stk) / pop(~stk), ~stk)
+            exec(is, ~(stk, w))
+        }
+        [Right("p"), ...is] -> {
+            print(pop(~stk), ~w)
+            exec(is, ~(stk, w))
+        }
+        [Right("d"), ...is] -> {
+            let x = pop(~stk)
+            push(dup(~x), ~stk)
+            push(x, ~stk)
+            exec(is, ~(stk, w))
+        }
+        [Right(x), ...is] -> {
+            putStrLn("Unrecognised operation:", ~w)
+            print(x, ~w)
+            exec(is, ~(stk, w))
+        }
+    }
+)
+
+ir-> (is0, (stk1, w2))=>(
+    (
+        match is0 {
+            [] -> ()
+            [Left(n3), ...is4] -> block{
+                let _ = block{let (r7, l8) = push(n3, stk1)}{r7}{swap(stk1, l8)};
+                let (r5, l6) = exec(is4, (stk1, w2))
+            }{r5}{swap((stk1, w2), l6)}
+            [Right("+"), ...is9] -> block{
+                let _ = block{let (r12, l13) = push(+(block{let (r14, l15) = pop(stk1)}{r14}{swap(stk1, l15)}, block{let (r16, l17) = pop(stk1)}{r16}{swap(stk1, l17)}), stk1)}{r12}{swap(stk1, l13)};
+                let (r10, l11) = exec(is9, (stk1, w2))
+            }{r10}{swap((stk1, w2), l11)}
+            [Right("-"), ...is18] -> block{
+                let _ = block{let (r21, l22) = push(-(block{let (r23, l24) = pop(stk1)}{r23}{swap(stk1, l24)}, block{let (r25, l26) = pop(stk1)}{r25}{swap(stk1, l26)}), stk1)}{r21}{swap(stk1, l22)};
+                let (r19, l20) = exec(is18, (stk1, w2))
+            }{r19}{swap((stk1, w2), l20)}
+            [Right("*"), ...is27] -> block{
+                let _ = block{let (r30, l31) = push((*(block{let (r32, l33) = pop(stk1)}{r32}{swap(stk1, l33)}, block{let (r34, l35) = pop(stk1)}{r34}{swap(stk1, l35)})), stk1)}{r30}{swap(stk1, l31)};
+                let (r28, l29) = exec(is27, (stk1, w2))
+            }{r28}{swap((stk1, w2), l29)}
+            [Right("/"), ...is36] -> block{
+                let _ = block{let (r39, l40) = push(/(block{let (r41, l42) = pop(stk1)}{r41}{swap(stk1, l42)}, block{let (r43, l44) = pop(stk1)}{r43}{swap(stk1, l44)}), stk1)}{r39}{swap(stk1, l40)};
+                let (r37, l38) = exec(is36, (stk1, w2))
+            }{r37}{swap((stk1, w2), l38)}
+            [Right("p"), ...is45] -> block{
+                let _ = block{let (r48, l49) = print(block{let (r50, l51) = pop(stk1)}{r50}{swap(stk1, l51)}, w2)}{r48}{swap(w2, l49)};
+                let (r46, l47) = exec(is45, (stk1, w2))
+            }{r46}{swap((stk1, w2), l47)}
+            [Right("d"), ...is52] -> block{
+                let x53 = block{let (r62, l63) = pop(stk1)}{r62}{swap(stk1, l63)};
+                let _ = block{let (r58, l59) = push(block{let (r60, l61) = dup(x53)}{r60}{swap(x53, l61)}, stk1)}{r58}{swap(stk1, l59)};
+                let _ = block{let (r56, l57) = push(x53, stk1)}{r56}{swap(stk1, l57)};
+                let (r54, l55) = exec(is52, (stk1, w2))
+            }{r54}{swap((stk1, w2), l55)}
+            [Right(x64), ...is65] -> block{
+                let _ = block{let (r70, l71) = putStrLn("Unrecognised operation:", w2)}{r70}{swap(w2, l71)};
+                let _ = block{let (r68, l69) = print(x64, w2)}{r68}{swap(w2, l69)};
+                let (r66, l67) = exec(is65, (stk1, w2))
+            }{r66}{swap((stk1, w2), l67)}
+        }
+    ), (stk1, w2)
+)
+
+fn run(is) {
+    let stk = []
+    let w = 0
+    exec(is, ~(stk, w))
+    stk
+}
+
+ir-> (is0)=>block{
+    let stk1 = [];
+    let w2 = 0;
+    let _ = block{let (r3, l4) = exec(is0, (stk1, w2))}{r3}{swap((stk1, w2), l4)}
+}{stk1}{}
+
+{run([Left(5), Left(3), Right("+")])}
+
+[8]
+
+ir-> run([Left(5), Left(3), Right("+")])
+
+run([Left(5), Left(10), Right("*"), Left(52), Right("-")])
+
+[2]
+
+ir-> run([Left(5), Left(10), Right("*"), Left(52), Right("-")])
+
 /*
 
-exec :: List (Either Int Char) -> ~(List Int, World) -> ()
-exec is ~(stk, w) = case is of
-  [] -> ()
-  (Left n):is ->
-    push n ~stk
-    exec is ~(stk, w)
-  (Right '+'):is ->
-    push (pop ~stk + pop ~stk) ~stk
-    exec is ~(stk, w)
-  (Right '-'):is ->
-    push (pop ~stk - pop ~stk) ~stk
-    exec is ~(stk, w)
-  (Right '*'):is ->
-    push (pop ~stk * pop ~stk) ~stk
-    exec is ~(stk, w)
-  (Right '/'):is ->
-    push (pop ~stk / pop ~stk) ~stk
-    exec is ~(stk, w)
-  (Right 'p'):is ->
-    // 'p' means "print".
-    print (pop ~stk) ~w
-    exec is ~(stk, w)
-  (Right 'd'):is ->
-    // 'd' means "duplicate".
-    let x = pop ~stk
-    push (dup ~x) ~stk
-    push x ~stk
-    exec is ~(stk, w)
-  (Right x):is ->
-    putStrLn "Unrecognised operation:" ~w
-    print x ~w
-    exec is ~(stk, w)
 
 execDemo :: ~World -> ()
 execDemo ~w =

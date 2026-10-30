@@ -121,9 +121,11 @@ const builtins = {
     '+': (a: number, b: number) => a + b,
     '-': (a: number, b: number) => a - b,
     '*': (a: number, b: number) => a * b,
+    '/': (a: number, b: number) => a / b,
     fst: ([a, b]: [any, any]) => {
         return [a, (a: any) => [a, b]];
     },
+    dup: (x: any) => [x, x],
     drop(v: any) {},
     inc: (v: number) => [null, v + 1],
     log: (v: any) => {
@@ -132,6 +134,12 @@ const builtins = {
     Some: (v: number) => ({ type: 'Some', args: [v] }),
     None: () => ({ type: 'None' }),
     newlens: () => [5, () => void 0],
+    putStrLn: (v: any, w: any) => {
+        log.push(v);
+    },
+    print: (v: any, w: any) => {
+        log.push(v);
+    },
 };
 
 const newScope = (globals: Record<string, any>) =>
@@ -155,7 +163,7 @@ for (let item of items) {
             out.push(stringify(item.impl.node));
             try {
                 const ir = linearToExpr(
-                    { counter: { current: 0 }, scope: newScope(globals) },
+                    { counter: { current: 0 }, scope: newScope({ ...globals, [item.name]: 0 }) },
                     item.impl.v,
                 );
                 const impl = evalExpr({ builtins: globals, scopes: [{}] }, ir);

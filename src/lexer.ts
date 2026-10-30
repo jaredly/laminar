@@ -62,57 +62,6 @@ const fail = (msg: string) => {
     throw new Error(msg);
 };
 
-export const stringify_ = (node: Node, indent = 0): string => {
-    if (node.type === 'wrapper') {
-        return `${node.kind}${node.child ? stringify(node.child, indent + 2) : ''}${closer[node.kind]}`;
-    }
-    if (node.type !== 'list') return node.text;
-    const children = node.children.map((child) => stringify(child, indent + 2));
-    switch (node.kind) {
-        case '':
-            return children.join('');
-        case '"': {
-            return (
-                '"' +
-                node.children
-                    .map((child, i) =>
-                        i % 2 === 0
-                            ? JSON.stringify(
-                                  child.type === 'id' || child.type === 'op'
-                                      ? child.text
-                                      : JSON.stringify(child), // fail('string text not an id'),
-                              ).slice(1, -1)
-                            : '${' + stringify(child, indent) + '}',
-                    )
-                    .join('') +
-                '"'
-            );
-        }
-        case ' ':
-            return children.join(' ');
-        case ':':
-            return children.join(': ');
-        case '\n':
-            if (!children.length) return '';
-            return (
-                '\n' +
-                Array(indent + 1).join(' ') +
-                children.join('\n' + Array(indent + 1).join(' ')) +
-                '\n'
-            );
-        case ';':
-            if (!children.length) return '';
-            return (
-                '\n' +
-                Array(indent + 1).join(' ') +
-                children.join(';\n' + Array(indent + 1).join(' ')) +
-                '\n'
-            );
-        case ',':
-            return children.join(', ');
-    }
-};
-
 export const stringify = (node: Node): string => {
     if (node.type === 'wrapper') {
         let child = node.child ? stringify(node.child) : '';

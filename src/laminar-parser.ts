@@ -145,6 +145,12 @@ grammar.add('Pat', [
         ({ items, tail, node }: { items: Pat[]; tail: Pat; node: Node }): Pat =>
             pcons([...items, tail], node.loc),
     ),
+    // Pat:11
+    option(list('"', b('text', 'id')), ({ text, node }: { text: Id; node: Node }): Pat => ({
+        type: 'string',
+        text: text.text,
+        loc: node.loc,
+    })),
 ]);
 
 grammar.add('Type', [

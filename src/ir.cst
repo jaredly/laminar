@@ -72,6 +72,7 @@ Patd {
     "_" -> ({type: "drop", loc: node.loc, id: null})
     ["(," ...items:Patd] -> ({type: "tuple", items, loc: node.loc})
     ["" name:re"^[A-Z]" ["(," ...args:Patd]] -> ({type: "constructor", name: name.text, args, loc: node.loc})
+    ["\"" text:id] -> ({type: "string", text:text.text, loc: node.loc})
 
     ["["] -> ({type: "constructor", name: "nil",args:[], loc: node.loc})
     ["[," ...items:Patd] -> pcons([...items, ({type: "constructor", name: "nil",args:[], loc: node.loc})], node.loc)

@@ -5,6 +5,7 @@ export type Patd =
     | Idd
     | { type: 'drop'; id: number | null; loc: Loc }
     | { type: 'tuple'; items: Patd[]; loc: Loc }
+    | { type: 'string'; text: string; loc: Loc }
     | { type: 'constructor'; name: string; args: Patd[]; loc: Loc };
 // NOTE: No lenses
 
@@ -13,6 +14,7 @@ export type Pat =
     | { type: 'drop'; loc: Loc }
     | { type: 'tuple'; items: Pat[]; loc: Loc }
     | { type: 'constructor'; name: string; args: Pat[]; loc: Loc }
+    | { type: 'string'; text: string; loc: Loc }
     // | { type: 'list'; items: Pat[]; tail?: Pat; loc: Loc }
     | { type: 'lens'; inner: Pat; loc: Loc };
 
@@ -113,6 +115,7 @@ export const names = (pat: Pat): string[] => {
         case 'id':
             return [pat.text];
         case 'drop':
+        case 'string':
             return [];
         // case 'list':
         //     return pat.items.flatMap(names).concat(pat.tail ? names(pat.tail) : []);

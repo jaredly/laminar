@@ -156,6 +156,8 @@ export const matches = (pat: Patd, value: any): boolean => {
     switch (pat.type) {
         case 'idd':
             return true;
+        case 'string':
+            return value === pat.text;
         case 'drop':
             return true;
         case 'tuple':
@@ -198,6 +200,8 @@ export const patIds = (pat: Patd): string[] => {
     switch (pat.type) {
         case 'idd':
             return [pat.text + pat.id];
+        case 'string':
+            return [];
         case 'drop':
             return pat.id != null ? ['_' + pat.id] : [];
         case 'tuple':

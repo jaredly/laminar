@@ -111,6 +111,8 @@ export const spat = (pat: Patd): string => {
     switch (pat.type) {
         case 'idd':
             return pat.id === -1 ? pat.text : pat.text + pat.id;
+        case 'string':
+            return `"${pat.text}"`;
         case 'drop':
             return '_' + (pat.id ?? '');
         case 'tuple':
@@ -179,6 +181,8 @@ export const lpat = (pat: Patd): Node => {
     switch (pat.type) {
         case 'idd':
             return l.i(pat.id === -1 ? pat.text : pat.text + pat.id);
+        case 'string':
+            return l.l('"', [pat.text]);
         case 'drop':
             return l.i('_' + (pat.id ?? ''));
         case 'tuple':
@@ -301,6 +305,8 @@ export const patToPatd = (ctx: Ctx, pat: Pat, allTags: boolean): Patd => {
             ctx.scope[pat.text] = id;
             return { ...pat, type: 'idd', id };
         }
+        case 'string':
+            return pat;
         case 'drop':
             return { ...pat, id: allTags ? ctx.counter.current++ : null };
         case 'tuple':
@@ -320,6 +326,8 @@ export const patValue = (ctx: Ctx, pat: Pat): Expr => {
             if (id == null) throw new Error(`unbound ${pat.text}`);
             return { ...pat, type: 'idd', id };
         }
+        case 'string':
+            return { type: 'string', head: pat.text, interp: [], loc: pat.loc };
         case 'drop':
             throw new Error(`cant make expr out of _`);
         case 'tuple':
@@ -335,6 +343,8 @@ export const patdToExpr = (pat: Patd): Expr => {
     switch (pat.type) {
         case 'idd':
             return pat;
+        case 'string':
+            return { type: 'string', head: pat.text, interp: [], loc: pat.loc };
         case 'drop':
             if (pat.id == null) throw new Error(`drop not initialized with an id`);
             return { type: 'idd', text: '_', id: pat.id, loc: pat.loc };

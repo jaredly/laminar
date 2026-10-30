@@ -361,13 +361,19 @@ grammar.add('Patd', [
         }),
     ),
     // Patd:6
+    option(list('"', b('text', 'id')), ({ text, node }: { text: Id; node: Node }): Patd => ({
+        type: 'string',
+        text: text.text,
+        loc: node.loc,
+    })),
+    // Patd:7
     option(wrapper('[', null), ({ node }: { node: Node }): Patd => ({
         type: 'constructor',
         name: 'nil',
         args: [],
         loc: node.loc,
     })),
-    // Patd:7
+    // Patd:8
     option(
         wrapper('[', list(',', many('items', 'Patd'))),
         ({ items, node }: { items: Patd[]; node: Node }): Patd =>
@@ -376,7 +382,7 @@ grammar.add('Patd', [
                 node.loc,
             ),
     ),
-    // Patd:8
+    // Patd:9
     option(
         wrapper('[', list(',', many('items', 'Patd'), list('', lit('...'), b('tail', 'Patd')))),
         ({ items, tail, node }: { items: Patd[]; tail: Patd; node: Node }): Patd =>

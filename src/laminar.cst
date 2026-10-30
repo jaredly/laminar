@@ -39,6 +39,7 @@ Pat {
     ["["] -> ({type: "constructor", name: "nil",args:[], loc: node.loc})
     ["[," ...items:Pat] -> pcons([...items, ({type: "constructor", name: "nil",args:[], loc: node.loc})], node.loc)
     ["[," ...items:Pat ["" "..." tail:Pat]] -> pcons([...items, tail], node.loc)
+    ["\"" text:id] -> ({type: "string", text: text.text, loc: node.loc})
     // [":" head:id tail:id] -> ({type: "pcons", head, tail, loc: node.loc})
     // ["[," ...items:Pat] -> ({type: "list", items, tail: null, loc: node.loc})
     // ["[," ...items:Pat ["" "..." tail:Pat]] -> ({type: "list", items, tail, loc: node.loc})
