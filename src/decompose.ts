@@ -240,16 +240,17 @@ export const lexpr = (expr: Expr): Node => {
             return res;
         }
         case 'case':
-            return l.l(`(`, [
+            return l.w(
+                `(`,
                 l.l(' ', [
                     'match',
                     lexpr(expr.value),
                     l.l(
-                        '{',
+                        '{\n',
                         expr.cases.map((c) => l.l(' ', [lpat(c.pat), '->', lexpr(c.body)])),
                     ),
                 ]),
-            ]);
+            );
         case 'tuple':
             if (expr.items.length === 1) return lexpr(expr.items[0]);
             return l.l(`(,`, expr.items.map(lexpr));

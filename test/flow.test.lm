@@ -514,26 +514,28 @@ ir-> (f0, g1, (x2, y3))=>block{
 }{}
 
 // funcurry :: (a/a' -> b/b' -> c/c') -> (a, b)/(a', b') -> c/c'
-fn funcurry(f, ~(x, y)) ~f(~(x, y))
-
-ir-> (f0, (x1, y2))=>block{let (t3, c4) = f0((x1, y2))}{
-    (
-        t3, (back5)=>block{
-            swap(t3, back5);
-            swap((x1, y2), c4(t3))
-        }{(x1, y2)}{}
-    )
-}{}
-
+// fn funcurry(f, ~(x, y)) ~f(~(x, y))
+// This isn't actually interesting in my setup
+//
 // swapPair :: (a, b)/(b, a) -> ()
 fn swapPair(~(x, y)) {y := x := y}
 
 ir-> ((x0, y1))=>(swap(y1, swap(x0, y1)), (x0, y1))
 
+{
+    let x = (1, 2)
+    swapPair(~x)
+    x
+}
+
+(2, 1)
+
+ir-> block{
+    let x0 = (1, 2);
+    let _ = block{let (r1, l2) = swapPair(x0)}{r1}{swap(x0, l2)}
+}{x0}{}
+
 /*
-
-
-
 // --------------------
 // Prelude
 // --------------------
@@ -553,7 +555,7 @@ truncateFile :: String -> ~World -> Handle
 readFile :: ~(World, Handle) -> String
 writeFile :: String -> ~(World, Handle) -> ()
 closeFile :: Handle -> ~World -> ()
-
+*/
 // --------------------
 // Stack-based evaluator
 // --------------------
@@ -563,17 +565,52 @@ closeFile :: Handle -> ~World -> ()
 // or characters that have an effect on the stack, such as adding the top two numbers
 // or printing the topmost number.
 // --------------------
-
 // Pop an element from a list in-place.
-pop :: ~(List Int) -> Int
-pop ~xs = case xs of
-  y:ys ->
-    xs := ys
-    y
+// pop :: ~(List Int) -> Int
+fn pop(~xs) (
+    match xs {
+        [y, ...ys] -> {
+            xs := ys
+            y
+        }
+    }
+)
+
+ir-> (xs0)=>((match xs0 {[y1, ...ys2] -> block{let _ = swap(xs0, ys2)}{y1}{}}), xs0)
+
+{
+    let x = [1, 2, 3]
+    pop(~x)
+    x
+}
+
+[2, 3]
+
+ir-> block{
+    let x0 = [1, 2, 3];
+    let _ = block{let (r1, l2) = pop(x0)}{r1}{swap(x0, l2)}
+}{x0}{}
 
 // Push an element onto a list in-place.
-push :: Int -> ~(List Int) -> ()
-push x ~xs = xs := x:xs
+// push :: Int -> ~(List Int) -> ()
+fn push(x, ~xs) {xs := [x, ...xs]}
+
+ir-> (x0, xs1)=>(swap(xs1, [x0, ...xs1]), xs1)
+
+{
+    let x = [1, 2]
+    push(5, ~x)
+    x
+}
+
+[5, 1, 2]
+
+ir-> block{
+    let x0 = [1, 2];
+    let _ = block{let (r1, l2) = push(5, x0)}{r1}{swap(x0, l2)}
+}{x0}{}
+
+/*
 
 exec :: List (Either Int Char) -> ~(List Int, World) -> ()
 exec is ~(stk, w) = case is of
