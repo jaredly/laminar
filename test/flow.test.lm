@@ -862,10 +862,16 @@ split(" ", charList("One two"))
 
 ir-> split(" ", charList("One two"))
 
+split(" ", charList("nope"))
+
+(charList("nope"), [])
+
+ir-> split(" ", charList("nope"))
+
 // splitMany :: Char -> String -> List String
 fn splitMany(c, xs) (
     match split(dup(~c), xs) {
-        (word, "") -> {
+        (word, []) -> {
             consume(c)
             [word]
         }
@@ -875,10 +881,16 @@ fn splitMany(c, xs) (
 
 ir-> (c0, xs1)=>(
     match split(block{let (r5, l6) = dup(c0)}{r5}{swap(c0, l6)}, xs1) {
-        (word2, "") -> block{let _ = consume(c0)}{[word2]}{}
+        (word2, []) -> block{let _ = consume(c0)}{[word2]}{}
         (word3, tail4) -> [word3, ...splitMany(c0, tail4)]
     }
 )
+
+{splitMany(" ", charList("A B C"))}
+
+(["A"], ["B"], ["C"])
+
+ir-> splitMany(" ", charList("A B C"))
 
 // words :: String -> List String
 fn words(text) splitMany(" ", text)
@@ -891,14 +903,14 @@ fn lines(text) splitMany("\n", text)
 ir-> (text0)=>splitMany("\n", text0)
 
 // fileWords :: ~(World, Handle) -> Int
-fn fileWords(~(w, f)) length'(words(readFile(~(w, f))))
+fn fileWords(~(w, f)) length'(words(charList(readFile(~(w, f)))))
 
-ir-> ((w0, f1))=>(length'(words(block{let (r2, l3) = readFile((w0, f1))}{r2}{swap((w0, f1), l3)})), (w0, f1))
+ir-> ((w0, f1))=>(length'(words(charList(block{let (r2, l3) = readFile((w0, f1))}{r2}{swap((w0, f1), l3)}))), (w0, f1))
 
 // fileLines :: ~(World, Handle) -> Int
-fn fileLines(~(w, f)) length'(lines(readFile(~(w, f))))
+fn fileLines(~(w, f)) length'(lines(charList(readFile(~(w, f)))))
 
-ir-> ((w0, f1))=>(length'(lines(block{let (r2, l3) = readFile((w0, f1))}{r2}{swap((w0, f1), l3)})), (w0, f1))
+ir-> ((w0, f1))=>(length'(lines(charList(block{let (r2, l3) = readFile((w0, f1))}{r2}{swap((w0, f1), l3)}))), (w0, f1))
 
 // avg :: ~World -> ()
 fn avg(fileName, ~w) {
@@ -917,12 +929,19 @@ ir-> (fileName0, w1)=>(
     }{r3}{swap(w1, l4)}, w1
 )
 
+// We run into call stack issues
 {
     let w = 0
-    avg("package.json", ~w)
+    avg("example.txt", ~w)
+    logs()
 }
 
-10
+["This source file has the following average number of words per line:", 2]
+
+ir-> block{
+    let w0 = 0;
+    let _ = block{let (r1, l2) = avg("example.txt", w0)}{r1}{swap(w0, l2)}
+}{logs()}{}
 
 /*
 

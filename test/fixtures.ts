@@ -150,25 +150,40 @@ const builtins = {
     newlens: () => [5, () => void 0],
     putStrLn: (v: any, w: any) => {
         log.push(v);
+        return [null, w];
     },
     print: (v: any, w: any) => {
         log.push(v);
+        return [null, w];
     },
     openFile(fileName, w) {
+        if (fileName === 'example.txt') {
+            console.log('opened');
+            return [-1, w];
+        }
         return [openSync(fileName, 'r'), w];
     },
     readFile([w, f]) {
-        const buffer = new Uint8Array();
+        // if (f === -1) return ['one', [w, f]];
+        if (f === -1) return ['two\nthree four five\nsix seven height nine', [w, f]];
+        console.log('bot bas');
+        const buffer = new Uint8Array(new ArrayBuffer(4096, { maxByteLength: 10 * 1000 * 1000 }));
         let read = 0;
         while (true) {
             const num = readSync(f, buffer, read, 4096, read);
             if (num === 0) break;
             read += num;
+            buffer.buffer.resize(read + 4096);
         }
-        return [new TextDecoder().decode(buffer), [w, f]];
+        return [new TextDecoder().decode(buffer.slice(0, read)), [w, f]];
     },
     closeFile(f, w) {
+        if (f === -1) return [null, w];
         closeSync(f);
+        return [null, w];
+    },
+    logs() {
+        return log;
     },
 };
 

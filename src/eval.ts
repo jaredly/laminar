@@ -114,10 +114,15 @@ export const evalExpr = (ctx: Ctx, expr: Expr): any => {
             if (typeof fn !== 'function') {
                 throw new Error(`fn not a function: ${typeof fn}`);
             }
-            return fn.apply(
-                null,
-                expr.args.map((arg) => evalExpr(ctx, arg)),
-            );
+            const args = expr.args.map((arg) => evalExpr(ctx, arg));
+            // if (expr.fn.type === 'idd') {
+            //     console.log(`CALL`, expr.fn.text, args);
+            // }
+            const res = fn.apply(null, args);
+            // if (expr.fn.type === 'idd') {
+            //     console.log(`GOT`, expr.fn.text, res);
+            // }
+            return res;
         }
         case 'tuple': {
             if (!expr.items.length) return null;
@@ -146,11 +151,22 @@ export const evalExpr = (ctx: Ctx, expr: Expr): any => {
                 }
             }
             console.log(value, expr.cases);
-            throw new Error(`no arms matched the value`);
+            throw new EvalError(expr, `no arms matched the value ` + JSON.stringify(value));
         }
     }
     throw new Error('unknown expr type ' + (expr as any).type);
 };
+
+export class EvalError extends Error {
+    expr: Expr;
+    constructor(expr: Expr, message: string) {
+        super(message + '; ' + sexpr(expr));
+        this.expr = expr;
+    }
+    toString() {
+        return 'lol';
+    }
+}
 
 export const matches = (pat: Patd, value: any): boolean => {
     switch (pat.type) {
