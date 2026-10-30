@@ -335,7 +335,7 @@ export const setPat = (ctx: Ctx, pat: Patd, value: any, fresh: boolean): any => 
                 throw new Error(`[] pat should only match null. ${JSON.stringify(value)}`);
             }
             if (!Array.isArray(value)) {
-                throw new Error(`value not an array in tuple pat ${spat(pat)}`);
+                throw new Error(`value not an array in tuple pat ${spat(pat)} ${pat.loc}`);
             }
             if (value.length !== pat.items.length) {
                 throw new Error(

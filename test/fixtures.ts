@@ -1,8 +1,9 @@
-import { readFileSync, writeFileSync } from 'fs';
+import { readFileSync, openSync, writeFileSync, readSync, closeSync } from 'fs';
 import { compact, defaultConfig, locLines, readFile, readLines, stringify } from '../src/lexer.ts';
 import { grammar } from '../src/laminar-parser.ts';
 import { grammar as ir } from '../src/ir-parser.ts';
 import { Decl, Expr, File, FileItem, Linear } from '../src/ast.ts';
+import { showFailure, findDeepest, showDeepest } from '../src/debugFailures.ts';
 
 const raw = readFileSync(import.meta.dirname + '/flow.test.lm', 'utf-8');
 const comments: {
@@ -75,7 +76,17 @@ for (let lnode of lexed.nodes) {
 
     const itemResult = grammar.parse<FileItem>('FileItem', lnode);
     if (itemResult.type === 'failure') {
-        throw new Error('failed to parse fileItem');
+        const locToPos = (loc: number) => {
+            const { line, char } = pos(loc);
+            return `${line + 1}:${char}`;
+        };
+        let text = `Failed to parse at ${showFailure(itemResult.failure, locToPos)}`;
+        const deepest = findDeepest(itemResult.failure);
+        if (deepest) {
+            text += '\n' + showDeepest(deepest, grammar, text, locToPos);
+        }
+
+        throw new Error(text);
     }
     const node = itemResult.value;
 
@@ -122,11 +133,14 @@ const builtins = {
     '-': (a: number, b: number) => a - b,
     '*': (a: number, b: number) => a * b,
     '/': (a: number, b: number) => a / b,
+    '==': (a: number, b: number) => a == b,
+    charList: (v: string) => [...v],
     fst: ([a, b]: [any, any]) => {
         return [a, (a: any) => [a, b]];
     },
     dup: (x: any) => [x, x],
     drop(v: any) {},
+    consume(v: any) {},
     inc: (v: number) => [null, v + 1],
     log: (v: any) => {
         log.push(v);
@@ -139,6 +153,22 @@ const builtins = {
     },
     print: (v: any, w: any) => {
         log.push(v);
+    },
+    openFile(fileName, w) {
+        return [openSync(fileName, 'r'), w];
+    },
+    readFile([w, f]) {
+        const buffer = new Uint8Array();
+        let read = 0;
+        while (true) {
+            const num = readSync(f, buffer, read, 4096, read);
+            if (num === 0) break;
+            read += num;
+        }
+        return [new TextDecoder().decode(buffer), [w, f]];
+    },
+    closeFile(f, w) {
+        closeSync(f);
     },
 };
 

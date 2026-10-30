@@ -219,9 +219,20 @@ grammar.add('Pat', [
     // Pat:6
     option(
         wrapper('[', list('"', b('kind', 'WrapperKind'))),
-        ({ kind, node }: { kind: Id; node: Node }): Pat => ({ type: 'wrapper', kind }),
+        ({ kind, node }: { kind: Id; node: Node }): Pat => ({
+            type: 'wrapper',
+            kind,
+            loc: node.loc,
+        }),
     ),
     // Pat:7
+    option(wrapper('[', list('"', lit('"'))), ({ node }: { node: Node }): Pat => ({
+        type: 'list',
+        kind: '"',
+        items: [],
+        loc: node.loc,
+    })),
+    // Pat:8
     option(
         list(':', list('', lit('...'), b('name', 'id')), list('', lit('*'), b('rule', 'id'))),
         ({ name, rule, node }: { name: Id; rule: Id; node: Node }): Pat => ({
@@ -231,7 +242,7 @@ grammar.add('Pat', [
             multi: !1,
         }),
     ),
-    // Pat:8
+    // Pat:9
     option(
         list(':', list('', lit('...'), b('name', 'id')), list('', lit('**'), b('rule', 'id'))),
         ({ name, rule, node }: { name: Id; rule: Id; node: Node }): Pat => ({
@@ -241,7 +252,7 @@ grammar.add('Pat', [
             multi: !0,
         }),
     ),
-    // Pat:9
+    // Pat:10
     option(
         list(':', list('', lit('...'), b('name', 'id')), b('rule', 'id')),
         ({ name, rule, node }: { name: Id; rule: Id; node: Node }): Pat => ({
@@ -250,7 +261,7 @@ grammar.add('Pat', [
             rule,
         }),
     ),
-    // Pat:10
+    // Pat:11
     option(
         list(
             ':',
@@ -263,7 +274,7 @@ grammar.add('Pat', [
             items,
         }),
     ),
-    // Pat:11
+    // Pat:12
     option(
         list('', lit('re'), list('"', b('raw', 'id'))),
         ({ raw, node }: { raw: Id; node: Node }): Pat => ({

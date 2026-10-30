@@ -818,55 +818,113 @@ ir-> (xs0)=>(
 
 ir-> block{let x0 = [1, 2, 3]}{(block{let (r1, l2) = length(x0)}{r1}{swap(x0, l2)}, x0)}{}
 
+// split :: Char -> String -> (String, String)
+fn split(c, xs) (
+    match xs {
+        [] -> {
+            consume(c)
+            ([], [])
+        }
+        [x, ...xs] -> (
+            match (dup(~x) == dup(~c)) {
+                true -> {
+                    consume(x)
+                    consume(c)
+                    ([], xs)
+                }
+                false -> {
+                    let (y, z) = split(c, xs)
+                    ([x, ...y], z)
+                }
+            }
+        )
+    }
+)
+
+ir-> (c0, xs1)=>(
+    match xs1 {
+        [] -> block{let _ = consume(c0)}{([], [])}{}
+        [x2, ...xs3] -> (
+            match ==(block{let (r6, l7) = dup(x2)}{r6}{swap(x2, l7)}, block{let (r8, l9) = dup(c0)}{r8}{swap(c0, l9)}) {
+                true -> block{
+                    let _ = consume(x2);
+                    let _ = consume(c0)
+                }{([], xs3)}{}
+                false -> block{let (y4, z5) = split(c0, xs3)}{([x2, ...y4], z5)}{}
+            }
+        )
+    }
+)
+
+split(" ", charList("One two"))
+
+(charList("One"), charList("two"))
+
+ir-> split(" ", charList("One two"))
+
+// splitMany :: Char -> String -> List String
+fn splitMany(c, xs) (
+    match split(dup(~c), xs) {
+        (word, "") -> {
+            consume(c)
+            [word]
+        }
+        (word, tail) -> [word, ...splitMany(c, tail)]
+    }
+)
+
+ir-> (c0, xs1)=>(
+    match split(block{let (r5, l6) = dup(c0)}{r5}{swap(c0, l6)}, xs1) {
+        (word2, "") -> block{let _ = consume(c0)}{[word2]}{}
+        (word3, tail4) -> [word3, ...splitMany(c0, tail4)]
+    }
+)
+
+// words :: String -> List String
+fn words(text) splitMany(" ", text)
+
+ir-> (text0)=>splitMany(" ", text0)
+
+// lines :: String -> List String
+fn lines(text) splitMany("\n", text)
+
+ir-> (text0)=>splitMany("\n", text0)
+
+// fileWords :: ~(World, Handle) -> Int
+fn fileWords(~(w, f)) length'(words(readFile(~(w, f))))
+
+ir-> ((w0, f1))=>(length'(words(block{let (r2, l3) = readFile((w0, f1))}{r2}{swap((w0, f1), l3)})), (w0, f1))
+
+// fileLines :: ~(World, Handle) -> Int
+fn fileLines(~(w, f)) length'(lines(readFile(~(w, f))))
+
+ir-> ((w0, f1))=>(length'(lines(block{let (r2, l3) = readFile((w0, f1))}{r2}{swap((w0, f1), l3)})), (w0, f1))
+
+// avg :: ~World -> ()
+fn avg(fileName, ~w) {
+    let f = openFile(fileName, ~w)
+    putStrLn("This source file has the following average number of words per line:", ~w)
+    print(fileWords(~(w, f)) / fileLines(~(w, f)), ~w)
+    closeFile(f, ~w)
+}
+
+ir-> (fileName0, w1)=>(
+    block{
+        let f2 = block{let (r13, l14) = openFile(fileName0, w1)}{r13}{swap(w1, l14)};
+        let _ = block{let (r11, l12) = putStrLn("This source file has the following average number of words per line:", w1)}{r11}{swap(w1, l12)};
+        let _ = block{let (r5, l6) = print(/(block{let (r7, l8) = fileWords((w1, f2))}{r7}{swap((w1, f2), l8)}, block{let (r9, l10) = fileLines((w1, f2))}{r9}{swap((w1, f2), l10)}), w1)}{r5}{swap(w1, l6)};
+        let (r3, l4) = closeFile(f2, w1)
+    }{r3}{swap(w1, l4)}, w1
+)
+
+{
+    let w = 0
+    avg("package.json", ~w)
+}
+
+10
+
 /*
-
-
-
-
-
-
-split :: Char -> String -> (String, String)
-split c xs = case xs of
-  [] ->
-    consume c
-    ([], [])
-  (x:xs) -> case dup ~x == dup ~c of
-    True ->
-      consume x
-      consume c
-      ([], xs)
-    False ->
-      let (y, z) = split c xs
-      (x:y, z)
-
-splitMany :: Char -> String -> List String
-splitMany c xs = case split (dup ~c) xs of {
-  (word, "") -> {
-    consume c
-    [word]
-}
-  (word, tail) -> word : splitMany c tail
-}
-
-words :: String -> List String
-words = splitMany " "
-
-lines :: String -> List String
-lines = splitMany "\n"
-
-fileWords :: ~(World, Handle) -> Int
-fileWords ~(w, f) = length' (words (readFile ~(w, f)))
-
-fileLines :: ~(World, Handle) -> Int
-fileLines ~(w, f) = length' (lines (readFile ~(w, f)))
-
-avg :: ~World -> ()
-avg ~w = {
-  let f = openFile "flow.fl" ~w
-  putStrLn "This source file has the following average number of words per line:" ~w
-  print (fileWords ~(w, f) / fileLines ~(w, f)) ~w
-  closeFile f ~w
-}
 
 // --------------------
 // Examples from "Capturing Types", Boruch-Gruszecki et al.

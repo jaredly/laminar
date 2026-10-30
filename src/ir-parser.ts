@@ -189,7 +189,10 @@ grammar.add('Expr', [
     ),
     // Expr:19
     option(
-        wrapper('[', list(',', many('items', 'Expr'), list('', lit('...'), b('tail', 'Expr')))),
+        wrapper(
+            '[',
+            list(',', many('items', 'Expr'), list('', lit('...'), rest('tail', 'Expr', false))),
+        ),
         ({ items, tail, node }: { items: Expr[]; tail: Expr; node: Node }): Expr =>
             econs([...items, tail], node.loc),
     ),
@@ -396,10 +399,15 @@ grammar.add('Patd', [
     ),
     // Patd:11
     option(
-        wrapper('[', list(',', many('items', 'Patd'), list('', lit('...'), b('tail', 'Patd')))),
+        wrapper(
+            '[',
+            list(',', many('items', 'Patd'), list('', lit('...'), rest('tail', 'Patd', false))),
+        ),
         ({ items, tail, node }: { items: Patd[]; tail: Patd; node: Node }): Patd =>
             pcons([...items, tail], node.loc),
     ),
+    // Patd:12
+    option(list('', b('one', 'Patd')), ({ one, node }: { one: Patd; node: Node }): Patd => one),
 ]);
 
 grammar.add('Swap', [

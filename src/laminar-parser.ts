@@ -153,7 +153,10 @@ grammar.add('Pat', [
     ),
     // Pat:12
     option(
-        wrapper('[', list(',', many('items', 'Pat'), list('', lit('...'), b('tail', 'Pat')))),
+        wrapper(
+            '[',
+            list(',', many('items', 'Pat'), list('', lit('...'), rest('tail', 'Pat', false))),
+        ),
         ({ items, tail, node }: { items: Pat[]; tail: Pat; node: Node }): Pat =>
             pcons([...items, tail], node.loc),
     ),
@@ -163,6 +166,14 @@ grammar.add('Pat', [
         text: text.text,
         loc: node.loc,
     })),
+    // Pat:14
+    option(list(undefined), ({ node }: { node: Node }): Pat => ({
+        type: 'string',
+        text: null,
+        loc: node.loc,
+    })),
+    // Pat:15
+    option(list('', b('one', 'Pat')), ({ one, node }: { one: Pat; node: Node }): Pat => one),
 ]);
 
 grammar.add('Type', [
@@ -513,7 +524,10 @@ grammar.add('Linear', [
     ),
     // Linear:17
     option(
-        wrapper('[', list(',', many('items', 'Linear'), list('', lit('...'), b('tail', 'Linear')))),
+        wrapper(
+            '[',
+            list(',', many('items', 'Linear'), list('', lit('...'), rest('tail', 'Linear', false))),
+        ),
         ({ items, tail, node }: { items: Linear[]; tail: Linear; node: Node }): Linear =>
             econs([...items, tail], node.loc),
     ),

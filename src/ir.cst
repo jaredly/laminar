@@ -18,7 +18,7 @@ Expr {
 
     ["["] -> ({type: "constructor", name: "nil",args:[], loc: node.loc})
     ["[," ...items:Expr] -> econs([...items, ({type: "constructor", name: "nil",args:[], loc: node.loc})], node.loc)
-    ["[," ...items:Expr ["" "..." tail:Expr]] -> econs([...items, tail], node.loc)
+    ["[," ...items:Expr ["" "..." ...tail:*Expr]] -> econs([...items, tail], node.loc)
 
     [" " "match" value:Expr ["{\n" ...cases:Case]] -> ({type: "case", value, cases,loc:node.loc})
     [" " "match" value:Expr ["{;" ...cases:Case]] -> ({type: "case", value, cases,loc:node.loc})
@@ -78,7 +78,8 @@ Patd {
 
     ["["] -> ({type: "constructor", name: "nil",args:[], loc: node.loc})
     ["[," ...items:Patd] -> pcons([...items, ({type: "constructor", name: "nil",args:[], loc: node.loc})], node.loc)
-    ["[," ...items:Patd ["" "..." tail:Patd]] -> pcons([...items, tail], node.loc)
+    ["[," ...items:Patd ["" "..." ...tail:*Patd]] -> pcons([...items, tail], node.loc)
+    ["" one:Patd] -> one
 }
 
 Swap {
