@@ -4,7 +4,7 @@ import { grammar } from '../src/laminar-parser.ts';
 import { grammar as ir } from '../src/ir-parser.ts';
 import { Decl, Expr, File, FileItem, Linear } from '../src/ast.ts';
 
-const raw = readFileSync(import.meta.dirname + '/flow.test.fl', 'utf-8');
+const raw = readFileSync(import.meta.dirname + '/flow.test.lm', 'utf-8');
 const comments: {
     text: string;
     at: { line: number; char: number };
@@ -206,4 +206,4 @@ for (let item of items) {
 comments.forEach((c) => out.push(c.text.trim()));
 
 console.log(`Errors: ${errors}`);
-writeFileSync(import.meta.dirname + '/flow.test.fl', out.join('\n'));
+writeFileSync(import.meta.dirname + '/flow.test.lm', out.join('\n'));
