@@ -3,6 +3,7 @@ export type Id = { type: 'id'; text: string; loc: Loc };
 // pat w/ debruijn
 export type Patd =
     | Idd
+    | { type: 'bool'; value: boolean; loc: Loc }
     | { type: 'drop'; id: number | null; loc: Loc }
     | { type: 'tuple'; items: Patd[]; loc: Loc }
     | { type: 'string'; text: string; loc: Loc }
@@ -11,6 +12,7 @@ export type Patd =
 
 export type Pat =
     | Id
+    | { type: 'bool'; value: boolean; loc: Loc }
     | { type: 'drop'; loc: Loc }
     | { type: 'tuple'; items: Pat[]; loc: Loc }
     | { type: 'constructor'; name: string; args: Pat[]; loc: Loc }
@@ -115,6 +117,7 @@ export const names = (pat: Pat): string[] => {
         case 'id':
             return [pat.text];
         case 'drop':
+        case 'bool':
         case 'string':
             return [];
         // case 'list':

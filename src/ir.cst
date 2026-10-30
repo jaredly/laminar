@@ -68,6 +68,8 @@ Stmt {
 
 Patd {
     id:re"^_\\d+$" -> ({type: "drop", loc: node.loc, id: +id.text.slice(1)})
+    "true" -> ({type: "bool", loc: node.loc, value: true})
+    "false" -> ({type: "bool", loc: node.loc, value: false})
     id:Idd -> id
     "_" -> ({type: "drop", loc: node.loc, id: null})
     ["(," ...items:Patd] -> ({type: "tuple", items, loc: node.loc})

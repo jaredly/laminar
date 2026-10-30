@@ -111,6 +111,8 @@ export const spat = (pat: Patd): string => {
     switch (pat.type) {
         case 'idd':
             return pat.id === -1 ? pat.text : pat.text + pat.id;
+        case 'bool':
+            return pat.value + '';
         case 'string':
             return `"${pat.text}"`;
         case 'drop':
@@ -181,6 +183,8 @@ export const lpat = (pat: Patd): Node => {
     switch (pat.type) {
         case 'idd':
             return l.i(pat.id === -1 ? pat.text : pat.text + pat.id);
+        case 'bool':
+            return l.i(pat.value + '');
         case 'string':
             return l.l('"', [pat.text]);
         case 'drop':
@@ -306,6 +310,7 @@ export const patToPatd = (ctx: Ctx, pat: Pat, allTags: boolean): Patd => {
             return { ...pat, type: 'idd', id };
         }
         case 'string':
+        case 'bool':
             return pat;
         case 'drop':
             return { ...pat, id: allTags ? ctx.counter.current++ : null };
@@ -326,6 +331,8 @@ export const patValue = (ctx: Ctx, pat: Pat): Expr => {
             if (id == null) throw new Error(`unbound ${pat.text}`);
             return { ...pat, type: 'idd', id };
         }
+        case 'bool':
+            return { type: 'const', value: pat.value, loc: pat.loc };
         case 'string':
             return { type: 'string', head: pat.text, interp: [], loc: pat.loc };
         case 'drop':
@@ -343,6 +350,8 @@ export const patdToExpr = (pat: Patd): Expr => {
     switch (pat.type) {
         case 'idd':
             return pat;
+        case 'bool':
+            return { type: 'const', value: pat.value, loc: pat.loc };
         case 'string':
             return { type: 'string', head: pat.text, interp: [], loc: pat.loc };
         case 'drop':

@@ -740,44 +740,90 @@ run([Left(5), Left(10), Right("*"), Left(52), Right("-")])
 
 ir-> run([Left(5), Left(10), Right("*"), Left(52), Right("-")])
 
-/*
-
-
-execDemo :: ~World -> ()
-execDemo ~w =
-  let stack = []
-  // A program to evaluate (2 + 6)^2 and print the result.
-  // Here, 'd' means "duplicate the top element of the stack",
-  // and 'p' means "print the top element of the stack".
-  let instrs = [Left 2, Left 6, Right '+', Right 'd', Right '*', Right 'p']
-  exec instrs ~(stack, w)
-  putStrLn "Final stack was:" ~w
-  print stack ~w
-
 // --------------------
 // Examples from "From Linearity to Borrowing", Wagner et al.
 // (https://dl.acm.org/doi/10.1145/3764117)
 // --------------------
-
+//
 // First we need to establish some basic functions on lists.
+// not :: Bool -> Bool
+fn not(b) (
+    match b {
+        true -> false
+        false -> true
+    }
+)
 
-not :: Bool -> Bool
-not b = case b of {
-  True -> False
-  False -> True
-}
+ir-> (b0)=>(
+    match b0 {
+        true -> false
+        false -> true
+    }
+)
+
+{not(true)}
+
+false
+
+ir-> not(true)
 
 // Consumes the input.
-length' :: List String -> Int
-length' xs = case xs of {
-  [] -> 0
-  (y:ys) -> consume y; 1 + length' ys
+// length' :: List String -> Int
+fn length'(xs) (
+    match xs {
+        [] -> 0
+        [y, ...ys] -> {
+            drop(y)
+            1 + length'(ys)
+        }
+    }
+)
+
+ir-> (xs0)=>(
+    match xs0 {
+        [] -> 0
+        [y1, ...ys2] -> block{let _ = drop(y1)}{+(1, length'(ys2))}{}
+    }
+)
+
+{length'([1, 2, 3])}
+
+3
+
+ir-> length'([1, 2, 3])
+
+// length :: ~List a -> Int
+fn length(~xs) (
+    match ~xs {
+        [] -> 0
+        [y, ...ys] -> 1 + length(~ys)
+    }
+)
+
+ir-> (xs0)=>(
+    (
+        match xs0 {
+            [] -> block{}{0}{swap(xs0, [])}
+            [y1, ...ys2] -> block{}{+(1, block{let (r3, l4) = length(ys2)}{r3}{swap(ys2, l4)})}{swap(xs0, [y1, ...ys2])}
+        }
+    ), xs0
+)
+
+{
+    let x = [1, 2, 3]
+    (length(~x), x)
 }
 
-length :: ~List a -> Int
-length ~xs = case ~xs of
-  [] -> 0
-  (y:ys) -> 1 + length ~ys
+(3, [1, 2, 3])
+
+ir-> block{let x0 = [1, 2, 3]}{(block{let (r1, l2) = length(x0)}{r1}{swap(x0, l2)}, x0)}{}
+
+/*
+
+
+
+
+
 
 split :: Char -> String -> (String, String)
 split c xs = case xs of
@@ -861,5 +907,17 @@ main = execDemo
 // main = avg
 // main = fileDemo
 // main = goodFileUsage "This program uses files correctly."
+
+execDemo :: ~World -> ()
+execDemo ~w =
+  let stack = []
+  // A program to evaluate (2 + 6)^2 and print the result.
+  // Here, 'd' means "duplicate the top element of the stack",
+  // and 'p' means "print the top element of the stack".
+  let instrs = [Left 2, Left 6, Right '+', Right 'd', Right '*', Right 'p']
+  exec instrs ~(stack, w)
+  putStrLn "Final stack was:" ~w
+  print stack ~w
+
 
 */

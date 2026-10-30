@@ -154,6 +154,8 @@ export const evalExpr = (ctx: Ctx, expr: Expr): any => {
 
 export const matches = (pat: Patd, value: any): boolean => {
     switch (pat.type) {
+        case 'bool':
+            return value === pat.value;
         case 'idd':
             return true;
         case 'string':
