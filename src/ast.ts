@@ -25,7 +25,8 @@ export type Type =
     | { type: 'fn'; args: Type[]; body: Type };
 
 export type File = FileItem[];
-export type FileItem = Linear | { type: 'decl'; name: Id; ann: Type };
+export type FileItem = Linear | Decl;
+export type Decl = { type: 'decl'; name: Id; ann: Type; loc: number };
 
 export type Lens =
     | Id

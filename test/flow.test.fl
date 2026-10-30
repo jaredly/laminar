@@ -1,0 +1,659 @@
+/**
+ * This is a translation of flow.fl to my syntax,
+ * along with some basic tests of the functions
+ */
+// ~a means the same as a/a,
+// so this has type `Int/Int -> ()`, modifying the integer it was passed in place.
+inc :: (~Int) => ()
+fn inc(~x) {x := x + 1}
+
+ir-> (x0)=>(swap(x0, +(x0, 1)), x0)
+
+{
+    let x = 5
+    inc(~x)
+    x
+}
+
+6
+
+ir-> iffe{
+    let x0 = 5;
+    let _ = iffe{let (r1, l2) = inc(x0)}{r1}{swap(x0, l2)}
+}{x0}{}
+
+fst :: ((a, b)/(a', b)) => a/a'
+fn fst(~(x, y)) ~x
+
+ir-> ((x0, y1))=>(x0, (back2)=>iffe{swap(x0, back2)}{(x0, y1)}{})
+
+{
+    let x = (1, 2)
+    let z = {
+        let y = ~fst(~x)
+        y := 5
+    }
+    (z, x)
+}
+
+(1, (5, 2))
+
+ir-> iffe{
+    let x0 = (1, 2);
+    let z1 = iffe{
+        let (t3, c4) = fst(x0);
+        let y2 = t3
+    }{swap(y2, 5)}{
+        swap(t3, y2);
+        swap(x0, c4(t3))
+    }
+}{(z1, x0)}{}
+
+incFst :: (~(Int, a)) => ()
+fn incFst(~x) inc(~fst(~x))
+
+ir-> (x0)=>(
+    iffe{
+        let (t1, c2) = fst(x0);
+        let (r3, l4) = inc(t1)
+    }{r3}{
+        swap(t1, l4);
+        swap(x0, c2(t1))
+    }, x0
+)
+
+{
+    let x = (1, 4)
+    incFst(~x)
+    x
+}
+
+(2, 4)
+
+ir-> iffe{
+    let x0 = (1, 4);
+    let _ = iffe{let (r1, l2) = incFst(x0)}{r1}{swap(x0, l2)}
+}{x0}{}
+
+idf :: (~a) => ()
+fn idf(~x) ()
+
+ir-> (x0)=>((), x0)
+
+{
+    let x = 2
+    idf(~x)
+    x
+}
+
+2
+
+ir-> iffe{
+    let x0 = 2;
+    let _ = iffe{let (r1, l2) = idf(x0)}{r1}{swap(x0, l2)}
+}{x0}{}
+
+idl :: (a/b) => a/b
+fn idl(~x) ~x
+
+ir-> (x0)=>(x0, (back1)=>iffe{swap(x0, back1)}{x0}{})
+
+{
+    let x = 2
+    let z = {
+        let m = ~idl(~x)
+        m := 4
+    }
+    (z, x)
+}
+
+(2, 4)
+
+ir-> iffe{
+    let x0 = 2;
+    let z1 = iffe{
+        let (t3, c4) = idl(x0);
+        let m2 = t3
+    }{swap(m2, 4)}{
+        swap(t3, m2);
+        swap(x0, c4(t3))
+    }
+}{(z1, x0)}{}
+
+united :: (~a) => ~()
+fn united(~x) ~()
+
+ir-> (x0)=>((), (back1)=>iffe{swap((), back1)}{x0}{})
+
+{
+    let x = 2
+    let z = {
+        let m = ~united(~x)
+        m := ()
+    }
+    (z, x)
+}
+
+((), 2)
+
+ir-> iffe{
+    let x0 = 2;
+    let z1 = iffe{
+        let (t3, c4) = united(x0);
+        let m2 = t3
+    }{swap(m2, ())}{
+        swap(t3, m2);
+        swap(x0, c4(t3))
+    }
+}{(z1, x0)}{}
+
+fn gimme(initial) ~{
+    lens b <- initial
+    drop(b)
+}
+
+ir-> (initial0)=>iffe{
+    let t1 = initial0;
+    let c2 = (b3)=>drop(b3)
+}{
+    (
+        t1, (back4)=>iffe{
+            swap(t1, back4);
+            swap((), c2(t1))
+        }{()}{}
+    )
+}{}
+
+{
+    let x = 2
+    let z = {
+        let m = ~gimme(5)
+        m := ()
+    }
+    (z, x)
+}
+
+(5, 2)
+
+ir-> iffe{
+    let x0 = 2;
+    let z1 = iffe{
+        let (t3, c4) = gimme(5);
+        let m2 = t3
+    }{swap(m2, ())}{
+        swap(t3, m2);
+        swap((), c4(t3))
+    }
+}{(z1, x0)}{}
+
+/*
+This should fail, but doesn't.
+In my next rewrite, I'll have a more
+principled stance on variables.
+but right now I don't.
+// pollution
+{
+    let a = 1
+    let b = {
+        let c = 2
+        3
+    }
+    (a, b, c)
+}
+
+(1, 3, 2)
+*/
+{
+    let m = ()
+    let n = {
+        let ok = ~{
+            lens b <- 5
+            m := b
+        }
+        ok := 10
+    }
+    (m, n)
+}
+
+(10, 5)
+
+ir-> iffe{
+    let m0 = ();
+    let n1 = iffe{
+        let t3 = 5;
+        let c4 = (b5)=>swap(m0, b5);
+        let ok2 = t3
+    }{swap(ok2, 10)}{
+        swap(t3, ok2);
+        swap((), c4(t3))
+    }
+}{(m0, n1)}{}
+
+swap :: ((a, b)/(c, d)) => (b, a)/(d, c)
+fn swap(~(x, y)) ~(y, x)
+
+ir-> ((x0, y1))=>((y1, x0), (back2)=>iffe{swap((y1, x0), back2)}{(x0, y1)}{})
+
+{
+    let x = (1, 2)
+    {
+        let z = ~swap(~x)
+        incFst(~z)
+    }
+    x
+}
+
+(1, 3)
+
+ir-> iffe{
+    let x0 = (1, 2);
+    let _ = iffe{
+        let (t4, c5) = swap(x0);
+        let z1 = t4;
+        let (r2, l3) = incFst(z1)
+    }{r2}{
+        swap(z1, l3);
+        swap(t4, z1);
+        swap(x0, c5(t4))
+    }
+}{x0}{}
+
+{
+    let x = (1, 2)
+    {incFst(~swap(~x))}
+    x
+}
+
+(1, 3)
+
+ir-> iffe{
+    let x0 = (1, 2);
+    let _ = iffe{
+        let (t1, c2) = swap(x0);
+        let (r3, l4) = incFst(t1)
+    }{r3}{
+        swap(t1, l4);
+        swap(x0, c2(t1))
+    }
+}{x0}{}
+
+united' :: (~a) => ()
+fn united'(~x) ()
+
+ir-> (x0)=>((), x0)
+
+{
+    let x = 1
+    united'(~x)
+    x
+}
+
+1
+
+ir-> iffe{
+    let x0 = 1;
+    let _ = iffe{let (r1, l2) = united'(x0)}{r1}{swap(x0, l2)}
+}{x0}{}
+
+makeunit :: (()) => ~()
+fn makeunit(()) ~()
+
+ir-> (())=>((), (back0)=>iffe{swap((), back0)}{()}{})
+
+{
+    let x = 1
+    let m = ~makeunit(())
+    x
+}
+
+1
+
+ir-> iffe{
+    let x0 = 1;
+    let (t2, c3) = makeunit(());
+    let m1 = t2
+}{x0}{
+    swap(t2, m1);
+    swap((), c3(t2))
+}
+
+take :: (a/()) => a
+fn take(~a) {a := ()}
+
+ir-> (a0)=>(swap(a0, ()), a0)
+
+{
+    let x = 1
+    take(~x)
+    x
+}
+
+()
+
+ir-> iffe{
+    let x0 = 1;
+    let _ = iffe{let (r1, l2) = take(x0)}{r1}{swap(x0, l2)}
+}{x0}{}
+
+map :: ((a) => b, a/b) => ()
+fn map(f, ~x) {x := f(x)}
+
+ir-> (f0, x1)=>(swap(x1, f0(x1)), x1)
+
+fn double(x) {(x * 2)}
+
+ir-> (x0)=>(*(x0, 2))
+
+{
+    let x = 10
+    map(double, ~x)
+    x
+}
+
+20
+
+ir-> iffe{
+    let x0 = 10;
+    let _ = iffe{let (r1, l2) = map(double, x0)}{r1}{swap(x0, l2)}
+}{x0}{}
+
+{
+    fn nothing() {4}
+    nothing()
+}
+
+4
+
+ir-> iffe{let nothing0 = ()=>4}{nothing0()}{}
+
+{
+    fn multi(a, b, c) {(a, b + c)}
+    multi(2, 3, 4)
+}
+
+(2, 7)
+
+ir-> iffe{let multi0 = (a1, b2, c3)=>(a1, +(b2, c3))}{multi0(2, 3, 4)}{}
+
+unmap :: ((a/b) => (), a) => b
+fn unmap(f, x) {
+    f(~x)
+    x
+}
+
+ir-> (f0, x1)=>iffe{let _ = iffe{let (r2, l3) = f0(x1)}{r2}{swap(x1, l3)}}{x1}{}
+
+{unmap(inc, 5)}
+
+6
+
+ir-> unmap(inc, 5)
+
+{
+    let a = (1, 2)
+    let m = {
+        let x = ~swap(~a)
+        5
+    }
+    (m, a)
+}
+
+(5, (1, 2))
+
+ir-> iffe{
+    let a0 = (1, 2);
+    let m1 = iffe{
+        let (t3, c4) = swap(a0);
+        let x2 = t3
+    }{5}{
+        swap(t3, x2);
+        swap(a0, c4(t3))
+    }
+}{(m1, a0)}{}
+
+fn swap2(~v) ~swap(~v)
+
+ir-> (v0)=>iffe{let (t1, c2) = swap(v0)}{
+    (
+        t1, (back3)=>iffe{
+            swap(t1, back3);
+            swap(v0, c2(t1))
+        }{v0}{}
+    )
+}{}
+
+{
+    let x = (1, 2)
+    inc(~fst(~swap2(~x)))
+    x
+}
+
+(1, 3)
+
+ir-> iffe{
+    let x0 = (1, 2);
+    let _ = iffe{
+        let (t1, c2) = swap2(x0);
+        let (t3, c4) = fst(t1);
+        let (r5, l6) = inc(t3)
+    }{r5}{
+        swap(t3, l6);
+        swap(t1, c4(t3));
+        swap(x0, c2(t1))
+    }
+}{x0}{}
+
+/*
+
+fcomp :: ((b/b') => c/c', (a/a') => b/b', a/a') => c/c'
+fn fcomp(g, f, ~x) { ~g(~f(~x)) }
+
+over :: (a -> b) -> (c/d -> a/b) -> c -> d
+over f g x = {
+  map f ~(g ~x)
+  x
+}
+
+join :: (a/a' -> b/b') -> (c/c' -> d/d') -> (a,c)/(a',c') -> (b,d)/(b',d')
+join f g ~(x, y) = ~(f ~x, g ~y)
+
+funcurry :: (a/a' -> b/b' -> c/c') -> (a, b)/(a', b') -> c/c'
+funcurry f ~(x, y) = ~(f ~x ~y)
+
+swapPair :: (a, b)/(b, a) -> ()
+swapPair ~(x, y) = y := x := y
+
+// --------------------
+// Prelude
+// --------------------
+// The functions in this section are defined without function bodies.
+// They are implemented in Linear Haskell in `linear-base` or the prelude `FlowPrelude.hs`.
+// --------------------
+
+// In Linear Haskell, these actually have typeclass constraints on `a`.
+putStrLn :: String -> ~World -> ()
+print :: a -> ~World -> ()
+dup :: ~a -> a
+consume :: a -> ()
+
+// These file-management functions use built-in types for the real-world and file handles.
+openFile :: String -> ~World -> Handle
+truncateFile :: String -> ~World -> Handle
+readFile :: ~(World, Handle) -> String
+writeFile :: String -> ~(World, Handle) -> ()
+closeFile :: Handle -> ~World -> ()
+
+// --------------------
+// Stack-based evaluator
+// --------------------
+// In this section, we use flow typing to implement a stack-based evaluator.
+// We use flow parameters to model the state of the stack.
+// Instructions are integers (push the number to the stack)
+// or characters that have an effect on the stack, such as adding the top two numbers
+// or printing the topmost number.
+// --------------------
+
+// Pop an element from a list in-place.
+pop :: ~(List Int) -> Int
+pop ~xs = case xs of
+  y:ys ->
+    xs := ys
+    y
+
+// Push an element onto a list in-place.
+push :: Int -> ~(List Int) -> ()
+push x ~xs = xs := x:xs
+
+exec :: List (Either Int Char) -> ~(List Int, World) -> ()
+exec is ~(stk, w) = case is of
+  [] -> ()
+  (Left n):is ->
+    push n ~stk
+    exec is ~(stk, w)
+  (Right '+'):is ->
+    push (pop ~stk + pop ~stk) ~stk
+    exec is ~(stk, w)
+  (Right '-'):is ->
+    push (pop ~stk - pop ~stk) ~stk
+    exec is ~(stk, w)
+  (Right '*'):is ->
+    push (pop ~stk * pop ~stk) ~stk
+    exec is ~(stk, w)
+  (Right '/'):is ->
+    push (pop ~stk / pop ~stk) ~stk
+    exec is ~(stk, w)
+  (Right 'p'):is ->
+    // 'p' means "print".
+    print (pop ~stk) ~w
+    exec is ~(stk, w)
+  (Right 'd'):is ->
+    // 'd' means "duplicate".
+    let x = pop ~stk
+    push (dup ~x) ~stk
+    push x ~stk
+    exec is ~(stk, w)
+  (Right x):is ->
+    putStrLn "Unrecognised operation:" ~w
+    print x ~w
+    exec is ~(stk, w)
+
+execDemo :: ~World -> ()
+execDemo ~w =
+  let stack = []
+  // A program to evaluate (2 + 6)^2 and print the result.
+  // Here, 'd' means "duplicate the top element of the stack",
+  // and 'p' means "print the top element of the stack".
+  let instrs = [Left 2, Left 6, Right '+', Right 'd', Right '*', Right 'p']
+  exec instrs ~(stack, w)
+  putStrLn "Final stack was:" ~w
+  print stack ~w
+
+// --------------------
+// Examples from "From Linearity to Borrowing", Wagner et al.
+// (https://dl.acm.org/doi/10.1145/3764117)
+// --------------------
+
+// First we need to establish some basic functions on lists.
+
+not :: Bool -> Bool
+not b = case b of {
+  True -> False
+  False -> True
+}
+
+// Consumes the input.
+length' :: List String -> Int
+length' xs = case xs of {
+  [] -> 0
+  (y:ys) -> consume y; 1 + length' ys
+}
+
+length :: ~List a -> Int
+length ~xs = case ~xs of
+  [] -> 0
+  (y:ys) -> 1 + length ~ys
+
+split :: Char -> String -> (String, String)
+split c xs = case xs of
+  [] ->
+    consume c
+    ([], [])
+  (x:xs) -> case dup ~x == dup ~c of
+    True ->
+      consume x
+      consume c
+      ([], xs)
+    False ->
+      let (y, z) = split c xs
+      (x:y, z)
+
+splitMany :: Char -> String -> List String
+splitMany c xs = case split (dup ~c) xs of {
+  (word, "") -> {
+    consume c
+    [word]
+}
+  (word, tail) -> word : splitMany c tail
+}
+
+words :: String -> List String
+words = splitMany " "
+
+lines :: String -> List String
+lines = splitMany "\n"
+
+fileWords :: ~(World, Handle) -> Int
+fileWords ~(w, f) = length' (words (readFile ~(w, f)))
+
+fileLines :: ~(World, Handle) -> Int
+fileLines ~(w, f) = length' (lines (readFile ~(w, f)))
+
+avg :: ~World -> ()
+avg ~w = {
+  let f = openFile "flow.fl" ~w
+  putStrLn "This source file has the following average number of words per line:" ~w
+  print (fileWords ~(w, f) / fileLines ~(w, f)) ~w
+  closeFile f ~w
+}
+
+// --------------------
+// Examples from "Capturing Types", Boruch-Gruszecki et al.
+// (https://dl.acm.org/doi/pdf/10.1145/3618003)
+// --------------------
+
+// This is the usingFile combinator from "Capturing Types".
+// Since this compiler targets Linear Haskell, we can't implement
+// the `withFile` combinator from our paper exactly as written,
+// since we have to take into account the state of the real world here.
+usingFile :: String -> (~(World, Handle) -> a) -> ~World -> a
+usingFile x f ~w = {
+  let h = truncateFile x ~w
+  let a = f ~(w, h)
+  closeFile h ~w
+  a
+}
+
+fileDemo :: ~World -> ()
+fileDemo = usingFile "out.txt" (writeFile "Hello, world!")
+
+goodFileUsage :: String -> ~World -> ()
+goodFileUsage s = usingFile "good.txt" (writeFile s)
+
+// This is an example of bad resource usage from "Capturing Types".
+// In flow typing, this doesn't compile, as expected
+// (uncomment to see the compiler's error messages).
+// badFileUsage :: String -> ~World -> ()
+// badFileUsage s ~w = usingFile "good.txt" (\~(w, f) -> \() -> writeFile s ~(w, f)) ~w ()
+
+// --------------------
+// Main function
+// Uncomment one of the lines below to run one of the included demos.
+// --------------------
+
+main :: ~World -> ()
+main = execDemo
+// main = avg
+// main = fileDemo
+// main = goodFileUsage "This program uses files correctly."
+
+*/

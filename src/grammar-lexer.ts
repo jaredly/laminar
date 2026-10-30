@@ -200,696 +200,602 @@ export class Grammar {
         this.fns[name] = pats;
     }
     parsePat(pat: Pat, node: Node, parentPath: FailurePath): PatResult {
-        if (parentPath.length > 1000) {
-            console.log(parentPath);
-            throw new Error('too deep');
-        }
-        // const path = path; // ignore
-        let path = [
-            ...parentPath,
-            pat.type === 'list' || pat.type === 'wrapper' ? pat.kind.text : pat.type,
-            node.loc,
-        ];
-        // console.log(
-        //     pat.type === 'list' || pat.type === 'wrapper' ? pat.kind.text : pat.type,
-        //     brief(node),
-        //     node.loc,
-        //     path,
-        // );
-        switch (pat.type) {
-            case 'regexp': {
-                if (node.type === 'id' || node.type === 'op') {
-                    if (node.text.match(pat.regexp)) {
-                        return { type: 'success', value: node };
-                    } else {
-                        return {
-                            type: 'failure',
-                            failure: {
-                                reason: `regexp mismatch, found ${JSON.stringify(node.text)}, expected ${pat.regexp}`,
-                                loc: node.loc,
-                                path,
-                            },
-                        };
-                    }
-                } else {
-                    return {
-                        type: 'failure',
-                        failure: {
-                            reason: 'not an id/op: ' + brief(node),
-                            loc: node.loc,
-                            path,
-                        },
-                    };
-                }
-            }
-            case 'literal':
-                if (node.type === 'id' || node.type === 'op') {
-                    if (node.text === pat.text.text) {
-                        return { type: 'success', value: node };
-                    } else {
-                        return {
-                            type: 'failure',
-                            failure: {
-                                reason: `literal mismatch, found ${JSON.stringify(node.text)}, expected ${JSON.stringify(pat.text.text)}`,
-                                loc: node.loc,
-                                path,
-                            },
-                        };
-                    }
-                } else {
-                    return {
-                        type: 'failure',
-                        failure: {
-                            reason: 'not an id/op: ' + brief(node),
-                            loc: node.loc,
-                            path,
-                        },
-                    };
-                }
-            case 'rule': {
-                if (pat.rule.type === 'regex') {
-                    if (node.type === 'id') {
-                        if (node.text.match(pat.rule.rx)) {
-                            return { type: 'success', bindings: { [pat.name.text]: node } };
-                        } else {
-                            return {
-                                type: 'failure',
-                                failure: {
-                                    loc: node.loc,
-                                    reason: `regex failed to match ${pat.rule.rx} vs ${node.text}`,
-                                    path,
-                                },
-                            };
-                        }
-                    }
-                    return {
-                        type: 'failure',
-                        failure: {
-                            reason: `not an id, found a ${brief(node)}`,
-                            loc: node.loc,
-                            path,
-                        },
-                    };
-                }
-                const name = pat.rule.text;
-                if (name === 'id') {
-                    if (node.type === 'id') {
-                        if (this.config.reserved?.includes(node.text)) {
-                            return {
-                                type: 'failure',
-                                failure: {
-                                    loc: node.loc,
-                                    path,
-                                    reason: node.text + ' is a reserved word',
-                                },
-                            };
-                        }
-                        return {
-                            type: 'success',
-                            bindings: { [pat.name.text]: node },
-                        };
-                    }
-                    return {
-                        type: 'failure',
-                        failure: {
-                            reason: `not an id, found a ${brief(node)}`,
-                            loc: node.loc,
-                            path,
-                        },
-                    };
-                } else if (name === 'op') {
-                    if (node.type === 'op') {
-                        return {
-                            type: 'success',
-                            bindings: { [pat.name.text]: node },
-                        };
-                    }
-                    return {
-                        type: 'failure',
-                        failure: {
-                            reason: `not an op, found a ${brief(node)}`,
-                            loc: node.loc,
-                            path,
-                        },
-                    };
-                } else if (name === '*') {
+        return parsePat(pat, node, parentPath, { rules: this.rules, config: this.config });
+    }
+    parse<T>(rule: string, node: Node, path: FailurePath = []): ParseResult<T> {
+        return parse<T>(rule, node, { rules: this.rules, config: this.config }, path);
+    }
+}
+
+type Rules = Record<string, Option[]>;
+
+export const parsePat = (
+    pat: Pat,
+    node: Node,
+    parentPath: FailurePath,
+    ctx: { config: GrammarConfig; rules: Rules },
+): PatResult => {
+    if (parentPath.length > 1000) {
+        console.log(parentPath);
+        throw new Error('too deep');
+    }
+    // const path = path; // ignore
+    let path = [
+        ...parentPath,
+        pat.type === 'list' || pat.type === 'wrapper' ? pat.kind.text : pat.type,
+        node.loc,
+    ];
+    // console.log(
+    //     pat.type === 'list' || pat.type === 'wrapper' ? pat.kind.text : pat.type,
+    //     brief(node),
+    //     node.loc,
+    //     path,
+    // );
+    switch (pat.type) {
+        case 'regexp': {
+            if (node.type === 'id' || node.type === 'op') {
+                if (node.text.match(pat.regexp)) {
                     return { type: 'success', value: node };
                 } else {
-                    const inner = this.parse(name, node, path);
-                    if (inner.type === 'failure') {
-                        return inner;
+                    return {
+                        type: 'failure',
+                        failure: {
+                            reason: `regexp mismatch, found ${JSON.stringify(node.text)}, expected ${pat.regexp}`,
+                            loc: node.loc,
+                            path,
+                        },
+                    };
+                }
+            } else {
+                return {
+                    type: 'failure',
+                    failure: {
+                        reason: 'not an id/op: ' + brief(node),
+                        loc: node.loc,
+                        path,
+                    },
+                };
+            }
+        }
+        case 'literal':
+            if (node.type === 'id' || node.type === 'op') {
+                if (node.text === pat.text.text) {
+                    return { type: 'success', value: node };
+                } else {
+                    return {
+                        type: 'failure',
+                        failure: {
+                            reason: `literal mismatch, found ${JSON.stringify(node.text)}, expected ${JSON.stringify(pat.text.text)}`,
+                            loc: node.loc,
+                            path,
+                        },
+                    };
+                }
+            } else {
+                return {
+                    type: 'failure',
+                    failure: {
+                        reason: 'not an id/op: ' + brief(node),
+                        loc: node.loc,
+                        path,
+                    },
+                };
+            }
+        case 'rule': {
+            if (pat.rule.type === 'regex') {
+                if (node.type === 'id') {
+                    if (node.text.match(pat.rule.rx)) {
+                        return { type: 'success', bindings: { [pat.name.text]: node } };
+                    } else {
+                        return {
+                            type: 'failure',
+                            failure: {
+                                loc: node.loc,
+                                reason: `regex failed to match ${pat.rule.rx} vs ${node.text}`,
+                                path,
+                            },
+                        };
+                    }
+                }
+                return {
+                    type: 'failure',
+                    failure: {
+                        reason: `not an id, found a ${brief(node)}`,
+                        loc: node.loc,
+                        path,
+                    },
+                };
+            }
+            const name = pat.rule.text;
+            if (name === 'id') {
+                if (node.type === 'id') {
+                    if (ctx.config.reserved?.includes(node.text)) {
+                        return {
+                            type: 'failure',
+                            failure: {
+                                loc: node.loc,
+                                path,
+                                reason: node.text + ' is a reserved word',
+                            },
+                        };
                     }
                     return {
                         type: 'success',
-                        bindings: { [pat.name.text]: inner.value },
+                        bindings: { [pat.name.text]: node },
                     };
                 }
-            }
-            case 'wrapper': {
-                if (node.type !== 'wrapper') {
-                    return {
-                        type: 'failure',
-                        failure: {
-                            reason: 'not a wrapper, found a ' + brief(node),
-                            loc: node.loc,
-                            path,
-                        },
-                    };
-                }
-                if (node.kind !== pat.kind.text) {
-                    return {
-                        type: 'failure',
-                        failure: {
-                            reason: `expected ${JSON.stringify(pat.kind.text)} wrapper, found ${JSON.stringify(node.kind)}`,
-                            loc: node.loc,
-                            path,
-                        },
-                    };
-                }
-                if (!node.child) {
-                    if (!pat.child) return { type: 'success' };
-                    if (pat.child.type === 'list') {
-                        return this.parsePat(
-                            pat.child,
-                            {
-                                type: 'list',
-                                kind: pat.child.kind.text as ListKind,
-                                children: [],
-                                loc: node.loc,
-                            },
-                            path,
-                        );
-                    }
-                    return {
-                        type: 'failure',
-                        failure: {
-                            reason: `wrapper has no contents`,
-                            loc: node.loc,
-                            path,
-                        },
-                    };
-                }
-                if (!pat.child) {
-                    return {
-                        type: 'failure',
-                        failure: {
-                            reason: `wrapper has contents, expected empty`,
-
-                            loc: node.loc,
-                            path,
-                        },
-                    };
-                }
-                if (
-                    pat.child.type === 'list' &&
-                    pat.child.items.length === 1 &&
-                    isSpread(pat.child.items[0])
-                ) {
-                    const patLevel = listLevels.indexOf(pat.child.kind.text as '');
-                    const childLevel =
-                        node.child.type === 'list' ? listLevels.indexOf(node.child.kind) : null;
-                    // don't ignore strings
-                    if (
-                        patLevel !== -1 &&
-                        (childLevel == null || childLevel === -1 || childLevel > patLevel)
-                    ) {
-                        return this.parsePat(
-                            pat.child,
-                            {
-                                type: 'list',
-                                children: [node.child],
-                                kind: pat.child.kind.text as '',
-                                loc: node.child.loc,
-                            },
-                            path,
-                            // [...path, 'pseudo-' + pat.child.kind.text],
-                        );
-                    }
-                }
-                return this.parsePat(pat.child, node.child, path);
-            }
-            case 'list': {
-                if (node.type !== 'list') {
-                    return {
-                        type: 'failure',
-                        failure: {
-                            reason: 'not a list, found a ' + brief(node),
-                            loc: node.loc,
-                            path,
-                        },
-                    };
-                }
-                if (node.kind !== pat.kind.text) {
-                    return {
-                        type: 'failure',
-                        failure: {
-                            reason: `expected ${JSON.stringify(pat.kind.text)} list, found ${JSON.stringify(node.kind)}`,
-                            loc: node.loc,
-                            path,
-                        },
-                    };
-                }
-                const hasSpread = pat.items.some(isSpread);
-                const minCount = pat.items.filter(
-                    (n) => !isSpread(n) || (n.type === 'rest' && !n.multi),
-                );
-                if (hasSpread) {
-                    if (minCount.length > node.children.length) {
-                        return {
-                            type: 'failure',
-                            failure: {
-                                reason: `not enough items ${node.kind}. ${node.children.length} total items; ${minCount} required pattern items`,
-                                loc: node.loc,
-                                path,
-                            },
-                        };
-                    }
-                } else if (pat.items.length !== node.children.length) {
-                    return {
-                        type: 'failure',
-                        failure: {
-                            reason: `wrong number of items while processing ${node.kind}. ${node.children.length} total items; ${pat.items.length} pattern items. ${pat.items.map((i) => i.type)}`,
-                            loc: node.loc,
-                            path,
-                        },
-                    };
-                }
-                const bindings: Record<string, any> = {};
-                let i = 0;
-                let n = -1;
-                for (let item of pat.items) {
-                    n++;
-                    // console.log(`LIST ITEM ${i}`, item);
-                    if (i >= node.children.length && !isSpread(item)) {
-                        return {
-                            type: 'failure',
-                            failure: {
-                                reason: `ran out of items while processing ${node.kind}. ${node.children.length} total items; ${pat.items.length} pattern items. ${pat.items.map((i) => i.type)}`,
-                                loc: node.loc,
-                                path,
-                            },
-                        };
-                    }
-                    if (i < node.children.length) {
-                        path = [...path, ':list-item:' + n + ':' + item.type, node.children[i].loc];
-                    }
-                    switch (item.type) {
-                        case 'rest': {
-                            if (item.multi) {
-                                const got: any[] = [];
-                                const options = this.rules[item.rule.text];
-                                if (!options) throw new Error(`Unknown rule ${item.rule.text}`);
-
-                                while (i < node.children.length) {
-                                    let failures: Failure[] = [];
-                                    let advanced = i;
-                                    for (let option of options) {
-                                        if (option.pat.type !== 'list') {
-                                            failures.push({
-                                                loc: node.children[i].loc,
-                                                reason: `option not a list`,
-                                                path,
-                                            });
-                                            continue;
-                                        }
-                                        let io = i;
-
-                                        let failed = false;
-                                        const inner: Record<string, any> = {};
-                                        for (const child of option.pat.items) {
-                                            if (i >= node.children.length) {
-                                                failed = true;
-                                                break;
-                                            }
-                                            const result = this.parsePat(
-                                                child,
-                                                node.children[i],
-                                                path,
-                                            );
-                                            if (result.type === 'failure') {
-                                                failed = true;
-                                                failures.push(result.failure);
-                                                break;
-                                            }
-                                            Object.assign(inner, result.bindings);
-                                            i++;
-                                        }
-                                        if (failed) {
-                                            i = io; // reset i
-                                            continue;
-                                        }
-                                        got.push(
-                                            option.res
-                                                ? option.res({
-                                                      ...inner,
-                                                      node: {
-                                                          ...node,
-                                                          children: node.children.slice(io, i),
-                                                          loc: node.children[io].loc,
-                                                      },
-                                                  })
-                                                : inner,
-                                        );
-                                        break;
-                                    }
-                                    if (advanced === i) {
-                                        return {
-                                            type: 'failure',
-                                            failure: {
-                                                loc: node.loc,
-                                                path,
-                                                reason: `No option consumed children in **${item.rule.text}`,
-                                                children: failures.map((f, i) => ({
-                                                    ...f,
-                                                    rule: {
-                                                        name: item.rule.text,
-                                                        option: i,
-                                                        node: {
-                                                            ...node,
-                                                            children: node.children.slice(i),
-                                                            loc: node.children[i].loc,
-                                                        },
-                                                    },
-                                                })),
-                                            },
-                                        };
-                                    }
-                                }
-                                bindings[item.name.text] = got;
-                                return { type: 'success', bindings };
-                            }
-
-                            const parsed = this.parse(
-                                item.rule.text,
-                                {
-                                    ...node,
-                                    loc: node.children[i].loc,
-                                    children: node.children.slice(i),
-                                },
-                                path,
-                            );
-                            if (parsed.type === 'failure') return parsed;
-                            bindings[item.name.text] = parsed.value;
-                            return { type: 'success', bindings };
-                        }
-                        case 'many': {
-                            const got: any[] = [];
-                            for (; i < node.children.length; i++) {
-                                const parsed = this.parse(item.rule.text, node.children[i], path);
-                                if (parsed.type === 'failure') {
-                                    // Nothing left to consume the rest of this list
-                                    if (n === pat.items.length - 1) {
-                                        return parsed;
-                                    } else {
-                                        break;
-                                    }
-                                }
-                                got.push(parsed.value);
-                            }
-                            bindings[item.name.text] = got;
-                            if (i >= node.children.length) {
-                                return { type: 'success', bindings };
-                            }
-                            continue;
-                        }
-                        case 'many-items': {
-                            const got: Record<string, any>[] = [];
-                            while (i < node.children.length) {
-                                const inner: Record<string, any> = {};
-                                for (const child of item.items) {
-                                    if (i >= node.children.length) {
-                                        return {
-                                            type: 'failure',
-                                            failure: {
-                                                reason: `ran out of items`,
-                                                loc: node.loc,
-                                                path,
-                                            },
-                                        };
-                                    }
-                                    const result = this.parsePat(child, node.children[i], path);
-                                    if (result.type === 'failure') return result;
-                                    Object.assign(inner, result.bindings);
-                                    i++;
-                                }
-                                got.push(inner);
-                            }
-                            bindings[item.name.text] = got;
-                            return { type: 'success', bindings };
-                        }
-                        default: {
-                            const parsed = this.parsePat(item, node.children[i], path);
-                            if (parsed.type === 'failure') {
-                                return {
-                                    ...parsed,
-                                    failure: {
-                                        ...parsed.failure,
-                                        reason: `list item ${n}: ` + parsed.failure.reason,
-                                    },
-                                };
-                            }
-                            Object.assign(bindings, parsed.bindings);
-                            i++;
-                            continue;
-                        }
-                    }
-                }
-                if (i < node.children.length) {
-                    return {
-                        type: 'failure',
-                        failure: {
-                            reason: `Didn't parse all children ${i}`,
-                            loc: node.children[i].loc,
-                            path,
-                        },
-                    };
-                }
-                if (Object.keys(bindings).length === 0) {
-                    return { type: 'success', value: node };
-                }
-                return { type: 'success', bindings };
-            }
-            case 'rest':
-            case 'many':
-            case 'many-items':
                 return {
                     type: 'failure',
                     failure: {
-                        reason: `Cant have a ${pat.type} outside of a list`,
+                        reason: `not an id, found a ${brief(node)}`,
                         loc: node.loc,
                         path,
                     },
                 };
-            // throw new Error(`Invalid rule; cant have ${pat.type} outside of a list literal`);
-        }
-    }
-    parse<T>(rule: string, node: Node, path: FailurePath = []): ParseResult<T> {
-        if (rule === 'id') {
-            if (node.type === 'id') {
-                return { type: 'success', value: node as T };
+            } else if (name === 'op') {
+                if (node.type === 'op') {
+                    return {
+                        type: 'success',
+                        bindings: { [pat.name.text]: node },
+                    };
+                }
+                return {
+                    type: 'failure',
+                    failure: {
+                        reason: `not an op, found a ${brief(node)}`,
+                        loc: node.loc,
+                        path,
+                    },
+                };
+            } else if (name === '*') {
+                return { type: 'success', value: node };
             } else {
-                return {
-                    type: 'failure',
-                    failure: {
-                        reason: 'not an id, found ' + node.type,
-                        loc: node.loc,
-                        path,
-                    },
-                };
-            }
-        }
-        if (rule === 'any') {
-            return { type: 'success', value: node as T };
-        }
-        if (!this.rules[rule]) {
-            console.log(this.rules);
-            throw new ParseError(node, 'Unknown rule: ' + rule);
-        }
-        const failures = [];
-        let i = 0;
-        for (const { pat, res } of this.rules[rule]) {
-            const result = this.parsePat(pat, node, [...path, rule + ':' + i++, node.loc]);
-            if (result.type === 'success') {
+                const inner = parse(name, node, ctx, path);
+                if (inner.type === 'failure') {
+                    return inner;
+                }
                 return {
                     type: 'success',
-                    value: res
-                        ? res(
-                              Object.keys(result.bindings ?? {}).length
-                                  ? { ...result.bindings, node }
-                                  : { node },
-                          )
-                        : result.value,
+                    bindings: { [pat.name.text]: inner.value },
                 };
             }
-            failures.push(result);
         }
-        // console.log("failed on ", rule, node.type);
-        return {
-            type: 'failure',
-            failure: {
-                reason: `no option of rule ${rule} matched.`,
-                loc: node.loc,
-                path,
-                // rule: { name: rule, option: 0, node },
-                children: failures.map((f, option): Failure => ({
-                    ...f.failure,
-                    rule: { name: rule, option, node: f.failure.rule?.node ?? node },
-                })),
-            },
-        };
-    }
-}
-const isSpread = (s: Pat) => s.type === 'rest' || s.type === 'many' || s.type === 'many-items';
-
-type Config = { lib: string; types: string };
-
-export const toSyntax = (grammar: Grammar) => {
-    return Object.entries(grammar.rules)
-        .map(([name, options]) => {
-            return `${name} {${options
-                .map((option) => {
-                    return `\n    ${asSyntax(option.pat)}${option.res ? ' -> ' + (option.res + '').replace(/^.*?=>/, '').trim() : ''}`;
-                })
-                .join('')}\n}`;
-        })
-        .join('\n\n');
-};
-
-export const toFile = (items: FileItem[], config: Config) => {
-    const imports = new Set<string>();
-    const names: string[] = [];
-    const ruleTypes: Record<string, string> = {};
-    const grammarConfig: Record<string, ConfigValue> = {};
-    items.forEach((item) => {
-        if (item.type === 'rule') {
-            ruleTypes[item.rule.name.name.text] = item.rule.name.ann
-                ? stringify(item.rule.name.ann)
-                : item.rule.name.name.text;
-        }
-        if (item.type === 'config') {
-            Object.assign(grammarConfig, item.values);
-        }
-    });
-
-    const chunks = items.map((item) => {
-        if (item.type === 'rule') {
-            const { rule } = item;
-            if (!rule.name.ann) {
-                names.push(rule.name.name.text);
+        case 'wrapper': {
+            if (node.type !== 'wrapper') {
+                return {
+                    type: 'failure',
+                    failure: {
+                        reason: 'not a wrapper, found a ' + brief(node),
+                        loc: node.loc,
+                        path,
+                    },
+                };
             }
-            rule.options.forEach((opt) => dslImports(opt.pat, imports));
-            return `grammar.add(${JSON.stringify(rule.name.name.text)}, [
-            ${rule.options
-                .map(
-                    (opt, i) => `    // ${item.rule.name.name.text}:${i + 1}\n    option(
-                    ${asDSL(opt.pat)},${
-                        opt.res
-                            ? `\n    ${dslHead(opt.pat, ruleTypes)}: ${ruleTypes[rule.name.name.text]} => ${stringify(opt.res)}`
-                            : ''
+            if (node.kind !== pat.kind.text) {
+                return {
+                    type: 'failure',
+                    failure: {
+                        reason: `expected ${JSON.stringify(pat.kind.text)} wrapper, found ${JSON.stringify(node.kind)}`,
+                        loc: node.loc,
+                        path,
+                    },
+                };
+            }
+            if (!node.child) {
+                if (!pat.child) return { type: 'success' };
+                if (pat.child.type === 'list') {
+                    return parsePat(
+                        pat.child,
+                        {
+                            type: 'list',
+                            kind: pat.child.kind.text as ListKind,
+                            children: [],
+                            loc: node.loc,
+                        },
+                        path,
+                        ctx,
+                    );
+                }
+                return {
+                    type: 'failure',
+                    failure: {
+                        reason: `wrapper has no contents`,
+                        loc: node.loc,
+                        path,
+                    },
+                };
+            }
+            if (!pat.child) {
+                return {
+                    type: 'failure',
+                    failure: {
+                        reason: `wrapper has contents, expected empty`,
+
+                        loc: node.loc,
+                        path,
+                    },
+                };
+            }
+            if (
+                pat.child.type === 'list' &&
+                pat.child.items.length === 1 &&
+                isSpread(pat.child.items[0])
+            ) {
+                const patLevel = listLevels.indexOf(pat.child.kind.text as '');
+                const childLevel =
+                    node.child.type === 'list' ? listLevels.indexOf(node.child.kind) : null;
+                // don't ignore strings
+                if (
+                    patLevel !== -1 &&
+                    (childLevel == null || childLevel === -1 || childLevel > patLevel)
+                ) {
+                    return parsePat(
+                        pat.child,
+                        {
+                            type: 'list',
+                            children: [node.child],
+                            kind: pat.child.kind.text as '',
+                            loc: node.child.loc,
+                        },
+                        path,
+                        // [...path, 'pseudo-' + pat.child.kind.text],
+                        ctx,
+                    );
+                }
+            }
+            return parsePat(pat.child, node.child, path, ctx);
+        }
+        case 'list': {
+            if (node.type !== 'list') {
+                return {
+                    type: 'failure',
+                    failure: {
+                        reason: 'not a list, found a ' + brief(node),
+                        loc: node.loc,
+                        path,
+                    },
+                };
+            }
+            if (node.kind !== pat.kind.text) {
+                return {
+                    type: 'failure',
+                    failure: {
+                        reason: `expected ${JSON.stringify(pat.kind.text)} list, found ${JSON.stringify(node.kind)}`,
+                        loc: node.loc,
+                        path,
+                    },
+                };
+            }
+            const hasSpread = pat.items.some(isSpread);
+            const minCount = pat.items.filter(
+                (n) => !isSpread(n) || (n.type === 'rest' && !n.multi),
+            );
+            if (hasSpread) {
+                if (minCount.length > node.children.length) {
+                    return {
+                        type: 'failure',
+                        failure: {
+                            reason: `not enough items ${node.kind}. ${node.children.length} total items; ${minCount} required pattern items`,
+                            loc: node.loc,
+                            path,
+                        },
+                    };
+                }
+            } else if (pat.items.length !== node.children.length) {
+                return {
+                    type: 'failure',
+                    failure: {
+                        reason: `wrong number of items while processing ${node.kind}. ${node.children.length} total items; ${pat.items.length} pattern items. ${pat.items.map((i) => i.type)}`,
+                        loc: node.loc,
+                        path,
+                    },
+                };
+            }
+            const bindings: Record<string, any> = {};
+            let i = 0;
+            let n = -1;
+            for (let item of pat.items) {
+                n++;
+                // console.log(`LIST ITEM ${i}`, item);
+                if (i >= node.children.length && !isSpread(item)) {
+                    return {
+                        type: 'failure',
+                        failure: {
+                            reason: `ran out of items while processing ${node.kind}. ${node.children.length} total items; ${pat.items.length} pattern items. ${pat.items.map((i) => i.type)}`,
+                            loc: node.loc,
+                            path,
+                        },
+                    };
+                }
+                if (i < node.children.length) {
+                    path = [...path, ':list-item:' + n + ':' + item.type, node.children[i].loc];
+                }
+                switch (item.type) {
+                    case 'rest': {
+                        if (item.multi) {
+                            const got: any[] = [];
+                            const options = ctx.rules[item.rule.text];
+                            if (!options) throw new Error(`Unknown rule ${item.rule.text}`);
+
+                            while (i < node.children.length) {
+                                let failures: Failure[] = [];
+                                let advanced = i;
+                                for (let option of options) {
+                                    if (option.pat.type !== 'list') {
+                                        failures.push({
+                                            loc: node.children[i].loc,
+                                            reason: `option not a list`,
+                                            path,
+                                        });
+                                        continue;
+                                    }
+                                    let io = i;
+
+                                    let failed = false;
+                                    const inner: Record<string, any> = {};
+                                    for (const child of option.pat.items) {
+                                        if (i >= node.children.length) {
+                                            failed = true;
+                                            break;
+                                        }
+                                        const result = parsePat(child, node.children[i], path, ctx);
+                                        if (result.type === 'failure') {
+                                            failed = true;
+                                            failures.push(result.failure);
+                                            break;
+                                        }
+                                        Object.assign(inner, result.bindings);
+                                        i++;
+                                    }
+                                    if (failed) {
+                                        i = io; // reset i
+                                        continue;
+                                    }
+                                    got.push(
+                                        option.res
+                                            ? option.res({
+                                                  ...inner,
+                                                  node: {
+                                                      ...node,
+                                                      children: node.children.slice(io, i),
+                                                      loc: node.children[io].loc,
+                                                  },
+                                              })
+                                            : inner,
+                                    );
+                                    break;
+                                }
+                                if (advanced === i) {
+                                    return {
+                                        type: 'failure',
+                                        failure: {
+                                            loc: node.loc,
+                                            path,
+                                            reason: `No option consumed children in **${item.rule.text}`,
+                                            children: failures.map((f, i) => ({
+                                                ...f,
+                                                rule: {
+                                                    name: item.rule.text,
+                                                    option: i,
+                                                    node: {
+                                                        ...node,
+                                                        children: node.children.slice(i),
+                                                        loc: node.children[i].loc,
+                                                    },
+                                                },
+                                            })),
+                                        },
+                                    };
+                                }
+                            }
+                            bindings[item.name.text] = got;
+                            return { type: 'success', bindings };
+                        }
+
+                        const parsed = parse(
+                            item.rule.text,
+                            {
+                                ...node,
+                                loc: node.children[i].loc,
+                                children: node.children.slice(i),
+                            },
+                            ctx,
+                            path,
+                        );
+                        if (parsed.type === 'failure') return parsed;
+                        bindings[item.name.text] = parsed.value;
+                        return { type: 'success', bindings };
                     }
-                )`,
-                )
-                .join(',\n')}
-            ])`;
-        } else if (item.type === 'const') {
-            return `const ${stringify(item.rest)}`;
-        } else if (item.type === 'import') {
-            return `import ${stringify(item.rest)}`;
-        } else if (item.type === 'function') {
-            return `function ${stringify(item.rest)}`;
-        }
-    });
-    return `\
-import {Grammar, Id, Op, Node, option, ${[...imports].join(', ')}} from "${config.lib}";
-import {${names.join(', ')}} from "${config.types}";
-
-export const grammar = new Grammar(${JSON.stringify(grammarConfig)});
-
-${chunks.join('\n\n')}
-    `;
-};
-
-const dslHead = (pat: Pat, ruleTypes: Record<string, string>) => {
-    const bindings: Record<string, string> = {};
-    collectBindings(pat, bindings, { id: 'Id', any: 'Node', op: 'Op', ...ruleTypes });
-    if (!Object.keys(bindings).length) return '({node}:{node:Node})';
-    return `({${Object.keys(bindings).join(',')},node}: {${Object.entries(bindings)
-        .map(([name, value]) => `${name}: ${value}`)
-        .join(',')},node:Node})`;
-};
-
-export const dslImports = (pat: Pat, imports: Set<string>): unknown => {
-    switch (pat.type) {
-        case 'literal':
-            return imports.add('lit');
-        case 'rule':
-            return imports.add('b');
-        case 'list':
-            pat.items.forEach((pat) => dslImports(pat, imports));
-            return imports.add(`list`);
-        case 'regexp':
-            return imports.add(`re`);
-        case 'rest':
-            return imports.add(`rest`);
-        case 'wrapper':
-            imports.add(`wrapper`);
-            return pat.child ? dslImports(pat.child, imports) : null;
-        case 'many':
-            return imports.add(`many`);
-        case 'many-items':
-            pat.items.forEach((pat) => dslImports(pat, imports));
-            return imports.add(`manyItems`);
-    }
-};
-
-export const asDSL = (pat: Pat): string => {
-    switch (pat.type) {
-        case 'regexp':
-            return `re(${pat.regexp + ''})`;
-        case 'literal':
-            return `lit(${JSON.stringify(pat.text.text)})`;
-        case 'rule':
-            return `b(${JSON.stringify(pat.name.text)},${pat.rule.type === 'regex' ? pat.rule.rx + '' : JSON.stringify(pat.rule.text)})`;
-        case 'wrapper':
-            return `wrapper(${JSON.stringify(pat.kind.text)}, ${pat.child ? asDSL(pat.child) : 'null'})`;
-        case 'list':
-            return `list(${JSON.stringify(pat.kind.text)}, ${pat.items.map(asDSL).join(', ')})`;
-        case 'rest':
-            return `rest("${pat.name.text}", "${pat.rule.text}", ${pat.multi})`;
-        case 'many':
-            return `many("${pat.name.text}", "${pat.rule.text}")`;
-        case 'many-items':
-            return `manyItems("${pat.name.text}", [${pat.items.map(asDSL).join(', ')}])`;
-    }
-};
-
-export const asSyntax = (pat: Pat): string => {
-    switch (pat.type) {
-        case 'regexp':
-            return `re${JSON.stringify((pat.regexp + '').slice(1, -1))}`;
-        case 'literal':
-            return `${JSON.stringify(pat.text.text)}`;
-        case 'rule':
-            return `${pat.name.text}:${pat.rule.type === 'regex' ? 're' + JSON.stringify((pat.rule.rx + '').slice(1, -1)) : pat.rule.text}`;
-        case 'wrapper':
-            if (pat.child) {
-                return `[${JSON.stringify(pat.kind.text)} ${asSyntax(pat.child)}]`;
-            } else {
-                return `[${JSON.stringify(pat.kind.text)}]`;
+                    case 'many': {
+                        const got: any[] = [];
+                        for (; i < node.children.length; i++) {
+                            const parsed = parse(item.rule.text, node.children[i], ctx, path);
+                            if (parsed.type === 'failure') {
+                                // Nothing left to consume the rest of this list
+                                if (n === pat.items.length - 1) {
+                                    return parsed;
+                                } else {
+                                    break;
+                                }
+                            }
+                            got.push(parsed.value);
+                        }
+                        bindings[item.name.text] = got;
+                        if (i >= node.children.length) {
+                            return { type: 'success', bindings };
+                        }
+                        continue;
+                    }
+                    case 'many-items': {
+                        const got: Record<string, any>[] = [];
+                        while (i < node.children.length) {
+                            const inner: Record<string, any> = {};
+                            for (const child of item.items) {
+                                if (i >= node.children.length) {
+                                    return {
+                                        type: 'failure',
+                                        failure: {
+                                            reason: `ran out of items`,
+                                            loc: node.loc,
+                                            path,
+                                        },
+                                    };
+                                }
+                                const result = parsePat(child, node.children[i], path, ctx);
+                                if (result.type === 'failure') return result;
+                                Object.assign(inner, result.bindings);
+                                i++;
+                            }
+                            got.push(inner);
+                        }
+                        bindings[item.name.text] = got;
+                        return { type: 'success', bindings };
+                    }
+                    default: {
+                        const parsed = parsePat(item, node.children[i], path, ctx);
+                        if (parsed.type === 'failure') {
+                            return {
+                                ...parsed,
+                                failure: {
+                                    ...parsed.failure,
+                                    reason: `list item ${n}: ` + parsed.failure.reason,
+                                },
+                            };
+                        }
+                        Object.assign(bindings, parsed.bindings);
+                        i++;
+                        continue;
+                    }
+                }
             }
-        case 'list':
-            return `[${JSON.stringify(pat.kind.text)} ${pat.items.map(asSyntax).join(' ')}]`;
+            if (i < node.children.length) {
+                return {
+                    type: 'failure',
+                    failure: {
+                        reason: `Didn't parse all children ${i}`,
+                        loc: node.children[i].loc,
+                        path,
+                    },
+                };
+            }
+            if (Object.keys(bindings).length === 0) {
+                return { type: 'success', value: node };
+            }
+            return { type: 'success', bindings };
+        }
         case 'rest':
-            return `...${pat.name.text}:*${pat.multi ? '*' : ''}${pat.rule.text}`;
         case 'many':
-            return `...${pat.name.text}:${pat.rule.text}`;
         case 'many-items':
-            return `...${pat.name.text}:(${pat.items.map(asSyntax).join(' ')})`;
+            return {
+                type: 'failure',
+                failure: {
+                    reason: `Cant have a ${pat.type} outside of a list`,
+                    loc: node.loc,
+                    path,
+                },
+            };
+        // throw new Error(`Invalid rule; cant have ${pat.type} outside of a list literal`);
     }
 };
+
+export const parse = <T>(
+    rule: string,
+    node: Node,
+    ctx: { rules: Rules; config: GrammarConfig },
+    path: FailurePath = [],
+): ParseResult<T> => {
+    if (rule === 'id') {
+        if (node.type === 'id') {
+            return { type: 'success', value: node as T };
+        } else {
+            return {
+                type: 'failure',
+                failure: {
+                    reason: 'not an id, found ' + node.type,
+                    loc: node.loc,
+                    path,
+                },
+            };
+        }
+    }
+    if (rule === 'any') {
+        return { type: 'success', value: node as T };
+    }
+    if (!ctx.rules[rule]) {
+        console.log(ctx.rules);
+        throw new ParseError(node, 'Unknown rule: ' + rule);
+    }
+    const failures = [];
+    let i = 0;
+    for (const { pat, res } of ctx.rules[rule]) {
+        const result = parsePat(pat, node, [...path, rule + ':' + i++, node.loc], ctx);
+        if (result.type === 'success') {
+            return {
+                type: 'success',
+                value: res
+                    ? res(
+                          Object.keys(result.bindings ?? {}).length
+                              ? { ...result.bindings, node }
+                              : { node },
+                      )
+                    : result.value,
+            };
+        }
+        failures.push(result);
+    }
+    // console.log("failed on ", rule, node.type);
+    return {
+        type: 'failure',
+        failure: {
+            reason: `no option of rule ${rule} matched.`,
+            loc: node.loc,
+            path,
+            // rule: { name: rule, option: 0, node },
+            children: failures.map((f, option): Failure => ({
+                ...f.failure,
+                rule: { name: rule, option, node: f.failure.rule?.node ?? node },
+            })),
+        },
+    };
+};
+const isSpread = (s: Pat) => s.type === 'rest' || s.type === 'many' || s.type === 'many-items';
 
 const brief = (node: Node) => {
     if (node.type === 'list') return `list(${JSON.stringify(node.kind)})`;
     if (node.type === 'wrapper') return `wrapper(${JSON.stringify(node.kind)})`;
     return node.type + ':' + node.text;
+};
+
+export const unParse = (
+    pat: Pat,
+    named: Record<string, Node | Node[] | Record<string, Node>>,
+): Node | Node[] => {
+    switch (pat.type) {
+        case 'literal':
+            return pat.text;
+        case 'regexp':
+            return { type: 'id', text: 'RE', loc: -1 };
+        case 'rule':
+            return named[pat.name.text] as Node;
+        case 'wrapper':
+            return {
+                type: 'wrapper',
+                kind: pat.kind.text as WrapperKind,
+                loc: -1,
+                child: pat.child ? (unParse(pat.child, named) as Node) : undefined,
+            };
+        case 'list':
+            return {
+                type: 'list',
+                kind: pat.kind.text as ListKind,
+                loc: -1,
+                children: pat.items.flatMap((item) => unParse(item, named)),
+            };
+        case 'rest':
+            return named[pat.name.text] as Node[];
+        case 'many':
+            return named[pat.name.text] as Node[];
+        case 'many-items':
+            return named[pat.name.text] as Node[];
+    }
 };

@@ -50,6 +50,7 @@ grammar.add('FileItem', [
             type: 'decl',
             name,
             ann,
+            loc: node.loc,
         }),
     ),
     // FileItem:2

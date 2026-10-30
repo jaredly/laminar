@@ -511,20 +511,19 @@ const pairs: TestCase[] = [
             source: `
                 fn head(~x) ~{
                     match ~x {
-                        [h, ...rest] -> @(Some(h), fn (opt) (match opt { None -> [];Some(h) -> [h, ...rest]}))
-                        h -> @(None, fn (opt) (match opt { None -> h;Some(h) -> [h]}))
+                        [h, ...rest] -> @(Some(h), fn (opt) (match opt { None -> rest;Some(h) -> [h, ...rest]}))
+                        [] -> @(None, fn (opt) (match opt { None -> [];Some(h) -> [h]}))
                     }
                 }`,
             ir: {
                 head: `(x0)=>iffe{
                     let (t1,c2) = (match x0 {
                         [h3,...rest4] -> (Some(h3),(opt5)=>(
-                            match opt5 {None() -> []
+                            match opt5 {None() -> rest4
                             Some(h6) -> [h6, ...rest4]
                         }))
-                        h7 -> (None(),(opt8)=>(
-                            match opt8 {None() -> h7
-                            Some(h9) -> [h9]}))})}{(t1,(back10)=>iffe{swap(t1,back10);
+                        [] -> (None(),(opt7)=>(match opt7 {None() -> []
+                        Some(h8) -> [h8]}))})}{(t1,(back9)=>iffe{swap(t1,back9);
                             swap(x0,c2(t1))}{x0}{})}{}`,
             },
         },
@@ -535,10 +534,10 @@ const pairs: TestCase[] = [
             head(~y) := Some(4)
             (x,y)
         }`,
-        ir: `iffe{let x11 = [1, 3, 5];
-        let _ = iffe{let (t15,c16) = head(x11)}{swap(t15,Some(3))}{swap(x11,c16(t15))};
-        let y12 = [];
-        let _ = iffe{let (t13,c14) = head(y12)}{swap(t13,Some(4))}{swap(y12,c14(t13))}}{(x11,y12)}{}`,
+        ir: `iffe{let x10 = [1, 3, 5];
+        let _ = iffe{let (t14,c15) = head(x10)}{swap(t14,Some(3))}{swap(x10,c15(t14))};
+        let y11 = [];
+        let _ = iffe{let (t12,c13) = head(y11)}{swap(t12,Some(4))}{swap(y11,c13(t12))}}{(x10,y11)}{}`,
         result: [[3, 3, 5], [4]],
     },
     // NEXT: manual lensing in fn bodies
@@ -577,9 +576,17 @@ const pairs: TestCase[] = [
             })
             `,
             ir: {
-                f: `(side0,(a1,b2))=>iffe{let (t3,c4) = (match side0 {Left() -> (a1,(back5)=>iffe{swap(a1,back5)}{Left()}{})
-                    Right() -> (b2,(back6)=>iffe{swap(b2,back6)}{Right()}{})})}{(t3,(back7)=>iffe{swap(t3,back7);
-                    swap(_,c4(t3))}{(a1,b2)}{})}{}`,
+                f: `(side0,(a1,b2))=>iffe{
+                        let (t3,c4) = (match side0 {
+                            Left() -> (a1,(back5)=>iffe{swap(a1,back5)}{Left()}{})
+                            Right() -> (b2,(back6)=>iffe{swap(b2,back6)}{Right()}{})
+                        })
+                    }{
+                        (t3,(back7)=>iffe{
+                                swap(t3,back7);
+                                swap(_,c4(t3))
+                            }{(a1,b2)}{})
+                    }{}`,
             },
         },
         source: `{

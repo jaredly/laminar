@@ -1,6 +1,10 @@
+Next up:
+- [x] make a fixture snapshot dealio
+- [ ] much better pretty printing is needed. stringify needs a leg up.
+
+---
 
 When trying out a lens match with no lens arg, I'm realizing I'm missing something.
-
 
 let f = fn (side, ~(a, b)) ~(match side {
     Left -> a

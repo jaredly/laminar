@@ -56,6 +56,9 @@ aslens vbl <- lin in lin : A/A'
 case ~lens
     Left(pat) -> lens
     Right(pat) -> lens
+case lin
+    Left(pat) -> lens
+    Right(pat) -> lens
 
 -> easier
 () : ()/A'
@@ -63,9 +66,6 @@ case ~lens
 -> harder???
 let pat = lin in lens
 let pat = ~lens in lens
-case lin
-    Left(pat) -> lens
-    Right(pat) -> lens
 false(term)
 
 
@@ -79,6 +79,7 @@ we can replace all of the lenses with, like, lambda functions. right?
 
 import { subscribe } from 'diagnostics_channel';
 import { Expr, Idd, Lens, Linear, Pat, Patd, patdBinds, Stmt, Swap } from './ast.ts';
+import { Node } from './lexer.ts';
 
 type Ctx = { scope: Record<string, number>; counter: { current: number } };
 
@@ -92,6 +93,17 @@ export const sstmt = (stmt: Stmt): string => {
         //     return `return ${sexpr(stmt.value)}`;
         default:
             return sexpr(stmt);
+    }
+};
+
+export const lstmt = (stmt: Stmt): Node => {
+    switch (stmt.type) {
+        case 'let':
+            return l.l(' ', [`let`, lpat(stmt.pat), '=', lexpr(stmt.value)]);
+        // case 'return':
+        //     return `return ${sexpr(stmt.value)}`;
+        default:
+            return lexpr(stmt);
     }
 };
 
@@ -159,6 +171,90 @@ export const unwrap = (expr: Expr): null | { items: Expr[]; tail: null | Expr } 
         }
     }
     return null;
+};
+
+import { dsl as l } from './lexer.ts';
+
+export const lpat = (pat: Patd): Node => {
+    switch (pat.type) {
+        case 'idd':
+            return l.i(pat.id === -1 ? pat.text : pat.text + pat.id);
+        case 'drop':
+            return l.i('_' + (pat.id ?? ''));
+        case 'tuple':
+            return l.l(`(,`, pat.items.map(lpat));
+        case 'constructor':
+            const list = unwrapp(pat);
+            if (list) {
+                return l.l(
+                    `[,`,
+                    list.items
+                        .map(lpat)
+                        .concat(list.tail ? l.l('', [l.o('...'), lpat(list.tail)]) : []),
+                );
+            }
+            return l.l('', [pat.name, l.l('(,', pat.args.map(lpat))]);
+    }
+};
+
+export const lexpr = (expr: Expr): Node => {
+    switch (expr.type) {
+        case 'constructor': {
+            const list = unwrap(expr);
+            if (list)
+                return l.l(
+                    '[,',
+                    list.items
+                        .map((i) => lexpr(i))
+                        .concat(list.tail ? [l.l('', ['...', lexpr(list.tail)])] : []),
+                );
+            return l.l('', [expr.name, l.l('(,', expr.args.map(lexpr))]);
+        }
+        case 'string':
+            return l.l('"', [expr.head, ...expr.interp.flatMap((i) => [lexpr(i.value), i.tail])]);
+        case 'idd':
+            return l.i(expr.id === -1 ? expr.text : expr.text + expr.id);
+        case 'swap':
+            return l.l('', ['swap', l.l('(,', [lpat(expr.pat), lexpr(expr.value)])]);
+        case 'const':
+            return l.i(expr.value + '');
+        case 'iffe': {
+            return l.l('', [
+                `iffe`,
+                l.l('{;', expr.block.map(lstmt)),
+                l.w('{', lexpr(expr.result)),
+                l.l('{;', expr.cleanup.map(lexpr)),
+            ]);
+        }
+        case 'fn':
+            return l.l('', [
+                l.l(`(,`, expr.args.map(lpat)),
+                '=>',
+                Array.isArray(expr.body) ? l.l(`{;`, expr.body.map(lstmt)) : lexpr(expr.body),
+            ]);
+        case 'apply': {
+            const res = l.l('', [lexpr(expr.fn), l.l('(,', expr.args.map(lexpr))]);
+            if (expr.fn.type === 'idd' && expr.fn.text === '*') {
+                return l.w('(', res);
+            }
+            return res;
+        }
+        case 'case':
+            return l.l(`(`, [
+                l.l(' ', [
+                    'match',
+                    lexpr(expr.value),
+                    l.l(
+                        '{',
+                        expr.cases.map((c) => l.l(' ', [lpat(c.pat), '->', lexpr(c.body)])),
+                    ),
+                ]),
+            ]);
+        case 'tuple':
+            if (expr.items.length === 1) return lexpr(expr.items[0]);
+            return l.l(`(,`, expr.items.map(lexpr));
+    }
+    throw new Error('oks' + JSON.stringify(expr));
 };
 
 export const sexpr = (expr: Expr): string => {
@@ -283,7 +379,14 @@ export const linearToExpr = (ctx: Ctx, lin: Linear): Expr => {
             };
         case 'let': {
             const sub = subScope(ctx);
-            const pat = patToPatd(sub, lin.pat, false);
+            const pat =
+                lin.pat.type === 'drop' && lin.value.type === 'fn' && lin.value.name
+                    ? patToPatd(
+                          sub,
+                          { type: 'id', text: lin.value.name, loc: lin.value.loc },
+                          false,
+                      )
+                    : patToPatd(sub, lin.pat, false);
             const next = linearToExpr(sub, lin.body);
             const cleanup: Swap[] = [];
             let lest: Stmt;
@@ -385,8 +488,58 @@ export const linearToExpr = (ctx: Ctx, lin: Linear): Expr => {
                         body,
                     };
                 }
-                throw 6;
+
+                const args = lin.args.map((a) => patToPatd(sub, a.pat, false));
+                const block: Stmt[] = [];
+                const body =
+                    lin.body.lens.type === 'manual'
+                        ? {
+                              type: 'tuple' as const,
+                              items: [
+                                  linearToExpr(sub, lin.body.lens.frontend),
+                                  linearToExpr(sub, lin.body.lens.backend),
+                              ],
+                              loc: lin.body.lens.loc,
+                          }
+                        : lensToExpr(sub, lin.body.lens, (pat): Expr => {
+                              const id = ctx.counter.current++;
+                              const iid: Idd = { type: 'idd', id, text: 'back', loc: -1 };
+                              block.push({ type: 'swap', pat, value: iid, loc: -1 });
+                              return {
+                                  type: 'tuple',
+                                  items: [
+                                      patdToExpr(pat),
+                                      {
+                                          type: 'fn',
+                                          args: [iid],
+                                          body: {
+                                              type: 'iffe',
+                                              block,
+                                              result: { type: 'tuple', items: [], loc: -1 },
+                                              cleanup: [],
+                                              loc: lin.loc,
+                                          },
+                                          loc: lin.loc,
+                                      },
+                                  ],
+                                  loc: lin.loc,
+                              };
+                          });
+                const pushCleanupInside = (expr: Expr) => {
+                    if (expr.type === 'iffe') {
+                        block.push(...expr.cleanup);
+                        expr.cleanup = [];
+                        pushCleanupInside(expr.result);
+                    }
+                };
+                pushCleanupInside(body);
+                return {
+                    ...lin,
+                    args,
+                    body,
+                };
             }
+
             if (last?.pat.type === 'lens') {
                 const inner = last.pat.inner;
                 const args = lin.args.map((a, i) =>

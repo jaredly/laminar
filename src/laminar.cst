@@ -8,7 +8,7 @@ File {
 }
 
 FileItem {
-    [" " name:id "::" ...ann:*Type] -> ({type: "decl", name, ann})
+    [" " name:id "::" ...ann:*Type] -> ({type: "decl", name, ann, loc: node.loc})
     linear:Linear -> linear
 }
 

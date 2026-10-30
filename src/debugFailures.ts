@@ -1,5 +1,6 @@
-import { Failure, Grammar, asSyntax, FailurePath } from './grammar-lexer.ts';
+import { Failure, Grammar, FailurePath } from './grammar-lexer.ts';
 import { compact } from './lexer.ts';
+import { asSyntax } from './toFile.ts';
 
 export const findDeepest = (
     failure: Failure,

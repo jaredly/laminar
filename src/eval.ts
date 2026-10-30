@@ -1,4 +1,4 @@
-import { Expr, Patd } from './ast.ts';
+import { Expr, Patd, Stmt } from './ast.ts';
 import { sexpr, spat, unwrap } from './decompose.ts';
 
 export type Ctx = { scopes: Record<string, any>[]; builtins: Record<string, any> };
@@ -9,6 +9,28 @@ const findScope = (ctx: Ctx, k: string) => {
     for (let i = 0; i < ctx.scopes.length; i++) {
         if (k in ctx.scopes[i]) return ctx.scopes[i];
     }
+};
+
+export const valueToExpr = (value: any): Expr => {
+    if (typeof value === 'string') {
+        return { type: 'string', head: value, interp: [], loc: -1 };
+    }
+    if (typeof value === 'number' || typeof value === 'boolean') {
+        return { type: 'const', loc: -1, value };
+    }
+    if (typeof value === 'function') {
+        throw new Error(`cant do functions sorry`);
+    }
+    if (Array.isArray(value)) {
+        let res: Expr = { type: 'constructor', name: 'nil', loc: -1, args: [] };
+        while (value.length) {
+            const last = value.pop()!;
+            res = { type: 'constructor', name: 'cons', loc: -1, args: [valueToExpr(last), res] };
+        }
+        return res;
+    }
+    if (value == null) return { type: 'tuple', items: [], loc: -1 };
+    throw new Error('cant make expr');
 };
 
 export const evalExpr = (ctx: Ctx, expr: Expr): any => {
@@ -63,17 +85,27 @@ export const evalExpr = (ctx: Ctx, expr: Expr): any => {
                 const nctx = { ...ctx, scopes: [scope, ...ctx.scopes] };
                 args.forEach((item, i) => setPat(nctx, expr.args[i], item, true));
                 const result = evalExpr(nctx, expr.body);
+
                 // NEXT STEP:
                 // -> this is ... catching things that ... get captured by sub functions that get returned
                 //    I need a way to track that somehow? like "the function returned from here has claim on this vbl"
                 //
+                // const allUses: Uses = {};
+                // collectVariableUses(expr, allUses);
+                // const stuffs = returnValueDelayedConsumption(expr.body);
                 // Object.keys(scope).forEach((k) => {
                 //     if (scope[k] !== deleted) {
+                //         if (stuffs.includes(k)) {
+                //             return;
+                //         }
+                //         console.log('all uses', allUses);
+                //         console.log('oh no bad scope', scope);
                 //         throw new Error(
                 //             `Linear variable ${k} not used up: ${JSON.stringify(scope[k])}`,
                 //         );
                 //     }
                 // });
+
                 return result;
             };
         }
@@ -152,6 +184,122 @@ export const matches = (pat: Patd, value: any): boolean => {
         }
     }
 };
+
+// 0 -> set or swap
+// 1 -> use
+type Uses = Record<string, ('put' | 'get' | 'swap')[]>;
+const addUse = (uses: Uses, id: string, which: 'put' | 'get' | 'swap') => {
+    // console.log('   ' + id + ' : ' + which);
+    if (!uses[id]) uses[id] = [which];
+    else uses[id].push(which);
+};
+
+export const patIds = (pat: Patd): string[] => {
+    switch (pat.type) {
+        case 'idd':
+            return [pat.text + pat.id];
+        case 'drop':
+            return pat.id != null ? ['_' + pat.id] : [];
+        case 'tuple':
+            return pat.items.flatMap(patIds);
+        case 'constructor':
+            return pat.args.flatMap(patIds);
+    }
+};
+
+export const returnValueDelayedConsumption = (expr: Expr): string[] => {
+    switch (expr.type) {
+        case 'string':
+            return expr.interp.flatMap((i) => returnValueDelayedConsumption(i.value));
+        case 'tuple':
+            return expr.items.flatMap(returnValueDelayedConsumption);
+        case 'case':
+            return expr.cases.flatMap((k) => returnValueDelayedConsumption(k.body));
+        case 'constructor':
+            return expr.args.flatMap(returnValueDelayedConsumption);
+        case 'idd':
+        case 'const':
+        case 'apply':
+        case 'swap':
+            return [];
+        case 'iffe':
+            return returnValueDelayedConsumption(expr.result);
+        case 'fn': {
+            const uses: Uses = {};
+            collectVariableUses(expr, uses);
+            console.log('found a fn', uses);
+            return Object.keys(uses).filter(
+                (k) => uses[k][0] !== 'put' && uses[k][uses[k].length - 1] === 'get',
+            );
+        }
+    }
+};
+
+export const collectVariableUses = (expr: Stmt, uses: Uses): void => {
+    // console.log('<-', expr.type, expr.loc);
+    switch (expr.type) {
+        case 'idd': {
+            return addUse(uses, expr.text + expr.id, 'get');
+        }
+        case 'string': {
+            return expr.interp.forEach((i) => collectVariableUses(i.value, uses));
+        }
+        case 'swap': {
+            patIds(expr.pat).forEach((i) => addUse(uses, i, 'swap'));
+            return collectVariableUses(expr.value, uses);
+        }
+        case 'iffe': {
+            expr.block.forEach((s) => collectVariableUses(s, uses));
+            collectVariableUses(expr.result, uses);
+            expr.cleanup.forEach((s) => collectVariableUses(s, uses));
+            return;
+        }
+        case 'let': {
+            patIds(expr.pat).forEach((i) => addUse(uses, i, 'put'));
+            return collectVariableUses(expr.value, uses);
+        }
+        case 'const': {
+            return;
+        }
+        case 'fn': {
+            expr.args.forEach((pat) => patIds(pat).forEach((i) => addUse(uses, i, 'put')));
+            return collectVariableUses(expr.body, uses);
+        }
+        case 'apply': {
+            collectVariableUses(expr.fn, uses);
+            return expr.args.forEach((arg) => collectVariableUses(arg, uses));
+        }
+        case 'tuple':
+            return expr.items.forEach((item) => collectVariableUses(item, uses));
+        case 'constructor':
+            return expr.args.forEach((arg) => collectVariableUses(arg, uses));
+        case 'case': {
+            const cases = expr.cases.map((k) => {
+                const uses: Uses = {};
+                patIds(k.pat).forEach((i) => addUse(uses, i, 'put'));
+                collectVariableUses(k.body, uses);
+                return { uses, vbls: new Set(consumedVbls(uses)) };
+            });
+            for (let i = 1; i < cases.length; i++) {
+                if (cases[i].vbls.symmetricDifference(cases[0].vbls).size > 0) {
+                    throw new Error(
+                        `case arms disagree as to what vbls they consume: case ${i}: ${[...cases[i].vbls]}, case 0: ${[...cases[0].vbls]}`,
+                    );
+                }
+            }
+            return;
+        }
+    }
+    throw new Error('not handled ' + (expr as any).type);
+};
+
+const consumedVbls = (uses: Uses) => {
+    return Object.keys(uses).filter(
+        (k) => uses[k][0] !== 'put' && uses[k][uses[k].length - 1] === 'get',
+    );
+};
+
+// export const returnedLambdaUses = ()
 
 export const setPat = (ctx: Ctx, pat: Patd, value: any, fresh: boolean): any => {
     switch (pat.type) {

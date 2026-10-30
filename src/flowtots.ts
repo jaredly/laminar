@@ -271,6 +271,7 @@ export const toTS = (ctx: Ctx, expr: Term | Lens, tail: Tail = null): string => 
 
 export const _toTS = (ctx: Ctx, expr: Term | Lens, tail: Tail = null): string => {
     switch (expr.type) {
+        case 'manual':
         case 'aslens': {
             throw new Error('cant actually support lenses here');
         }
