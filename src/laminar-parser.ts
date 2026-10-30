@@ -9,8 +9,8 @@ import {
     b,
     lit,
     rest,
-    wrapper,
     re,
+    wrapper,
     manyItems,
 } from './grammar-lexer.ts';
 import {
@@ -80,31 +80,40 @@ grammar.add('Pat', [
     // Pat:1
     option(lit('_'), ({ node }: { node: Node }): Pat => ({ type: 'drop', loc: node.loc })),
     // Pat:2
-    option(lit('true'), ({ node }: { node: Node }): Pat => ({
+    option(b('bool', /true|false/), ({ bool, node }: { bool: Id; node: Node }): Pat => ({
         type: 'bool',
         loc: node.loc,
-        value: true,
+        value: bool.text === 'true',
     })),
     // Pat:3
-    option(lit('false'), ({ node }: { node: Node }): Pat => ({
-        type: 'bool',
-        loc: node.loc,
-        value: false,
-    })),
+    option(
+        list('', b('one', /^[0-9]+$/), lit('.'), b('two', /^[0-9]+$/)),
+        ({ one, two, node }: { one: Id; two: Id; node: Node }): Pat => ({
+            type: 'number',
+            value: !(one.text + '.' + two.text),
+            loc: node.loc,
+        }),
+    ),
     // Pat:4
+    option(re(/^[0-9]+$/), ({ node }: { node: Node }): Pat => ({
+        type: 'number',
+        value: +(node as Id).text,
+        loc: node.loc,
+    })),
+    // Pat:5
     option(b('name', /^[A-Z]/), ({ name, node }: { name: Id; node: Node }): Pat => ({
         type: 'constructor',
         name: name.text,
         args: [],
         loc: node.loc,
     })),
-    // Pat:5
+    // Pat:6
     option(b('text', 'id'), ({ text, node }: { text: Id; node: Node }): Pat => ({
         type: 'id',
         text: text.text,
         loc: node.loc,
     })),
-    // Pat:6
+    // Pat:7
     option(
         list('', lit('~'), b('inner', 'Pat')),
         ({ inner, node }: { inner: Pat; node: Node }): Pat => ({
@@ -113,7 +122,7 @@ grammar.add('Pat', [
             loc: node.loc,
         }),
     ),
-    // Pat:7
+    // Pat:8
     option(
         list('', b('name', 'id'), wrapper('(', list(',', many('args', 'Pat')))),
         ({ name, args, node }: { name: Id; args: Pat[]; node: Node }): Pat => ({
@@ -123,26 +132,26 @@ grammar.add('Pat', [
             loc: node.loc,
         }),
     ),
-    // Pat:8
+    // Pat:9
     option(
         wrapper('(', list(',', many('items', 'Pat'))),
         ({ items, node }: { items: Pat[]; node: Node }): Pat =>
             items.length === 1 ? items[0] : { type: 'tuple', items, loc: node.loc },
     ),
-    // Pat:9
+    // Pat:10
     option(wrapper('(', null), ({ node }: { node: Node }): Pat => ({
         type: 'tuple',
         items: [],
         loc: node.loc,
     })),
-    // Pat:10
+    // Pat:11
     option(wrapper('[', null), ({ node }: { node: Node }): Pat => ({
         type: 'constructor',
         name: 'nil',
         args: [],
         loc: node.loc,
     })),
-    // Pat:11
+    // Pat:12
     option(
         wrapper('[', list(',', many('items', 'Pat'))),
         ({ items, node }: { items: Pat[]; node: Node }): Pat =>
@@ -151,7 +160,7 @@ grammar.add('Pat', [
                 node.loc,
             ),
     ),
-    // Pat:12
+    // Pat:13
     option(
         wrapper(
             '[',
@@ -160,19 +169,19 @@ grammar.add('Pat', [
         ({ items, tail, node }: { items: Pat[]; tail: Pat; node: Node }): Pat =>
             pcons([...items, tail], node.loc),
     ),
-    // Pat:13
+    // Pat:14
     option(list('"', b('text', 'id')), ({ text, node }: { text: Id; node: Node }): Pat => ({
         type: 'string',
         text: text.text,
         loc: node.loc,
     })),
-    // Pat:14
+    // Pat:15
     option(list(undefined), ({ node }: { node: Node }): Pat => ({
         type: 'string',
         text: null,
         loc: node.loc,
     })),
-    // Pat:15
+    // Pat:16
     option(list('', b('one', 'Pat')), ({ one, node }: { one: Pat; node: Node }): Pat => one),
 ]);
 
@@ -382,43 +391,52 @@ import { partition } from './laminar-helpers.ts';
 
 grammar.add('Linear', [
     // Linear:1
+    option(
+        list('', b('one', /^[0-9]+$/), lit('.'), b('two', /^[0-9]+$/)),
+        ({ one, two, node }: { one: Id; two: Id; node: Node }): Linear => ({
+            type: 'number',
+            value: !(one.text + '.' + two.text),
+            loc: node.loc,
+        }),
+    ),
+    // Linear:2
     option(re(/^[0-9]+$/), ({ node }: { node: Node }): Linear => ({
-        type: 'const',
+        type: 'number',
         value: +(node as Id).text,
         loc: node.loc,
     })),
-    // Linear:2
+    // Linear:3
     option(re(/true|false/), ({ node }: { node: Node }): Linear => ({
-        type: 'const',
+        type: 'bool',
         value: (node as Id).text === 'true',
         loc: node.loc,
     })),
-    // Linear:3
+    // Linear:4
     option(b('text', /^[A-Z]/), ({ text, node }: { text: Id; node: Node }): Linear => ({
         type: 'constructor',
         name: text.text,
         args: [],
         loc: text.loc,
     })),
-    // Linear:4
+    // Linear:5
     option(b('text', 'id'), ({ text, node }: { text: Id; node: Node }): Linear => ({
         type: 'id',
         text: text.text,
         loc: node.loc,
     })),
-    // Linear:5
+    // Linear:6
     option(list('"', b('text', 'id')), ({ text, node }: { text: Id; node: Node }): Linear => ({
         type: 'string',
         head: text.text,
         interp: [],
         loc: node.loc,
     })),
-    // Linear:6
+    // Linear:7
     option(
         list('', b('one', 'Linear')),
         ({ one, node }: { one: Linear; node: Node }): Linear => one,
     ),
-    // Linear:7
+    // Linear:8
     option(
         list('', b('fn', /^[A-Z]/), wrapper('(', list(',', many('args', 'Linear')))),
         ({ fn, args, node }: { fn: Id; args: Linear[]; node: Node }): Linear => ({
@@ -428,7 +446,7 @@ grammar.add('Linear', [
             loc: fn.loc,
         }),
     ),
-    // Linear:8
+    // Linear:9
     option(
         list('', b('fn', /^[+-]$/), rest('arg', 'Linear', false)),
         ({ fn, arg, node }: { fn: Id; arg: Linear; node: Node }): Linear => ({
@@ -438,7 +456,7 @@ grammar.add('Linear', [
             loc: node.loc,
         }),
     ),
-    // Linear:9
+    // Linear:10
     option(
         list('', b('target', 'Linear'), rest('suffixes', 'LinearOps', true)),
         ({
@@ -451,7 +469,7 @@ grammar.add('Linear', [
             node: Node;
         }): Linear => handleSuffixes(target, suffixes),
     ),
-    // Linear:10
+    // Linear:11
     option(
         wrapper('(', list(',', many('items', 'Linear'))),
         ({ items, node }: { items: Linear[]; node: Node }): Linear => ({
@@ -460,13 +478,13 @@ grammar.add('Linear', [
             loc: node.loc,
         }),
     ),
-    // Linear:11
+    // Linear:12
     option(wrapper('(', null), ({ node }: { node: Node }): Linear => ({
         type: 'tuple',
         items: [],
         loc: node.loc,
     })),
-    // Linear:12
+    // Linear:13
     option(
         list('"', b('head', 'id'), rest('interp', 'LinearInterp', true)),
         ({ head, interp, node }: { head: Id; interp: LinearInterp[]; node: Node }): Linear => ({
@@ -476,7 +494,7 @@ grammar.add('Linear', [
             loc: node.loc,
         }),
     ),
-    // Linear:13
+    // Linear:14
     option(
         list(
             ' ',
@@ -491,7 +509,7 @@ grammar.add('Linear', [
             loc: node.loc,
         }),
     ),
-    // Linear:14
+    // Linear:15
     option(
         list(
             ' ',
@@ -506,14 +524,14 @@ grammar.add('Linear', [
             loc: node.loc,
         }),
     ),
-    // Linear:15
+    // Linear:16
     option(wrapper('[', null), ({ node }: { node: Node }): Linear => ({
         type: 'constructor',
         name: 'nil',
         args: [],
         loc: node.loc,
     })),
-    // Linear:16
+    // Linear:17
     option(
         wrapper('[', list(',', many('items', 'Linear'))),
         ({ items, node }: { items: Linear[]; node: Node }): Linear =>
@@ -522,7 +540,7 @@ grammar.add('Linear', [
                 node.loc,
             ),
     ),
-    // Linear:17
+    // Linear:18
     option(
         wrapper(
             '[',
@@ -531,7 +549,7 @@ grammar.add('Linear', [
         ({ items, tail, node }: { items: Linear[]; tail: Linear; node: Node }): Linear =>
             econs([...items, tail], node.loc),
     ),
-    // Linear:18
+    // Linear:19
     option(
         list(
             ' ',
@@ -557,7 +575,7 @@ grammar.add('Linear', [
             node: Node;
         }): Linear => ({ type: 'fn', name: name.text, args, ann, body, loc: node.loc }),
     ),
-    // Linear:19
+    // Linear:20
     option(
         list(
             ' ',
@@ -577,7 +595,7 @@ grammar.add('Linear', [
             node: Node;
         }): Linear => ({ type: 'fn', name: name.text, args, body, loc: node.loc }),
     ),
-    // Linear:20
+    // Linear:21
     option(
         list(
             ' ',
@@ -597,7 +615,7 @@ grammar.add('Linear', [
             node: Node;
         }): Linear => ({ type: 'fn', args, ann, body, loc: node.loc }),
     ),
-    // Linear:21
+    // Linear:22
     option(
         list(' ', lit('fn'), wrapper('(', list(',', many('args', 'FnArg'))), b('body', 'Term')),
         ({ args, body, node }: { args: FnArg[]; body: Term; node: Node }): Linear => ({
@@ -607,7 +625,7 @@ grammar.add('Linear', [
             loc: node.loc,
         }),
     ),
-    // Linear:22
+    // Linear:23
     option(
         list(' ', b('lens', 'Lens'), lit(':='), rest('value', 'Linear', false)),
         ({ lens, value, node }: { lens: Lens; value: Linear; node: Node }): Linear => ({
@@ -617,7 +635,7 @@ grammar.add('Linear', [
             loc: node.loc,
         }),
     ),
-    // Linear:23
+    // Linear:24
     option(
         list(' ', b('left', 'Linear'), manyItems('right', [b('op', 'op'), b('right', 'Linear')])),
         ({
@@ -630,17 +648,17 @@ grammar.add('Linear', [
             node: Node;
         }): Linear => partition(left, right),
     ),
-    // Linear:24
+    // Linear:25
     option(
         list(' ', b('one', 'Linear')),
         ({ one, node }: { one: Linear; node: Node }): Linear => one,
     ),
-    // Linear:25
+    // Linear:26
     option(
         list('\n', b('one', 'Linear')),
         ({ one, node }: { one: Linear; node: Node }): Linear => one,
     ),
-    // Linear:26
+    // Linear:27
     option(
         wrapper(
             '{',
@@ -662,7 +680,7 @@ grammar.add('Linear', [
             node: Node;
         }): Linear => ({ type: 'let', pat, value, body, loc: node.loc }),
     ),
-    // Linear:27
+    // Linear:28
     option(
         list(
             '\n',
@@ -681,17 +699,17 @@ grammar.add('Linear', [
             node: Node;
         }): Linear => ({ type: 'let', pat, value, body, loc: node.loc }),
     ),
-    // Linear:28
+    // Linear:29
     option(
         wrapper('{', b('one', 'Linear')),
         ({ one, node }: { one: Linear; node: Node }): Linear => one,
     ),
-    // Linear:29
+    // Linear:30
     option(
         wrapper('{', list('\n', b('one', 'Linear'))),
         ({ one, node }: { one: Linear; node: Node }): Linear => one,
     ),
-    // Linear:30
+    // Linear:31
     option(
         wrapper('{', list('\n', b('value', 'Linear'), rest('body', 'Linear', false))),
         ({ value, body, node }: { value: Linear; body: Linear; node: Node }): Linear => ({
@@ -702,7 +720,7 @@ grammar.add('Linear', [
             loc: node.loc,
         }),
     ),
-    // Linear:31
+    // Linear:32
     option(
         list('\n', b('value', 'Linear'), rest('body', 'Linear', false)),
         ({ value, body, node }: { value: Linear; body: Linear; node: Node }): Linear => ({

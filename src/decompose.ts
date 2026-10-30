@@ -111,6 +111,7 @@ export const spat = (pat: Patd): string => {
     switch (pat.type) {
         case 'idd':
             return pat.id === -1 ? pat.text : pat.text + pat.id;
+        case 'number':
         case 'bool':
             return pat.value + '';
         case 'string':
@@ -183,6 +184,7 @@ export const lpat = (pat: Patd): Node => {
     switch (pat.type) {
         case 'idd':
             return l.i(pat.id === -1 ? pat.text : pat.text + pat.id);
+        case 'number':
         case 'bool':
             return l.i(pat.value + '');
         case 'string':
@@ -310,6 +312,7 @@ export const patToPatd = (ctx: Ctx, pat: Pat, allTags: boolean): Patd => {
             return { ...pat, type: 'idd', id };
         }
         case 'string':
+        case 'number':
         case 'bool':
             return pat;
         case 'drop':
@@ -331,6 +334,7 @@ export const patValue = (ctx: Ctx, pat: Pat): Expr => {
             if (id == null) throw new Error(`unbound ${pat.text}`);
             return { ...pat, type: 'idd', id };
         }
+        case 'number':
         case 'bool':
             return { type: 'const', value: pat.value, loc: pat.loc };
         case 'string':
@@ -350,6 +354,7 @@ export const patdToExpr = (pat: Patd): Expr => {
     switch (pat.type) {
         case 'idd':
             return pat;
+        case 'number':
         case 'bool':
             return { type: 'const', value: pat.value, loc: pat.loc };
         case 'string':
@@ -384,8 +389,9 @@ export const collapseIffe = (expr: Expr): Expr => {
 
 export const linearToExpr = (ctx: Ctx, lin: Linear): Expr => {
     switch (lin.type) {
-        case 'const':
-            return lin;
+        case 'bool':
+        case 'number':
+            return { type: 'const', value: lin.value, loc: lin.loc };
         case 'op':
         case 'id': {
             const id = ctx.scope[lin.text];

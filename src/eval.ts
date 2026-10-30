@@ -170,6 +170,7 @@ export class EvalError extends Error {
 
 export const matches = (pat: Patd, value: any): boolean => {
     switch (pat.type) {
+        case 'number':
         case 'bool':
             return value === pat.value;
         case 'idd':
@@ -218,6 +219,8 @@ export const patIds = (pat: Patd): string[] => {
     switch (pat.type) {
         case 'idd':
             return [pat.text + pat.id];
+        case 'bool':
+        case 'number':
         case 'string':
             return [];
         case 'drop':

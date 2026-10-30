@@ -4,6 +4,7 @@ export type Id = { type: 'id'; text: string; loc: Loc };
 export type Patd =
     | Idd
     | { type: 'bool'; value: boolean; loc: Loc }
+    | { type: 'number'; value: number; loc: Loc }
     | { type: 'drop'; id: number | null; loc: Loc }
     | { type: 'tuple'; items: Patd[]; loc: Loc }
     | { type: 'string'; text: string; loc: Loc }
@@ -13,6 +14,7 @@ export type Patd =
 export type Pat =
     | Id
     | { type: 'bool'; value: boolean; loc: Loc }
+    | { type: 'number'; value: number; loc: Loc }
     | { type: 'drop'; loc: Loc }
     | { type: 'tuple'; items: Pat[]; loc: Loc }
     | { type: 'constructor'; name: string; args: Pat[]; loc: Loc }
@@ -60,7 +62,8 @@ export type Linear =
     | Id
     | Op
     | { type: 'assign'; lens: Lens; value: Linear; loc: Loc }
-    | { type: 'const'; value: number | boolean | null; loc: Loc }
+    | { type: 'number'; value: number; loc: Loc }
+    | { type: 'bool'; value: boolean; loc: Loc }
     | {
           type: 'string';
           head: string;
@@ -116,6 +119,7 @@ export const names = (pat: Pat): string[] => {
     switch (pat.type) {
         case 'id':
             return [pat.text];
+        case 'number':
         case 'drop':
         case 'bool':
         case 'string':
@@ -154,7 +158,8 @@ export const free = (expr: Term | Lens): string[] => {
         case 'id':
         case 'op':
             return [expr.text];
-        case 'const':
+        case 'bool':
+        case 'number':
             return [];
         case 'let': {
             const one = free(expr.value);
