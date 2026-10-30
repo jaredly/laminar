@@ -237,6 +237,8 @@ for (let item of items) {
                     { counter: { current: 0 }, scope: newScope(globals) },
                     item.body.v,
                 );
+                out.push('');
+                out.push('ir-> ' + stringify(lexpr(ir)));
                 const result = evalExpr({ builtins: globals, scopes: [{}] }, ir);
                 const rir = linearToExpr(
                     { counter: { current: 0 }, scope: newScope(globals) },
@@ -249,8 +251,6 @@ for (let item of items) {
                     errors++;
                     console.error(rresult);
                 }
-                out.push('');
-                out.push('ir-> ' + stringify(lexpr(ir)));
             } catch (err) {
                 console.log('Error at line', pos(item.expected.node.loc).line + 1);
                 console.log((err as Error).stack);

@@ -952,6 +952,47 @@ ir-> block{
 
 ir-> block{let x0 = +(3.4, 1.2)}{x0}{}
 
+fn useFile(name, ~w) ~{
+    lens (fd, _) <- (openFile(name, ~w), w)
+    closeFile(fd)
+}
+
+ir-> (name0, w1)=>block{
+    let t2 = (block{let (r4, l5) = openFile(name0, w1)}{r4}{swap(w1, l5)}, w1);
+    let c3 = ((fd6, _))=>closeFile(fd6)
+}{
+    (
+        t2, (back7)=>block{
+            swap(t2, back7);
+            swap((), c3(t2))
+        }{w1}{}
+    )
+}{}
+
+{
+    let ops = []
+    let text = {
+        let (file, ops_) = ~useFile("example.txt", ~ops)
+        readFile(~(ops_, file))
+    }
+    (text, ops)
+}
+
+("two\nthree four five\nsix seven height nine", [])
+
+ir-> block{
+    let ops0 = [];
+    let text1 = block{
+        let (t6, c7) = useFile("example.txt", ops0);
+        let (file2, ops_3) = t6;
+        let (r4, l5) = readFile((ops_3, file2))
+    }{r4}{
+        swap((ops_3, file2), l5);
+        swap(t6, (file2, ops_3));
+        swap(ops0, c7(t6))
+    }
+}{(text1, ops0)}{}
+
 /*
 
 // --------------------

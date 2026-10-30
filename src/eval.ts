@@ -47,6 +47,9 @@ export const evalExpr = (ctx: Ctx, expr: Expr): any => {
                 console.log(ctx.builtins, ctx.scopes);
                 throw new Error(`unbound ${k}`);
             }
+            if (scope[k] === deleted) {
+                throw new Error(`vbl has been deleted ${k}`);
+            }
             const v = scope[k];
             scope[k] = deleted;
             return v;
@@ -351,6 +354,7 @@ export const setPat = (ctx: Ctx, pat: Patd, value: any, fresh: boolean): any => 
         case 'tuple': {
             if (pat.items.length === 0) {
                 if (value == null) return;
+                if (Array.isArray(value) && value.every((v) => v == null)) return;
                 throw new Error(`[] pat should only match null. ${JSON.stringify(value)}`);
             }
             if (!Array.isArray(value)) {

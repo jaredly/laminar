@@ -418,7 +418,7 @@ export const linearToExpr = (ctx: Ctx, lin: Linear): Expr => {
             let lest: Stmt;
             if (lin.value.type === 'lens') {
                 return collapseIffe(
-                    lensToExpr(sub, lin.value.lens, (lpat) => {
+                    lensToExpr(ctx, lin.value.lens, (lpat) => {
                         return {
                             type: 'block',
                             block: [
