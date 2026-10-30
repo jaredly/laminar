@@ -56,7 +56,7 @@ for (let lnode of lexed.nodes) {
         items.push({ ...comments.shift()!, type: 'comment' });
     }
     const results = g.parse<g.Node>('ir', lnode, {
-        rules: { ir: [{ pat: irNode, res: (v) => v.ir }] },
+        rules: { ir: [{ pat: irNode, res: (v: { ir: g.Node }) => v.ir }] },
         config: {},
     });
     if (results.type !== 'failure') {
@@ -69,8 +69,12 @@ for (let lnode of lexed.nodes) {
             console.log(pos(lnode.loc));
             throw new Error('failed to parse ir');
         }
-
-        items[items.length - 1].ir = { v: expr.value, node: lnode };
+        const last = items[items.length - 1];
+        if (last.type !== 'comment') {
+            last.ir = { v: expr.value, node: lnode };
+        } else {
+            throw new Error('Cant have comment there');
+        }
         continue;
     }
 
@@ -156,14 +160,14 @@ const builtins = {
         log.push(v);
         return [null, w];
     },
-    openFile(fileName, w) {
+    openFile(fileName: string, w: any) {
         if (fileName === 'example.txt') {
             console.log('opened');
             return [-1, w];
         }
         return [openSync(fileName, 'r'), w];
     },
-    readFile([w, f]) {
+    readFile([w, f]: [any, number]) {
         // if (f === -1) return ['one', [w, f]];
         if (f === -1) return ['two\nthree four five\nsix seven height nine', [w, f]];
         console.log('bot bas');
@@ -177,7 +181,7 @@ const builtins = {
         }
         return [new TextDecoder().decode(buffer.slice(0, read)), [w, f]];
     },
-    closeFile(f, w) {
+    closeFile(f: number, w: any) {
         if (f === -1) return [null, w];
         closeSync(f);
         return [null, w];
