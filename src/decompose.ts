@@ -218,9 +218,9 @@ export const lexpr = (expr: Expr): Node => {
             return l.l('', ['swap', l.l('(,', [lpat(expr.pat), lexpr(expr.value)])]);
         case 'const':
             return l.i(expr.value + '');
-        case 'iffe': {
+        case 'block': {
             return l.l('', [
-                `iffe`,
+                `block`,
                 l.l('{;', expr.block.map(lstmt)),
                 l.w('{', lexpr(expr.result)),
                 l.l('{;', expr.cleanup.map(lexpr)),
@@ -276,8 +276,8 @@ export const sexpr = (expr: Expr): string => {
             return `swap(${spat(expr.pat)},${sexpr(expr.value)})`;
         case 'const':
             return expr.value + '';
-        case 'iffe': {
-            return `iffe{${expr.block.map(sstmt).join(';\n')}}{${sexpr(expr.result)}}{${expr.cleanup.map(sexpr).join(';\n')}}`;
+        case 'block': {
+            return `block{${expr.block.map(sstmt).join(';\n')}}{${sexpr(expr.result)}}{${expr.cleanup.map(sexpr).join(';\n')}}`;
         }
         case 'fn':
             return `(${expr.args.map(spat)})=>${
@@ -350,8 +350,8 @@ export const patdToExpr = (pat: Patd): Expr => {
 };
 
 export const collapseIffe = (expr: Expr): Expr => {
-    if (expr.type === 'iffe' && expr.result.type === 'iffe') {
-        const result = collapseIffe(expr.result) as Expr & { type: 'iffe' };
+    if (expr.type === 'block' && expr.result.type === 'block') {
+        const result = collapseIffe(expr.result) as Expr & { type: 'block' };
         return {
             ...expr,
             block: [...expr.block, ...result.block],
@@ -394,7 +394,7 @@ export const linearToExpr = (ctx: Ctx, lin: Linear): Expr => {
                 return collapseIffe(
                     lensToExpr(sub, lin.value.lens, (lpat) => {
                         return {
-                            type: 'iffe',
+                            type: 'block',
                             block: [
                                 {
                                     type: 'let',
@@ -424,9 +424,9 @@ export const linearToExpr = (ctx: Ctx, lin: Linear): Expr => {
                     value: linearToExpr(ctx, lin.value),
                 };
             }
-            return next.type === 'iffe'
+            return next.type === 'block'
                 ? { ...next, block: [lest, ...next.block], cleanup: [...cleanup, ...next.cleanup] }
-                : { type: 'iffe', block: [lest], cleanup, result: next, loc: -1 };
+                : { type: 'block', block: [lest], cleanup, result: next, loc: -1 };
         }
         case 'fn': {
             const last = lin.args[lin.args.length - 1];
@@ -462,7 +462,7 @@ export const linearToExpr = (ctx: Ctx, lin: Linear): Expr => {
                                               type: 'fn',
                                               args: [iid],
                                               body: {
-                                                  type: 'iffe',
+                                                  type: 'block',
                                                   block,
                                                   result: patdToExpr(args[args.length - 1]),
                                                   cleanup: [],
@@ -475,7 +475,7 @@ export const linearToExpr = (ctx: Ctx, lin: Linear): Expr => {
                                   };
                               });
                     const pushCleanupInside = (expr: Expr) => {
-                        if (expr.type === 'iffe') {
+                        if (expr.type === 'block') {
                             block.push(...expr.cleanup);
                             expr.cleanup = [];
                             pushCleanupInside(expr.result);
@@ -513,7 +513,7 @@ export const linearToExpr = (ctx: Ctx, lin: Linear): Expr => {
                                           type: 'fn',
                                           args: [iid],
                                           body: {
-                                              type: 'iffe',
+                                              type: 'block',
                                               block,
                                               result: { type: 'tuple', items: [], loc: -1 },
                                               cleanup: [],
@@ -526,7 +526,7 @@ export const linearToExpr = (ctx: Ctx, lin: Linear): Expr => {
                               };
                           });
                 const pushCleanupInside = (expr: Expr) => {
-                    if (expr.type === 'iffe') {
+                    if (expr.type === 'block') {
                         block.push(...expr.cleanup);
                         expr.cleanup = [];
                         pushCleanupInside(expr.result);
@@ -573,7 +573,7 @@ export const linearToExpr = (ctx: Ctx, lin: Linear): Expr => {
                     const rid = ctx.counter.current++;
                     const lid = ctx.counter.current++;
                     return {
-                        type: 'iffe',
+                        type: 'block',
                         block: [
                             {
                                 type: 'let',
@@ -662,7 +662,7 @@ export const linearToExpr = (ctx: Ctx, lin: Linear): Expr => {
                             ...l,
                             pat: pd,
                             body: collapseIffe({
-                                type: 'iffe',
+                                type: 'block',
                                 block: [],
                                 result: linearToExpr(ctx, l.body),
                                 cleanup: [
@@ -713,7 +713,7 @@ export const lensToExpr = (ctx: Ctx, lens: Lens, inner: (name: Patd) => Expr): E
                 const tid = ctx.counter.current++;
                 const cid = ctx.counter.current++;
                 return collapseIffe({
-                    type: 'iffe',
+                    type: 'block',
                     block: [
                         {
                             type: 'let',
@@ -765,7 +765,7 @@ export const lensToExpr = (ctx: Ctx, lens: Lens, inner: (name: Patd) => Expr): E
             const cid = ctx.counter.current++;
             const subFinish = subScope(ctx);
             return {
-                type: 'iffe',
+                type: 'block',
                 block: [
                     {
                         type: 'let',
@@ -807,7 +807,7 @@ export const lensToExpr = (ctx: Ctx, lens: Lens, inner: (name: Patd) => Expr): E
             const cid = ctx.counter.current++;
             const finish = (tmp?: Patd) =>
                 collapseIffe({
-                    type: 'iffe',
+                    type: 'block',
                     block: [
                         {
                             type: 'let',
@@ -857,7 +857,7 @@ export const lensToExpr = (ctx: Ctx, lens: Lens, inner: (name: Patd) => Expr): E
                                                                       },
                                                                   ],
                                                                   body: collapseIffe({
-                                                                      type: 'iffe',
+                                                                      type: 'block',
                                                                       result: patdToExpr(cpat),
                                                                       loc: -1,
                                                                       block: [

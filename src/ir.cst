@@ -3,8 +3,8 @@ Expr {
     id:id -> ({type: "idd", text: id.text, id: -1, loc: id.loc})
     id:op -> ({type: "idd", text: id.text, id: -1, loc: id.loc})
     swap:Swap -> swap
-    ["" "iffe" ["{;" ...block:Stmt] ["{" result:Expr] ["{;" ...cleanup:Swap]] -> ({type: "iffe", block, cleanup, result, loc: node.loc})
-    ["" "iffe" ["{\n" ...block:Stmt] ["{" result:Expr] ["{;" ...cleanup:Swap]] -> ({type: "iffe", block, cleanup, result, loc: node.loc})
+    ["" "block" ["{;" ...block:Stmt] ["{" result:Expr] ["{;" ...cleanup:Swap]] -> ({type: "block", block, cleanup, result, loc: node.loc})
+    ["" "block" ["{\n" ...block:Stmt] ["{" result:Expr] ["{;" ...cleanup:Swap]] -> ({type: "block", block, cleanup, result, loc: node.loc})
     num:re"\\d+" -> ({type: "const", value: +num.text, loc: num.loc})
     "true" -> ({type: "const", value: true, loc: node.loc})
     "false" -> ({type: "const", value: false, loc: node.loc})
@@ -50,8 +50,8 @@ function pcons(items:Patd[], loc:number) {
 
 function bodyIffe(body:Stmt[]):Expr {
     let last = body[body.length - 1]
-    if (!body.length || last.type === "let") return {type: "iffe", block:body, result: {type: "tuple",items:[],loc:-1},cleanup:[],loc:-1}
-    return {type: "iffe", block: body.slice(0, -1), result: last,cleanup:[],loc:-1}
+    if (!body.length || last.type === "let") return {type: "block", block:body, result: {type: "tuple",items:[],loc:-1},cleanup:[],loc:-1}
+    return {type: "block", block: body.slice(0, -1), result: last,cleanup:[],loc:-1}
 }
 
 Block:Stmt[] {

@@ -39,7 +39,7 @@ grammar.add('Expr', [
     option(
         list(
             '',
-            lit('iffe'),
+            lit('block'),
             wrapper('{', list(';', many('block', 'Stmt'))),
             wrapper('{', b('result', 'Expr')),
             wrapper('{', list(';', many('cleanup', 'Swap'))),
@@ -54,13 +54,13 @@ grammar.add('Expr', [
             result: Expr;
             cleanup: Swap[];
             node: Node;
-        }): Expr => ({ type: 'iffe', block, cleanup, result, loc: node.loc }),
+        }): Expr => ({ type: 'block', block, cleanup, result, loc: node.loc }),
     ),
     // Expr:6
     option(
         list(
             '',
-            lit('iffe'),
+            lit('block'),
             wrapper('{', list('\n', many('block', 'Stmt'))),
             wrapper('{', b('result', 'Expr')),
             wrapper('{', list(';', many('cleanup', 'Swap'))),
@@ -75,7 +75,7 @@ grammar.add('Expr', [
             result: Expr;
             cleanup: Swap[];
             node: Node;
-        }): Expr => ({ type: 'iffe', block, cleanup, result, loc: node.loc }),
+        }): Expr => ({ type: 'block', block, cleanup, result, loc: node.loc }),
     ),
     // Expr:7
     option(b('num', /\d+/), ({ num, node }: { num: Id; node: Node }): Expr => ({
@@ -279,13 +279,13 @@ function bodyIffe(body: Stmt[]): Expr {
     let last = body[body.length - 1];
     if (!body.length || last.type === 'let')
         return {
-            type: 'iffe',
+            type: 'block',
             block: body,
             result: { type: 'tuple', items: [], loc: -1 },
             cleanup: [],
             loc: -1,
         };
-    return { type: 'iffe', block: body.slice(0, -1), result: last, cleanup: [], loc: -1 };
+    return { type: 'block', block: body.slice(0, -1), result: last, cleanup: [], loc: -1 };
 }
 
 grammar.add('Block', [

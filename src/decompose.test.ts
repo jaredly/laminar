@@ -26,19 +26,19 @@ const pairs: TestCase[] = [
     t('num', '1', '1', 1),
     t('null', '()', '()', null),
     t('fn', 'fn hi(x) 20', '(x0)=>20', Function),
-    t('let', '{let x = 2\nx}', 'iffe{let x0=2}{x0}{}', 2),
+    t('let', '{let x = 2\nx}', 'block{let x0=2}{x0}{}', 2),
     t('tuple', '(1, 2)', '(1,2)', [1, 2]),
     // ['log(10)', 'log(10)'],
     t('string', '"A string ${5}"', '"A string ${5}"', 'A string 5'),
-    t('tuple let', '{let (x,y) = (1,2)\nx}', 'iffe{let (x0,y1)=(1,2)}{x0}{}', 1),
-    t('block', '{5\n2}', 'iffe{let _=5}{2}{}', 2),
-    t('shadow', '{let x = 2\nlet x = 3\nx}', 'iffe{let x0=2;let x1=3}{x1}{}', 3),
-    //['x := 2', 'iffe{let x0=2}{x0}{}'],
-    t('swap', '{let x = 2\nx := 3\nx}', 'iffe{let x0=2;let _=swap(x0,3)}{x0}{}', 3),
+    t('tuple let', '{let (x,y) = (1,2)\nx}', 'block{let (x0,y1)=(1,2)}{x0}{}', 1),
+    t('block', '{5\n2}', 'block{let _=5}{2}{}', 2),
+    t('shadow', '{let x = 2\nlet x = 3\nx}', 'block{let x0=2;let x1=3}{x1}{}', 3),
+    //['x := 2', 'block{let x0=2}{x0}{}'],
+    t('swap', '{let x = 2\nx := 3\nx}', 'block{let x0=2;let _=swap(x0,3)}{x0}{}', 3),
     t(
         'block',
         '{let x = 1\n{let x = 2\n3}\nx}',
-        `iffe{let x0=1;let _=iffe{let x1=2}{3}{}}{x0}{}`,
+        `block{let x0=1;let _=block{let x1=2}{3}{}}{x0}{}`,
         1,
     ),
     // *** Assignments to local variables ***
@@ -52,9 +52,9 @@ const pairs: TestCase[] = [
         }
         x
     }`,
-        `iffe{
+        `block{
         let x0=1;
-        let _=iffe{let y1=x0}{swap(y1,2)}{swap(x0,y1)}}{x0}{}`,
+        let _=block{let y1=x0}{swap(y1,2)}{swap(x0,y1)}}{x0}{}`,
         2,
     ),
     t(
@@ -69,10 +69,10 @@ const pairs: TestCase[] = [
         }
         (a,x)
     }`,
-        `iffe{
+        `block{
         let x0=1;
         let a1=2;
-        let _=iffe{
+        let _=block{
             let y2=x0;
             let b3=a1;
         }{
@@ -95,9 +95,9 @@ const pairs: TestCase[] = [
         }
         (m,n)
         }`,
-        `iffe{
+        `block{
             let m0=(1,5);
-            let n1=iffe{
+            let n1=block{
                 let (x2,y3)=m0;
                 let _=swap(x2,2)
             }{swap(y3,4)}{
@@ -113,9 +113,9 @@ const pairs: TestCase[] = [
             let m = 5
             (inc(~m),m)
         }`,
-        `iffe{
+        `block{
             let m0=5
-        }{(iffe{
+        }{(block{
             let (r1,l2)=inc(m0)
         }{r1}{swap(m0,l2)},m0)}{}`,
         [null, 6],
@@ -127,9 +127,9 @@ const pairs: TestCase[] = [
             inc(~fst(~m))
             m
         }`,
-        `iffe{
+        `block{
             let m0=(1,5);
-            let _=iffe{
+            let _=block{
                 let (t1,c2)=fst(m0)
                 let (r3,l4)=inc(t1)
             }{
@@ -145,10 +145,10 @@ const pairs: TestCase[] = [
     t(
         'inc fst tuple',
         `{let a = 1\nlet b = 5\ninc(~fst(~(a,b)))\n(a,b)}`,
-        `iffe{
+        `block{
             let a0=1
             let b1=5
-            let _=iffe{
+            let _=block{
                 let (t2,c3)=fst((a0,b1))
                 let (r4,l5)=inc(t2)
             }{r4}{
@@ -169,10 +169,10 @@ const pairs: TestCase[] = [
             }
             (x,y)
         }`,
-        `iffe{
+        `block{
             let x0=1;
             let y1=2;
-            let _=iffe{let m2=(x0,y1)}{
+            let _=block{let m2=(x0,y1)}{
                 swap(m2,(4,5))
             }{swap((x0,y1),m2)}
         }{(x0,y1)}{}`,
@@ -186,10 +186,10 @@ const pairs: TestCase[] = [
             inc(~fst(~(fst(~a),fst(~b))))
             (a,b)
         }`,
-        `iffe{
+        `block{
             let a0=(1,2);
             let b1=(5,6);
-            let _=iffe{
+            let _=block{
                 let (t2,c3)=fst(a0);
                 let (t4,c5)=fst(b1);
                 let (t6,c7)=fst((t2,t4));
@@ -221,9 +221,9 @@ const pairs: TestCase[] = [
             log("after")
             x
         }`,
-        `iffe{
+        `block{
             let x0=2
-            let _=iffe{
+            let _=block{
                 let t2=10;
                 let c3=(b4)=>log(b4);
                 let y1=t2;
@@ -242,7 +242,7 @@ const pairs: TestCase[] = [
         let y = 2
         (x,y) := (4,5)
         (x,y)}`,
-        `iffe{
+        `block{
             let x0=1;
             let y1=2;
             let _=swap((x0,y1),(4,5))
@@ -254,9 +254,9 @@ const pairs: TestCase[] = [
         `{let m = (1,2)
           let n = fst(~m) := 5
           (m,n)}`,
-        `iffe{
+        `block{
             let m0=(1,2);
-            let n1=iffe{
+            let n1=block{
                 let (t2,c3)=fst(m0)
             }{swap(t2,5)}{
                 swap(m0,c3(t2))
@@ -269,9 +269,9 @@ const pairs: TestCase[] = [
         `{let m = 2
           newlens() := 4
           m}`,
-        `iffe{
+        `block{
             let m0=2;
-            let _=iffe{
+            let _=block{
                 let (t1,c2)=newlens()
             }{swap(t1,4)}{swap((),c2(t1))}
         }{m0}{}`,
@@ -285,10 +285,10 @@ const pairs: TestCase[] = [
             inc2(~y)
             y
         }`,
-        `iffe{
+        `block{
             let inc20=(x4)=>(swap(x4,+(x4,1)),x4);
             let y1=4;
-            let _=iffe{
+            let _=block{
                 let (r2,l3)=inc20(y1)
             }{r2}{swap(y1,l3)}
         }{y1}{}`,
@@ -302,10 +302,10 @@ const pairs: TestCase[] = [
             inc(~fst2(~m))
             m
         }`,
-        `iffe{
-            let fst20 = ((a6,b7))=>(a6,(back8)=>iffe{swap(a6,back8)}{(a6,b7)}{});
+        `block{
+            let fst20 = ((a6,b7))=>(a6,(back8)=>block{swap(a6,back8)}{(a6,b7)}{});
             let m1=(3,5);
-            let _=iffe{
+            let _=block{
                 let (t2,c3)=fst20(m1);
                 let (r4,l5)=inc(t2)
             }{r4}{
@@ -323,11 +323,11 @@ const pairs: TestCase[] = [
             inc(~fst2(~m))
             m
         }`,
-        `iffe{
-        let fst20 = ((a6,b7))=>iffe{let (t8,c9) = fst(a6)}{(t8,(back10)=>iffe{swap(t8,back10);
+        `block{
+        let fst20 = ((a6,b7))=>block{let (t8,c9) = fst(a6)}{(t8,(back10)=>block{swap(t8,back10);
         swap(a6,c9(t8))}{(a6,b7)}{})}{};
             let m1=((3,5),6);
-            let _=iffe{
+            let _=block{
                 let (t2,c3)=fst20(m1);
                 let (r4,l5)=inc(t2)
             }{r4}{
@@ -365,10 +365,10 @@ const pairs: TestCase[] = [
             }
             x
         }`,
-        `iffe{
+        `block{
             let x0=[1, 3, 5];
             let _=(match x0 {
-                [a1,...b2] -> iffe{
+                [a1,...b2] -> block{
                     let (r3,l4)=inc(a1)
                 }{r3}{
                     swap(a1,l4);
@@ -388,11 +388,11 @@ const pairs: TestCase[] = [
             }
             x
         }`,
-        `iffe{
+        `block{
             let x0=[1, 3, 5];
             let _=(match x0 {
-                [] -> iffe{}{()}{swap(x0,[])}
-                [a1,..._2] -> iffe{
+                [] -> block{}{()}{swap(x0,[])}
+                [a1,..._2] -> block{
                     let (r3,l4)=inc(a1)
                 }{r3}{
                     swap(a1,l4);
@@ -411,11 +411,11 @@ const pairs: TestCase[] = [
             }) := 5
             x
         }`,
-        `iffe{
+        `block{
             let x0=[1,2,3]
-            let _ = iffe{
+            let _ = block{
                 let (t1,c2) = (match x0 {
-                    [h3,..._4] -> (h3,(back5)=>iffe{swap(h3,back5)}{[h3, ..._4]}{})
+                    [h3,..._4] -> (h3,(back5)=>block{swap(h3,back5)}{[h3, ..._4]}{})
                 })
             }{swap(t1,5)}{swap(x0,c2(t1))}
         }{x0}{}`,
@@ -433,10 +433,10 @@ const pairs: TestCase[] = [
             inc(~snd(~x))
             x
         }`,
-        `iffe{let snd0 = (x6)=>iffe{let (t7,c8) = (match x6 {[_9,h10,..._11] -> (h10,(back12)=>iffe{swap(h10,back12)}{[_9, h10, ..._11]}{})})}{(t7,(back13)=>iffe{swap(t7,back13);
+        `block{let snd0 = (x6)=>block{let (t7,c8) = (match x6 {[_9,h10,..._11] -> (h10,(back12)=>block{swap(h10,back12)}{[_9, h10, ..._11]}{})})}{(t7,(back13)=>block{swap(t7,back13);
         swap(x6,c8(t7))}{x6}{})}{};
         let x1=[1, 3];
-        let _=iffe{let (t2,c3)=snd0(x1);
+        let _=block{let (t2,c3)=snd0(x1);
         let (r4,l5)=inc(t2)}{r4}{swap(t2,l5);
         swap(x1,c3(t2))}}{x1}{}`,
         [1, 4],
@@ -448,7 +448,7 @@ const pairs: TestCase[] = [
             x := None
             x
         }`,
-        `iffe{let x0=Some(2);
+        `block{let x0=Some(2);
         let _=swap(x0,None())}{x0}{}`,
         { type: 'None' },
     ),
@@ -462,8 +462,8 @@ const pairs: TestCase[] = [
             }
             x
         }`,
-        `iffe{let x0 = Some(2);
-        let _=iffe{let Some(n1) = x0}{swap(n1,4)}{swap(x0,Some(n1))}}{x0}{}`,
+        `block{let x0 = Some(2);
+        let _=block{let Some(n1) = x0}{swap(n1,4)}{swap(x0,Some(n1))}}{x0}{}`,
         { type: 'Some', args: [4] },
     ),
     {
@@ -484,14 +484,14 @@ const pairs: TestCase[] = [
             }
             `,
             ir: {
-                head: `(x0)=>iffe{let (t1,c2) = (match x0 {[h3,...rest4] -> (Some(h3),(opt5)=>(match opt5 {None() -> []
+                head: `(x0)=>block{let (t1,c2) = (match x0 {[h3,...rest4] -> (Some(h3),(opt5)=>(match opt5 {None() -> []
                 Some(h6) -> [h6, ...rest4]}))
                 h7 -> (None(),(opt8)=>(match opt8 {None() -> h7
-                Some(h9) -> [h9]}))})}{(t1,(back10)=>iffe{swap(t1,back10);
+                Some(h9) -> [h9]}))})}{(t1,(back10)=>block{swap(t1,back10);
                 swap(x0,c2(t1))}{x0}{})}{}`,
-                apply: `(f11,x12)=>((match x12 {Some(v13) -> iffe{let (r14,l15) = f11(v13)}{r14}{swap(v13,l15);
+                apply: `(f11,x12)=>((match x12 {Some(v13) -> block{let (r14,l15) = f11(v13)}{r14}{swap(v13,l15);
                 swap(x12,Some(v13))}
-                None() -> iffe{}{()}{swap(x12,None())}}),x12)`,
+                None() -> block{}{()}{swap(x12,None())}}),x12)`,
             },
         },
         source: `{
@@ -499,8 +499,8 @@ const pairs: TestCase[] = [
             apply(inc, ~head(~x))
             x
         }`,
-        ir: `iffe{let x16 = [1, 3, 5];
-        let _ = iffe{let (t17,c18) = head(x16);
+        ir: `block{let x16 = [1, 3, 5];
+        let _ = block{let (t17,c18) = head(x16);
         let (r19,l20) = apply(inc,t17)}{r19}{swap(t17,l20);
         swap(x16,c18(t17))}}{x16}{}`,
         result: [2, 3, 5],
@@ -516,14 +516,14 @@ const pairs: TestCase[] = [
                     }
                 }`,
             ir: {
-                head: `(x0)=>iffe{
+                head: `(x0)=>block{
                     let (t1,c2) = (match x0 {
                         [h3,...rest4] -> (Some(h3),(opt5)=>(
                             match opt5 {None() -> rest4
                             Some(h6) -> [h6, ...rest4]
                         }))
                         [] -> (None(),(opt7)=>(match opt7 {None() -> []
-                        Some(h8) -> [h8]}))})}{(t1,(back9)=>iffe{swap(t1,back9);
+                        Some(h8) -> [h8]}))})}{(t1,(back9)=>block{swap(t1,back9);
                             swap(x0,c2(t1))}{x0}{})}{}`,
             },
         },
@@ -534,10 +534,10 @@ const pairs: TestCase[] = [
             head(~y) := Some(4)
             (x,y)
         }`,
-        ir: `iffe{let x10 = [1, 3, 5];
-        let _ = iffe{let (t14,c15) = head(x10)}{swap(t14,Some(3))}{swap(x10,c15(t14))};
+        ir: `block{let x10 = [1, 3, 5];
+        let _ = block{let (t14,c15) = head(x10)}{swap(t14,Some(3))}{swap(x10,c15(t14))};
         let y11 = [];
-        let _ = iffe{let (t12,c13) = head(y11)}{swap(t12,Some(4))}{swap(y11,c13(t12))}}{(x10,y11)}{}`,
+        let _ = block{let (t12,c13) = head(y11)}{swap(t12,Some(4))}{swap(y11,c13(t12))}}{(x10,y11)}{}`,
         result: [[3, 3, 5], [4]],
     },
     // NEXT: manual lensing in fn bodies
@@ -558,10 +558,10 @@ const pairs: TestCase[] = [
             inc(~leftShifted(~y))
             (x, y)
         }`,
-        ir: `iffe{let x2 = 4;
-        let _ = iffe{let (t8,c9) = leftShifted(x2)}{swap(t8,5)}{swap(x2,c9(t8))};
+        ir: `block{let x2 = 4;
+        let _ = block{let (t8,c9) = leftShifted(x2)}{swap(t8,5)}{swap(x2,c9(t8))};
         let y3 = 10;
-        let _ = iffe{let (t4,c5) = leftShifted(y3);
+        let _ = block{let (t4,c5) = leftShifted(y3);
         let (r6,l7) = inc(t4)}{r6}{swap(t4,l7);
         swap(y3,c5(t4))}}{(x2,y3)}{}`,
         result: [3, 11],
@@ -576,13 +576,13 @@ const pairs: TestCase[] = [
             })
             `,
             ir: {
-                f: `(side0,(a1,b2))=>iffe{
+                f: `(side0,(a1,b2))=>block{
                         let (t3,c4) = (match side0 {
-                            Left() -> (a1,(back5)=>iffe{swap(a1,back5)}{Left()}{})
-                            Right() -> (b2,(back6)=>iffe{swap(b2,back6)}{Right()}{})
+                            Left() -> (a1,(back5)=>block{swap(a1,back5)}{Left()}{})
+                            Right() -> (b2,(back6)=>block{swap(b2,back6)}{Right()}{})
                         })
                     }{
-                        (t3,(back7)=>iffe{
+                        (t3,(back7)=>block{
                                 swap(t3,back7);
                                 swap(_,c4(t3))
                             }{(a1,b2)}{})
@@ -595,9 +595,9 @@ const pairs: TestCase[] = [
             f(Right, ~x) := 20
             x
         }`,
-        ir: `iffe{let x8 = (1,5);
-        let _ = iffe{let (t11,c12) = f(Left(),x8)}{swap(t11,10)}{swap(x8,c12(t11))};
-        let _ = iffe{let (t9,c10) = f(Right(),x8)}{swap(t9,20)}{swap(x8,c10(t9))}}{x8}{}`,
+        ir: `block{let x8 = (1,5);
+        let _ = block{let (t11,c12) = f(Left(),x8)}{swap(t11,10)}{swap(x8,c12(t11))};
+        let _ = block{let (t9,c10) = f(Right(),x8)}{swap(t9,20)}{swap(x8,c10(t9))}}{x8}{}`,
         result: [10, 20],
     },
 ];

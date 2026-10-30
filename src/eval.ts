@@ -55,7 +55,7 @@ export const evalExpr = (ctx: Ctx, expr: Expr): any => {
             const v = evalExpr(ctx, expr.value);
             return setPat(ctx, expr.pat, v, false);
         }
-        case 'iffe': {
+        case 'block': {
             expr.block.forEach((stmt) => {
                 if (stmt.type === 'let') {
                     const v = evalExpr(ctx, stmt.value);
@@ -222,7 +222,7 @@ export const returnValueDelayedConsumption = (expr: Expr): string[] => {
         case 'apply':
         case 'swap':
             return [];
-        case 'iffe':
+        case 'block':
             return returnValueDelayedConsumption(expr.result);
         case 'fn': {
             const uses: Uses = {};
@@ -248,7 +248,7 @@ export const collectVariableUses = (expr: Stmt, uses: Uses): void => {
             patIds(expr.pat).forEach((i) => addUse(uses, i, 'swap'));
             return collectVariableUses(expr.value, uses);
         }
-        case 'iffe': {
+        case 'block': {
             expr.block.forEach((s) => collectVariableUses(s, uses));
             collectVariableUses(expr.result, uses);
             expr.cleanup.forEach((s) => collectVariableUses(s, uses));

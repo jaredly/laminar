@@ -70,7 +70,7 @@ export const exprToTS = (scope: Scope, lin: Expr): string => {
         case 'tuple': {
             return `[${lin.items.map((lin) => exprToTS(scope, lin)).join(', ')}]`;
         }
-        case 'iffe': {
+        case 'block': {
             const blockScope = { ...scope };
             return `(() => {${lin.block.map((item) => stmtToTS(blockScope, item)).join('\n')}})()`;
         }

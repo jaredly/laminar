@@ -89,7 +89,7 @@ export type Swap = { type: 'swap'; pat: Patd; value: Expr; loc: Loc };
 export type Expr =
     | Idd
     | Swap
-    | { type: 'iffe'; block: Stmt[]; result: Expr; cleanup: Swap[]; loc: Loc }
+    | { type: 'block'; block: Stmt[]; result: Expr; cleanup: Swap[]; loc: Loc }
     | { type: 'const'; value: number | boolean | null; loc: Loc }
     | {
           type: 'string';

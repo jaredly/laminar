@@ -17,15 +17,15 @@ ir-> (x0)=>(swap(x0, +(x0, 1)), x0)
 
 6
 
-ir-> iffe{
+ir-> block{
     let x0 = 5;
-    let _ = iffe{let (r1, l2) = inc(x0)}{r1}{swap(x0, l2)}
+    let _ = block{let (r1, l2) = inc(x0)}{r1}{swap(x0, l2)}
 }{x0}{}
 
 fst :: ((a, b)/(a', b)) => a/a'
 fn fst(~(x, y)) ~x
 
-ir-> ((x0, y1))=>(x0, (back2)=>iffe{swap(x0, back2)}{(x0, y1)}{})
+ir-> ((x0, y1))=>(x0, (back2)=>block{swap(x0, back2)}{(x0, y1)}{})
 
 {
     let x = (1, 2)
@@ -38,9 +38,9 @@ ir-> ((x0, y1))=>(x0, (back2)=>iffe{swap(x0, back2)}{(x0, y1)}{})
 
 (1, (5, 2))
 
-ir-> iffe{
+ir-> block{
     let x0 = (1, 2);
-    let z1 = iffe{
+    let z1 = block{
         let (t3, c4) = fst(x0);
         let y2 = t3
     }{swap(y2, 5)}{
@@ -53,7 +53,7 @@ incFst :: (~(Int, a)) => ()
 fn incFst(~x) inc(~fst(~x))
 
 ir-> (x0)=>(
-    iffe{
+    block{
         let (t1, c2) = fst(x0);
         let (r3, l4) = inc(t1)
     }{r3}{
@@ -70,9 +70,9 @@ ir-> (x0)=>(
 
 (2, 4)
 
-ir-> iffe{
+ir-> block{
     let x0 = (1, 4);
-    let _ = iffe{let (r1, l2) = incFst(x0)}{r1}{swap(x0, l2)}
+    let _ = block{let (r1, l2) = incFst(x0)}{r1}{swap(x0, l2)}
 }{x0}{}
 
 idf :: (~a) => ()
@@ -88,15 +88,15 @@ ir-> (x0)=>((), x0)
 
 2
 
-ir-> iffe{
+ir-> block{
     let x0 = 2;
-    let _ = iffe{let (r1, l2) = idf(x0)}{r1}{swap(x0, l2)}
+    let _ = block{let (r1, l2) = idf(x0)}{r1}{swap(x0, l2)}
 }{x0}{}
 
 idl :: (a/b) => a/b
 fn idl(~x) ~x
 
-ir-> (x0)=>(x0, (back1)=>iffe{swap(x0, back1)}{x0}{})
+ir-> (x0)=>(x0, (back1)=>block{swap(x0, back1)}{x0}{})
 
 {
     let x = 2
@@ -109,9 +109,9 @@ ir-> (x0)=>(x0, (back1)=>iffe{swap(x0, back1)}{x0}{})
 
 (2, 4)
 
-ir-> iffe{
+ir-> block{
     let x0 = 2;
-    let z1 = iffe{
+    let z1 = block{
         let (t3, c4) = idl(x0);
         let m2 = t3
     }{swap(m2, 4)}{
@@ -123,7 +123,7 @@ ir-> iffe{
 united :: (~a) => ~()
 fn united(~x) ~()
 
-ir-> (x0)=>((), (back1)=>iffe{swap((), back1)}{x0}{})
+ir-> (x0)=>((), (back1)=>block{swap((), back1)}{x0}{})
 
 {
     let x = 2
@@ -136,9 +136,9 @@ ir-> (x0)=>((), (back1)=>iffe{swap((), back1)}{x0}{})
 
 ((), 2)
 
-ir-> iffe{
+ir-> block{
     let x0 = 2;
-    let z1 = iffe{
+    let z1 = block{
         let (t3, c4) = united(x0);
         let m2 = t3
     }{swap(m2, ())}{
@@ -152,12 +152,12 @@ fn gimme(initial) ~{
     drop(b)
 }
 
-ir-> (initial0)=>iffe{
+ir-> (initial0)=>block{
     let t1 = initial0;
     let c2 = (b3)=>drop(b3)
 }{
     (
-        t1, (back4)=>iffe{
+        t1, (back4)=>block{
             swap(t1, back4);
             swap((), c2(t1))
         }{()}{}
@@ -175,9 +175,9 @@ ir-> (initial0)=>iffe{
 
 (5, 2)
 
-ir-> iffe{
+ir-> block{
     let x0 = 2;
-    let z1 = iffe{
+    let z1 = block{
         let (t3, c4) = gimme(5);
         let m2 = t3
     }{swap(m2, ())}{
@@ -217,9 +217,9 @@ but right now I don't.
 
 (10, 5)
 
-ir-> iffe{
+ir-> block{
     let m0 = ();
-    let n1 = iffe{
+    let n1 = block{
         let t3 = 5;
         let c4 = (b5)=>swap(m0, b5);
         let ok2 = t3
@@ -232,7 +232,7 @@ ir-> iffe{
 swap :: ((a, b)/(c, d)) => (b, a)/(d, c)
 fn swap(~(x, y)) ~(y, x)
 
-ir-> ((x0, y1))=>((y1, x0), (back2)=>iffe{swap((y1, x0), back2)}{(x0, y1)}{})
+ir-> ((x0, y1))=>((y1, x0), (back2)=>block{swap((y1, x0), back2)}{(x0, y1)}{})
 
 {
     let x = (1, 2)
@@ -245,9 +245,9 @@ ir-> ((x0, y1))=>((y1, x0), (back2)=>iffe{swap((y1, x0), back2)}{(x0, y1)}{})
 
 (1, 3)
 
-ir-> iffe{
+ir-> block{
     let x0 = (1, 2);
-    let _ = iffe{
+    let _ = block{
         let (t4, c5) = swap(x0);
         let z1 = t4;
         let (r2, l3) = incFst(z1)
@@ -266,9 +266,9 @@ ir-> iffe{
 
 (1, 3)
 
-ir-> iffe{
+ir-> block{
     let x0 = (1, 2);
-    let _ = iffe{
+    let _ = block{
         let (t1, c2) = swap(x0);
         let (r3, l4) = incFst(t1)
     }{r3}{
@@ -290,15 +290,15 @@ ir-> (x0)=>((), x0)
 
 1
 
-ir-> iffe{
+ir-> block{
     let x0 = 1;
-    let _ = iffe{let (r1, l2) = united'(x0)}{r1}{swap(x0, l2)}
+    let _ = block{let (r1, l2) = united'(x0)}{r1}{swap(x0, l2)}
 }{x0}{}
 
 makeunit :: (()) => ~()
 fn makeunit(()) ~()
 
-ir-> (())=>((), (back0)=>iffe{swap((), back0)}{()}{})
+ir-> (())=>((), (back0)=>block{swap((), back0)}{()}{})
 
 {
     let x = 1
@@ -308,7 +308,7 @@ ir-> (())=>((), (back0)=>iffe{swap((), back0)}{()}{})
 
 1
 
-ir-> iffe{
+ir-> block{
     let x0 = 1;
     let (t2, c3) = makeunit(());
     let m1 = t2
@@ -330,9 +330,9 @@ ir-> (a0)=>(swap(a0, ()), a0)
 
 ()
 
-ir-> iffe{
+ir-> block{
     let x0 = 1;
-    let _ = iffe{let (r1, l2) = take(x0)}{r1}{swap(x0, l2)}
+    let _ = block{let (r1, l2) = take(x0)}{r1}{swap(x0, l2)}
 }{x0}{}
 
 map :: ((a) => b, a/b) => ()
@@ -352,9 +352,9 @@ ir-> (x0)=>(*(x0, 2))
 
 20
 
-ir-> iffe{
+ir-> block{
     let x0 = 10;
-    let _ = iffe{let (r1, l2) = map(double, x0)}{r1}{swap(x0, l2)}
+    let _ = block{let (r1, l2) = map(double, x0)}{r1}{swap(x0, l2)}
 }{x0}{}
 
 {
@@ -364,7 +364,7 @@ ir-> iffe{
 
 4
 
-ir-> iffe{let nothing0 = ()=>4}{nothing0()}{}
+ir-> block{let nothing0 = ()=>4}{nothing0()}{}
 
 {
     fn multi(a, b, c) {(a, b + c)}
@@ -373,7 +373,7 @@ ir-> iffe{let nothing0 = ()=>4}{nothing0()}{}
 
 (2, 7)
 
-ir-> iffe{let multi0 = (a1, b2, c3)=>(a1, +(b2, c3))}{multi0(2, 3, 4)}{}
+ir-> block{let multi0 = (a1, b2, c3)=>(a1, +(b2, c3))}{multi0(2, 3, 4)}{}
 
 unmap :: ((a/b) => (), a) => b
 fn unmap(f, x) {
@@ -381,7 +381,7 @@ fn unmap(f, x) {
     x
 }
 
-ir-> (f0, x1)=>iffe{let _ = iffe{let (r2, l3) = f0(x1)}{r2}{swap(x1, l3)}}{x1}{}
+ir-> (f0, x1)=>block{let _ = block{let (r2, l3) = f0(x1)}{r2}{swap(x1, l3)}}{x1}{}
 
 {unmap(inc, 5)}
 
@@ -400,9 +400,9 @@ ir-> unmap(inc, 5)
 
 (5, (1, 2))
 
-ir-> iffe{
+ir-> block{
     let a0 = (1, 2);
-    let m1 = iffe{
+    let m1 = block{
         let (t3, c4) = swap(a0);
         let x2 = t3
     }{5}{
@@ -413,9 +413,9 @@ ir-> iffe{
 
 fn swap2(~v) ~swap(~v)
 
-ir-> (v0)=>iffe{let (t1, c2) = swap(v0)}{
+ir-> (v0)=>block{let (t1, c2) = swap(v0)}{
     (
-        t1, (back3)=>iffe{
+        t1, (back3)=>block{
             swap(t1, back3);
             swap(v0, c2(t1))
         }{v0}{}
@@ -430,9 +430,9 @@ ir-> (v0)=>iffe{let (t1, c2) = swap(v0)}{
 
 (1, 3)
 
-ir-> iffe{
+ir-> block{
     let x0 = (1, 2);
-    let _ = iffe{
+    let _ = block{
         let (t1, c2) = swap2(x0);
         let (t3, c4) = fst(t1);
         let (r5, l6) = inc(t3)
@@ -446,12 +446,12 @@ ir-> iffe{
 fcomp :: ((b/b') => c/c', (a/a') => b/b', a/a') => c/c'
 fn fcomp(g, f, ~x) {~g(~f(~x))}
 
-ir-> (g0, f1, x2)=>iffe{
+ir-> (g0, f1, x2)=>block{
     let (t3, c4) = f1(x2);
     let (t5, c6) = g0(t3)
 }{
     (
-        t5, (back7)=>iffe{
+        t5, (back7)=>block{
             swap(t5, back7);
             swap(t3, c6(t5));
             swap(x2, c4(t3))
@@ -467,9 +467,9 @@ ir-> (g0, f1, x2)=>iffe{
 
 ((5, 2), 3)
 
-ir-> iffe{
+ir-> block{
     let x0 = ((1, 2), 3);
-    let _ = iffe{let (t1, c2) = fcomp(fst, fst, x0)}{swap(t1, 5)}{swap(x0, c2(t1))}
+    let _ = block{let (t1, c2) = fcomp(fst, fst, x0)}{swap(t1, 5)}{swap(x0, c2(t1))}
 }{x0}{}
 
 over :: (((a) => b), ((c/d) => a/b), c) => d
@@ -478,8 +478,8 @@ fn over(f, g, x) {
     x
 }
 
-ir-> (f0, g1, x2)=>iffe{
-    let _ = iffe{
+ir-> (f0, g1, x2)=>block{
+    let _ = block{
         let (t3, c4) = g1(x2);
         let (r5, l6) = map(f0, t3)
     }{r5}{
