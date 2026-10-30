@@ -1,6 +1,8 @@
 Next up:
 - [x] make a fixture snapshot dealio
-- [ ] much better pretty printing is needed. stringify needs a leg up.
+- [x] much better pretty printing is needed. stringify needs a leg up.
+- [x] zed ext for syntax highlighting
+- [ ] process the rest of flow.test.lm
 
 ---
 

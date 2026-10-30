@@ -488,18 +488,51 @@ ir-> (f0, g1, x2)=>block{
     }
 }{x2}{}
 
-// TODO make an over example
+{
+    let x = (5, 2)
+    over(double, fst, (5, 2))
+}
+
+(10, 2)
+
+ir-> block{let x0 = (5, 2)}{over(double, fst, (5, 2))}{}
+
+// join :: ((a/a' => b/b'), (c/c' => d/d'), (a,c)/(a',c')) => (b,d)/(b',d')
+fn join(f, g, ~(x, y)) ~(f(~x), g(~y))
+
+ir-> (f0, g1, (x2, y3))=>block{
+    let (t4, c5) = f0(x2);
+    let (t6, c7) = g1(y3)
+}{
+    (
+        (t4, t6), (back8)=>block{
+            swap((t4, t6), back8);
+            swap(y3, c7(t6));
+            swap(x2, c5(t4))
+        }{(x2, y3)}{}
+    )
+}{}
+
+// funcurry :: (a/a' -> b/b' -> c/c') -> (a, b)/(a', b') -> c/c'
+fn funcurry(f, ~(x, y)) ~f(~(x, y))
+
+ir-> (f0, (x1, y2))=>block{let (t3, c4) = f0((x1, y2))}{
+    (
+        t3, (back5)=>block{
+            swap(t3, back5);
+            swap((x1, y2), c4(t3))
+        }{(x1, y2)}{}
+    )
+}{}
+
+// swapPair :: (a, b)/(b, a) -> ()
+fn swapPair(~(x, y)) {y := x := y}
+
+ir-> ((x0, y1))=>(swap(y1, swap(x0, y1)), (x0, y1))
+
 /*
 
 
-join :: (a/a' -> b/b') -> (c/c' -> d/d') -> (a,c)/(a',c') -> (b,d)/(b',d')
-join f g ~(x, y) = ~(f ~x, g ~y)
-
-funcurry :: (a/a' -> b/b' -> c/c') -> (a, b)/(a', b') -> c/c'
-funcurry f ~(x, y) = ~(f ~x ~y)
-
-swapPair :: (a, b)/(b, a) -> ()
-swapPair ~(x, y) = y := x := y
 
 // --------------------
 // Prelude
