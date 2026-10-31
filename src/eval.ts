@@ -362,7 +362,7 @@ export const setPat = (ctx: Ctx, pat: Patd, value: any, fresh: boolean): any => 
             }
             if (value.length !== pat.items.length) {
                 throw new Error(
-                    `value wrong length. found ${value.length}, expected ${pat.items.length}`,
+                    `value wrong length. found ${value.length}, expected ${pat.items.length}. ${spat(pat)}`,
                 );
             }
             return value.map((item, i) => setPat(ctx, pat.items[i], item, fresh));

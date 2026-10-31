@@ -1,4 +1,11 @@
 
+Ok I think this is what Im' going to say.
+IF you have a fn with a lens arg and an aslens body, the resolved value of the aslens must be
+a replacement for the whole input lens
+
+
+---
+
 oooh ok so figuring out how to do their "nice file" example, which they were unable to achieve
 due to the presence of the "world" argument (required by linear haskell).
 So I was like "I wonder if I can do that" and I can!

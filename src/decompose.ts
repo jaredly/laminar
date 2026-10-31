@@ -476,30 +476,117 @@ export const linearToExpr = (ctx: Ctx, lin: Linear): Expr => {
                                   ],
                                   loc: lin.body.lens.loc,
                               }
-                            : lensToExpr(sub, lin.body.lens, (pat): Expr => {
-                                  const id = ctx.counter.current++;
-                                  const iid: Idd = { type: 'idd', id, text: 'back', loc: -1 };
-                                  block.push({ type: 'swap', pat, value: iid, loc: -1 });
-                                  return {
-                                      type: 'tuple',
-                                      items: [
-                                          patdToExpr(pat),
-                                          {
-                                              type: 'fn',
-                                              args: [iid],
-                                              body: {
-                                                  type: 'block',
-                                                  block,
-                                                  result: patdToExpr(args[args.length - 1]),
-                                                  cleanup: [],
-                                                  loc: lin.loc,
-                                              },
-                                              loc: lin.loc,
-                                          },
-                                      ],
-                                      loc: lin.loc,
-                                  };
-                              });
+                            : lin.body.lens.type === 'aslens'
+                              ? ((): Expr => {
+                                    const tid: Idd = {
+                                        type: 'idd',
+                                        text: 't',
+                                        id: sub.counter.current++,
+                                        loc: -1,
+                                    };
+                                    const cid: Idd = {
+                                        type: 'idd',
+                                        text: 'c',
+                                        id: sub.counter.current++,
+                                        loc: -1,
+                                    };
+                                    const bid: Idd = {
+                                        type: 'idd',
+                                        text: 'b',
+                                        id: sub.counter.current++,
+                                        loc: -1,
+                                    };
+                                    const subFinish = subScope(sub);
+                                    return {
+                                        type: 'block',
+                                        block: [
+                                            {
+                                                type: 'let',
+                                                pat: tid,
+                                                value: linearToExpr(sub, lin.body.lens.value),
+                                                loc: lin.body.lens.loc,
+                                            },
+                                            {
+                                                type: 'let',
+                                                pat: cid,
+                                                value: {
+                                                    type: 'fn',
+                                                    args: [
+                                                        patToPatd(
+                                                            subFinish,
+                                                            lin.body.lens.pat,
+                                                            false,
+                                                        ),
+                                                    ],
+                                                    body: linearToExpr(
+                                                        subFinish,
+                                                        lin.body.lens.body,
+                                                    ),
+                                                    loc: lin.body.lens.loc,
+                                                },
+                                                loc: lin.body.lens.loc,
+                                            },
+                                        ],
+                                        result: {
+                                            type: 'tuple',
+                                            items: [
+                                                tid,
+
+                                                {
+                                                    type: 'fn',
+                                                    body: {
+                                                        type: 'block',
+                                                        block: [
+                                                            {
+                                                                type: 'swap',
+                                                                pat: tid,
+                                                                value: bid,
+                                                                loc: -1,
+                                                            },
+                                                        ],
+                                                        loc: -1,
+                                                        result: {
+                                                            type: 'apply',
+                                                            fn: cid,
+                                                            args: [tid],
+                                                            loc: -1,
+                                                        },
+                                                        cleanup: [],
+                                                    },
+                                                    args: [bid],
+                                                    loc: -1,
+                                                },
+                                            ],
+                                            loc: -1,
+                                        },
+                                        loc: lin.body.lens.loc,
+                                        cleanup: [],
+                                    };
+                                })()
+                              : lensToExpr(sub, lin.body.lens, (pat): Expr => {
+                                    const id = ctx.counter.current++;
+                                    const iid: Idd = { type: 'idd', id, text: 'back', loc: -1 };
+                                    block.push({ type: 'swap', pat, value: iid, loc: -1 });
+                                    return {
+                                        type: 'tuple',
+                                        items: [
+                                            patdToExpr(pat),
+                                            {
+                                                type: 'fn',
+                                                args: [iid],
+                                                body: {
+                                                    type: 'block',
+                                                    block,
+                                                    result: patdToExpr(args[args.length - 1]),
+                                                    cleanup: [],
+                                                    loc: lin.loc,
+                                                },
+                                                loc: lin.loc,
+                                            },
+                                        ],
+                                        loc: lin.loc,
+                                    };
+                                });
                     const pushCleanupInside = (expr: Expr) => {
                         if (expr.type === 'block') {
                             block.push(...expr.cleanup);
@@ -787,21 +874,21 @@ export const lensToExpr = (ctx: Ctx, lens: Lens, inner: (name: Patd) => Expr): E
             return lensToExpr(ctx, last.lens, finish);
         }
         case 'aslens': {
-            const tid = ctx.counter.current++;
-            const cid = ctx.counter.current++;
+            const tid: Idd = { type: 'idd', text: 't', id: ctx.counter.current++, loc: -1 };
+            const cid: Idd = { type: 'idd', text: 'c', id: ctx.counter.current++, loc: -1 };
             const subFinish = subScope(ctx);
             return {
                 type: 'block',
                 block: [
                     {
                         type: 'let',
-                        pat: { type: 'idd', text: 't', id: tid, loc: -1 },
+                        pat: tid,
                         value: linearToExpr(ctx, lens.value),
                         loc: lens.loc,
                     },
                     {
                         type: 'let',
-                        pat: { type: 'idd', text: 'c', id: cid, loc: -1 },
+                        pat: cid,
                         value: {
                             type: 'fn',
                             args: [patToPatd(subFinish, lens.pat, false)],
@@ -811,7 +898,7 @@ export const lensToExpr = (ctx: Ctx, lens: Lens, inner: (name: Patd) => Expr): E
                         loc: lens.loc,
                     },
                 ],
-                result: inner({ type: 'idd', text: 't', id: tid, loc: -1 }),
+                result: inner(tid),
                 loc: lens.loc,
                 cleanup: [
                     {
@@ -819,8 +906,8 @@ export const lensToExpr = (ctx: Ctx, lens: Lens, inner: (name: Patd) => Expr): E
                         pat: { type: 'tuple', items: [], loc: lens.loc },
                         value: {
                             type: 'apply',
-                            fn: { type: 'idd', id: cid, text: 'c', loc: -1 },
-                            args: [{ type: 'idd', id: tid, text: 't', loc: -1 }],
+                            fn: cid,
+                            args: [tid],
                             loc: -1,
                         },
                         loc: -1,
