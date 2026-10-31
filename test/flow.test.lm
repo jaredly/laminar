@@ -27,6 +27,10 @@ fn fst(~(x, y)) ~x
 
 ir-> ((x0, y1))=>(x0, (back2)=>block{swap(x0, back2)}{(x0, y1)}{})
 
+fn snd(~(x, y)) ~y
+
+ir-> ((x0, y1))=>(y1, (back2)=>block{swap(y1, back2)}{(x0, y1)}{})
+
 {
     let x = (1, 2)
     let z = {
@@ -953,17 +957,18 @@ ir-> block{
 ir-> block{let x0 = +(3.4, 1.2)}{x0}{}
 
 fn useFile(name, ~w) ~{
-    lens (fd, _) <- (openFile(name, ~w), w)
+    lens (fd, w) <- (openFile(name, ~w), w)
     closeFile(fd)
+    w
 }
 
 ir-> (name0, w1)=>block{
     let t2 = (block{let (r4, l5) = openFile(name0, w1)}{r4}{swap(w1, l5)}, w1);
-    let c3 = ((fd6, _))=>closeFile(fd6)
+    let c3 = ((fd6, w7))=>block{let _ = closeFile(fd6)}{w7}{}
 }{
     (
-        t2, (back7)=>block{
-            swap(t2, back7);
+        t2, (back8)=>block{
+            swap(t2, back8);
             swap((), c3(t2))
         }{w1}{}
     )
@@ -972,8 +977,8 @@ ir-> (name0, w1)=>block{
 {
     let ops = []
     let text = {
-        let (file, ops_) = ~useFile("example.txt", ~ops)
-        readFile(~(ops_, file))
+        let (file, ops) = ~useFile("example.txt", ~ops)
+        readFile(~(ops, file))
     }
     (text, ops)
 }
@@ -984,11 +989,11 @@ ir-> block{
     let ops0 = [];
     let text1 = block{
         let (t6, c7) = useFile("example.txt", ops0);
-        let (file2, ops_3) = t6;
-        let (r4, l5) = readFile((ops_3, file2))
+        let (file2, ops3) = t6;
+        let (r4, l5) = readFile((ops3, file2))
     }{r4}{
-        swap((ops_3, file2), l5);
-        swap(t6, (file2, ops_3));
+        swap((ops3, file2), l5);
+        swap(t6, (file2, ops3));
         swap(ops0, c7(t6))
     }
 }{(text1, ops0)}{}

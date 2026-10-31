@@ -250,6 +250,10 @@ for (let item of items) {
                     console.error(result);
                     errors++;
                     console.error(rresult);
+                } else {
+                    console.log(
+                        `Test pass test/flow.test.lm:${pos(item.expected.node.loc).line + 1}`,
+                    );
                 }
             } catch (err) {
                 console.log('Error at line', pos(item.expected.node.loc).line + 1);

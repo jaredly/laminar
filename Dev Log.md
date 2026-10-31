@@ -1,8 +1,59 @@
+
+oooh ok so figuring out how to do their "nice file" example, which they were unable to achieve
+due to the presence of the "world" argument (required by linear haskell).
+So I was like "I wonder if I can do that" and I can!
+
+intersetingly it requires bundling the world into the new lens
+
+```lm
+fn useFile(name, ~w) ~{
+    lens (fd, _) <- (openFile(name, ~w), w)
+    closeFile(fd)
+}
+```
+
+Hmmmmm. OK SO:
+Semantically:
+-> `~useFile(name, ~w)` at the callsite is going to say "OK w is borrowed for the duration of the returned lens"
+As well it should.
+BUT in this case ... it doesn't need to be?
+
+Options include:
+-> have a different syntax like ~~w or something, which indicates that:
+    -> the return value of this function includes the provided lens back to you.
+This obviously can't be used for any functions that actually give you a lens into another lens.
+It only makes sense for that kind of "world-modifying thing".
+
+IDEA: what about methods on objects? I'm thinking
+
+`let file = ~world.useFile("example.txt")`
+
+only (maybe) makes sense for functions that don't need to consume the world.
+
+Yeah this is where actual type inference is necessary.
+Because that function could be
+useFile(~self, string) -> A/A'
+useFile(self, string) -> A/A'
+and we can't indicate syntactically which it directly is.
+BUT ALSO it could be this special third thing
+useFile(~~self, string) -> A/A'
+but like, what's the purpose of 'world' in linear haskell?
+
+NOTE: the `world` argument is important, because haskell doesn't guarantee sequential processing
+of adjacent statements. And so if you want deterministic ordering of side effects, you need
+the threaded variable.
+ok that's fine.
+
+I still want to figure out the w issue
+
+
+---
+
 Next up:
 - [x] make a fixture snapshot dealio
 - [x] much better pretty printing is needed. stringify needs a leg up.
 - [x] zed ext for syntax highlighting
-- [ ] process the rest of flow.test.lm
+- [x] process the rest of flow.test.lm
 
 ---
 
