@@ -963,8 +963,8 @@ fn aside(~(a, b)) ~{
 
 ir-> ((a0, b1))=>block{
     let t2 = +(a0, b1);
-    let c3 = (c5)=>c5
-}{(t2, (b4)=>block{swap(t2, b4)}{c3(t2)}{})}{}
+    let c3 = (c4)=>c4
+}{(t2, (b5)=>block{swap(t2, b5)}{c3(t2)}{})}{}
 
 fn useFile(name, ~w) ~{
     lens (fd, w) <- (openFile(name, ~w), w)
@@ -973,9 +973,9 @@ fn useFile(name, ~w) ~{
 }
 
 ir-> (name0, w1)=>block{
-    let t2 = (block{let (r5, l6) = openFile(name0, w1)}{r5}{swap(w1, l6)}, w1);
-    let c3 = ((fd7, w8))=>block{let _ = closeFile(fd7)}{w8}{}
-}{(t2, (b4)=>block{swap(t2, b4)}{c3(t2)}{})}{}
+    let t2 = (block{let (r4, l5) = openFile(name0, w1)}{r4}{swap(w1, l5)}, w1);
+    let c3 = ((fd6, w7))=>block{let _ = closeFile(fd6)}{w7}{}
+}{(t2, (b8)=>block{swap(t2, b8)}{c3(t2)}{})}{}
 
 {
     let ops = []
