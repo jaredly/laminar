@@ -1,8 +1,91 @@
 
+Games I can try for a demo:
+- snake (text output, union input)
+- guess my number
+- tictactoe
+- pokemon battle
+
+---
+
+Now, that's what I call music.
+
+Next up: can we make ourselves a game?
+After that: what would it look like to translate this to c?
+orrr let's try zig maybe idk
+
+-> The Approach:
+
+-> Take a basic example
+-> Translate the IR to zig by hand
+-> see if it makes sense.
+
+OR
+-> translate the IR to js by hand
+-> ask ai to turn it into zig
+
+
+```lm
+fn inc(~x) {x := x + 1}
+{
+    let x = 5
+    inc(~x)
+    x
+}
+```
+
+```ts
+function inc(x): [null,number] {
+    x = x + 1
+    return [null, x]
+}
+
+function main() {
+    let x = 5
+    let [r1, l2] = inc(x)
+    x = l2
+    console.log(x)
+}
+```
+
+OR
+
+```c
+void inc(int* x) {
+    *x = *x + 1;
+}
+
+void main() {
+    int x = 5;
+    inc(&x);
+    printf("%d", x);
+}
+```
+
+Q: do I need to worry about memory representation now??
+
+```c
+void* fst(void*[2] tuple) {
+    return tuple[0]
+}
+
+void main() {
+    int x_1 = 1;
+    int x_2 = 2;
+    int*[2] x = {&x_1, &x_2};
+    int* y = fst(&x)
+}
+```
+
+
+
+
+
+
+---
+
 Ok I think this is what Im' going to say.
 IF you have a fn with a lens arg and an aslens body, the resolved value of the aslens must be
 a replacement for the whole input lens
-
 
 ---
 

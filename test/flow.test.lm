@@ -1056,3 +1056,22 @@ execDemo ~w =
 
 
 */
+fn range(n) {
+    match n {
+        0 -> []
+        n -> [dup(~n), ...range(n - 1)]
+    }
+}
+
+ir-> (n0)=>(
+    match n0 {
+        0 -> []
+        n1 -> [block{let (r2, l3) = dup(n1)}{r2}{swap(n1, l3)}, ...range(-(n1, 1))]
+    }
+)
+
+{range(10)}
+
+[10, 9, 8, 7, 6, 5, 4, 3, 2, 1]
+
+ir-> range(10)

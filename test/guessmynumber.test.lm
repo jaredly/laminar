@@ -1,0 +1,112 @@
+// how to guess my number
+/*
+Also how we gonna deal with side effects?
+For them, they just said "it's fine" basically.
+*/
+fn nextGuess(direction, ~(min, max, lastGuess)) {
+    round(
+        match direction {
+            Higher() -> {(!max + !lastGuess) / 2}
+            Lower() -> {(!lastGuess + !min) / 2}
+        }
+    )
+}
+
+ir-> (direction0, (min1, max2, lastGuess3))=>(
+    round(
+        (
+            match direction0 {
+                Higher() -> /(+(block{let (r4, l5) = dup(max2)}{r4}{swap(max2, l5)}, block{let (r6, l7) = dup(lastGuess3)}{r6}{swap(lastGuess3, l7)}), 2)
+                Lower() -> /(+(block{let (r8, l9) = dup(lastGuess3)}{r8}{swap(lastGuess3, l9)}, block{let (r10, l11) = dup(min1)}{r10}{swap(min1, l11)}), 2)
+            }
+        )
+    ), (min1, max2, lastGuess3)
+)
+
+fn handleResponse(response, ~state) {
+    match response {
+        "higher" -> {
+            let next = nextGuess(Higher, ~state)
+            let (min, _, last) = ~state
+            min := last
+            last := next
+            false
+        }
+        "lower" -> {
+            let next = nextGuess(Lower, ~state)
+            let (_, max, last) = ~state
+            max := last
+            last := next
+            false
+        }
+        "match" -> true
+        _ -> {
+            print("I'm sorry, I didn't understand that. Please say 'higher', 'lower', or 'match'")
+            false
+        }
+    }
+}
+
+ir-> (response0, state1)=>(
+    (
+        match response0 {
+            "higher" -> block{
+                let next2 = block{let (r6, l7) = nextGuess(Higher(), state1)}{r6}{swap(state1, l7)};
+                let (min3, _4, last5) = state1;
+                let _ = swap(min3, last5);
+                let _ = swap(last5, next2)
+            }{false}{swap(state1, (min3, _4, last5))}
+            "lower" -> block{
+                let next8 = block{let (r12, l13) = nextGuess(Lower(), state1)}{r12}{swap(state1, l13)};
+                let (_9, max10, last11) = state1;
+                let _ = swap(max10, last11);
+                let _ = swap(last11, next8)
+            }{false}{swap(state1, (_9, max10, last11))}
+            "match" -> true
+            _14 -> block{let _ = print("I'm sorry, I didn't understand that. Please say 'higher', 'lower', or 'match'")}{false}{}
+        }
+    ), state1
+)
+
+fn step(steps, ~(min, max, lastGuess)) {
+    let input = getInput("My guess is ${!lastGuess}")
+    let next = handleResponse(input, ~(min, max, lastGuess))
+    match (next) {
+        true -> steps
+        false -> step(steps + 1, ~(min, max, lastGuess))
+    }
+}
+
+ir-> (steps0, (min1, max2, lastGuess3))=>(
+    block{
+        let input4 = getInput("My guess is ${block{let (r10, l11) = dup(lastGuess3)}{r10}{swap(lastGuess3, l11)}}");
+        let next5 = block{let (r8, l9) = handleResponse(input4, (min1, max2, lastGuess3))}{r8}{swap((min1, max2, lastGuess3), l9)}
+    }{
+        (
+            match next5 {
+                true -> steps0
+                false -> block{let (r6, l7) = step(+(steps0, 1), (min1, max2, lastGuess3))}{r6}{swap((min1, max2, lastGuess3), l7)}
+            }
+        )
+    }{}, (min1, max2, lastGuess3)
+)
+
+fn game() {
+    let state = (0, 100, 50)
+    let steps = step(0, ~state)
+    (state, steps)
+}
+
+ir-> ()=>block{
+    let state0 = (0, 100, 50);
+    let steps1 = block{let (r2, l3) = step(0, state0)}{r2}{swap(state0, l3)}
+}{(state0, steps1)}{}
+
+{
+    setInput(["higher", "higher", "lower", "lower", "match"])
+    (game(), logs())
+}
+
+(((75, 82, 79), 4), ["My guess is 50", "My guess is 75", "My guess is 88", "My guess is 82", "My guess is 79"])
+
+ir-> block{let _ = setInput(["higher", "higher", "lower", "lower", "match"])}{(game(), logs())}{}

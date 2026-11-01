@@ -87,7 +87,7 @@ grammar.add('Expr', [
         }),
     ),
     // Expr:8
-    option(b('num', /\d+/), ({ num, node }: { num: Id; node: Node }): Expr => ({
+    option(b('num', /^\d+$/), ({ num, node }: { num: Id; node: Node }): Expr => ({
         type: 'const',
         value: +num.text,
         loc: num.loc,
@@ -358,14 +358,29 @@ grammar.add('Patd', [
         value: false,
     })),
     // Patd:4
-    option(b('id', 'Idd'), ({ id, node }: { id: Idd; node: Node }): Patd => id),
+    option(
+        list('', b('one', /^[0-9]+$/), lit('.'), b('two', /^[0-9]+$/)),
+        ({ one, two, node }: { one: Id; two: Id; node: Node }): Patd => ({
+            type: 'number',
+            value: +(one.text + '.' + two.text),
+            loc: node.loc,
+        }),
+    ),
     // Patd:5
+    option(b('num', /^\d+$/), ({ num, node }: { num: Id; node: Node }): Patd => ({
+        type: 'number',
+        value: +num.text,
+        loc: num.loc,
+    })),
+    // Patd:6
+    option(b('id', 'Idd'), ({ id, node }: { id: Idd; node: Node }): Patd => id),
+    // Patd:7
     option(lit('_'), ({ node }: { node: Node }): Patd => ({
         type: 'drop',
         loc: node.loc,
         id: null,
     })),
-    // Patd:6
+    // Patd:8
     option(
         wrapper('(', list(',', many('items', 'Patd'))),
         ({ items, node }: { items: Patd[]; node: Node }): Patd => ({
@@ -374,7 +389,7 @@ grammar.add('Patd', [
             loc: node.loc,
         }),
     ),
-    // Patd:7
+    // Patd:9
     option(
         list('', b('name', /^[A-Z]/), wrapper('(', list(',', many('args', 'Patd')))),
         ({ name, args, node }: { name: Id; args: Patd[]; node: Node }): Patd => ({
@@ -384,20 +399,20 @@ grammar.add('Patd', [
             loc: node.loc,
         }),
     ),
-    // Patd:8
+    // Patd:10
     option(list('"', b('text', 'id')), ({ text, node }: { text: Id; node: Node }): Patd => ({
         type: 'string',
         text: text.text,
         loc: node.loc,
     })),
-    // Patd:9
+    // Patd:11
     option(wrapper('[', null), ({ node }: { node: Node }): Patd => ({
         type: 'constructor',
         name: 'nil',
         args: [],
         loc: node.loc,
     })),
-    // Patd:10
+    // Patd:12
     option(
         wrapper('[', list(',', many('items', 'Patd'))),
         ({ items, node }: { items: Patd[]; node: Node }): Patd =>
@@ -406,7 +421,7 @@ grammar.add('Patd', [
                 node.loc,
             ),
     ),
-    // Patd:11
+    // Patd:13
     option(
         wrapper(
             '[',
@@ -415,7 +430,7 @@ grammar.add('Patd', [
         ({ items, tail, node }: { items: Patd[]; tail: Patd; node: Node }): Patd =>
             pcons([...items, tail], node.loc),
     ),
-    // Patd:12
+    // Patd:14
     option(list('', b('one', 'Patd')), ({ one, node }: { one: Patd; node: Node }): Patd => one),
 ]);
 

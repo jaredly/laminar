@@ -426,7 +426,7 @@ export const linearToExpr = (ctx: Ctx, lin: Linear): Expr => {
                           { type: 'id', text: lin.value.name, loc: lin.value.loc },
                           false,
                       )
-                    : patToPatd(sub, lin.pat, false);
+                    : patToPatd(sub, lin.pat, lin.value.type === 'lens');
             const next = linearToExpr(sub, lin.body);
             const cleanup: Swap[] = [];
             let lest: Stmt;
