@@ -1,4 +1,10 @@
 
+Guess my number, lookin rad.
+-> I really need record syntax
+-> it would be really cool if (~state) -> print(!state.name) worked, where attribute access does an instaborrow.
+
+---
+
 Games I can try for a demo:
 - snake (text output, union input)
 - guess my number
