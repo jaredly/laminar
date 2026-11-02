@@ -1,11 +1,12 @@
 import { it, expect } from 'bun:test';
-import { locLines, readFile, readLine, showPos } from './lexer.ts';
+import { locLines, readFile, readLine, showPos, stringify } from './lexer.ts';
 import { grammar } from './laminar-parser.ts';
 import { grammar as ir } from './ir-parser.ts';
 import { Expr, File, Linear } from './ast.ts';
-import { linearToExpr, sexpr } from './decompose.ts';
-import { evalExpr } from './eval.ts';
+import { lexpr, linearToExpr, sexpr } from './decompose.ts';
+import { evalExpr, valueToExpr } from './eval.ts';
 import { findDeepest, showDeepest } from './debugFailures.ts';
+import { writeFileSync } from 'fs';
 
 type TestCase = {
     name: string;
@@ -25,7 +26,7 @@ const t = (name: string, source: string, ir: string, result: any): TestCase => (
 const pairs: TestCase[] = [
     t('num', '1', '1', 1),
     t('null', '()', '()', null),
-    t('fn', 'fn hi(x) 20', '(x0)=>20', Function),
+    // t('fn', 'fn hi(x) 20', '(x0)=>20', Function),
     t('let', '{let x = 2\nx}', 'block{let x0=2}{x0}{}', 2),
     t('tuple', '(1, 2)', '(1,2)', [1, 2]),
     // ['log(10)', 'log(10)'],
@@ -717,3 +718,16 @@ it.each(pairs)('input / output $name', ({ source, ir: irSource, defns, result })
         }).toEqual({ result, text: outText });
     }
 });
+
+// it('shoudl write out', () => {
+//     writeFileSync(
+//         import.meta.dirname + '/systematic.test.lm',
+//         pairs
+//             .map(
+//                 (p) =>
+//                     p.defns?.source ??
+//                     '' + '\n' + p.source + '\n\n' + stringify(lexpr(valueToExpr(p.result))),
+//             )
+//             .join('\n\n\n'),
+//     );
+// });

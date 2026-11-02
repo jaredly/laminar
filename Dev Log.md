@@ -3,6 +3,9 @@ Guess my number, lookin rad.
 -> I really need record syntax
 -> it would be really cool if (~state) -> print(!state.name) worked, where attribute access does an instaborrow.
 
+So qurstion.
+Should I look into C now?
+
 ---
 
 Games I can try for a demo:

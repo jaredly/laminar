@@ -103,7 +103,13 @@ const runSnapshot = (raw: string) => {
         }
         const node = itemResult.value;
 
-        if (node.type === 'let' || node.type === 'apply') {
+        if (
+            body == null &&
+            (node.type === 'let' ||
+                node.type === 'apply' ||
+                node.type === 'constructor' ||
+                node.type === 'case')
+        ) {
             body = { v: node, node: lnode };
             continue;
         }

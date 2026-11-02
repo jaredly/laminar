@@ -30,7 +30,15 @@ export const valueToExpr = (value: any): Expr => {
         return res;
     }
     if (value == null) return { type: 'tuple', items: [], loc: -1 };
-    throw new Error('cant make expr');
+    if (typeof value === 'object' && 'type' in value && typeof value.type === 'string') {
+        return {
+            type: 'constructor',
+            name: value.type,
+            args: value.args?.map(valueToExpr) ?? [],
+            loc: -1,
+        };
+    }
+    throw new Error('cant make expr ' + JSON.stringify(value));
 };
 
 export const evalExpr = (ctx: Ctx, expr: Expr): any => {

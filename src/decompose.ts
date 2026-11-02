@@ -254,7 +254,9 @@ export const lexpr = (expr: Expr): Node => {
             return l.l('', [
                 l.l(`(,`, expr.args.map(lpat)),
                 '=>',
-                Array.isArray(expr.body) ? l.l(`{;`, expr.body.map(lstmt)) : lexpr(expr.body),
+                Array.isArray(expr.body)
+                    ? l.l(`{;`, expr.body.map(lstmt))
+                    : maybeWrap(lexpr(expr.body)),
             ]);
         case 'apply': {
             const res = l.l('', [lexpr(expr.fn), l.l('(,', expr.args.map(lexpr))]);
@@ -281,6 +283,16 @@ export const lexpr = (expr: Expr): Node => {
     }
     throw new Error('oks' + JSON.stringify(expr));
 };
+
+const maybeWrap = (node: Node): Node =>
+    node.type === 'list' && node.kind === ''
+        ? {
+              type: 'wrapper',
+              kind: '(',
+              loc: node.loc,
+              child: node,
+          }
+        : node;
 
 export const sexpr = (expr: Expr): string => {
     switch (expr.type) {
