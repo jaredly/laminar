@@ -148,6 +148,10 @@ ir-> block{
     }{swap(y3, 4)}{swap(m0, (x2, y3))}
 }{(m0, n1)}{}
 
+fn inc(~x) {x := x + 1}
+
+ir-> (x0)=>(swap(x0, +(x0, 1)), x0)
+
 {
     let m = 5
     (inc(~m), m)
@@ -255,7 +259,7 @@ ir-> block{
         log("before")
     }
     log("after")
-    x
+    (x, logs())
 }
 
 [10, ["before", 2, "after"]]
@@ -272,7 +276,7 @@ ir-> block{
         swap((), c3(t2))
     };
     let _ = log("after")
-}{x0}{}
+}{(x0, logs())}{}
 
 {
     let x = 1

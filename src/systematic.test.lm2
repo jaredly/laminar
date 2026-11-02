@@ -1,0 +1,93 @@
+
+{
+    {x1}
+    set(x1, 2)
+    get(x1)
+}
+
+{
+    {x1, y2}
+    set((x1, y2), (1, 2))
+    get(x1)
+}
+
+{
+    {x1, x2}
+    set(x1, 2)
+    set(x2, 3)
+    get(x2)
+}
+
+{
+    {x1}
+    set(x1, 2)
+    swap(x1, 3)
+    get(x1)
+}
+
+{
+    {x1}
+    set(x1, 1)
+    {
+        {x2}
+        set(x2, 2)
+        3
+    }
+    get(x1)
+}
+
+/*
+In C, would it be that we have all variables are pointers?
+
+int x1_; // shadow stack variable
+int* x = &x1;
+*x = 1 // set
+y = x // point(y, x)
+
+*/
+
+{
+    {x1}
+    set(x1, 1)
+    {
+        {y2}
+        point(y2, x1)
+        swap(y2, 2)
+    }
+    get(x1)
+}
+
+{
+    {x1, a2}
+    set(x1, 1)
+    set(a2, 2)
+    {
+        {y3, b4}
+        point(y3, x1)
+        point(b4, a2)
+        swap(y3, swap(b4, 4))
+    }
+    (get(a2), get(x1))
+}
+
+{
+    {m1}
+    set(m, (1, 5))
+    let n2 = {
+        {x3, y4}
+        point((x3, y4), m)
+        swap(x3, 2)
+        swap(y4, 4)
+    }
+    (get(m1), get(n2))
+}
+
+{
+    {m1}
+    set(m1, 5)
+    (inc(&m1), get(m1))
+}
+
+void inc(int* x0) {
+    swap(x0, get(x0) + 1)
+}

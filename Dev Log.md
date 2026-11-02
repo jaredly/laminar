@@ -6,6 +6,16 @@ Guess my number, lookin rad.
 So qurstion.
 Should I look into C now?
 
+OK so for c, we'd probably have to do a bunch of onthefly structs and stuff, for the tuples.
+we'll also need real inference and stuff to know types of all vbls.
+BUT
+before we do that, we could do like a pseudo-c
+that has like a stack and stuff.
+hmmmmmmmmmmmmmm
+maybe a VM then
+an assembly?
+or just an IR with explicit stack locations?
+
 ---
 
 Games I can try for a demo:
