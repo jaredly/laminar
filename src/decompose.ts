@@ -285,7 +285,10 @@ export const lexpr = (expr: Expr): Node => {
 };
 
 const maybeWrap = (node: Node): Node =>
-    node.type === 'list' && node.kind === ''
+    node.type === 'list' &&
+    node.kind === '' &&
+    node.children[0].type === 'id' &&
+    !node.children[0].text.match(/^[a-zA-Z]/)
         ? {
               type: 'wrapper',
               kind: '(',

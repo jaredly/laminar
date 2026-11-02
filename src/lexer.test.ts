@@ -139,11 +139,19 @@ it('should handle js better', () => {
         })`),
         ),
     ).toMatchInlineSnapshot(`
-      "(function handleSuffixes(head, suffixes) {return suffixes.reduce((head, suffix): Linear => {switch (suffix.type) {
-      case "attr": return {type: "attr", target: head, attr: suffix.attr}
-      case "index": return {type: "index", index: suffix.index, target: head}
-      case "apply": return {type: "apply", fn: head, args: suffix.args}
-      }}, head)})"
+      "(
+          function handleSuffixes(head, suffixes) {
+              return suffixes.reduce(
+                  (head, suffix): Linear => {
+                      switch (suffix.type) {
+                          case "attr": return {type: "attr", target: head, attr: suffix.attr}
+                          case "index": return {type: "index", index: suffix.index, target: head}
+                          case "apply": return {type: "apply", fn: head, args: suffix.args}
+                      }
+                  }, head
+              )
+          }
+      )"
     `);
 });
 

@@ -1,8 +1,9 @@
 import { expect, it } from 'bun:test';
 import { read, readFile, readLine, readLines } from './lexer.ts';
 import { grammar as self } from './self-lexer.ts';
-import { asDSL, Grammar, RawRule } from './grammar-lexer.ts';
+import { Grammar, RawRule } from './grammar-lexer.ts';
 import { readFileSync } from 'fs';
+import { asDSL } from './toFile.ts';
 
 const loadGrammar = (text: string) => {
     const parsed = readLines(text);
