@@ -155,7 +155,11 @@ ir-> block{
 
 [(), 6]
 
-ir-> block{let m0 = 5}{(block{let (r1, l2) = inc(m0)}{r1}{swap(m0, l2)}, m0)}{}
+ir-> block{let m0 = 5}{
+    (
+        block{let (r1, l2) = inc(m0)}{r1}{swap(m0, l2)}, m0
+    )
+}{}
 
 {
     let m = (1, 5)
@@ -465,7 +469,13 @@ ir-> block{
 
 ir-> block{
     let x0 = [1, 2, 3];
-    let _ = block{let (t1, c2) = (match x0 {[h3, ..._4] -> (h3, (back5)=>block{swap(h3, back5)}{[h3, ..._4]}{})})}{swap(t1, 5)}{swap(x0, c2(t1))}
+    let _ = block{
+        let (t1, c2) = (
+            match x0 {
+                [h3, ..._4] -> (h3, (back5)=>block{swap(h3, back5)}{[h3, ..._4]}{})
+            }
+        )
+    }{swap(t1, 5)}{swap(x0, c2(t1))}
 }{x0}{}
 
 {
@@ -478,7 +488,15 @@ ir-> block{
 [1, 4]
 
 ir-> block{
-    let snd0 = (x6)=>block{let (t7, c8) = (match x6 {[_9, h10, ..._11] -> (h10, (back12)=>block{swap(h10, back12)}{[_9, h10, ..._11]}{})})}{
+    let snd0 = (x6)=>block{
+        let (t7, c8) = (
+            match x6 {
+                [_9, h10, ..._11] -> (
+                    h10, (back12)=>block{swap(h10, back12)}{[_9, h10, ..._11]}{}
+                )
+            }
+        )
+    }{
         (
             t7, (back13)=>block{
                 swap(t7, back13);

@@ -65,7 +65,7 @@ const fail = (msg: string) => {
 export const stringify = (node: Node): string => {
     if (node.type === 'wrapper') {
         let child = node.child ? stringify(node.child) : '';
-        if (child.includes('\n')) {
+        if (child.includes('\n') || child.length > 50) {
             child = '\n    ' + child.replace(/\n/g, '\n    ') + '\n';
         }
         return `${node.kind}${child}${closer[node.kind]}`;
