@@ -260,7 +260,7 @@ ir-> block{
     let x0 = 2;
     let _ = block{
         let t2 = 10;
-        let c3 = (b4)=>log(b4);
+        let c3 = (b4)=>(log(b4));
         let y1 = t2;
         let _ = swap(y1, swap(x0, y1))
     }{log("before")}{
@@ -336,7 +336,7 @@ ir-> block{
 [4, 5]
 
 ir-> block{
-    let fst20 = ((a6, b7))=>(a6, (back8)=>block{swap(a6, back8)}{(a6, b7)}{});
+    let fst20 = ((a6, b7))=>(a6, (back8)=>(block{swap(a6, back8)}{(a6, b7)}{}));
     let m1 = (3, 5);
     let _ = block{
         let (t2, c3) = fst20(m1);
@@ -357,14 +357,18 @@ ir-> block{
 [[4, 5], 6]
 
 ir-> block{
-    let fst20 = ((a6, b7))=>block{let (t8, c9) = fst(a6)}{
-        (
-            t8, (back10)=>block{
-                swap(t8, back10);
-                swap(a6, c9(t8))
-            }{(a6, b7)}{}
-        )
-    }{};
+    let fst20 = ((a6, b7))=>(
+        block{let (t8, c9) = fst(a6)}{
+            (
+                t8, (back10)=>(
+                    block{
+                        swap(t8, back10);
+                        swap(a6, c9(t8))
+                    }{(a6, b7)}{}
+                )
+            )
+        }{}
+    );
     let m1 = ((3, 5), 6);
     let _ = block{
         let (t2, c3) = fst20(m1);
@@ -465,7 +469,7 @@ ir-> block{
 
 ir-> block{
     let x0 = [1, 2, 3];
-    let _ = block{let (t1, c2) = (match x0 {[h3, ..._4] -> (h3, (back5)=>block{swap(h3, back5)}{[h3, ..._4]}{})})}{swap(t1, 5)}{swap(x0, c2(t1))}
+    let _ = block{let (t1, c2) = (match x0 {[h3, ..._4] -> (h3, (back5)=>(block{swap(h3, back5)}{[h3, ..._4]}{}))})}{swap(t1, 5)}{swap(x0, c2(t1))}
 }{x0}{}
 
 {
@@ -478,14 +482,18 @@ ir-> block{
 [1, 4]
 
 ir-> block{
-    let snd0 = (x6)=>block{let (t7, c8) = (match x6 {[_9, h10, ..._11] -> (h10, (back12)=>block{swap(h10, back12)}{[_9, h10, ..._11]}{})})}{
-        (
-            t7, (back13)=>block{
-                swap(t7, back13);
-                swap(x6, c8(t7))
-            }{x6}{}
-        )
-    }{};
+    let snd0 = (x6)=>(
+        block{let (t7, c8) = (match x6 {[_9, h10, ..._11] -> (h10, (back12)=>(block{swap(h10, back12)}{[_9, h10, ..._11]}{}))})}{
+            (
+                t7, (back13)=>(
+                    block{
+                        swap(t7, back13);
+                        swap(x6, c8(t7))
+                    }{x6}{}
+                )
+            )
+        }{}
+    );
     let x1 = [1, 3];
     let _ = block{
         let (t2, c3) = snd0(x1);
@@ -546,35 +554,39 @@ fn head(~x) ~{
     }
 }
 
-ir-> (x0)=>block{
-    let (t1, c2) = (
-        match x0 {
-            [h3, ...rest4] -> (
-                Some(h3), (opt5)=>(
-                    match opt5 {
-                        None() -> []
-                        Some(h6) -> [h6, ...rest4]
-                    }
+ir-> (x0)=>(
+    block{
+        let (t1, c2) = (
+            match x0 {
+                [h3, ...rest4] -> (
+                    Some(h3), (opt5)=>(
+                        match opt5 {
+                            None() -> []
+                            Some(h6) -> [h6, ...rest4]
+                        }
+                    )
                 )
-            )
-            h7 -> (
-                None(), (opt8)=>(
-                    match opt8 {
-                        None() -> h7
-                        Some(h9) -> [h9]
-                    }
+                h7 -> (
+                    None(), (opt8)=>(
+                        match opt8 {
+                            None() -> h7
+                            Some(h9) -> [h9]
+                        }
+                    )
                 )
+            }
+        )
+    }{
+        (
+            t1, (back10)=>(
+                block{
+                    swap(t1, back10);
+                    swap(x0, c2(t1))
+                }{x0}{}
             )
-        }
-    )
-}{
-    (
-        t1, (back10)=>block{
-            swap(t1, back10);
-            swap(x0, c2(t1))
-        }{x0}{}
-    )
-}{}
+        )
+    }{}
+)
 
 fn apply(f, ~x) {
     match ~x {
@@ -616,35 +628,39 @@ fn head(~x) ~{
     }
 }
 
-ir-> (x0)=>block{
-    let (t1, c2) = (
-        match x0 {
-            [h3, ...rest4] -> (
-                Some(h3), (opt5)=>(
-                    match opt5 {
-                        None() -> rest4
-                        Some(h6) -> [h6, ...rest4]
-                    }
+ir-> (x0)=>(
+    block{
+        let (t1, c2) = (
+            match x0 {
+                [h3, ...rest4] -> (
+                    Some(h3), (opt5)=>(
+                        match opt5 {
+                            None() -> rest4
+                            Some(h6) -> [h6, ...rest4]
+                        }
+                    )
                 )
-            )
-            [] -> (
-                None(), (opt7)=>(
-                    match opt7 {
-                        None() -> []
-                        Some(h8) -> [h8]
-                    }
+                [] -> (
+                    None(), (opt7)=>(
+                        match opt7 {
+                            None() -> []
+                            Some(h8) -> [h8]
+                        }
+                    )
                 )
+            }
+        )
+    }{
+        (
+            t1, (back9)=>(
+                block{
+                    swap(t1, back9);
+                    swap(x0, c2(t1))
+                }{x0}{}
             )
-        }
-    )
-}{
-    (
-        t1, (back9)=>block{
-            swap(t1, back9);
-            swap(x0, c2(t1))
-        }{x0}{}
-    )
-}{}
+        )
+    }{}
+)
 
 fn leftShifted(~x) ~(@(x + 2, fn (x) {x - 2}))
 
@@ -657,18 +673,22 @@ fn f(side, ~(a, b)) ~(
     }
 )
 
-ir-> (side0, (a1, b2))=>block{
-    let (t3, c4) = (
-        match side0 {
-            Left() -> (a1, (back5)=>block{swap(a1, back5)}{Left()}{})
-            Right() -> (b2, (back6)=>block{swap(b2, back6)}{Right()}{})
-        }
-    )
-}{
-    (
-        t3, (back7)=>block{
-            swap(t3, back7);
-            swap(_, c4(t3))
-        }{(a1, b2)}{}
-    )
-}{}
+ir-> (side0, (a1, b2))=>(
+    block{
+        let (t3, c4) = (
+            match side0 {
+                Left() -> (a1, (back5)=>(block{swap(a1, back5)}{Left()}{}))
+                Right() -> (b2, (back6)=>(block{swap(b2, back6)}{Right()}{}))
+            }
+        )
+    }{
+        (
+            t3, (back7)=>(
+                block{
+                    swap(t3, back7);
+                    swap(_, c4(t3))
+                }{(a1, b2)}{}
+            )
+        )
+    }{}
+)
