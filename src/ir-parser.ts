@@ -12,7 +12,7 @@ import {
     manyItems,
     rest,
 } from './grammar-lexer.ts';
-import { Expr, Stmt, Patd, Swap, Idd } from './ast.ts';
+import { Expr, Stmt, Patd, Swap, Idd } from './expr1.ts';
 
 export const grammar = new Grammar({});
 

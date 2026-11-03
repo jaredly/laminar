@@ -1,4 +1,5 @@
-import { Expr, Pat, Stmt } from './ast.ts';
+import { Pat } from './ast.ts';
+import { Expr, Stmt } from './expr1.ts';
 
 /*
 

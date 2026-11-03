@@ -1,0 +1,44 @@
+
+{
+    let x = (2, (3, 4))
+    snd(~snd(x)) := 2
+    snd(x) := 2
+}
+
+let addStack = () => {
+    let i = _global_stack.length
+    _global_stack.push({})
+    i
+}
+
+type Ptr = {stack: number, name: string, path: number[]}
+
+let set = (ptr, value) => {
+    let target = _global_stack[ptr.stack][ptr.name]
+    if (!ptr.path.length) {
+        _global_stack[ptr.stack][ptr.name] = value
+        target
+    } else {
+        let target = _global_stack[ptr.stack][ptr.name]
+        for (let i=0; i<path.length - 1; i++) {
+            target = target[path[i]]
+        }
+        let current = target[path[path.length - 1]]
+        target[path[path.length - 1]] = value
+        current
+    }
+}
+
+let get = (ptr) => {
+    set(ptr, deleted)
+}
+
+{
+    let stack = addStack()
+    let x = {stack, name: "x"}
+    set(x, (2, (3, 4)))
+}
+
+{
+    // hmmmmm
+}

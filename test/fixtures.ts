@@ -2,7 +2,8 @@ import { readFileSync, openSync, writeFileSync, readSync, closeSync, existsSync 
 import { compact, defaultConfig, locLines, readFile, readLines, stringify } from '../src/lexer.ts';
 import { grammar } from '../src/laminar-parser.ts';
 import { grammar as ir } from '../src/ir-parser.ts';
-import { Decl, Expr, File, FileItem, Linear } from '../src/ast.ts';
+import { Decl, File, FileItem, Linear } from '../src/ast.ts';
+import { Expr } from '../src/expr1.ts';
 import { showFailure, findDeepest, showDeepest } from '../src/debugFailures.ts';
 import * as g from '../src/grammar-lexer.ts';
 import { lexpr, linearToExpr } from '../src/decompose.ts';

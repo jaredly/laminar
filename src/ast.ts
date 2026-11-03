@@ -1,15 +1,6 @@
-export type Id = { type: 'id'; text: string; loc: Loc };
+// import { Patd } from './expr1.ts';
 
-// pat w/ debruijn
-export type Patd =
-    | Idd
-    | { type: 'bool'; value: boolean; loc: Loc }
-    | { type: 'number'; value: number; loc: Loc }
-    | { type: 'drop'; id: number | null; loc: Loc }
-    | { type: 'tuple'; items: Patd[]; loc: Loc }
-    | { type: 'string'; text: string; loc: Loc }
-    | { type: 'constructor'; name: string; args: Patd[]; loc: Loc };
-// NOTE: No lenses
+export type Id = { type: 'id'; text: string; loc: Loc };
 
 export type Pat =
     | Id
@@ -84,36 +75,6 @@ export type Linear =
     | { type: 'tuple'; items: Linear[]; loc: Loc }
     | { type: 'constructor'; name: string; args: Linear[]; loc: Loc }
     | { type: 'case'; value: Term; cases: { pat: Pat; body: Linear }[]; loc: Loc };
-
-export type Stmt = Expr | { type: 'let'; pat: Patd; value: Expr; loc: Loc };
-// | { type: 'expr'; expr: Expr }
-// | { type: 'block'; items: Stmt[] }
-// | { type: 'return'; value: Expr; loc: Loc };
-
-export type Idd = { type: 'idd'; text: string; id: number; loc: Loc };
-
-export type Swap = { type: 'swap'; pat: Patd; value: Expr; loc: Loc };
-export type Expr =
-    | Idd
-    | Swap
-    | { type: 'block'; block: Stmt[]; result: Expr; cleanup: Swap[]; loc: Loc }
-    | { type: 'const'; value: number | boolean | null; loc: Loc }
-    | {
-          type: 'string';
-          head: string;
-          interp: { value: Expr; tail: string }[];
-          loc: Loc;
-      }
-    | {
-          type: 'fn';
-          args: Patd[];
-          body: Expr;
-          loc: Loc;
-      }
-    | { type: 'apply'; fn: Expr; args: Expr[]; loc: Loc }
-    | { type: 'tuple'; items: Expr[]; loc: Loc }
-    | { type: 'constructor'; name: string; args: Expr[]; loc: Loc }
-    | { type: 'case'; value: Expr; cases: { pat: Patd; body: Expr }[]; loc: Loc };
 
 export const names = (pat: Pat): string[] => {
     switch (pat.type) {
@@ -200,18 +161,5 @@ export const free = (expr: Term | Lens): string[] => {
         case 'assign': {
             return free(expr.value).concat(free(expr.lens));
         }
-    }
-};
-
-export const patdBinds = (pat: Patd) => {
-    switch (pat.type) {
-        case 'idd':
-            return true;
-        case 'drop':
-            return false;
-        case 'tuple':
-            return pat.items.some(patdBinds);
-        case 'constructor':
-            return pat.args.some(patdBinds);
     }
 };

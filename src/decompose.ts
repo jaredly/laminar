@@ -77,22 +77,8 @@ we can replace all of the lenses with, like, lambda functions. right?
 
 */
 
-import { subscribe } from 'diagnostics_channel';
-import {
-    Expr,
-    FnArg,
-    Idd,
-    Lens,
-    Linear,
-    Loc,
-    Pat,
-    Patd,
-    patdBinds,
-    Stmt,
-    Swap,
-    Term,
-    Type,
-} from './ast.ts';
+import { Lens, Linear, Pat } from './ast.ts';
+import { Expr, Idd, Patd, Stmt, Swap } from './expr1.ts';
 import { Node } from './lexer.ts';
 
 type Ctx = { scope: Record<string, number>; counter: { current: number } };
@@ -103,8 +89,6 @@ export const sstmt = (stmt: Stmt): string => {
     switch (stmt.type) {
         case 'let':
             return `let ${spat(stmt.pat)} = ${sexpr(stmt.value)}`;
-        // case 'return':
-        //     return `return ${sexpr(stmt.value)}`;
         default:
             return sexpr(stmt);
     }
@@ -308,6 +292,8 @@ export const sexpr = (expr: Expr): string => {
                     .join(', ')}]`;
             return `${expr.name}(${expr.args.map(sexpr).join(',')})`;
         }
+        case 'addr':
+            return `&${sexpr(expr.inner)}`;
         case 'string':
             return `"${expr.head}${expr.interp.map((i) => '${' + sexpr(i.value) + '}' + i.tail).join('')}"`;
         case 'idd':
@@ -860,7 +846,7 @@ export const lensToExpr = (ctx: Ctx, lens: Lens, inner: (name: Patd) => Expr): E
                                                       loc: lens.loc,
                                                   }
                                                 : lensToExpr(sub, body, (bpat): Expr => {
-                                                      const hasBindings = patdBinds(bpat);
+                                                      // const hasBindings = patdBinds(bpat);
                                                       const id = ctx.counter.current++;
                                                       return {
                                                           type: 'tuple',

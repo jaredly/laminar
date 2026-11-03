@@ -205,6 +205,231 @@ ir-> block{
     }
 }{(a0, b1)}{}
 
+// Ok so,
+// ~(a, b) is of type (A,B)/(A',B')
+// sets(x: M/(int,int)): M
+//
+// if .... x is a ptr ...
+// so, x could be a simple ptr,
+// in which case the contents would be written
+// as a tuple
+// BUT it could be a compound tuple ptr
+// in which case the contents would be written
+// piecewise.
+//
+// is that a problem?
+// like am I setting myself up for weird fragility?
+//
+// anyway, ~(a,b) needs to turn into something like (&a, &b)
+// and then a call to `get(x)` will see the tuple, unpack it, and follow the pointers
+// (in a c-targetting impl, we'd monomorphise everything, so we can do more direct assignment)
+//
+// In this system, the only 'cleanup' that needs to happen is actual destructors.
+// that feels very nice.
+//
+// let m = ~(x, y)
+// becomes
+// m = (&x, &y)
+//
+// ok but what about
+// let m = ~fst(~x)
+//
+// oooh wait
+//
+// let x = (1, 2)
+// puts (1, 2) in a single slot
+// but then doing fst(~x) ends up... hmm.
+// I guess we'd do {...x, path: [...x.path, 0]}
+// like if x is a tuple of (&a, &b) then we grab &a,
+// otherwise we just make the ptr a sub-item.
+// Ok that seems like it would work.
+//
+// first of all fst(~x) becomes fst(&x)
+// and then fst returns [ptr, destructor?]
+// wher destructor is optional
+//
+// fn fst(~(a, b)) ~a
+// becomes
+// fn fst(tmp) {
+//  point((a0, b0), tmp)
+//  (a0, ())
+// }
+//
+// SO does this preclude @manual lenses?
+// I think it might not.
+//
+// let x = ~fst(~y)
+// 10
+//
+// becomes
+// {
+//  let (t1, c2) = &fst(&y)
+//  point(x, t1)
+//  10
+// }{swap(y, c2(t1))} // this is the same as usual
+//
+/*
+ok so question: would it make sense to just do a single pass,
+evalute while decomposing?
+answer: using an IR makes it easier to debug things.
+and makes it more likely that I can turn it into C.
+which would be fun.
+
+ok so also ... what do we think about doing type inference
+post decomposition? is that a good idea?
+
+
+so
+
+let pat = &id
+
+let (a, b) = &apply(&arg) -> we've got something special going on here.
+Should we instead have some kind of fat pointer?
+like a gets set to a pointer normally, but there's a 'drop()' fn on it or something?
+so we got
+
+{
+   let x = &fst(&y)
+   10
+}{drop(&x)} // this is the same as usual
+
+so type Ptr = {stack: number, name: string, path: number[], drop?: () => void}
+
+and
+
+let y = ~{
+    lens x <- 10
+    log(x)
+}
+
+becomes
+
+let y = &lens(10, fn(x) {
+    log(x)
+})
+
+and
+function lens(value, drop): Ptr {
+    let stack = newstack()
+    _global_stack[stack].lens = value
+    return {stack, name: "lens", drop: () => {
+        drop(_global_stack[stack].lens)
+    }}
+}
+
+yeah that sounds right.
+ALSO
+
+function drop(ptr) {
+    if (ptr.drop) ptr.drop()
+}
+
+AND now for manual
+
+@(A, fn(b) { C })
+
+becomes
+
+manual(ptr, A, fn(b) { C })
+
+where
+
+function manual(ptr, front, back) {
+    let stack = newstack()
+    _global_stack[stack].manual = front
+    return {stack, name: 'manual', drop: () => {
+        swap(ptr, back(_global_stack[stack].manual))
+    }}
+}
+
+
+hmmmm... I find myself unsatisfied with putting drop on the ptr.
+because, it's not actually needed to be on there.
+it doesn't need to go everywhere the ptr goes.
+it's scoped to a given scope, after all.
+
+so from that angle, it makes sense for the fncall to return a tuple
+that lives in normal space.
+
+HOWEVER. It also now makes sense for some vbls to be ... different.
+like, we should have a two tiered system. Normal vbls and managed vbls.
+Like the (t1, c1) returned from a lens fn don't need to go on the stack,
+they're generated vbls that don't have the option of lens shenanigans happening to them.
+Also, when we have a vbl that doesn't do anything lensy, we can call it normal.
+and not do anything special with it.
+a bit of local inference for simplification.
+BUT also, we could say "everything is handled uniformly", and then we do an
+optimization pass on the backend to simplify vbls that don't need lens madness.
+that feels simpler tbh.
+
+{
+    let x = ~fst(~y)
+    10
+}
+
+->
+
+{
+   let (x, dropx) = &fst(&y)
+   10
+}{dropx?())}
+
+does that work?
+yeah seems like it probably does.
+
+
+
+
+
+{
+    let x = 2
+    {
+        let y = ~{
+            lens b <- 10
+            log(b)
+        }
+        y := x := y
+        log("before")
+    }
+    log("after")
+    (x, logs())
+}
+
+[10, ["before", 2, "after"]]
+
+ir-> block{
+    let x0 = 2;
+    let _ = block{
+        let t2 = 10;
+        let c3 = (b4)=>log(b4);
+        let y1 = t2;
+        let _ = swap(y1, swap(x0, y1))
+    }{log("before")}{
+        swap(t2, y1);
+        swap((), c3(t2))
+    };
+    let _ = log("after")
+}{(x0, logs())}{}
+
+
+*/
+{
+    fn sets(~x) {x := (5, 6)}
+    let a = 1
+    let b = 2
+    sets(~(a, b))
+    (a, b)
+}
+
+(5, 6)
+
+ir-> block{
+    let sets0 = (x5)=>(swap(x5, (5, 6)), x5);
+    let a1 = 1;
+    let b2 = 2;
+    let _ = block{let (r3, l4) = sets0((a1, b2))}{r3}{swap((a1, b2), l4)}
+}{(a1, b2)}{}
+
 {
     let x = 1
     let y = 2

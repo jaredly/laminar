@@ -1,4 +1,16 @@
 
+Ok so.
+I could really write a blog post about the runtime characteristics.
+BUT ALSO
+I could make a version of decompose + eval that are more pointer-based
+because that sounds rad
+I would want to set it up in such a way that I could feasibly like use
+a flat array instead of nested lookups. that would be so cool.
+not sure if that's possible though. or how much clairvoyance that
+would require.
+
+---
+
 Guess my number, lookin rad.
 -> I really need record syntax
 -> it would be really cool if (~state) -> print(!state.name) worked, where attribute access does an instaborrow.

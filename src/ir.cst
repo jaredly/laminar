@@ -2,6 +2,7 @@ Expr {
     id:Idd -> id
     id:id -> ({type: "idd", text: id.text, id: -1, loc: id.loc})
     id:op -> ({type: "idd", text: id.text, id: -1, loc: id.loc})
+    ["" "&" ...inner:*Expr] -> ({type:"addr", inner, loc: node.loc})
     swap:Swap -> swap
     ["" "block" ["{;" ...block:Stmt] ["{" result:Expr] ["{;" ...cleanup:Swap]] -> ({type: "block", block, cleanup, result, loc: node.loc})
     ["" "block" ["{\n" ...block:Stmt] ["{" result:Expr] ["{;" ...cleanup:Swap]] -> ({type: "block", block, cleanup, result, loc: node.loc})

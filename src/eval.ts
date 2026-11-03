@@ -1,5 +1,14 @@
-import { Expr, Patd, Stmt } from './ast.ts';
+import { Expr, Patd, Stmt } from './expr1.ts';
 import { sexpr, spat, unwrap } from './decompose.ts';
+
+/**
+ * This runtime is for the decomposed `Expr` intermediate representation.
+ * It is relatively close to the translation of the paper, and so is
+ * good for debugging and ensuring logical alignment. However, it's not
+ * great for performance, as it does quite a bit of extra bookkeeping.
+ * This runtime maintains linearity, where a given value is accessed only
+ * once.
+ */
 
 export type Ctx = { scopes: Record<string, any>[]; builtins: Record<string, any> };
 
@@ -247,6 +256,8 @@ export const returnValueDelayedConsumption = (expr: Expr): string[] => {
     switch (expr.type) {
         case 'string':
             return expr.interp.flatMap((i) => returnValueDelayedConsumption(i.value));
+        case 'addr':
+            throw new Error('addr not here');
         case 'tuple':
             return expr.items.flatMap(returnValueDelayedConsumption);
         case 'case':
