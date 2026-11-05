@@ -377,6 +377,65 @@ that feels simpler tbh.
 does that work?
 yeah seems like it probably does.
 
+hmmmmmm.
+So part of me wants to just say
+if there's a `let x = &fn()` then we
+automatically do a defer. So it's not
+represented syntactically in the IR.
+and then if we have a `let x = ~{ lens b <-c ... }`
+we drop that deferred thing at the end of the block.
+
+BUT
+ok this feels like making the IR too complicated.
+
+Here's what I think.
+the IR needs two types of vbls.
+One is a plain/direct vbl, which we use for tmps,
+and one is for normal / lensable / pointer vbls.
+
+So like
+
+{
+    let x = 2
+    x := 3
+    x
+}
+
+let *x1 = 2
+*x1 = 3
+*x1
+
+does that do the trick?
+hmmm.
+
+{
+    let x = ~fst(~y)
+    let n = x := 2
+    (n := 4) + n
+}
+
+{
+    {n3}
+    let (t1, r2) = fst(&y)
+    let x2 = &t1
+    let n3 = swap(x2, 2)
+    swap(n3, 4) + n3
+}{n3}{r2(t1)}
+
+OK SO this could be interesting.
+We could do /detection/ on variables, to see which ones
+need to be handled special (like pointers) and which
+ones can be normal.
+That's actually kinda nice.
+
+&x -> x is a pointer, and we're using the pointer
+x -> if x is a pointer, get&consume the value
+x -> if x is not a pointer, just ... use it?
+
+
+
+
+
 
 
 
