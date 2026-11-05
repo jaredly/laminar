@@ -63,7 +63,12 @@ grammar.add('FileItem', [
 function pcons(items: Pat[], loc: number) {
     let last = items[items.length - 1];
     for (let i = items.length - 2; i >= 0; i--) {
-        last = { type: 'constructor', name: 'cons', args: [items[i], last], loc };
+        last = {
+            type: 'constructor',
+            name: 'cons',
+            args: [items[i], last],
+            loc,
+        };
     }
     return last;
 }
@@ -71,7 +76,12 @@ function pcons(items: Pat[], loc: number) {
 function econs(items: Linear[], loc: number) {
     let last = items[items.length - 1];
     for (let i = items.length - 2; i >= 0; i--) {
-        last = { type: 'constructor', name: 'cons', args: [items[i], last], loc };
+        last = {
+            type: 'constructor',
+            name: 'cons',
+            args: [items[i], last],
+            loc,
+        };
     }
     return last;
 }
@@ -156,7 +166,15 @@ grammar.add('Pat', [
         wrapper('[', list(',', many('items', 'Pat'))),
         ({ items, node }: { items: Pat[]; node: Node }): Pat =>
             pcons(
-                [...items, { type: 'constructor', name: 'nil', args: [], loc: node.loc }],
+                [
+                    ...items,
+                    {
+                        type: 'constructor',
+                        name: 'nil',
+                        args: [],
+                        loc: node.loc,
+                    },
+                ],
                 node.loc,
             ),
     ),
@@ -176,9 +194,9 @@ grammar.add('Pat', [
         loc: node.loc,
     })),
     // Pat:15
-    option(list(undefined), ({ node }: { node: Node }): Pat => ({
+    option(list('"'), ({ node }: { node: Node }): Pat => ({
         type: 'string',
-        text: null,
+        text: '',
         loc: node.loc,
     })),
     // Pat:16
@@ -546,7 +564,15 @@ grammar.add('Linear', [
         wrapper('[', list(',', many('items', 'Linear'))),
         ({ items, node }: { items: Linear[]; node: Node }): Linear =>
             econs(
-                [...items, { type: 'constructor', name: 'nil', args: [], loc: node.loc }],
+                [
+                    ...items,
+                    {
+                        type: 'constructor',
+                        name: 'nil',
+                        args: [],
+                        loc: node.loc,
+                    },
+                ],
                 node.loc,
             ),
     ),
@@ -583,7 +609,14 @@ grammar.add('Linear', [
             ann: Type;
             body: Term;
             node: Node;
-        }): Linear => ({ type: 'fn', name: name.text, args, ann, body, loc: node.loc }),
+        }): Linear => ({
+            type: 'fn',
+            name: name.text,
+            args,
+            ann,
+            body,
+            loc: node.loc,
+        }),
     ),
     // Linear:21
     option(
@@ -603,7 +636,13 @@ grammar.add('Linear', [
             args: FnArg[];
             body: Term;
             node: Node;
-        }): Linear => ({ type: 'fn', name: name.text, args, body, loc: node.loc }),
+        }): Linear => ({
+            type: 'fn',
+            name: name.text,
+            args,
+            body,
+            loc: node.loc,
+        }),
     ),
     // Linear:22
     option(
@@ -760,7 +799,12 @@ function handleSuffixes(head: Linear, suffixes: LinearOps[]): Linear {
     return suffixes.reduce((head, suffix): Linear => {
         switch (suffix.type) {
             case 'apply':
-                return { type: 'apply', fn: head, args: suffix.args, loc: head.loc };
+                return {
+                    type: 'apply',
+                    fn: head,
+                    args: suffix.args,
+                    loc: head.loc,
+                };
         }
         throw new Error('bad suffix' + JSON.stringify(suffix));
     }, head);

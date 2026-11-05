@@ -171,7 +171,11 @@ function parseList(kind: Id, items: Pat[]): Pat {
         return {
             type: 'wrapper',
             kind: { ...kind, text: kind.text[0] },
-            child: { type: 'list', kind: { ...kind, text: kind.text[1] }, items },
+            child: {
+                type: 'list',
+                kind: { ...kind, text: kind.text[1] },
+                items,
+            },
         };
     }
     return { type: 'list', kind, items };
@@ -219,18 +223,13 @@ grammar.add('Pat', [
     // Pat:6
     option(
         wrapper('[', list('"', b('kind', 'WrapperKind'))),
-        ({ kind, node }: { kind: Id; node: Node }): Pat => ({
-            type: 'wrapper',
-            kind,
-            loc: node.loc,
-        }),
+        ({ kind, node }: { kind: Id; node: Node }): Pat => ({ type: 'wrapper', kind }),
     ),
     // Pat:7
     option(wrapper('[', list('"', lit('"'))), ({ node }: { node: Node }): Pat => ({
         type: 'list',
-        kind: '"',
+        kind: { type: 'id', text: '"', loc: node.loc },
         items: [],
-        loc: node.loc,
     })),
     // Pat:8
     option(
