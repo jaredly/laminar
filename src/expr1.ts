@@ -17,7 +17,7 @@ export type Swap = { type: 'swap'; pat: Patd; value: Expr; loc: Loc };
 export type Expr =
     | Idd
     | Swap
-    | { type: 'addr'; inner: Expr; loc: Loc }
+    // | { type: 'addr'; inner: Expr; loc: Loc }
     | { type: 'block'; block: Stmt[]; result: Expr; cleanup: Swap[]; loc: Loc }
     | { type: 'const'; value: number | boolean | null; loc: Loc }
     | {

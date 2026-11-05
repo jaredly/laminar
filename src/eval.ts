@@ -256,8 +256,8 @@ export const returnValueDelayedConsumption = (expr: Expr): string[] => {
     switch (expr.type) {
         case 'string':
             return expr.interp.flatMap((i) => returnValueDelayedConsumption(i.value));
-        case 'addr':
-            throw new Error('addr not here');
+        // case 'addr':
+        //     throw new Error('addr not here');
         case 'tuple':
             return expr.items.flatMap(returnValueDelayedConsumption);
         case 'case':

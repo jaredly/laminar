@@ -292,8 +292,8 @@ export const sexpr = (expr: Expr): string => {
                     .join(', ')}]`;
             return `${expr.name}(${expr.args.map(sexpr).join(',')})`;
         }
-        case 'addr':
-            return `&${sexpr(expr.inner)}`;
+        // case 'addr':
+        //     return `&${sexpr(expr.inner)}`;
         case 'string':
             return `"${expr.head}${expr.interp.map((i) => '${' + sexpr(i.value) + '}' + i.tail).join('')}"`;
         case 'idd':
