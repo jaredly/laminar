@@ -1,6 +1,6 @@
 # Plan: typed lowering, representation specialization, and C/Wasm code generation
 
-Status: proposed implementation plan, 2026-11-17. This document plans the work; it does not implement a backend. Each phase should be independently reviewable and leave the existing checked and unchecked execution paths working.
+Status: implementation started, 2026-11-17. The phase-0 contracts/acceptance corpus and phase-1 durable elaboration are implemented; phases 2–8 remain. C/Wasm emission is not implemented yet. See [the implementation record](backend-progress.md) and [backend contract](backend-contract.md). Each phase should be independently reviewable and leave the existing checked and unchecked execution paths working.
 
 ## Outcome and scope
 
@@ -60,7 +60,7 @@ Use exact typed indirect-call signatures for closures and restoration adapters. 
 
 Separate the internal specialized ABI from the host interface. Export deliberate scalar operations, buffers with lengths, and opaque owned handles. Specify allocation, disposal, ownership transfer, and whether imports may reenter the module. Initially keep borrowed lenses internal; do not expose a borrow that can survive a host call or outlive its storage. A stable host ABI is not a memory dump of target-dependent internal structs. Host bindings must refresh memory views when the chosen runtime requires it after memory growth.
 
-Choose one executable Wasm profile in phase 0. Recommended for the first automated smoke test: wasm32 with a pinned [WASI SDK](https://github.com/WebAssembly/wasi-sdk) and a compatible pinned runtime. Record the actual supported WASI ABI/profile rather than assuming all WASI versions are interchangeable. For browser deployment, add an [Emscripten](https://emscripten.org/docs/compiling/Building-Projects.html) or explicit JavaScript-import profile. These share source semantics but have distinct platform adapters. Do not require both profiles for the first milestone.
+Choose one executable Wasm profile in phase 0. Implementation decision: the initial profile is Emscripten/Node, based on the available toolchain, as recorded in [the backend contract](backend-contract.md#initial-target-profiles). The original recommendation was: wasm32 with a pinned [WASI SDK](https://github.com/WebAssembly/wasi-sdk) and a compatible pinned runtime. Record the actual supported WASI ABI/profile rather than assuming all WASI versions are interchangeable. For browser deployment, add an [Emscripten](https://emscripten.org/docs/compiling/Building-Projects.html) or explicit JavaScript-import profile. These share source semantics but have distinct platform adapters. Do not require both profiles for the first milestone.
 
 Printing, files, clocks, allocation, and traps belong to explicit runtime interfaces. The core language runtime should not assume POSIX access or browser globals. Wasm testing complements native warning/sanitizer builds; passing Wasm validation alone does not establish memory or ownership safety.
 

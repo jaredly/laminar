@@ -1,3 +1,10 @@
+import {
+    ElaborationBuilder,
+    type Elaboration,
+    type ElaborationContext,
+    type BindingRecord,
+    type RawState,
+} from './elaborated.ts';
 import { captureUses } from './captures.ts';
 import { names, type Linear, type Lens, type Pat, type Term, type Type, type Decl } from './ast.ts';
 import {
@@ -10,14 +17,15 @@ import {
     flow,
     mono,
     mapFlow,
+    mapType,
     type Ty,
     type FlowTy,
     type Scheme,
 } from './types.ts';
 
-type Borrow = { path: number[]; parent?: Borrow };
-type Root = { type: Ty; empty: number[][]; borrows: Set<Borrow> };
-type Binding = { root: Root; path: number[]; scheme?: Scheme; permit?: Borrow };
+type Borrow = { path: number[]; parent?: Borrow; id: string };
+type Root = { place?: string; type: Ty; empty: number[][]; borrows: Set<Borrow> };
+type Binding = { id?: string; root: Root; path: number[]; scheme?: Scheme; permit?: Borrow };
 type Env = Map<string, Binding>;
 type View = { read: Ty; put: (type: Ty) => void; targets: Binding[] };
 export type TypeEnvironment = ReadonlyMap<string, Scheme>;
@@ -25,21 +33,27 @@ export type Inference = {
     type: Ty;
     scheme: Scheme;
     types: ReadonlyMap<object, FlowTy>;
-    bindings: ReadonlyMap<object, object>;
+    bindings: ReadonlyMap<object, BindingRecord>;
+    elaboration: Elaboration;
 };
 
 /** One solver per checked expression/definition; environments contain finalized schemes. */
 export class Inferencer {
     readonly solver = new Solver();
     private types = new Map<object, FlowTy>();
-    private bindings = new Map<object, object>();
+    private bindings = new Map<object, Binding>();
+    private builder: ElaborationBuilder;
+    private current?: object;
+    private globalParameters = new Map<string, { local: number; parameter: string }[]>();
     private constructors: Map<string, Scheme>;
     constructor(
         private globals: TypeEnvironment = new Map(),
         constructors: TypeEnvironment = new Map(),
+        context: ElaborationContext = { id: 'unit/expression' },
     ) {
+        this.builder = new ElaborationBuilder(context);
         // Re-home externally supplied variables so solver IDs never collide.
-        const imports = (table: TypeEnvironment) =>
+        const imports = (table: TypeEnvironment, constructor = false) =>
             new Map(
                 [...table].map(([name, scheme]) => {
                     const source = new Solver();
@@ -55,11 +69,18 @@ export class Inferencer {
                     const quantified = scheme.quantified.map(
                         (id) => (replacements.get(id) as Ty & { tag: 'meta' }).id,
                     );
+                    const definition = constructor
+                        ? `constructor/${name}`
+                        : (context.definitions?.get(name) ?? `native/${name}`);
+                    this.globalParameters.set(
+                        (constructor ? 'constructor:' : 'value:') + name,
+                        quantified.map((local, i) => ({ local, parameter: `${definition}/q${i}` })),
+                    );
                     return [name, { body, quantified }];
                 }),
             );
         this.globals = imports(globals);
-        this.constructors = imports(constructors);
+        this.constructors = imports(constructors, true);
     }
     private replace(t: Ty, vars: Map<number, Ty>): Ty {
         switch (t.tag) {
@@ -83,16 +104,90 @@ export class Inferencer {
     }
     private env(): Env {
         return new Map(
-            [...this.globals].map(([n, s]) => [
-                n,
-                {
-                    root: { type: s.body, empty: [], borrows: new Set<Borrow>() },
-                    path: [],
-                    scheme: s,
-                },
-            ]),
+            [...this.globals].map(([name, scheme]) => {
+                const b = { ...this.freshBinding(scheme.body), scheme };
+                this.declare(
+                    b,
+                    name,
+                    undefined,
+                    'global',
+                    this.builder.context.definitions?.get(name) ?? `native/${name}`,
+                );
+                return [name, b];
+            }),
         );
     }
+    private declare(
+        b: Binding,
+        name: string,
+        node: object | undefined,
+        kind: BindingRecord['kind'],
+        definition?: string,
+    ): void {
+        b.id = this.builder.binding({
+            name,
+            declaration: node ? this.builder.node(node) : undefined,
+            definition,
+            place: b.root.place!,
+            path: [...b.path],
+            kind,
+            borrow: b.permit?.id,
+            initialType: this.get(b, 0),
+        });
+    }
+    private state(root: Root): RawState {
+        return {
+            place: root.place!,
+            type: root.type,
+            empty: root.empty.map((p) => [...p]),
+            borrows: [...root.borrows].map((b) => b.id),
+        };
+    }
+    private states(env: Env): RawState[] {
+        return [...new Set([...env.values()].filter((b) => !b.scheme).map((b) => b.root))]
+            .filter((r) => r.place)
+            .map((r) => this.state(r));
+    }
+    private transition(
+        kind: Elaboration['transitions'][number]['kind'],
+        b: Binding,
+        before: RawState,
+    ): void {
+        if (b.root.place && this.current)
+            this.builder.transitions.push({
+                node: this.builder.node(this.current),
+                kind,
+                path: [...b.path],
+                before,
+                after: this.state(b.root),
+            });
+    }
+    private use(node: object, b: Binding, mode: 'value' | 'lens'): void {
+        this.bindings.set(node, b);
+        this.builder.uses.push({ node: this.builder.node(node), binding: b.id!, mode });
+    }
+    private instantiate(name: string, scheme: Scheme, node: object, constructor = false): Ty {
+        const result = this.solver.instantiateWithArguments(scheme);
+        const recursive = !constructor && name === this.selfName;
+        const parameters = recursive
+            ? []
+            : (this.globalParameters.get((constructor ? 'constructor:' : 'value:') + name) ?? []);
+        this.builder.instantiations.push({
+            node: this.builder.node(node),
+            definition: constructor
+                ? `constructor/${name}`
+                : recursive
+                  ? this.builder.context.id
+                  : (this.builder.context.definitions?.get(name) ?? `native/${name}`),
+            type: result.type,
+            arguments: parameters.map((p) => ({
+                parameter: p.parameter,
+                type: result.arguments.get(p.local)!,
+            })),
+        });
+        return result.type;
+    }
+    private selfName?: string;
     private lookup(env: Env, name: string, loc: number): Binding {
         return env.get(name) ?? this.error('unbound-name', loc, `Unbound name ${name}`);
     }
@@ -129,7 +224,8 @@ export class Inferencer {
         }
         return t;
     }
-    private put(b: Binding, value: Ty, loc: number): void {
+    private put(b: Binding, value: Ty, loc: number, record = true): void {
+        const before = this.state(b.root);
         this.accessible(b, loc);
         if (b.scheme)
             this.error('immutable-definition', loc, 'Reusable definitions cannot be lens targets');
@@ -142,13 +238,16 @@ export class Inferencer {
         };
         b.root.type = update(b.root.type, b.path);
         b.root.empty = b.root.empty.filter((path) => !this.overlaps(path, b.path));
+        if (record) this.transition('write', b, before);
     }
     private consume(b: Binding, loc: number): Ty {
         const type = this.get(b, loc);
         if (!this.available(b))
             this.error('use-after-move', loc, 'Value has already been consumed');
-        this.put(b, tuple(), loc);
+        const before = this.state(b.root);
+        this.put(b, tuple(), loc, false);
         b.root.empty.push(b.path);
+        this.transition('move', b, before);
         return type;
     }
     private restored(b: Binding, loc: number): void {
@@ -161,19 +260,30 @@ export class Inferencer {
             );
     }
     private freshBinding(type: Ty): Binding {
-        return { root: { type, empty: [], borrows: new Set() }, path: [] };
+        return {
+            root: { place: this.builder.place(), type, empty: [], borrows: new Set() },
+            path: [],
+        };
     }
     private record(node: object, t: FlowTy): void {
         this.types.set(node, t);
+        this.builder.record(node, t);
     }
 
     infer(ast: Linear, declaration?: Decl): Inference {
+        const prepared = this.builder.prepare(ast, declaration);
+        ast = prepared.ast;
+        declaration = prepared.declaration;
         const env = this.env();
+        const bodyVariables = new Map<number, Ty>();
         let self: Ty | undefined;
         if (ast.type === 'fn' && ast.name) {
             self = this.solver.fresh();
             // Recursion is reusable at runtime, but monomorphic during inference.
-            env.set(ast.name, { ...this.freshBinding(self), scheme: mono(self) });
+            this.selfName = ast.name;
+            const binding = { ...this.freshBinding(self), scheme: mono(self) };
+            this.declare(binding, ast.name, ast, 'global', this.builder.context.id);
+            env.set(ast.name, binding);
         }
         const type = this.linear(ast, env);
         if (self) this.solver.unify(self, type, ast.loc);
@@ -193,20 +303,47 @@ export class Inferencer {
                     'Definition signature must be a value type',
                 );
             const contract = this.solver.generalize(declared.value, []);
-            this.solver.unify(
-                this.solver.instantiate(scheme),
-                this.solver.instantiate(contract, true),
-                declaration.loc,
+            const inferredInstance = this.solver.instantiateWithArguments(scheme);
+            const contractInstance = this.solver.instantiateWithArguments(contract, true);
+            this.solver.unify(inferredInstance.type, contractInstance.type, declaration.loc);
+            const contractVariables = new Map(
+                [...contractInstance.arguments].map(([id, t]) => [
+                    (t as Ty & { tag: 'rigid' }).id,
+                    { tag: 'meta' as const, id },
+                ]),
             );
+            for (const [id, instance] of inferredInstance.arguments) {
+                bodyVariables.set(
+                    id,
+                    mapType(this.solver.resolve(instance), (t) =>
+                        t.tag === 'rigid' ? contractVariables.get(t.id) : undefined,
+                    ),
+                );
+            }
             scheme = contract;
         }
+        const elaboration = this.builder.finish(
+            ast,
+            declaration,
+            this.solver,
+            scheme,
+            type,
+            bodyVariables,
+        );
+        const bindingRecords = new Map(elaboration.bindings.map((b) => [b.id, b]));
         return {
+            elaboration,
             type: this.solver.resolve(type),
             scheme,
             types: new Map(
                 [...this.types].map(([n, t]) => [n, mapFlow(t, (v) => this.solver.resolve(v))]),
             ),
-            bindings: this.bindings,
+            bindings: new Map(
+                [...this.bindings].map(([node, binding]) => [
+                    node,
+                    bindingRecords.get(binding.id!)!,
+                ]),
+            ),
         };
     }
     private annotation(t: Type, vars: Map<string, Ty>): FlowTy {
@@ -256,7 +393,8 @@ export class Inferencer {
                 if (seen.has(p.text))
                     this.error('duplicate-pattern', p.loc, `Duplicate pattern name ${p.text}`);
                 seen.add(p.text);
-                const b = source ?? this.freshBinding(type);
+                const b = source ? { ...source } : this.freshBinding(type);
+                this.declare(b, p.text, p, source ? 'alias' : 'local');
                 env.set(p.text, b);
                 this.bindings.set(p, b);
                 return;
@@ -292,7 +430,7 @@ export class Inferencer {
                         'Constructor aliases require restoration checking',
                     );
                 const args = p.args.map(() => this.solver.fresh());
-                this.constructorType(p.name, args, type, p.loc);
+                this.constructorType(p.name, args, type, p.loc, p);
                 p.args.forEach((v, i) => this.pattern(v, args[i], env, undefined, seen));
                 return;
             }
@@ -304,24 +442,34 @@ export class Inferencer {
                 );
         }
     }
-    private constructorType(name: string, args: Ty[], result: Ty, loc: number): void {
+    private constructorType(name: string, args: Ty[], result: Ty, loc: number, node: object): void {
         const scheme =
             this.constructors.get(name) ??
             this.error('unknown-constructor', loc, `Unknown constructor ${name}`);
-        this.solver.unify(this.solver.instantiate(scheme), fn(args.map(plain), plain(result)), loc);
+        this.solver.unify(
+            this.instantiate(name, scheme, node, true),
+            fn(args.map(plain), plain(result)),
+            loc,
+        );
     }
     private linear(n: Linear, env: Env): Ty {
-        const t = this.linearInner(n, env);
-        this.record(n, plain(t));
-        return t;
+        const previous = this.current;
+        this.current = n;
+        try {
+            const t = this.linearInner(n, env);
+            this.record(n, plain(t));
+            return t;
+        } finally {
+            this.current = previous;
+        }
     }
     private linearInner(n: Linear, env: Env): Ty {
         switch (n.type) {
             case 'id':
             case 'op': {
                 const b = this.lookup(env, n.text, n.loc);
-                this.bindings.set(n, b);
-                return b.scheme ? this.solver.instantiate(b.scheme) : this.consume(b, n.loc);
+                this.use(n, b, 'value');
+                return b.scheme ? this.instantiate(n.text, b.scheme, n) : this.consume(b, n.loc);
             }
             case 'number':
                 return con('Number');
@@ -337,7 +485,7 @@ export class Inferencer {
             case 'constructor': {
                 const args = n.args.map((v) => this.linear(v, env)),
                     result = this.solver.fresh();
-                this.constructorType(n.name, args, result, n.loc);
+                this.constructorType(n.name, args, result, n.loc, n);
                 return result;
             }
             case 'apply':
@@ -373,6 +521,7 @@ export class Inferencer {
         const { values: captures, lenses: borrowed } = captureUses(n.body, bound);
         const sub = new Map(env),
             vars = new Map<string, Ty>();
+        const captureRoots: Root[] = [];
         for (const name of borrowed) {
             const b = this.lookup(env, name, n.loc);
             if (!b.scheme)
@@ -384,10 +533,24 @@ export class Inferencer {
         }
         for (const name of captures) {
             const b = this.lookup(env, name, n.loc);
-            if (!b.scheme) sub.set(name, this.freshBinding(this.consume(b, n.loc)));
+            if (!b.scheme) {
+                const type = this.consume(b, n.loc),
+                    captured = this.freshBinding(type);
+                this.declare(captured, name, n, 'capture');
+                this.builder.captures.push({
+                    node: this.builder.node(n),
+                    from: b.id!,
+                    to: captured.id!,
+                    type,
+                });
+                sub.set(name, captured);
+                captureRoots.push(captured.root);
+            }
         }
         const exits: { root: Binding; read: Ty; write: Ty }[] = [];
         const seen = new Set<string>();
+        const parameters: string[][] = [],
+            parameterPlaces: string[][] = [];
         const args = n.args.map((a, i): FlowTy => {
             const read = this.solver.fresh();
             let type: FlowTy;
@@ -403,9 +566,25 @@ export class Inferencer {
                 this.pattern(a.pat, read, sub, undefined, seen);
                 type = plain(read);
             }
+            parameters.push(names(a.pat).map((name) => sub.get(name)!.id!));
+            parameterPlaces.push(
+                a.pat.type === 'lens'
+                    ? [exits[exits.length - 1].root.root.place!]
+                    : [...new Set(names(a.pat).map((name) => sub.get(name)!.root.place!))],
+            );
             if (a.typ) this.solver.unifyFlow(type, this.annotation(a.typ, vars), a.pat.loc);
             return type;
         });
+        const parameterIds = new Set(parameters.flat());
+        const functionRoots = [
+            ...new Set([
+                ...captureRoots,
+                ...[...sub.values()].filter((b) => parameterIds.has(b.id!)).map((b) => b.root),
+                ...exits.map((e) => e.root.root),
+            ]),
+        ];
+        const functionEntry = functionRoots.map((r) => this.state(r));
+        const bodyStart = this.builder.transitions.length;
         let result: FlowTy;
         if (n.body.type === 'lens') {
             const view = this.lens(n.body.lens, sub),
@@ -421,6 +600,15 @@ export class Inferencer {
             this.solver.unify(v.write, this.get(v.root, n.loc), n.loc);
         });
         if (n.ann) this.solver.unifyFlow(result, this.annotation(n.ann, vars), n.loc);
+        this.builder.functions.push({
+            node: this.builder.node(n),
+            parameters,
+            parameterPlaces,
+            body: this.builder.node(n.body),
+            transitions: [bodyStart, this.builder.transitions.length],
+            entry: functionEntry,
+            exit: functionRoots.map((r) => this.state(r)),
+        });
         return fn(args, result);
     }
     private alias(n: Lens, env: Env): Binding {
@@ -448,14 +636,33 @@ export class Inferencer {
         if (n.value.type === 'lens') {
             const b = this.alias(n.value.lens, env);
             const type = this.get(b, n.loc);
-            const borrow: Borrow = { path: b.path, parent: b.permit };
+            this.use(n.value.lens, b, 'lens');
+            const before = this.state(b.root);
+            const borrow: Borrow = { path: b.path, parent: b.permit, id: this.builder.borrow() };
+            this.builder.borrows.push({
+                id: borrow.id,
+                node: this.builder.node(n),
+                place: b.root.place!,
+                path: [...b.path],
+                parent: b.permit?.id,
+            });
             b.root.borrows.add(borrow);
+            this.transition('borrow-open', b, before);
             const alias = { ...b, permit: borrow };
             this.pattern(p, type, sub, alias);
             const close = () => {
                 // End the borrow before checking the owner's restored state.
+                const before = this.state(b.root);
                 b.root.borrows.delete(borrow);
                 this.restored(b, n.loc);
+                if (n.value.type === 'lens')
+                    this.record(n.value.lens, flow(type, this.get(b, n.loc)));
+                this.transition('borrow-close', b, before);
+                this.builder.scopes.push({
+                    node: this.builder.node(n),
+                    bindings: names(p).map((name) => sub.get(name)!.id!),
+                    exit: [this.state(b.root)],
+                });
             };
             if (isLens) {
                 const view = this.lens(n.body as Lens, sub);
@@ -474,7 +681,25 @@ export class Inferencer {
         const type = this.linear(n.value, env);
         this.pattern(p, type, sub);
         // First-class functions are affine monotypes; only top-level definitions are reusable schemes.
-        return isLens ? this.lens(n.body as Lens, sub) : this.linear(n.body as Linear, sub);
+        const close = () =>
+            this.builder.scopes.push({
+                node: this.builder.node(n),
+                bindings: names(p).map((name) => sub.get(name)!.id!),
+                exit: names(p).map((name) => this.state(sub.get(name)!.root)),
+            });
+        if (isLens) {
+            const view = this.lens(n.body as Lens, sub);
+            return {
+                ...view,
+                put: (t) => {
+                    view.put(t);
+                    close();
+                },
+            };
+        }
+        const result = this.linear(n.body as Linear, sub);
+        close();
+        return result;
     }
     private lens(n: Lens, env: Env): View {
         const v = this.lensInner(n, env);
@@ -497,7 +722,7 @@ export class Inferencer {
         switch (n.type) {
             case 'id': {
                 const b = this.alias(n, env);
-                this.bindings.set(n, b);
+                this.use(n, b, 'lens');
                 const self = this;
                 return {
                     get read() {
@@ -598,6 +823,12 @@ export class Inferencer {
             result = this.solver.fresh();
         if (!n.cases.length) this.error('empty-case', n.loc, 'Case requires at least one branch');
         const roots = [...new Set([...env.values()].map((b) => b.root))];
+        const branchRecord: (typeof this.builder.branches)[number] = {
+            node: this.builder.node(n),
+            input: this.states(env),
+            arms: [],
+            output: [],
+        };
         const initial = roots.map((r) => ({ type: r.type, empty: [...r.empty] }));
         let joined: { type: Ty; empty: number[][] }[] | undefined;
         for (const branch of n.cases) {
@@ -607,7 +838,13 @@ export class Inferencer {
             });
             const sub = new Map(env);
             this.pattern(branch.pat, scrutinee, sub);
+            const firstTransition = this.builder.transitions.length;
             this.solver.unify(result, this.linear(branch.body, sub), branch.body.loc);
+            branchRecord.arms.push({
+                node: this.builder.node(branch.body),
+                output: this.states(env),
+                transitions: [firstTransition, this.builder.transitions.length],
+            });
             if (!joined) joined = roots.map((r) => ({ type: r.type, empty: [...r.empty] }));
             else
                 roots.forEach((r, i) => {
@@ -644,6 +881,8 @@ export class Inferencer {
             r.type = joined![i].type;
             r.empty = joined![i].empty;
         });
+        branchRecord.output = this.states(env);
+        this.builder.branches.push(branchRecord);
         return result;
     }
 }

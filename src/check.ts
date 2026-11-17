@@ -4,22 +4,27 @@ import type { Expr } from './expr.ts';
 import { Inferencer, type Inference, type TypeEnvironment } from './infer.ts';
 import { builtinTypes, constructorTypes } from './builtins.ts';
 import { TypeDiagnostic, type Scheme } from './types.ts';
+import { verifyElaboration } from './backend/verify-elaboration.ts';
 
 export type CheckedExpression = Inference & { readonly ast: Linear };
 
 /** Owns persistent definition schemes. A failed check never publishes a definition. */
 export class Checker {
     private environment: Map<string, Scheme>;
+    private definitionIds = new Map<string, string>();
+    private nextExpression = 0;
     private checked = new WeakMap<
         CheckedExpression,
-        { ast: Linear; names: string[]; scheme: Scheme }
+        { ast: Linear; names: string[]; scheme: Scheme; definitionId: string }
     >();
     constructor(
         environment: TypeEnvironment = builtinTypes(),
         private constructors: TypeEnvironment = constructorTypes(),
+        private unitId = 'unit',
     ) {
         this.environment = structuredClone(new Map(environment));
         this.constructors = structuredClone(new Map(constructors));
+        for (const name of environment.keys()) this.definitionIds.set(name, `native/${name}`);
     }
     get definitions(): TypeEnvironment {
         return structuredClone(this.environment);
@@ -31,15 +36,21 @@ export class Checker {
                 ast.loc,
                 `Definition ${ast.name} already exists`,
             );
-        const inference = new Inferencer(this.environment, this.constructors).infer(
-            ast,
-            declaration,
-        );
-        const result = { ...inference, ast };
+        const id =
+            ast.type === 'fn' && ast.name
+                ? `${this.unitId}/definition/${encodeURIComponent(ast.name)}`
+                : `${this.unitId}/expression/${this.nextExpression++}`;
+        const inference = new Inferencer(this.environment, this.constructors, {
+            id,
+            definitions: this.definitionIds,
+        }).infer(ast, declaration);
+        verifyElaboration(inference.elaboration);
+        const result = { ...inference, ast: inference.elaboration.source };
         this.checked.set(result, {
-            ast: structuredClone(ast),
+            ast: inference.elaboration.source,
             names: [...this.environment.keys()],
             scheme: structuredClone(inference.scheme),
+            definitionId: inference.elaboration.id,
         });
         return result;
     }
@@ -64,6 +75,7 @@ export class Checker {
                 `Definition ${stored.ast.name} already exists`,
             );
         this.environment.set(stored.ast.name, structuredClone(stored.scheme));
+        this.definitionIds.set(stored.ast.name, stored.definitionId);
     }
     define(
         ast: Linear & { type: 'fn' },
@@ -83,12 +95,13 @@ export function checkFile(
     file: File,
     environment: TypeEnvironment = builtinTypes(),
     constructors: TypeEnvironment = constructorTypes(),
+    unitId = 'unit',
 ): {
     expressions: CheckedExpression[];
     ir: Expr[];
     definitions: TypeEnvironment;
 } {
-    const checker = new Checker(environment, constructors);
+    const checker = new Checker(environment, constructors, unitId);
     const expressions: CheckedExpression[] = [];
     let declaration: Decl | undefined;
     for (const item of file) {

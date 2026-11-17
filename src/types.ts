@@ -79,10 +79,16 @@ export class Solver {
         return ids;
     }
     instantiate(s: Scheme, rigid = false): Ty {
+        return this.instantiateWithArguments(s, rigid).type;
+    }
+    instantiateWithArguments(s: Scheme, rigid = false): { type: Ty; arguments: Map<number, Ty> } {
         const vars = new Map(s.quantified.map((id) => [id, rigid ? this.rigid() : this.fresh()]));
-        return mapType(this.resolve(s.body), (t) =>
-            t.tag === 'meta' ? vars.get(t.id) : undefined,
-        );
+        return {
+            type: mapType(this.resolve(s.body), (t) =>
+                t.tag === 'meta' ? vars.get(t.id) : undefined,
+            ),
+            arguments: vars,
+        };
     }
     generalize(t: Ty, environment: Scheme[]): Scheme {
         const excluded = new Set(
