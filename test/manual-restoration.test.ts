@@ -11,65 +11,21 @@ import { verifyTypedProgram } from '../src/verify-ir.ts';
 import { TypeDiagnostic } from '../src/types.ts';
 import { BackendDiagnostic, wasm32Emscripten } from '../src/backend/target.ts';
 import { compileConcreteProgram } from '../src/lower-concrete.ts';
+import { manualRestorationSamples as samples } from './backend/manual-restoration-samples.ts';
+import { specializeProgram } from '../src/specialize.ts';
 
-const samples = [
-    {
-        name: 'deferred no-op',
-        source: '{let x = 1\n {let f = ~{@(x, fn () ())}\n f := true}\n x}',
-        expected: true,
-    },
-    {
-        name: 'shifted temporary',
-        source: 'fn shifted(~x) ~{let v = x + 2\n @(v, fn () {x := v - 2})}\n{let x = 1\n shifted(~x) := 10\n x}',
-        expected: 8,
-    },
-    {
-        name: 'cleanup sees final type',
-        source: '{let x = 1\n {let f = ~{@(x, fn () {x := 3})}\n f := true}\n x}',
-        expected: 3,
-    },
-    {
-        name: 'owned cleanup parameter',
-        source: 'fn restore(f, ~x) ~{@(x, f)}\n{let x = 1\n restore(fn () 4, ~x) := true\n x}',
-        expected: true,
-    },
-    {
-        name: 'nested cleanup order',
-        source: '{let x = 1\n {let f = ~{@(@(x, fn () {x := x + 1}), fn () {x := x * 2})}\n f := 10}\n x}',
-        expected: 21,
-    },
-    {
-        name: 'nested owned callbacks',
-        source: 'fn nest(f, g, ~x) ~{@(@(x, g), f)}\n{let x = 1\n nest(fn () 1, fn () 2, ~x) := true\n x}',
-        expected: true,
-    },
-    {
-        name: 'tuple focus before cleanup',
-        source: '{let x = 1\n let y = 2\n {let f = ~{@((x, y), fn () {x := x + dup(~y)})}\n f := (3, 4)}\n (x, y)}',
-        expected: [7, 4],
-    },
-    {
-        name: 'branch cleanup',
-        source: '{let x = 1\n {let f = ~{match false {true -> @(x, fn () {x := x + 1}); false -> @(x, fn () {x := x + 10})}}\n f := 3}\n x}',
-        expected: 13,
-    },
-    {
-        name: 'explicit owned lifetime',
-        source: 'fn own() ~{let v = 1\n @(v, fn () ())}\nown() := true',
-        expected: 1,
-    },
-    {
-        name: 'manual around branch',
-        source: '{let x = 1\n {let f = ~{@({match true {true -> x; false -> x}}, fn () {x := x + 1})}\n f := 4}\n x}',
-        expected: 5,
-    },
-];
 for (const sample of samples)
     it(`manual restoration: ${sample.name}`, () => {
         const artifact = JSON.parse(JSON.stringify(typedProgram(sample.source)));
         verifyTypedProgram(artifact);
         expect(executeTypedProgram(artifact)).toEqual(sample.expected);
         expect(legacyReference(sample.source)).toEqual(sample.expected);
+        const specialized = specializeProgram(artifact, wasm32Emscripten('test'), [
+            { unit: artifact.units.at(-1)!.id, arguments: [] },
+        ]);
+        const detached = JSON.parse(JSON.stringify(specialized.program));
+        verifyTypedProgram(detached);
+        expect(executeTypedProgram(detached)).toEqual(sample.expected);
     });
 for (const [source, code] of [
     [

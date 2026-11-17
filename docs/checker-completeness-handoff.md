@@ -183,7 +183,18 @@ Implementation anchors:
 
 ### Acceptance gates for this slice
 
-Start from all 25 tests in `test/manual-restoration.test.ts`. Carry the supported
+Acceptance-corpus preparation is in `test/backend/manual-restoration-samples.ts`:
+20 shared cases cover the original examples plus both selections of tuple staging
+around a branch, selected cleanup effects, late generic cleanup reads, initially
+empty dependency refill, cleanup-only definition reachability, unused/duplicated
+focuses, and an owned cleanup result. `test/manual-restoration.test.ts` runs every
+case through checked legacy execution, JSON-detached typed execution, and
+JSON-detached semantic-specialized typed execution. The dedicated event-order,
+disposal-count, ownership-negative, and artifact-corruption tests remain in place.
+This is reference acceptance coverage only: representation, concrete, and C/Wasm
+manual adapters remain pending, with their existing explicit diagnostics.
+
+Start from all 35 tests in `test/manual-restoration.test.ts`. Carry the supported
 subset into shared C execution samples rather than replacing reference tests.
 Cover shifted owned focuses, final-type changes, tuple staging, manual around a
 branch, branch-selected manual cleanup, nested ordering, owned callback parameters,
