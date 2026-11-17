@@ -329,6 +329,20 @@ export function lconcrete(program: ConcreteProgram, options: ConcretePrintOption
                         name(i.abi),
                     );
                     break;
+                case 'manual':
+                    expression = words(
+                        'manual',
+                        value(i.lens),
+                        'holds',
+                        tuple(i.holds.map(slot)),
+                        'order',
+                        tuple(i.restoration.order.map((phase) => l.i(phase))),
+                        'retain',
+                        i.restoration.retention,
+                        'deferred',
+                        block(i.cleanup),
+                    );
+                    break;
                 case 'scope':
                     expression = words('scope', block(i.body));
                     break;
@@ -402,6 +416,7 @@ export function lconcrete(program: ConcreteProgram, options: ConcretePrintOption
                     if (i.out.type.tag === 'flow') lensResults.add(i.out.id);
                 }
                 if (i.op === 'scope') reserve(i.body);
+                if (i.op === 'manual') reserve(i.cleanup);
                 else if (i.op === 'case') i.cases.forEach((c) => reserve(c.body));
             }
         };

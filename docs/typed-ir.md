@@ -136,5 +136,6 @@ thunks, so reading a temporary or owned callback after a function return sees it
 final contents and live lexical storage. Representation analysis and independent
 verification cover manual topology and deferred cleanup temporaries/calls, using
 restoration-time data annotations and protected callable provenance. Concrete
-lowering still rejects manual instructions with `unsupported-concrete` and the
-concrete deferred-cleanup adapter diagnostic; no manual C/Wasm execution is claimed.
+lowering retains independently checked deferred cleanup blocks and restoration
+contracts. C lowering still rejects manual instructions with `unsupported-c` and
+the C staging/retained-context adapter diagnostic; no manual C/Wasm execution is claimed.

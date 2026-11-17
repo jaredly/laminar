@@ -90,5 +90,5 @@ effects are independently rejected before execution.
 Manual cleanup cannot access an owner whose computed frontend still has pending
 restoration. The existing whole-owner invalidation guard also remains conservative
 for disjoint projections of a shared computed owner. C/Wasm lowering currently
-reports `unsupported-concrete` with “Manual restoration requires a
-concrete deferred-cleanup adapter”; it does not execute a fallback.
+reports `unsupported-c` with “Manual restoration requires a
+C staging and retained-context adapter”; it does not execute a fallback.

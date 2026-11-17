@@ -84,3 +84,17 @@ backing is allocated or released. Owned moves now mark logical storage empty,
 so setup availability normalization agrees with typed verification. Native
 strict/optimized/sanitized and Emscripten/Node execution cover these adapters;
 dynamic callable joins and nominal/runtime data retain their existing restrictions.
+
+## Deferred manual restoration
+
+A concrete `manual` operation retains its frontend lens, protected logical slot
+references, and a recursively lowered cleanup block. Its `restoration` record
+retains frontend/result representation shapes, the required sequence (`stage`,
+`cleanup`, `dispose-result`, `restore`, `release`), and retention through enclosing
+cleanup. These are serialized lowering obligations, not allocated C contexts.
+Independent verification checks the contract against verified typed IR and
+representation analysis, including cleanup output ownership, complete instruction
+coverage, layouts, and concrete invocation wrappers. The callable indexers and
+diagnostic printer include deferred cleanup regions. C lowering currently reports
+`unsupported-c`: “Manual restoration requires a C staging and retained-context
+adapter”. No manual C/Wasm execution is claimed.

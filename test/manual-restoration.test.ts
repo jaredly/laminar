@@ -1,3 +1,4 @@
+import { printConcreteProgram } from '../src/print-concrete.ts';
 import { readLines } from '../parser-generator/lexer.ts';
 import { grammar } from '../src/laminar-parser.ts';
 import type { Linear } from '../src/ast.ts';
@@ -15,6 +16,8 @@ import { manualRestorationSamples as samples } from './backend/manual-restoratio
 import { specializeProgram } from '../src/specialize.ts';
 import { inferRepresentations } from '../src/infer-representations.ts';
 import { verifyRepresentations } from '../src/verify-representations.ts';
+import { verifyConcreteProgram } from '../src/verify-concrete.ts';
+import { lowerC } from '../src/c/lower.ts';
 
 for (const sample of samples)
     it(`manual restoration: ${sample.name}`, () => {
@@ -30,6 +33,10 @@ for (const sample of samples)
         expect(executeTypedProgram(detached)).toEqual(sample.expected);
         const analysis = JSON.parse(JSON.stringify(inferRepresentations(specialized)));
         verifyRepresentations(JSON.parse(JSON.stringify(specialized)), analysis);
+        const concrete = compileConcreteProgram(artifact, wasm32Emscripten('test'), [
+            { unit: artifact.units.at(-1)!.id, arguments: [] },
+        ]);
+        verifyConcreteProgram(JSON.parse(JSON.stringify(concrete)));
     });
 for (const [source, code] of [
     [
@@ -56,18 +63,20 @@ for (const [source, code] of [
             expect((e as TypeDiagnostic).code).toBe(code);
         }
     });
-it('stops at concrete lowering until the deferred-cleanup adapter exists', () => {
+it('stops at C lowering until the staging and retained-context adapter exists', () => {
     const p = typedProgram(samples[1].source);
     try {
-        compileConcreteProgram(p, wasm32Emscripten('test'), [
-            { unit: p.units.at(-1)!.id, arguments: [] },
-        ]);
+        lowerC(
+            compileConcreteProgram(p, wasm32Emscripten('test'), [
+                { unit: p.units.at(-1)!.id, arguments: [] },
+            ]),
+        );
         throw Error('Expected backend restriction');
     } catch (e) {
         expect(e).toBeInstanceOf(BackendDiagnostic);
-        expect((e as BackendDiagnostic).code).toBe('unsupported-concrete');
+        expect((e as BackendDiagnostic).code).toBe('unsupported-c');
         expect((e as Error).message).toBe(
-            'Manual restoration requires a concrete deferred-cleanup adapter',
+            'Manual restoration requires a C staging and retained-context adapter',
         );
     }
 });
@@ -226,4 +235,124 @@ it('keeps callable focus replacement explicit at the representation boundary', (
     expect(() => inferRepresentations(source)).toThrow(
         'Callable storage requires an explicit closure representation',
     );
+});
+
+function concreteManual(p: import('../src/concrete-ir.ts').ConcreteProgram) {
+    const visit = (
+        b: import('../src/concrete-ir.ts').ConcreteBlock,
+    ):
+        | Extract<import('../src/concrete-ir.ts').ConcreteInstruction, { op: 'manual' }>
+        | undefined => {
+        for (const i of b.instructions) {
+            if (i.op === 'manual') return i;
+            if (i.op === 'scope') {
+                const found = visit(i.body);
+                if (found) return found;
+            }
+            if (i.op === 'case')
+                for (const arm of i.cases) {
+                    const found = visit(arm.body);
+                    if (found) return found;
+                }
+        }
+    };
+    for (const code of p.code) {
+        const found = visit(code.body);
+        if (found) return found;
+    }
+    throw Error('Missing concrete manual');
+}
+
+for (const corruption of [
+    'cleanup',
+    'dependency',
+    'frontend',
+    'result',
+    'order',
+    'retention',
+    'invoke',
+] as const)
+    it(`independently rejects corrupted concrete manual ${corruption}`, () => {
+        const p = typedProgram(samples[1]!.source);
+        const concrete = JSON.parse(
+            JSON.stringify(
+                compileConcreteProgram(p, wasm32Emscripten('test'), [
+                    { unit: p.units.at(-1)!.id, arguments: [] },
+                ]),
+            ),
+        );
+        const m = concreteManual(concrete);
+        if (corruption === 'cleanup') delete (m as Partial<typeof m>).cleanup;
+        if (corruption === 'dependency') m.holds = [];
+        if (corruption === 'frontend') m.restoration.frontend = 'lost-frontend';
+        if (corruption === 'result') m.restoration.result = 'lost-focus';
+        if (corruption === 'order') m.restoration.order.reverse();
+        if (corruption === 'retention')
+            (m.restoration as { retention: string }).retention = 'setup-only';
+        if (corruption === 'invoke') {
+            const call = m.cleanup.instructions.find((i) => i.op === 'invoke');
+            if (!call || call.op !== 'invoke') throw Error('Missing cleanup invocation');
+            call.wrapper = 'lost-wrapper';
+        }
+        expect(() => verifyConcreteProgram(concrete)).toThrow(
+            corruption === 'cleanup'
+                ? 'Missing manual cleanup block'
+                : corruption === 'invoke'
+                  ? 'Concrete invocation target/ABI changed'
+                  : 'Manual restoration contract changed',
+        );
+    });
+
+it('prints the complete concrete deferred-cleanup contract', () => {
+    const p = typedProgram('{let x = 1\n @(x, fn () ()) := 2\n x}');
+    const concrete = compileConcreteProgram(p, wasm32Emscripten('test'), [
+        { unit: p.units.at(-1)!.id, arguments: [] },
+    ]);
+    expect(printConcreteProgram(concrete)).toMatchInlineSnapshot(`
+      "concrete-ir 1
+      target "wasm32-unknown-emscripten" 32bit little c11 emscripten-node
+      toolchain emscripten "test" features ()
+      entries (entry0)
+      forward {
+          layouts (L0, L1, L2)
+          abis (abi0, abi1)
+          code (entry0)
+      }
+      layouts {
+          L0 = unit
+          L1 = f64
+          L2 = record thin {
+              read: ptr<L1>
+              restore: code<abi0>
+              context: ptr<void>
+          }
+      }
+      abis {
+          abi0 = (env: ptr<void>, L1) -> L0
+          abi1 = (env: ptr<void>) -> L1
+      }
+      wrappers {}
+      callables {}
+      fn entry0() : abi1 env L0 {
+          %0: L1 = 1
+          %1: L1 = scope {
+              bind $x = %0
+              %2: L2 = acquire $x
+              %3: L2 = manual %2 holds () order (stage, cleanup, dispose-result, restore, release) retain through-enclosing-cleanup deferred {
+                  %4: L0 = ()
+                  return %4 : L0
+              }
+              %5: L1 = 2
+              %6: L1 = swap(%3, %5)
+              %7: L1 = scope {
+                  bind _ = %6
+                  %8: L1 = move $x
+                  return %8 : L1
+              }
+              return %7 : L1
+              cleanup {drop $x}
+          }
+          return %1 : L1
+      }"
+    `);
 });

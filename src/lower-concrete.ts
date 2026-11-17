@@ -88,6 +88,7 @@ export function lowerConcreteProgram(
                     const g = group(callee);
                     g.contracts.set(contractKey(call), call);
                 } else if (i.op === 'scope') walk(i.body);
+                else if (i.op === 'manual') walk(i.cleanup);
                 else if (i.op === 'case') i.cases.forEach((c) => walk(c.body));
             }
         };
@@ -263,12 +264,25 @@ export function lowerConcreteProgram(
             cleanup: structuredClone(b.cleanup),
             instructions: b.instructions.map((i): ConcreteInstruction => {
                 if (i.op === 'borrow' || i.op === 'bind') return structuredClone(i);
-                if (i.op === 'manual')
-                    throw new BackendDiagnostic(
-                        'unsupported-concrete',
-                        'Manual restoration requires a concrete deferred-cleanup adapter',
-                    );
                 const out = { ...i.out, layout: layout(values.get(i.out.id)!) };
+                if (i.op === 'manual') {
+                    const frontend = values.get(i.lens)!,
+                        result = values.get(i.out.id)!;
+                    if (frontend.kind !== 'lens' || result.kind !== 'lens')
+                        return fail('Manual restoration requires lens representations');
+                    return {
+                        ...i,
+                        out,
+                        cleanup: lower(i.cleanup),
+                        restoration: {
+                            kind: 'deferred',
+                            frontend: frontend.shape,
+                            result: result.shape,
+                            order: ['stage', 'cleanup', 'dispose-result', 'restore', 'release'],
+                            retention: 'through-enclosing-cleanup',
+                        },
+                    };
+                }
                 if (i.op === 'scope') return { ...i, out, body: lower(i.body) };
                 if (i.op === 'case')
                     return {

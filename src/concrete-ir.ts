@@ -1,7 +1,7 @@
 import type { TargetConfig } from './backend/target.ts';
 import type { SpecializedProgram } from './specialize.ts';
 import type { RepresentationAnalysis, ValueRepresentation } from './infer-representations.ts';
-import type { IRBlock, Instruction, IRPattern, Cleanup } from './typed-ir.ts';
+import type { IRBlock, Instruction, IRPattern, Cleanup, SlotRef } from './typed-ir.ts';
 
 export type ConcreteField = { name: string } & (
     | { kind: 'value'; layout: string }
@@ -54,6 +54,20 @@ export type ConcreteInstruction =
           { op: 'bind' | 'borrow' | 'scope' | 'case' | 'call' | 'global' | 'closure' | 'manual' }
       > &
           ConcreteOutput)
+    | ({
+          op: 'manual';
+          origin: string;
+          lens: string;
+          holds: SlotRef[];
+          cleanup: ConcreteBlock;
+          restoration: {
+              kind: 'deferred';
+              frontend: string;
+              result: string;
+              order: ['stage', 'cleanup', 'dispose-result', 'restore', 'release'];
+              retention: 'through-enclosing-cleanup';
+          };
+      } & ConcreteOutput)
     | ({ op: 'scope'; origin: string; body: ConcreteBlock } & ConcreteOutput)
     | ({
           op: 'case';

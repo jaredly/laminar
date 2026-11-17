@@ -228,6 +228,7 @@ export function verifyConcreteProgram(p: ConcreteProgram): void {
                     if (!contracts.has(k)) contracts.set(k, new Map());
                     contracts.get(k)!.set(contractKey(c), c);
                 } else if (i.op === 'scope') walk(i.body);
+                else if (i.op === 'manual') walk(i.cleanup);
                 else if (i.op === 'case') i.cases.forEach((c) => walk(c.body));
             }
         };
@@ -384,7 +385,36 @@ export function verifyConcreteProgram(p: ConcreteProgram): void {
                     { ...i.out, layout: storage(reps.get(i.out.id)!) },
                     'Concrete output layout/type mismatch',
                 );
-                if (i.op === 'scope') {
+                if (i.op === 'manual') {
+                    if (o.op !== 'manual') return fail('Manual restoration operation changed');
+                    const frontend = reps.get(i.lens)!,
+                        result = reps.get(i.out.id)!;
+                    if (frontend.kind !== 'lens' || result.kind !== 'lens')
+                        return fail('Manual restoration lacks lens shapes');
+                    eq(
+                        {
+                            origin: o.origin,
+                            lens: o.lens,
+                            holds: o.holds,
+                            restoration: o.restoration,
+                        },
+                        {
+                            origin: i.origin,
+                            lens: i.lens,
+                            holds: i.holds,
+                            restoration: {
+                                kind: 'deferred',
+                                frontend: frontend.shape,
+                                result: result.shape,
+                                order: ['stage', 'cleanup', 'dispose-result', 'restore', 'release'],
+                                retention: 'through-enclosing-cleanup',
+                            },
+                        },
+                        'Manual restoration contract changed',
+                    );
+                    if (!o.cleanup) return fail('Missing manual cleanup block');
+                    walk(i.cleanup, o.cleanup);
+                } else if (i.op === 'scope') {
                     if (o.op !== 'scope') return fail('Scope operation changed');
                     eq(o.origin, i.origin, 'Scope origin changed');
                     walk(i.body, o.body);

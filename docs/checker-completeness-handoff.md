@@ -7,8 +7,9 @@ checker restrictions: computed aliases and lens-valued branches are implemented,
 and manual restoration now has semantic/reference support. Do not reimplement
 those milestones or treat their old rejection paths as current restrictions.
 
-The next recommended slice is **manual restoration through representation,
-concrete IR, and C/Wasm**. Borrowed matching, constructor alias patterns, `aslens`,
+The next recommended slice is **manual restoration through C/Wasm staging and
+retained contexts**. Representation analysis and concrete contracts now retain
+and independently verify deferred cleanup. Borrowed matching, constructor alias patterns, `aslens`,
 and conservative computed-owner invalidation remain separate work.
 
 This is a status and implementation handoff, not a proof that checking or the
@@ -57,7 +58,7 @@ pointer path is `src/decompose.ts` and `src/eval.ts`, not `src/value-passing/`.
 | --- | --- | --- | --- | --- |
 | Computed/tuple persistent aliases | Implemented | Implemented | Tested | Tested scalar/tuple subset |
 | Branches producing lenses | Implemented | Implemented | Tested | Tested selected-branch adapters |
-| Manual `@(focus, cleanup)` | Implemented | Implemented | Tested | Explicit representation restriction |
+| Manual `@(focus, cleanup)` | Implemented | Implemented | Tested | Explicit C adapter restriction |
 | Matching a borrowed scrutinee | Unsupported | Not implemented | Unchecked machinery exists | Not implemented |
 | Constructor alias patterns | Unsupported | Not implemented | Unchecked machinery exists | Not implemented |
 | `aslens`: `lens pattern <- value` | Unsupported | Not implemented | Unchecked machinery exists | Not implemented |
@@ -112,8 +113,8 @@ fn shifted(~x) ~{
 Concrete compilation currently stops with:
 
 ```text
-unsupported-concrete
-Manual restoration requires a concrete deferred-cleanup adapter
+unsupported-c
+Manual restoration requires a C staging and retained-context adapter
 ```
 
 ### Existing semantic and executable contract
@@ -152,7 +153,7 @@ Implementation anchors:
   cleanup thunks preserve lexical storage frames. Do not restore the old eager
   value-capture behavior: cleanup must see the final temporary contents.
 
-### Backend changes still needed
+### Backend adapter status and remaining changes
 
 - `src/infer-representations.ts` and `src/verify-representations.ts` now cover
   deferred cleanup regions, retaining frontend topology with manual endpoints and
@@ -165,10 +166,14 @@ Implementation anchors:
   region, alongside scopes, branches, and function bodies. Semantic specialization
   recursively rewrites objects, but other analyses/indexers may require explicit
   handling. Retain complete temporary, call, and cleanup coverage.
-- `src/concrete-ir.ts` excludes generic `manual` instructions, and
-  `src/lower-concrete.ts` has an explicit guard. Introduce a concrete deferred-cleanup
-  contract and independently verify frontend shape, dependency storage, cleanup
-  body/result ownership, ordering, and lifetime before removing those guards.
+- `src/concrete-ir.ts` and `src/lower-concrete.ts` retain a concrete `manual`
+  operation with a recursively lowered cleanup block. Its independently checked
+  restoration contract names frontend/result shapes, protected logical references,
+  stage/cleanup/result-disposal/restore/release order, and retention through enclosing
+  cleanup. Typed verification still establishes ownership and dependency validity;
+  concrete verification checks correspondence, layouts, invocation contracts, and
+  these adapter records. Physical retained context allocation remains C work.
+  Both concrete callable indexers and the printer traverse deferred regions.
 - `src/c/lower.ts` currently represents a lens with `view` and `finish`. Do not
   merely run cleanup before the existing `finish`: final contents must already be
   visible to cleanup, while original restoration must still be deferred. In
@@ -198,10 +203,13 @@ disposal-count, ownership-negative, and artifact-corruption tests remain in plac
 Every case also passes representation analysis and independent serialized analysis
 verification. Corruption tests reject missing cleanup temporaries, missing calls,
 and substituted callable provenance. Callable focus replacement retains its existing
-closure-storage representation diagnostic. Concrete and C/Wasm manual adapters remain
-pending, with explicit concrete diagnostics.
+closure-storage representation diagnostic. Concrete manual contracts pass
+independent verification after JSON round trips.
+Corruption tests reject missing cleanup/dependencies, incorrect shapes, ordering,
+retention, and invocation records; complete printer output is inline. C/Wasm
+physical adapters remain pending, with an explicit C diagnostic.
 
-Start from all 39 tests in `test/manual-restoration.test.ts`. Carry the supported
+Start from all 47 tests in `test/manual-restoration.test.ts`. Carry the supported
 subset into shared C execution samples rather than replacing reference tests.
 Cover shifted owned focuses, final-type changes, tuple staging, manual around a
 branch, branch-selected manual cleanup, nested ordering, owned callback parameters,
@@ -349,6 +357,13 @@ callee/ordinary arguments and assignment RHS evaluation.
   and discarding an invocation-erased closure environment.
 
 ## Verification and reporting
+
+Concrete deferred-cleanup contract verification: `bun test` reports **831 pass,
+39 existing skips, 0 failures across 30 files** (47 manual-restoration tests).
+`bunx tsc --noEmit` and `git diff --check` pass. The existing C/Wasm corpus remains
+passing; the new manual cases are verified concrete artifacts and reference
+executions, with no manual C/Wasm execution claim. Remote CI was not run.
+
 
 For each slice:
 

@@ -333,6 +333,10 @@ export function lowerC(program: ConcreteProgram): TranslationUnit {
                     name = fresh();
                 let expr!: string;
                 switch (i.op) {
+                    case 'manual':
+                        return unsupported(
+                            'Manual restoration requires a C staging and retained-context adapter',
+                        );
                     case 'make-callable':
                         if (
                             i.captures.length &&
@@ -674,6 +678,7 @@ export function lowerC(program: ConcreteProgram): TranslationUnit {
             b.instructions.forEach((i) => {
                 if ('out' in i) outputLayouts.set(i.out.id, i.out.layout);
                 if (i.op === 'scope') index(i.body);
+                if (i.op === 'manual') index(i.cleanup);
                 if (i.op === 'case') i.cases.forEach((a) => index(a.body));
             });
         index(c.body);
