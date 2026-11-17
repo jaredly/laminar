@@ -66,7 +66,13 @@ export type Elaboration = {
     branches: {
         node: NodeId;
         input: PlaceState[];
-        arms: { node: NodeId; output: PlaceState[]; transitions: [number, number] }[];
+        restored?: PlaceState[];
+        arms: {
+            node: NodeId;
+            restored?: PlaceState[];
+            output: PlaceState[];
+            transitions: [number, number];
+        }[];
         output: PlaceState[];
     }[];
     scopes: { node: NodeId; bindings: BindingId[]; exit: PlaceState[] }[];
@@ -130,7 +136,13 @@ export class ElaborationBuilder {
     readonly branches: {
         node: NodeId;
         input: RawState[];
-        arms: { node: NodeId; output: RawState[]; transitions: [number, number] }[];
+        restored?: RawState[];
+        arms: {
+            node: NodeId;
+            restored?: RawState[];
+            output: RawState[];
+            transitions: [number, number];
+        }[];
         output: RawState[];
     }[] = [];
     readonly scopes: { node: NodeId; bindings: BindingId[]; exit: RawState[] }[] = [];
@@ -283,8 +295,13 @@ export class ElaborationBuilder {
             branches: this.branches.map((b) => ({
                 ...b,
                 input: b.input.map(state),
+                restored: b.restored?.map(state),
                 output: b.output.map(state),
-                arms: b.arms.map((a) => ({ ...a, output: a.output.map(state) })),
+                arms: b.arms.map((a) => ({
+                    ...a,
+                    output: a.output.map(state),
+                    restored: a.restored?.map(state),
+                })),
             })),
             scopes: this.scopes.map((s) => ({ ...s, exit: s.exit.map(state) })),
             functions: this.functions.map((f) => ({

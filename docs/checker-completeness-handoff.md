@@ -143,7 +143,31 @@ Required behavior:
 Do not implement this by removing the identifier guard or by copying a focus type
 into an unrelated binding. Neither approach retains the restoration relationship.
 
-### 2. Lens-valued branches
+### Lens-branch implementation slice
+
+Lens-valued branches now pass semantic checking, retained elaboration validation,
+and independent typed verification. Setup and restoration states are joined
+separately. Selected branch pattern storage, computed aliases, and owned lens-block
+storage remain alive until cleanup; the typed reference and legacy pointer paths
+execute the selected setup and restoration only. Typed arm normalization edges
+record availability drops separately from deferred block cleanup. Function-return
+provenance still rejects lenses into owned local storage.
+
+`test/lens-branches.test.ts` covers serialized execution, selected-only setup,
+type changes, differing owners, nested selections, deferred aliases and closure
+disposal, branch-local storage release, ownership negatives, missing normalization
+and cleanup, missing retained restoration metadata, and unmatched-case traps.
+Representation inference deliberately stops with `unsupported-representation`:
+“Lens-valued branches require a selected-branch restoration adapter”. Implementing
+that adapter and concrete/C/Wasm execution is the next backend slice. Matching a
+borrowed scrutinee remains separate unsupported checker work.
+
+Branch-slice verification: 750 passing tests, the same 39 existing skips, and
+zero failures across 28 files. TypeScript and whitespace checks pass. The existing
+native/optimized/sanitized and Emscripten/Node corpus still executes; new branch
+execution is tested only in serialized typed IR and the checked legacy evaluator.
+
+### 2. Lens-valued branches (original gap description)
 
 `Inferencer.lensInner` (approximately line 722) rejects `Lens.case` with
 `unsupported-lens`. The AST and grammar can represent branches producing lenses.

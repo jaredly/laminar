@@ -340,6 +340,37 @@ export function lowerTypedUnit(e: Elaboration): IRUnit {
             }
         }
     };
+    const edgeDrops = (
+        before: Elaboration['branches'][number]['output'],
+        after: Elaboration['branches'][number]['output'],
+    ): Cleanup[] =>
+        after.flatMap((output) => {
+            const input = before.find((s) => s.place === output.place)!;
+            return output.empty
+                .filter(
+                    (path) =>
+                        !input.empty.some(
+                            (p) => p.length <= path.length && p.every((v, i) => path[i] === v),
+                        ),
+                )
+                .map((path) => {
+                    const permit = [...e.bindings]
+                        .reverse()
+                        .find(
+                            (v) =>
+                                v.place === output.place &&
+                                v.borrow &&
+                                input.borrows.includes(v.borrow) &&
+                                e.borrows
+                                    .find((l) => l.id === v.borrow)!
+                                    .path.every((v, i) => path[i] === v),
+                        )?.borrow;
+                    return {
+                        kind: 'drop-place' as const,
+                        slot: { place: output.place, path, permit },
+                    };
+                });
+        });
     const lens = (n: Lens, b: IRBlock): IRValue => {
         switch (n.type) {
             case 'id':
@@ -350,6 +381,24 @@ export function lowerTypedUnit(e: Elaboration): IRUnit {
                 return call(n, b);
             case 'let':
                 return letBody(n, b, true);
+            case 'case': {
+                if (n.value.type === 'lens') return fail('Borrowed matching is not checked', n);
+                const value = linear(n.value, b);
+                const join = e.branches.find((v) => v.node === id(n))!;
+                const cases = n.cases.map((arm, i) => {
+                    const p = pattern(arm.pat),
+                        body = block(arm.body);
+                    body.result = lens(arm.body, body).id;
+                    body.cleanup.push(...drops(p));
+                    return {
+                        pattern: p,
+                        body,
+                        setup: edgeDrops(join.arms[i].output, join.output),
+                        restored: edgeDrops(join.arms[i].restored!, join.restored!),
+                    };
+                });
+                return emit(b, n, { op: 'case', value: value.id, cases });
+            }
             default:
                 return fail(`Unchecked lens form ${n.type}`, n);
         }

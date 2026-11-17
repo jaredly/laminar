@@ -62,7 +62,11 @@ export type Instruction =
     | (Output & { op: 'call'; callee: ValueId; args: ValueId[] })
     | (Output & { op: 'closure'; function: string; captures: { place: string; value: ValueId }[] })
     | (Output & { op: 'scope'; body: IRBlock })
-    | (Output & { op: 'case'; value: ValueId; cases: { pattern: IRPattern; body: IRBlock }[] })
+    | (Output & {
+          op: 'case';
+          value: ValueId;
+          cases: { pattern: IRPattern; body: IRBlock; setup?: Cleanup[]; restored?: Cleanup[] }[];
+      })
     | { op: 'bind'; origin: string; value: ValueId; pattern: IRPattern }
     | { op: 'borrow'; origin: string; loan: string; lens: ValueId };
 export type IRFunction = {

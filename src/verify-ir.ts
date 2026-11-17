@@ -28,7 +28,17 @@ type Cap =
           effects: { cap: Cap; type: SemanticType }[];
           guards: { place: string; version: number }[];
       }
-    | { kind: 'scope'; inner: Cap; cleanup: Cleanup[]; retire: string[] };
+    | { kind: 'scope'; inner: Cap; cleanup: Cleanup[]; retire: string[] }
+    | {
+          kind: 'choice';
+          read: SemanticType;
+          refs: SlotRef[];
+          places: string[];
+          versions: Map<string, number>;
+          baseLoans: string[];
+          guards: { place: string; version: number }[];
+          arms: { state: State; cap: Cap; restored: Cleanup[] }[];
+      };
 type Value = { type: SemanticFlow; cap?: Cap };
 type State = {
     slots: Map<string, Slot>;
@@ -210,21 +220,25 @@ export function verifyTypedProgram(program: TypedProgram): void {
             slot.version++;
         };
         const targets = (c: Cap): SlotRef[] =>
-            c.kind === 'place'
-                ? [c.slot]
-                : c.kind === 'tuple'
-                  ? c.items.flatMap(targets)
-                  : c.kind === 'scope'
-                    ? targets(c.inner)
-                    : c.effects.flatMap((e) => targets(e.cap));
+            c.kind === 'choice'
+                ? c.refs
+                : c.kind === 'place'
+                  ? [c.slot]
+                  : c.kind === 'tuple'
+                    ? c.items.flatMap(targets)
+                    : c.kind === 'scope'
+                      ? targets(c.inner)
+                      : c.effects.flatMap((e) => targets(e.cap));
         const read = (s: State, c: Cap): SemanticType =>
-            c.kind === 'place'
-                ? focus(s, c.slot)
-                : c.kind === 'tuple'
-                  ? { tag: 'tuple', items: c.items.map((v) => read(s, v)) }
-                  : c.kind === 'scope'
-                    ? read(s, c.inner)
-                    : c.read;
+            c.kind === 'choice'
+                ? c.read
+                : c.kind === 'place'
+                  ? focus(s, c.slot)
+                  : c.kind === 'tuple'
+                    ? { tag: 'tuple', items: c.items.map((v) => read(s, v)) }
+                    : c.kind === 'scope'
+                      ? read(s, c.inner)
+                      : c.read;
         const empty = (s: State, c: Cap): number[][] => {
             switch (c.kind) {
                 case 'place':
@@ -237,10 +251,84 @@ export function verifyTypedProgram(program: TypedProgram): void {
                     return empty(s, c.inner);
                 case 'call':
                     return [];
+                case 'choice':
+                    return c.arms.flatMap((arm) => empty(arm.state, arm.cap));
             }
+        };
+        const mergeStates = (into: State, branches: State[], places: string[]): void => {
+            for (const place of places) {
+                const first = branches[0].slots.get(place) ?? fail('Branch retired outer storage');
+                for (const other of branches.slice(1)) {
+                    const slot = other.slots.get(place) ?? fail('Branch retired outer storage');
+                    eq(first.type, slot.type);
+                    const paths = (ps: number[][]) =>
+                        [...new Set(ps.map((p) => JSON.stringify(p)))].sort().join(';');
+                    if (paths(first.empty) !== paths(slot.empty))
+                        fail('Branch availability was not normalized with edge drops');
+                }
+                into.slots.set(place, {
+                    ...first,
+                    empty: first.empty.map((p) => [...p]),
+                    version: Math.max(...branches.map((s) => s.slots.get(place)!.version)),
+                });
+            }
+        };
+        const externalTargets = (outer: State, branch: State, c: Cap): SlotRef[] => {
+            if (c.kind === 'choice')
+                return c.arms.flatMap((a) => externalTargets(outer, a.state, a.cap));
+            if (c.kind === 'scope') return externalTargets(outer, branch, c.inner);
+            if (c.kind === 'tuple')
+                return c.items.flatMap((v) => externalTargets(outer, branch, v));
+            if (c.kind === 'call')
+                return c.effects.flatMap((e) => externalTargets(outer, branch, e.cap));
+            const computed = [...branch.loans.entries()].find(
+                ([id]) => loans.get(id)!.owners && loans.get(id)!.place === c.slot.place,
+            );
+            if (computed) return externalTargets(outer, branch, computed[1].cap);
+            if (!outer.slots.has(c.slot.place)) return [];
+            let permit = c.slot.permit;
+            while (permit && !outer.loans.has(permit)) permit = loans.get(permit)?.parent;
+            return [{ ...c.slot, permit }];
         };
         const apply = (s: State, c: Cap, type: SemanticType): void => {
             switch (c.kind) {
+                case 'choice': {
+                    if (c.guards.some((g) => s.slots.get(g.place)?.version !== g.version))
+                        fail('Branch lens owner changed before restoration');
+                    const branches = c.arms.map((arm) => {
+                        const branch = clone(arm.state);
+                        for (const place of c.places) {
+                            const current =
+                                s.slots.get(place) ??
+                                fail('Branch owner retired before restoration');
+                            const original = branch.slots.get(place)!;
+                            branch.slots.set(place, {
+                                ...current,
+                                empty: current.empty.map((p) => [...p]),
+                                version:
+                                    original.version + current.version - c.versions.get(place)!,
+                            });
+                        }
+                        for (const id of c.baseLoans) branch.loans.delete(id);
+                        for (const [id, loan] of s.loans) branch.loans.set(id, loan);
+                        apply(branch, arm.cap, type);
+                        cleanup(branch, arm.restored);
+                        for (const place of branch.slots.keys())
+                            if (!c.places.includes(place)) {
+                                if (full(branch, { place, path: [] }))
+                                    fail('Branch-local storage has no deferred disposal');
+                                branch.slots.delete(place);
+                            }
+                        if (
+                            JSON.stringify([...branch.loans.keys()].sort()) !==
+                            JSON.stringify([...s.loans.keys()].sort())
+                        )
+                            fail('Branch restoration leaks a lexical loan');
+                        return branch;
+                    });
+                    mergeStates(s, branches, c.places);
+                    return;
+                }
                 case 'place':
                     write(s, c.slot, type);
                     return;
@@ -556,20 +644,80 @@ export function verifyTypedProgram(program: TypedProgram): void {
                         const t = plain(take(s, i.value));
                         if (!i.cases.length) fail('Empty case');
                         const branches = i.cases.map((c) => {
+                            if (
+                                i.out.type.tag === 'plain' &&
+                                (c.setup?.length || c.restored?.length)
+                            )
+                                fail('Owned case edges must use block cleanup');
+                            if (
+                                [...(c.setup ?? []), ...(c.restored ?? [])].some(
+                                    (a) => a.kind !== 'drop-place',
+                                )
+                            )
+                                fail('Branch normalization must only discard places');
                             const branch = clone(s);
                             pattern(branch, c.pattern, t);
                             const v = verifyBlock(c.body, branch);
                             feq(v.type, i.out.type);
-                            for (const place of branch.slots.keys())
-                                if (!s.slots.has(place)) {
-                                    if (full(branch, { place, path: [] }))
-                                        fail('Case pattern value has no disposal');
-                                    branch.slots.delete(place);
-                                }
-                            return { state: branch, result: v };
+                            cleanup(branch, c.setup ?? []);
+                            if (v.type.tag === 'plain') {
+                                cleanup(branch, c.restored ?? []);
+                                for (const place of branch.slots.keys())
+                                    if (!s.slots.has(place)) {
+                                        if (full(branch, { place, path: [] }))
+                                            fail('Case pattern value has no disposal');
+                                        branch.slots.delete(place);
+                                    }
+                            } else eq(read(branch, cap(v)), v.type.read);
+                            return { state: branch, result: v, restored: c.restored ?? [] };
                         });
-                        if (i.out.type.tag !== 'plain')
-                            fail('Lens case results require semantic support');
+                        if (i.out.type.tag === 'flow') {
+                            for (const branch of branches.slice(1))
+                                if (
+                                    JSON.stringify([...branch.state.values.keys()]) !==
+                                    JSON.stringify([...branches[0].state.values.keys()])
+                                )
+                                    fail('Branch temporary consumption mismatch');
+                            s.values = new Map(branches[0].state.values);
+                            const refs = branches
+                                .flatMap((b) => externalTargets(s, b.state, cap(b.result)))
+                                .filter(
+                                    (r, index, all) =>
+                                        !all.some(
+                                            (other, j) =>
+                                                other.place === r.place &&
+                                                other.permit === r.permit &&
+                                                prefix(other.path, r.path) &&
+                                                (other.path.length < r.path.length || j < index),
+                                        ),
+                                );
+                            const places = [...s.slots.keys()];
+                            mergeStates(
+                                s,
+                                branches.map((b) => b.state),
+                                places,
+                            );
+                            result.cap = {
+                                kind: 'choice',
+                                read: i.out.type.read,
+                                refs,
+                                places,
+                                versions: new Map(
+                                    [...s.slots].map(([p, slot]) => [p, slot.version]),
+                                ),
+                                baseLoans: [...s.loans.keys()],
+                                guards: refs.map((r) => ({
+                                    place: r.place,
+                                    version: access(s, r).version,
+                                })),
+                                arms: branches.map((b) => ({
+                                    state: b.state,
+                                    cap: cap(b.result),
+                                    restored: b.restored,
+                                })),
+                            };
+                            break;
+                        }
                         const first = branches[0].state;
                         for (const other of branches.slice(1)) {
                             if (
@@ -644,18 +792,17 @@ export function verifyTypedProgram(program: TypedProgram): void {
             feq(result.type, f.type.result);
             if (result.type.tag === 'flow') {
                 const c = cap(result);
-                const owners = (r: SlotRef): SlotRef[] => {
-                    const loan = [...loans.values()].find(
-                        (l) => state.loans.has(l.id) && l.place === r.place && l.owners,
+                const escapes = (state: State, c: Cap): boolean => {
+                    if (c.kind === 'choice') return c.arms.some((a) => escapes(a.state, a.cap));
+                    if (c.kind === 'scope') return escapes(state, c.inner);
+                    if (c.kind === 'tuple') return c.items.some((v) => escapes(state, v));
+                    if (c.kind === 'call') return c.effects.some((e) => escapes(state, e.cap));
+                    const loan = [...state.loans.entries()].find(
+                        ([id]) => loans.get(id)!.owners && loans.get(id)!.place === c.slot.place,
                     );
-                    return loan ? loan.owners!.flatMap(owners) : [r];
+                    return loan ? escapes(state, loan[1].cap) : !lensPlaces.has(c.slot.place);
                 };
-                if (
-                    targets(c)
-                        .flatMap(owners)
-                        .some((r) => !lensPlaces.has(r.place))
-                )
-                    fail('Lens return escapes owned local storage', f.origin);
+                if (escapes(state, c)) fail('Lens return escapes owned local storage', f.origin);
                 eq(read(state, c), result.type.read);
                 apply(state, c, result.type.write);
             }

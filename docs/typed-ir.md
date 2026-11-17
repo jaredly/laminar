@@ -81,3 +81,29 @@ focus provenance is traced through computed loans to lens parameters; owned loca
 storage still cannot escape. The detached reference interpreter maps the focus
 to the retained lens and invokes its restoration once at release. Representation
 analysis and its independent verifier preserve the computed focus topology.
+
+## Lens-valued branches
+
+A `case` may produce a flow value. Each arm retains its lens capability and
+branch-local storage until restoration. Its block cleanup runs after the selected
+focus is replaced. Optional `setup` and `restored` arrays on an arm contain only
+`drop-place` actions: they normalize affine availability after setup and after
+restoration, respectively. Owned cases continue to use ordinary block cleanup.
+Only the selected arm executes either normalization edge or deferred cleanup.
+Pattern storage is retired after that cleanup, including when the result passes
+through further lens-valued scopes or persistent aliases.
+
+Independent verification checks every arm at setup, derives the union of protected
+external owners from capabilities, and retains separate branch states. At
+restoration it checks every possible replacement effect, verifies cleanup and
+branch-local disposal, and joins outer types and availability. Function-return
+provenance is checked in each branch state, so an owned local focus cannot escape
+by being hidden in a branch. Retained elaboration records setup and restored
+states separately and rejects missing restoration-state records.
+
+The serialized typed interpreter and active legacy pointer evaluator execute these
+branches. Legacy decomposition retains owned pattern and lens-block storage on
+the heap until selected cleanup finishes. Representation inference currently
+reports an explicit `unsupported-representation` diagnostic for lens-valued
+branches; its independent verifier also rejects analyses claiming an adapter that
+has not been implemented. No new concrete/C/Wasm branch execution is claimed.

@@ -414,6 +414,10 @@ export function verifyRepresentations(
                         );
                         break;
                     case 'case':
+                        if (i.out.type.tag === 'flow')
+                            fail(
+                                'Lens-valued branches require a selected-branch restoration adapter',
+                            );
                         i.cases.forEach((arm) => {
                             const branch = clone(s);
                             bind(arm.pattern, get(s, i.value), branch);

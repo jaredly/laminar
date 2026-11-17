@@ -345,6 +345,34 @@ const makeLensCase = (
     ref: boolean,
     inner: (inner: Expr, cleanup: Expr[]) => Expr,
 ): Expr => {
+    // Pattern storage outlives branch selection when the result is a lens.
+    if (!ref) {
+        const tid = ctx.counter.current++,
+            rid = ctx.counter.current++;
+        const focus: Idd = { type: 'idd', id: tid, text: 'case-focus', loc: lin.loc };
+        const finish: Idd = { type: 'idd', id: rid, text: 'case-finish', loc: lin.loc };
+        return {
+            type: 'block',
+            loc: lin.loc,
+            block: [
+                {
+                    type: 'let',
+                    loc: lin.loc,
+                    pat: { type: 'tuple', loc: lin.loc, items: [pref(focus), finish] },
+                    value: {
+                        type: 'apply',
+                        loc: lin.loc,
+                        fn: { type: 'idd', id: -1, text: 'heap', loc: lin.loc },
+                        args: [value],
+                    },
+                },
+            ],
+            result: makeLensCase(ctx, eref(focus), lin, true, (focus, cleanup) =>
+                inner(focus, [...cleanup, { type: 'apply', loc: lin.loc, fn: finish, args: [] }]),
+            ),
+            cleanup: [],
+        };
+    }
     return {
         type: 'case',
         value,
@@ -602,7 +630,7 @@ export const lensToRvalue = (
                 lin.pat.type === 'drop' && lin.value.type === 'fn' && lin.value.name
                     ? { type: 'id', text: lin.value.name, loc: lin.value.loc }
                     : lin.pat;
-            let pat = patToPatd(sub, rpat, lin.value.type === 'lens');
+            const pat = patToPatd(sub, rpat, lin.value.type === 'lens' || rpat.type !== 'drop');
             if (lin.value.type === 'lens') {
                 return lensToRvalue(ctx, lin.value.lens, (value, cleanup) =>
                     collapseIffe({
@@ -622,6 +650,38 @@ export const lensToRvalue = (
                         cleanup: [],
                     }),
                 );
+            } else if (rpat.type !== 'drop') {
+                const finish: Idd = {
+                    type: 'idd',
+                    id: ctx.counter.current++,
+                    text: 'scope-finish',
+                    loc: lin.loc,
+                };
+                const owned = pat;
+                return collapseIffe({
+                    type: 'block',
+                    loc: lin.loc,
+                    block: [
+                        {
+                            type: 'let',
+                            loc: lin.loc,
+                            pat: { type: 'tuple', loc: lin.loc, items: [pref(owned), finish] },
+                            value: {
+                                type: 'apply',
+                                loc: lin.loc,
+                                fn: { type: 'idd', id: -1, text: 'heap', loc: lin.loc },
+                                args: [linearToExpr(ctx, lin.value)],
+                            },
+                        },
+                    ],
+                    result: lensToRvalue(sub, lin.body, (value, cleanup) =>
+                        inner(value, [
+                            ...cleanup,
+                            { type: 'apply', loc: lin.loc, fn: finish, args: [] },
+                        ]),
+                    ),
+                    cleanup: [],
+                });
             } else {
                 return collapseIffe({
                     type: 'block',

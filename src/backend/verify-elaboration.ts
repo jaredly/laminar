@@ -176,12 +176,17 @@ export function verifyElaboration(e: Elaboration): void {
     });
     e.branches.forEach((b) => {
         node(b.node);
+        const kind = e.nodes.find((n) => n.id === b.node)!;
+        if (kind.type?.tag === 'flow' && (!b.restored || b.arms.some((a) => !a.restored)))
+            fail('Lens branch is missing restoration states', b.node);
         b.input.forEach(state);
         b.output.forEach(state);
+        b.restored?.forEach(state);
         b.arms.forEach((a) => {
             node(a.node);
             span(a.transitions);
             a.output.forEach(state);
+            a.restored?.forEach(state);
         });
     });
     type(e.signature.type);

@@ -518,7 +518,14 @@ export function executeTypedProgram(
                     const before = new Set(f.places.keys());
                     bind(f, arm.pattern, value);
                     result = executeBlock(u, arm.body, f);
-                    for (const key of f.places.keys()) if (!before.has(key)) f.places.delete(key);
+                    cleanup(f, arm.setup ?? []);
+                    const close = () => {
+                        cleanup(f, arm.restored ?? []);
+                        for (const key of f.places.keys())
+                            if (!before.has(key)) f.places.delete(key);
+                    };
+                    if (isLens(result)) result = scoped(result, close);
+                    else close();
                     break;
                 }
             }

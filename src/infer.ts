@@ -34,7 +34,13 @@ type Root = {
 };
 type Binding = { id?: string; root: Root; path: number[]; scheme?: Scheme; permit?: Borrow };
 type Env = Map<string, Binding>;
-type View = { empty?: number[][]; read: Ty; put: (type: Ty) => void; targets: Binding[] };
+type View = {
+    provenance?: Binding[];
+    empty?: number[][];
+    read: Ty;
+    put: (type: Ty) => void;
+    targets: Binding[];
+};
 export type TypeEnvironment = ReadonlyMap<string, Scheme>;
 export type Inference = {
     type: Ty;
@@ -599,7 +605,9 @@ export class Inferencer {
             const owners = (b: Binding): Binding[] =>
                 b.root.owners ? b.root.owners.flatMap(owners) : [b];
             if (
-                view.targets.flatMap(owners).some((t) => !exits.some((e) => e.root.root === t.root))
+                (view.provenance ?? view.targets)
+                    .flatMap(owners)
+                    .some((t) => !exits.some((e) => e.root.root === t.root))
             )
                 this.error('escaping-lens', n.loc, 'Returned lens must refer to a lens parameter');
             const read = view.read;
@@ -725,7 +733,7 @@ export class Inferencer {
         const view = this.lens(n.value.lens, env);
         const read = view.read;
         const focus = this.freshBinding(read);
-        focus.root.owners = view.targets;
+        focus.root.owners = view.provenance ?? view.targets;
         focus.root.empty = view.empty?.map((p) => [...p]) ?? [];
         const loan: Borrow = { path: [], id: this.builder.borrow() };
         const protections = view.targets.map((target) => {
@@ -785,6 +793,7 @@ export class Inferencer {
                 return v.empty;
             },
             targets: v.targets,
+            provenance: v.provenance,
             put: (t) => {
                 this.record(n, flow(v.read, write));
                 this.solver.unify(write, t, n.loc);
@@ -823,6 +832,7 @@ export class Inferencer {
                         return views.flatMap((v, i) => (v.empty ?? []).map((p) => [i, ...p]));
                     },
                     targets,
+                    provenance: views.flatMap((v) => v.provenance ?? v.targets),
                     put: (t) =>
                         this.components(t, views.length, n.loc).forEach((v, i) => views[i].put(v)),
                 };
@@ -831,9 +841,10 @@ export class Inferencer {
                 return this.call(n, env, true);
             case 'let':
                 return this.letBody(n, env, true) as View;
+            case 'case':
+                return this.lensCase(n, env);
             case 'manual':
             case 'aslens':
-            case 'case':
                 return this.error(
                     'unsupported-lens',
                     n.loc,
@@ -888,9 +899,139 @@ export class Inferencer {
         return {
             read,
             targets: view?.targets ?? [],
+            provenance: view?.provenance,
             put: (t) => {
                 this.solver.unify(write, t, n.loc);
                 view?.put(replacement);
+            },
+        };
+    }
+    private lensCase(n: Lens & { type: 'case' }, env: Env): View {
+        if (n.value.type === 'lens')
+            return this.error(
+                'unsupported-lens-case',
+                n.loc,
+                'Matching a lens requires scoped restoration checking',
+            );
+        const scrutinee = this.linear(n.value, env);
+        if (!n.cases.length) this.error('empty-case', n.loc, 'Case requires at least one branch');
+        const roots = [...new Set([...env.values()].map((b) => b.root))];
+        type Snapshot = { type: Ty; empty: number[][]; borrows: Set<Borrow> }[];
+        const snapshot = (): Snapshot =>
+            roots.map((r) => ({
+                type: r.type,
+                empty: r.empty.map((p) => [...p]),
+                borrows: new Set(r.borrows),
+            }));
+        const restore = (states: Snapshot) =>
+            roots.forEach((r, i) =>
+                Object.assign(r, {
+                    ...states[i],
+                    empty: [...states[i].empty],
+                    borrows: new Set(states[i].borrows),
+                }),
+            );
+        const initial = snapshot();
+        const join = (states: Snapshot[]): Snapshot =>
+            roots.map((_, i) => {
+                const empty = states.flatMap((s) => s[i].empty);
+                const erase = (type: Ty) => {
+                    const root: Root = { type, empty: [], borrows: new Set() };
+                    for (const path of empty.filter(
+                        (p) => !empty.some((q) => q.length < p.length && this.overlaps(p, q)),
+                    ))
+                        this.put({ root, path }, tuple(), n.loc, false);
+                    return root.type;
+                };
+                const type = erase(states[0][i].type);
+                for (const state of states.slice(1)) {
+                    try {
+                        this.solver.unify(type, erase(state[i].type), n.loc);
+                    } catch (e) {
+                        if (e instanceof TypeDiagnostic)
+                            this.error(
+                                'branch-state',
+                                n.loc,
+                                `Branches leave incompatible binding types: ${e.message}`,
+                            );
+                        throw e;
+                    }
+                }
+                return { type, empty, borrows: new Set(initial[i].borrows) };
+            });
+        const read = this.solver.fresh();
+        const record: (typeof this.builder.branches)[number] = {
+            node: this.builder.node(n),
+            input: this.states(env),
+            arms: [],
+            output: [],
+        };
+        const arms = n.cases.map((arm) => {
+            restore(initial);
+            const sub = new Map(env);
+            this.pattern(arm.pat, scrutinee, sub);
+            const start = this.builder.transitions.length;
+            const view = this.lens(arm.body, sub);
+            this.solver.unify(read, view.read, arm.body.loc);
+            const state = snapshot();
+            record.arms.push({
+                node: this.builder.node(arm.body),
+                output: this.states(env),
+                transitions: [start, this.builder.transitions.length],
+            });
+            return { view, state, empty: view.empty?.map((p) => [...p]) ?? [] };
+        });
+        const setup = join(arms.map((a) => a.state));
+        restore(setup);
+        record.output = this.states(env);
+        this.builder.branches.push(record);
+        const external = (b: Binding): Binding[] => {
+            if (b.root.owners) return b.root.owners.flatMap(external);
+            if (!roots.includes(b.root)) return [];
+            let permit = b.permit;
+            const active = initial[roots.indexOf(b.root)].borrows;
+            while (permit && !active.has(permit)) permit = permit.parent;
+            return [{ ...b, permit }];
+        };
+        const targets = arms
+            .flatMap((a) => a.view.targets.flatMap(external))
+            .filter(
+                (b, i, all) =>
+                    !all.some(
+                        (other, j) =>
+                            other.root === b.root &&
+                            other.permit === b.permit &&
+                            other.path.length <= b.path.length &&
+                            other.path.every((v, k) => b.path[k] === v) &&
+                            (other.path.length < b.path.length || j < i),
+                    ),
+            );
+        return {
+            read,
+            targets,
+            empty: arms.flatMap((a) => a.empty),
+            provenance: arms.flatMap((a) => a.view.provenance ?? a.view.targets),
+            put: (type) => {
+                const current = snapshot();
+                const outputs: Snapshot[] = [];
+                arms.forEach((arm, i) => {
+                    restore(
+                        current.map((s, j) => ({
+                            ...s,
+                            borrows: new Set([
+                                ...s.borrows,
+                                ...[...arm.state[j].borrows].filter(
+                                    (b) => !initial[j].borrows.has(b),
+                                ),
+                            ]),
+                        })),
+                    );
+                    arm.view.put(type);
+                    outputs.push(snapshot());
+                    record.arms[i].restored = this.states(env);
+                });
+                restore(join(outputs).map((s, i) => ({ ...s, borrows: current[i].borrows })));
+                record.restored = this.states(env);
             },
         };
     }

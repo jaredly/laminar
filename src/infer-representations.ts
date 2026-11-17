@@ -368,6 +368,10 @@ export function inferRepresentations(
                     out = block(unit, i.body, clone(s), record, chain);
                     break;
                 case 'case':
+                    if (i.out.type.tag === 'flow')
+                        return fail(
+                            'Lens-valued branches require a selected-branch restoration adapter',
+                        );
                     out = join(
                         i.cases.map((arm) => {
                             const state = clone(s);
