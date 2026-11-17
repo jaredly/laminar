@@ -221,7 +221,44 @@ permissions, consumption/refill, reconstruction, and restoration at branch exit.
 Determine the intended replacement rules for constructor/tag changes before
 implementing them; do not invent those rules from ordinary owned matching.
 
-### 4. Manual restoration
+### Manual restoration semantic/reference slice
+
+The user clarified that manual zero-argument cleanup function literals may borrow
+lexical storage until restoration completes; ordinary escaping closures keep their
+existing restrictions. Cleanup expressions execute at restoration, after final
+focus contents are staged, and their owned results are disposed before the
+frontend's original cleanup runs. Dependencies are retained and exclusively
+protected through the lifetime. An explicit manual contract can retain owned
+frontend storage and its enclosing disposal obligation across a function return;
+raw local-lens returns remain rejected. This ownership model is specific to manual
+restoration; the `aslens` pattern-bound cleanup form remains open.
+
+Inference and typed verification separate staging from frontend completion.
+Elaboration retains manual identities, dependencies, and three restoration-phase
+state snapshots. Typed IR retains a `manual` frontend, dependency references, and
+a deferred executable block. Verification derives dependency protection from that
+block, checks restoration effects and disposal, and rejects missing metadata.
+The serialized reference interpreter executes this contract without inference
+closures or the source AST. Legacy decomposition uses scoped retained cleanup
+thunks, preserving final temporary contents and owned callback parameters after
+function return, rather than eagerly capturing their initial values.
+
+`test/manual-restoration.test.ts` covers shifted owned temporary focuses,
+type-changing cleanup, tuple/branch and nested cleanup order, deferred evaluation,
+owned cleanup results, unused/duplicated focuses, dependency/refill negatives,
+ordinary closure restrictions, and corrupted metadata/artifacts. Representation
+analysis currently reports `unsupported-representation`: “Manual restoration
+requires a deferred-cleanup representation adapter”. No manual C/Wasm execution
+is claimed. Pending computed-owner access remains restricted, including the
+existing conservative whole-owner version guard for disjoint projections.
+
+Manual-slice verification: 809 passing tests, the same 39 existing skips, zero
+failures across 30 files. The 25 manual tests cover serialized typed artifacts
+and checked legacy execution; existing native strict/optimized/sanitized and
+Emscripten/Node execution still passes. TypeScript and whitespace checks pass.
+No manual C/Wasm execution or remote CI execution is claimed.
+
+### 4. Manual restoration (original gap description)
 
 `Inferencer.lensInner` rejects `Lens.manual`, the `@(focus, cleanup)` form.
 The AST, grammar, and existing lowering contain this construct.

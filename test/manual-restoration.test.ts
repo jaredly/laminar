@@ -1,0 +1,224 @@
+import { readLines } from '../parser-generator/lexer.ts';
+import { grammar } from '../src/laminar-parser.ts';
+import type { Linear } from '../src/ast.ts';
+import { Checker } from '../src/check.ts';
+import { verifyElaboration } from '../src/backend/verify-elaboration.ts';
+import { expect, it } from 'bun:test';
+import { typedProgram } from './backend/typed-program.ts';
+import { legacyReference } from './backend/legacy-reference.ts';
+import { executeTypedProgram } from '../src/eval-typed.ts';
+import { verifyTypedProgram } from '../src/verify-ir.ts';
+import { TypeDiagnostic } from '../src/types.ts';
+import { BackendDiagnostic, wasm32Emscripten } from '../src/backend/target.ts';
+import { compileConcreteProgram } from '../src/lower-concrete.ts';
+
+const samples = [
+    {
+        name: 'deferred no-op',
+        source: '{let x = 1\n {let f = ~{@(x, fn () ())}\n f := true}\n x}',
+        expected: true,
+    },
+    {
+        name: 'shifted temporary',
+        source: 'fn shifted(~x) ~{let v = x + 2\n @(v, fn () {x := v - 2})}\n{let x = 1\n shifted(~x) := 10\n x}',
+        expected: 8,
+    },
+    {
+        name: 'cleanup sees final type',
+        source: '{let x = 1\n {let f = ~{@(x, fn () {x := 3})}\n f := true}\n x}',
+        expected: 3,
+    },
+    {
+        name: 'owned cleanup parameter',
+        source: 'fn restore(f, ~x) ~{@(x, f)}\n{let x = 1\n restore(fn () 4, ~x) := true\n x}',
+        expected: true,
+    },
+    {
+        name: 'nested cleanup order',
+        source: '{let x = 1\n {let f = ~{@(@(x, fn () {x := x + 1}), fn () {x := x * 2})}\n f := 10}\n x}',
+        expected: 21,
+    },
+    {
+        name: 'nested owned callbacks',
+        source: 'fn nest(f, g, ~x) ~{@(@(x, g), f)}\n{let x = 1\n nest(fn () 1, fn () 2, ~x) := true\n x}',
+        expected: true,
+    },
+    {
+        name: 'tuple focus before cleanup',
+        source: '{let x = 1\n let y = 2\n {let f = ~{@((x, y), fn () {x := x + dup(~y)})}\n f := (3, 4)}\n (x, y)}',
+        expected: [7, 4],
+    },
+    {
+        name: 'branch cleanup',
+        source: '{let x = 1\n {let f = ~{match false {true -> @(x, fn () {x := x + 1}); false -> @(x, fn () {x := x + 10})}}\n f := 3}\n x}',
+        expected: 13,
+    },
+    {
+        name: 'explicit owned lifetime',
+        source: 'fn own() ~{let v = 1\n @(v, fn () ())}\nown() := true',
+        expected: 1,
+    },
+    {
+        name: 'manual around branch',
+        source: '{let x = 1\n {let f = ~{@({match true {true -> x; false -> x}}, fn () {x := x + 1})}\n f := 4}\n x}',
+        expected: 5,
+    },
+];
+for (const sample of samples)
+    it(`manual restoration: ${sample.name}`, () => {
+        const artifact = JSON.parse(JSON.stringify(typedProgram(sample.source)));
+        verifyTypedProgram(artifact);
+        expect(executeTypedProgram(artifact)).toEqual(sample.expected);
+        expect(legacyReference(sample.source)).toEqual(sample.expected);
+    });
+for (const [source, code] of [
+    [
+        '{let x = 1\n let resource = 2\n {let f = ~{@(x, fn () resource)}\n resource}\n ()}',
+        'use-while-borrowed',
+    ],
+    ['{let x = 1\n {let f = ~{@(x, fn () ())}\n f}\n ()}', 'unrestored-lens'],
+    ['{let x = 1\n let f = fn () {x := 2}\n f()}', 'borrowed-capture'],
+    ['fn bad(~x) ~{@(x, fn () x)}', 'unrestored-lens'],
+    ['fn bad(~x) ~{@(x, round)}', 'arity-mismatch'],
+    ['fn raw() ~{let v = 1\n v}', 'escaping-lens'],
+    ['fn bad(~x) ~{@(x, fn () {fn () {x := 3}})}', 'borrowed-capture'],
+    [
+        'fn first(~(x, y)) ~x\n{let p = (1, 2)\n {let f = ~{@(first(~p), fn () p)}\n f := 3}\n ()}',
+        'use-while-borrowed',
+    ],
+])
+    it(`manual cleanup rejects ${code}`, () => {
+        try {
+            typedProgram(source);
+            throw Error('Expected rejection');
+        } catch (e) {
+            expect(e).toBeInstanceOf(TypeDiagnostic);
+            expect((e as TypeDiagnostic).code).toBe(code);
+        }
+    });
+it('stops before representation lowering requires a deferred-cleanup adapter', () => {
+    const p = typedProgram(samples[1].source);
+    try {
+        compileConcreteProgram(p, wasm32Emscripten('test'), [
+            { unit: p.units.at(-1)!.id, arguments: [] },
+        ]);
+        throw Error('Expected backend restriction');
+    } catch (e) {
+        expect(e).toBeInstanceOf(BackendDiagnostic);
+        expect((e as BackendDiagnostic).code).toBe('unsupported-representation');
+        expect((e as Error).message).toBe(
+            'Manual restoration requires a deferred-cleanup representation adapter',
+        );
+    }
+});
+
+it('evaluates the cleanup expression and its result only at restoration', () => {
+    const source =
+        '{let x = 1\n let count = 0\n {let f = ~{@(x, {count := count + 1\n fn () ()})}\n f := true}\n (x, count)}';
+    const events: string[] = [];
+    const p = JSON.parse(JSON.stringify(typedProgram(source)));
+    expect(
+        executeTypedProgram(p, {
+            onStep: (_, op) => {
+                if (['manual', 'swap', 'closure'].includes(op)) events.push(op);
+            },
+        }),
+    ).toEqual([true, 1]);
+    expect(events).toEqual(['manual', 'swap', 'swap', 'closure']);
+    expect(legacyReference(source)).toEqual([true, 1]);
+});
+
+it('disposes owned cleanup results and captured resources once', () => {
+    const source =
+        '{let x = 1\n let resource = 2\n {let f = ~{@(x, fn () {let owned = fn () resource\n owned})}\n f := true}\n x}';
+    let disposals = 0;
+    expect(
+        executeTypedProgram(JSON.parse(JSON.stringify(typedProgram(source))), {
+            onDisposeClosure: () => disposals++,
+        }),
+    ).toBe(true);
+    expect(disposals).toBe(1);
+    expect(legacyReference(source)).toBe(true);
+});
+
+function manual(p: ReturnType<typeof typedProgram>) {
+    const visit = (
+        b: import('../src/typed-ir.ts').IRBlock,
+    ): Extract<import('../src/typed-ir.ts').Instruction, { op: 'manual' }> | undefined => {
+        for (const i of b.instructions) {
+            if (i.op === 'manual') return i;
+            if (i.op === 'scope') {
+                const found = visit(i.body);
+                if (found) return found;
+            }
+        }
+    };
+    for (const u of p.units) {
+        for (const f of u.functions) {
+            const found = visit(f.body);
+            if (found) return found;
+        }
+        const found = visit(u.entry);
+        if (found) return found;
+    }
+    throw Error('Missing manual restoration');
+}
+
+it('independently rejects missing dependency protection before running effects', () => {
+    const p = JSON.parse(JSON.stringify(typedProgram(samples[1].source)));
+    manual(p).holds = [];
+    let steps = 0;
+    expect(() => executeTypedProgram(p, { onStep: () => steps++ })).toThrow(
+        'Manual cleanup dependency protection mismatch',
+    );
+    expect(steps).toBe(0);
+});
+
+it('independently rejects removed restoration effects', () => {
+    const p = JSON.parse(JSON.stringify(typedProgram(samples[1].source)));
+    const m = manual(p);
+    m.holds = [];
+    m.cleanup = {
+        origin: m.origin,
+        instructions: [
+            {
+                op: 'constant',
+                origin: m.origin,
+                value: null,
+                out: {
+                    id: 'removed-cleanup',
+                    type: { tag: 'plain', value: { tag: 'tuple', items: [] } },
+                },
+            },
+        ],
+        result: 'removed-cleanup',
+        cleanup: [],
+    };
+    expect(() => verifyTypedProgram(p)).toThrow(BackendDiagnostic);
+});
+
+it('restores unused and duplicated manual focuses once', () => {
+    for (const [body, expected] of [
+        ['{let _ = ~{@(x, fn () {count := count + 1})}\n ()}\n (x, count)', [1, 1]],
+        ['let copied = dup(~{@(x, fn () {count := count + 1})})\n (copied, x, count)', [1, 1, 1]],
+    ] as const) {
+        const source = `{let x = 1\n let count = 0\n ${body}}`;
+        expect(executeTypedProgram(JSON.parse(JSON.stringify(typedProgram(source))))).toEqual([
+            ...expected,
+        ]);
+        expect(legacyReference(source)).toEqual(expected);
+    }
+});
+
+it('retains and independently validates restoration-time metadata', () => {
+    const parsed = grammar.parse<Linear>('FileItem', readLines(samples[0].source).nodes[0]);
+    if (parsed.type === 'failure') throw Error('Parse failure');
+    const original = new Checker().check(parsed.value).elaboration;
+    verifyElaboration(JSON.parse(JSON.stringify(original)));
+    const missing = JSON.parse(JSON.stringify(original));
+    missing.manuals = [];
+    expect(() => verifyElaboration(missing)).toThrow('Missing manual restoration metadata');
+    const phase = JSON.parse(JSON.stringify(original));
+    delete phase.manuals[0].cleaned;
+    expect(() => verifyElaboration(phase)).toThrow('Missing manual restoration phase');
+});

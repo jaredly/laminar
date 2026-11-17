@@ -49,3 +49,20 @@ Source errors remain `TypeDiagnostic`. Backend configuration, unsupported-featur
 Tests run in temporary directories and preserve generated C/Wasm and compiler commands on failure. Compare typed-IR, native, and Wasm results through a test-only protocol: booleans and finite numbers as JSON scalars, unit as `null`, tuples/lists recursively as arrays, strings as strings. Preserve special numeric values with tagged objects for `NaN`, infinities, and negative zero. This protocol is a test interface, not the public language ABI.
 
 Phase-0 baseline: `bun test` reported 285 pass, 39 existing skips, 0 failures across 15 files; `bunx tsc --noEmit` passed. Required sanitizer support and compiler flags are checked per toolchain, not assumed identical between native and Wasm targets.
+
+## Scoped manual restoration
+
+Manual cleanup is a non-escaping restoration computation. Its zero-argument
+function-literal body may borrow lexical storage for that computation's lifetime;
+ordinary and nested escaping functions still cannot borrow outer storage. Cleanup
+expressions and any captures they construct are evaluated at restoration, with final focus
+contents available, and owned callback results are disposed once. The frontend's
+original restoration runs afterward. All dependency borrows remain live until
+this sequence completes, and borrowed lens parameters still require refill.
+
+An explicit manual contract retains owned frontend storage through restoration
+and enclosing-scope disposal. This permits returned manual focuses backed by
+owned storage, while raw owned-local lens returns remain invalid. Typed execution
+retains these storage cells and scopes explicitly; no inference closure or source
+AST is needed after serialization. Manual concrete/C/Wasm adapters are pending
+and produce an explicit representation diagnostic rather than evaluator fallback.

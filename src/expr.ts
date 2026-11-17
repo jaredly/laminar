@@ -39,6 +39,8 @@ export type Expr =
       }
     | {
           type: 'fn';
+          /** Compiler-generated scoped cleanup retains its lexical storage frames. */
+          retained?: boolean;
           args: Patd[];
           body: Expr;
           loc: Loc;

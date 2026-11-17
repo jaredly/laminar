@@ -365,8 +365,8 @@ describe('AST inference', () => {
             'branch-state',
         );
     });
-    it('diagnoses unsupported lens restoration forms instead of inventing types', () => {
-        rejects('fn (~x) ~{ @(x, round) }', 'unsupported-lens');
+    it('checks the zero-argument manual cleanup convention', () => {
+        rejects('fn (~x) ~{ @(x, round) }', 'arity-mismatch');
     });
 });
 

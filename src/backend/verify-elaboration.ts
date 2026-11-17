@@ -124,6 +124,30 @@ export function verifyElaboration(e: Elaboration): void {
             parent = p.parent;
         }
     });
+    const manuals = e.manuals ?? [];
+    unique(
+        manuals.map((m) => m.node),
+        'manual restoration',
+    );
+    for (const n of e.nodes)
+        if (n.kind === 'manual' && n.type && !manuals.some((m) => m.node === n.id))
+            fail('Missing manual restoration metadata', n.id);
+    manuals.forEach((m) => {
+        node(m.node);
+        node(m.frontend);
+        node(m.cleanup);
+        if (
+            e.nodes.find((n) => n.id === m.node)!.kind !== 'manual' ||
+            e.nodes.find((n) => n.id === m.frontend)!.type?.tag !== 'flow'
+        )
+            fail('Invalid manual restoration source', m.node);
+        unique(m.dependencies, 'cleanup dependency');
+        m.dependencies.forEach(binding);
+        for (const phase of [m.staged, m.cleaned, m.restored]) {
+            if (!Array.isArray(phase)) fail('Missing manual restoration phase', m.node);
+            phase.forEach(state);
+        }
+    });
     e.uses.forEach((u) => {
         node(u.node);
         binding(u.binding);

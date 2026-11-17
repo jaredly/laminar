@@ -74,7 +74,11 @@ and logical `fst`. `dup` of a computed focus restores that focus after copying i
 There is no evaluator fallback. Function roots with parameters need a future host
 adapter, and borrowed lenses cannot escape the test entry boundary. Existing
 checker restrictions still apply: matching borrowed scrutinees is unsupported,
-and owned local storage cannot escape through returned function lenses. Lens-valued
+and raw owned-local lenses cannot escape through function returns. Explicit manual
+restoration may retain owned focuses in typed/legacy execution, but its physical
+adapter is pending and reports `unsupported-representation`: “Manual restoration
+requires a deferred-cleanup representation adapter”. No manual C/Wasm execution
+is claimed. Lens-valued
 branches normalize their focus into thin storage and retain a selector plus each
 arm’s original restoration operation. Only the selected arm runs setup,
 normalization, and cleanup. Deferred branch variables are initialized outside the

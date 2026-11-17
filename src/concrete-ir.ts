@@ -51,7 +51,7 @@ export type ConcreteInstruction =
     | Extract<Instruction, { op: 'bind' | 'borrow' }>
     | (Exclude<
           Instruction,
-          { op: 'bind' | 'borrow' | 'scope' | 'case' | 'call' | 'global' | 'closure' }
+          { op: 'bind' | 'borrow' | 'scope' | 'case' | 'call' | 'global' | 'closure' | 'manual' }
       > &
           ConcreteOutput)
     | ({ op: 'scope'; origin: string; body: ConcreteBlock } & ConcreteOutput)

@@ -49,6 +49,16 @@ export type Elaboration = {
         /** Present for independent computed focuses; absent for direct aliases. */
         owners?: { place: PlaceId; path: number[]; permit?: string }[];
     }[];
+    manuals: {
+        node: NodeId;
+        frontend: NodeId;
+        cleanup: NodeId;
+        scoped: boolean;
+        dependencies: BindingId[];
+        staged: PlaceState[];
+        cleaned: PlaceState[];
+        restored: PlaceState[];
+    }[];
     instantiations: {
         node: NodeId;
         definition: DefinitionId;
@@ -119,6 +129,16 @@ export class ElaborationBuilder {
     readonly bindings: (Omit<BindingRecord, 'initialType'> & { initialType: Ty })[] = [];
     readonly uses: Elaboration['uses'] = [];
     readonly borrows: Elaboration['borrows'] = [];
+    readonly manuals: {
+        node: NodeId;
+        frontend: NodeId;
+        cleanup: NodeId;
+        scoped: boolean;
+        dependencies: BindingId[];
+        staged: RawState[];
+        cleaned: RawState[];
+        restored: RawState[];
+    }[] = [];
     readonly instantiations: {
         node: NodeId;
         definition: DefinitionId;
@@ -275,6 +295,12 @@ export class ElaborationBuilder {
             bindings: this.bindings.map((b) => ({ ...b, initialType: type(b.initialType) })),
             uses: this.uses,
             borrows: this.borrows,
+            manuals: this.manuals.map((m) => ({
+                ...m,
+                staged: m.staged.map(state),
+                cleaned: m.cleaned.map(state),
+                restored: m.restored.map(state),
+            })),
             instantiations: this.instantiations.map((i) => ({
                 ...i,
                 type: type(i.type),

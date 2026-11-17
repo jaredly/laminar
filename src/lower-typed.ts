@@ -381,6 +381,37 @@ export function lowerTypedUnit(e: Elaboration): IRUnit {
                 return call(n, b);
             case 'let':
                 return letBody(n, b, true);
+            case 'manual': {
+                const frontend = lens(n.frontend, b);
+                const record =
+                    e.manuals.find((m) => m.node === id(n)) ??
+                    fail('Missing manual restoration metadata', n);
+                const cleanup = block(
+                    record.scoped && n.backend.type === 'fn' ? n.backend.body : n.backend,
+                );
+                if (record.scoped && n.backend.type === 'fn') {
+                    if (n.backend.body.type === 'lens') return fail('Cleanup returned a lens', n);
+                    cleanup.result = linear(n.backend.body, cleanup).id;
+                } else {
+                    const callee = linear(n.backend, cleanup);
+                    if (callee.type.tag !== 'plain' || callee.type.value.tag !== 'fn')
+                        return fail('Cleanup is not callable', n);
+                    cleanup.result = emit(
+                        cleanup,
+                        n.backend,
+                        { op: 'call', callee: callee.id, args: [] },
+                        callee.type.value.result,
+                    ).id;
+                }
+                return emit(b, n, {
+                    op: 'manual',
+                    lens: frontend.id,
+                    holds: record.dependencies.map((id) =>
+                        ref(e.bindings.find((v) => v.id === id)!),
+                    ),
+                    cleanup,
+                });
+            }
             case 'case': {
                 if (n.value.type === 'lens') return fail('Borrowed matching is not checked', n);
                 const value = linear(n.value, b);

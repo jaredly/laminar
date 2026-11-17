@@ -263,6 +263,11 @@ export function lowerConcreteProgram(
             cleanup: structuredClone(b.cleanup),
             instructions: b.instructions.map((i): ConcreteInstruction => {
                 if (i.op === 'borrow' || i.op === 'bind') return structuredClone(i);
+                if (i.op === 'manual')
+                    throw new BackendDiagnostic(
+                        'unsupported-concrete',
+                        'Manual restoration requires a deferred-cleanup representation adapter',
+                    );
                 const out = { ...i.out, layout: layout(values.get(i.out.id)!) };
                 if (i.op === 'scope') return { ...i, out, body: lower(i.body) };
                 if (i.op === 'case')

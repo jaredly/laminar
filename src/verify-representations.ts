@@ -361,6 +361,10 @@ export function verifyRepresentations(
                         else if (actual.kind !== 'thin') fail('Owned acquisition must be thin');
                         break;
                     }
+                    case 'manual':
+                        return fail(
+                            'Manual restoration requires a deferred-cleanup representation adapter',
+                        );
                     case 'lens-tuple': {
                         const actual = lens(v);
                         if (actual.kind !== 'tuple') return fail('Lens tuple lost its topology');

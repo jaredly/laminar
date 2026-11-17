@@ -8,6 +8,16 @@ The implementation now follows the clarified affine resource model, superseding 
 
 The original examples that access `x` while `y` or `(a, b)` still borrow it are invalid use-while-borrowed programs. End the alias scope before accessing the owner. Likewise, consuming a value on the RHS of assignment empties the target before the swap, so `inc` and `map` can correctly return unit; the earlier annotation-mismatch discussion missed this resource transition.
 
+### Follow-up decision: scoped manual cleanup
+
+The user clarified that a manual cleanup function may borrow surrounding storage
+until restoration completes. This is a scoped restoration computation, not an
+exception for ordinary escaping closures. Evaluate the cleanup expression at
+restoration, invoke it with zero arguments, dispose its owned result, and only
+then finish the frontend lens. Retain cleanup dependencies and owned focus storage
+through this boundary. The checker and serialized typed/legacy reference paths now
+implement that contract; physical manual-restoration adapters remain backend work.
+
 ## Recommendation
 
 Add an AST inference/elaboration pass using first-order unification, fresh instantiation, and restricted rank-1 let-polymorphism. Preserve Laminar's distinction between ordinary values and lenses in the inferred function signatures. Thread a typing context through inference so lens updates can change the types of subsequent uses. A single immutable mapping from names to HM types cannot express the existing language.

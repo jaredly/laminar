@@ -110,3 +110,29 @@ verification checks this contract and both normalization edges against typed IR.
 C storage lowering dispatches deferred restoration using the retained selector,
 reconstructs selected owner outputs, and merges their logical storage versions.
 Scalar/tuple cases, including thin/scattered joins, execute on native C and Wasm.
+
+## Manual restoration
+
+`manual` consumes a frontend lens temporary and retains a `cleanup` block plus
+`holds` dependency references. The output has the frontend's focus contract.
+Cleanup runs at restoration, after staging the final contents but before the
+frontend's original restoration. Its owned block result is disposed. A separate
+staging operation in the verifier preserves this order through tuples, scopes,
+and branch selections; ordinary non-manual restoration keeps its atomic contract.
+
+The verifier derives external dependency references from cleanup instructions,
+normalizes nested borrow permissions, and compares them with `holds`. Its active
+loan protections cover those dependencies and the frontend owners. Pending
+computed owners remain inaccessible during cleanup. A manual capability explicitly
+retains owned frontend storage; enclosing deferred scope/parameter cleanup must
+still dispose every owned value. Raw local-lens escape checks remain unchanged
+outside that contract. Elaboration's `manuals` records retain frontend/cleanup node
+identities, dependency binding IDs, whether a function literal is scoped, and
+staged/cleaned/restored storage states.
+
+The typed interpreter executes this detached block and retains its frame until
+restoration completes. The legacy pointer path uses retained scoped cleanup
+thunks, so reading a temporary or owned callback after a function return sees its
+final contents and live lexical storage. Representation analysis and verification
+currently reject manual instructions with the precise deferred-cleanup adapter
+diagnostic; no manual concrete/C/Wasm execution is claimed.

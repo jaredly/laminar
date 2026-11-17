@@ -348,7 +348,7 @@ export const evalExpr = (ctx: Ctx, expr: Expr): any => {
                     );
                 }
                 if (!mem) throw new Error(`getting called tho with bad stack`);
-                const nctx: Ctx = subCtx(ctx, mem.stack, expr.loc);
+                const nctx: Ctx = subCtx(ctx, expr.retained ? ctx.stack : mem.stack, expr.loc);
                 if ((f as any).closure) {
                     const items = (f as any).closure as { id: Idd; value: any }[];
                     items.forEach(({ id, value }) => {

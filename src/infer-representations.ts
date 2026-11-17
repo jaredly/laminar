@@ -310,6 +310,10 @@ export function inferRepresentations(
                     };
                     break;
                 }
+                case 'manual':
+                    return fail(
+                        'Manual restoration requires a deferred-cleanup representation adapter',
+                    );
                 case 'lens-tuple':
                     out = {
                         kind: 'lens',

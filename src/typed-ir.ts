@@ -58,6 +58,7 @@ export type Instruction =
     | (Output & { op: 'move'; slot: SlotRef })
     | (Output & { op: 'acquire'; slot: SlotRef })
     | (Output & { op: 'lens-tuple'; items: ValueId[] })
+    | (Output & { op: 'manual'; lens: ValueId; holds: SlotRef[]; cleanup: IRBlock })
     | (Output & { op: 'swap'; lens: ValueId; value: ValueId })
     | (Output & { op: 'call'; callee: ValueId; args: ValueId[] })
     | (Output & { op: 'closure'; function: string; captures: { place: string; value: ValueId }[] })

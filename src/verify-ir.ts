@@ -29,6 +29,7 @@ type Cap =
           guards: { place: string; version: number }[];
       }
     | { kind: 'scope'; inner: Cap; cleanup: Cleanup[]; retire: string[] }
+    | { kind: 'manual'; inner: Cap; holds: SlotRef[]; cleanup: IRBlock }
     | {
           kind: 'choice';
           read: SemanticType;
@@ -41,6 +42,7 @@ type Cap =
       };
 type Value = { type: SemanticFlow; cap?: Cap };
 type State = {
+    locked: SlotRef[];
     slots: Map<string, Slot>;
     values: Map<string, Value>;
     loans: Map<string, { cap: Cap; type: SemanticFlow & { tag: 'flow' } }>;
@@ -151,8 +153,14 @@ export function verifyTypedProgram(program: TypedProgram): void {
         const source = (id: string) => {
             if (!origins.has(id)) fail('Missing source origin', id);
         };
-        const fresh = (): State => ({ slots: new Map(), values: new Map(), loans: new Map() });
+        const fresh = (): State => ({
+            locked: [],
+            slots: new Map(),
+            values: new Map(),
+            loans: new Map(),
+        });
         const clone = (s: State): State => ({
+            locked: [...s.locked],
             slots: new Map(
                 [...s.slots].map(([id, v]) => [id, { ...v, empty: v.empty.map((p) => [...p]) }]),
             ),
@@ -169,6 +177,8 @@ export function verifyTypedProgram(program: TypedProgram): void {
         const cap = (v: Value): Cap =>
             v.type.tag === 'flow' && v.cap ? v.cap : fail('Expected a lens capability');
         const access = (s: State, r: SlotRef): Slot => {
+            if (s.locked.some((p) => p.place === r.place && overlap(p.path, r.path)))
+                fail('Cleanup accesses an owner before pending restoration');
             if (r.path.some((p) => !Number.isSafeInteger(p) || p < 0)) fail('Invalid slot path');
             const slot = s.slots.get(r.place) ?? fail(`Unknown or retired place ${r.place}`);
             const permits = new Set<string>();
@@ -219,26 +229,41 @@ export function verifyTypedProgram(program: TypedProgram): void {
             if (empty) slot.empty.push(r.path);
             slot.version++;
         };
+        const normalized = (refs: SlotRef[]): SlotRef[] =>
+            refs.filter(
+                (r, i, all) =>
+                    !all.some(
+                        (o, j) =>
+                            o.place === r.place &&
+                            o.permit === r.permit &&
+                            prefix(o.path, r.path) &&
+                            (o.path.length < r.path.length || j < i),
+                    ),
+            );
         const targets = (c: Cap): SlotRef[] =>
-            c.kind === 'choice'
-                ? c.refs
-                : c.kind === 'place'
-                  ? [c.slot]
-                  : c.kind === 'tuple'
-                    ? c.items.flatMap(targets)
-                    : c.kind === 'scope'
-                      ? targets(c.inner)
-                      : c.effects.flatMap((e) => targets(e.cap));
+            c.kind === 'manual'
+                ? normalized([...targets(c.inner), ...c.holds])
+                : c.kind === 'choice'
+                  ? c.refs
+                  : c.kind === 'place'
+                    ? [c.slot]
+                    : c.kind === 'tuple'
+                      ? c.items.flatMap(targets)
+                      : c.kind === 'scope'
+                        ? targets(c.inner)
+                        : c.effects.flatMap((e) => targets(e.cap));
         const read = (s: State, c: Cap): SemanticType =>
-            c.kind === 'choice'
-                ? c.read
-                : c.kind === 'place'
-                  ? focus(s, c.slot)
-                  : c.kind === 'tuple'
-                    ? { tag: 'tuple', items: c.items.map((v) => read(s, v)) }
-                    : c.kind === 'scope'
-                      ? read(s, c.inner)
-                      : c.read;
+            c.kind === 'manual'
+                ? read(s, c.inner)
+                : c.kind === 'choice'
+                  ? c.read
+                  : c.kind === 'place'
+                    ? focus(s, c.slot)
+                    : c.kind === 'tuple'
+                      ? { tag: 'tuple', items: c.items.map((v) => read(s, v)) }
+                      : c.kind === 'scope'
+                        ? read(s, c.inner)
+                        : c.read;
         const empty = (s: State, c: Cap): number[][] => {
             switch (c.kind) {
                 case 'place':
@@ -248,6 +273,7 @@ export function verifyTypedProgram(program: TypedProgram): void {
                 case 'tuple':
                     return c.items.flatMap((v, i) => empty(s, v).map((p) => [i, ...p]));
                 case 'scope':
+                case 'manual':
                     return empty(s, c.inner);
                 case 'call':
                     return [];
@@ -277,6 +303,8 @@ export function verifyTypedProgram(program: TypedProgram): void {
             if (c.kind === 'choice')
                 return c.arms.flatMap((a) => externalTargets(outer, a.state, a.cap));
             if (c.kind === 'scope') return externalTargets(outer, branch, c.inner);
+            if (c.kind === 'manual')
+                return normalized([...externalTargets(outer, branch, c.inner), ...c.holds]);
             if (c.kind === 'tuple')
                 return c.items.flatMap((v) => externalTargets(outer, branch, v));
             if (c.kind === 'call')
@@ -290,8 +318,122 @@ export function verifyTypedProgram(program: TypedProgram): void {
             while (permit && !outer.loans.has(permit)) permit = loans.get(permit)?.parent;
             return [{ ...c.slot, permit }];
         };
+        const pending = (s: State, c: Cap): SlotRef[] => {
+            if (c.kind === 'place') return [];
+            if (c.kind === 'call') return targets(c);
+            if (c.kind === 'tuple') return c.items.flatMap((v) => pending(s, v));
+            if (c.kind === 'manual') return pending(s, c.inner);
+            if (c.kind === 'choice') return c.arms.flatMap((a) => pending(a.state, a.cap));
+            return [
+                ...pending(s, c.inner),
+                ...c.cleanup.flatMap((a) =>
+                    a.kind === 'release'
+                        ? targets(s.loans.get(a.loan)?.cap ?? fail('Missing deferred loan'))
+                        : [],
+                ),
+            ];
+        };
+        const stage = (s: State, c: Cap, type: SemanticType): (() => void) => {
+            if (c.kind === 'place') {
+                write(s, c.slot, type);
+                return () => {};
+            }
+            if (c.kind === 'tuple') {
+                const parts = tupleItems(type);
+                if (parts.length !== c.items.length) fail('Tuple lens replacement shape mismatch');
+                const finishes = c.items.map((v, i) => stage(s, v, parts[i]!));
+                return () => finishes.forEach((f) => f());
+            }
+            if (c.kind === 'call') {
+                eq(type, c.write);
+                return () => apply(s, c, type);
+            }
+            if (c.kind === 'scope') {
+                const finish = stage(s, c.inner, type);
+                return () => {
+                    finish();
+                    cleanup(s, c.cleanup);
+                    for (const p of c.retire) {
+                        if (s.slots.has(p) && full(s, { place: p, path: [] }))
+                            fail('Deferred scope value has no disposal');
+                        s.slots.delete(p);
+                    }
+                };
+            }
+            if (c.kind === 'manual') {
+                const finish = stage(s, c.inner, type);
+                return () => {
+                    const locked = s.locked;
+                    s.locked = [...locked, ...pending(s, c.inner)];
+                    const value = verifyBlock(c.cleanup, s);
+                    plain(value);
+                    s.locked = locked;
+                    finish();
+                };
+            }
+            if (c.guards.some((g) => s.slots.get(g.place)?.version !== g.version))
+                fail('Branch lens owner changed before restoration');
+            const arms = c.arms.map((arm) => {
+                const branch = clone(arm.state);
+                for (const place of c.places) {
+                    const current = s.slots.get(place)!;
+                    const original = branch.slots.get(place)!;
+                    branch.slots.set(place, {
+                        ...current,
+                        empty: current.empty.map((p) => [...p]),
+                        version: original.version + current.version - c.versions.get(place)!,
+                    });
+                }
+                for (const id of c.baseLoans) branch.loans.delete(id);
+                for (const [id, loan] of s.loans) branch.loans.set(id, loan);
+                const finish = stage(branch, arm.cap, type);
+                return { branch, finish, restored: arm.restored };
+            });
+            mergeStates(
+                s,
+                arms.map((a) => a.branch),
+                c.places,
+            );
+            const versions = new Map([...s.slots].map(([p, slot]) => [p, slot.version]));
+            return () => {
+                for (const arm of arms) {
+                    for (const place of c.places) {
+                        const current = s.slots.get(place)!;
+                        const original = arm.branch.slots.get(place)!;
+                        arm.branch.slots.set(place, {
+                            ...current,
+                            empty: current.empty.map((p) => [...p]),
+                            version: original.version + current.version - versions.get(place)!,
+                        });
+                    }
+                    for (const id of c.baseLoans) arm.branch.loans.delete(id);
+                    for (const [id, loan] of s.loans) arm.branch.loans.set(id, loan);
+                    arm.finish();
+                    cleanup(arm.branch, arm.restored);
+                    for (const place of arm.branch.slots.keys())
+                        if (!c.places.includes(place)) {
+                            if (full(arm.branch, { place, path: [] }))
+                                fail('Branch-local storage has no deferred disposal');
+                            arm.branch.slots.delete(place);
+                        }
+                    if (
+                        JSON.stringify([...arm.branch.loans.keys()].sort()) !==
+                        JSON.stringify([...s.loans.keys()].sort())
+                    )
+                        fail('Branch restoration leaks a lexical loan');
+                }
+                mergeStates(
+                    s,
+                    arms.map((a) => a.branch),
+                    c.places,
+                );
+            };
+        };
         const apply = (s: State, c: Cap, type: SemanticType): void => {
             switch (c.kind) {
+                case 'manual':
+                    stage(s, c, type)();
+                    return;
                 case 'choice': {
                     if (c.guards.some((g) => s.slots.get(g.place)?.version !== g.version))
                         fail('Branch lens owner changed before restoration');
@@ -636,6 +778,73 @@ export function verifyTypedProgram(program: TypedProgram): void {
                         });
                         break;
                     }
+                    case 'manual': {
+                        const frontend = take(s, i.lens);
+                        feq(frontend.type, i.out.type);
+                        const local = new Set<string>(),
+                            refs: SlotRef[] = [],
+                            scopedLoans = new Set<string>();
+                        const patternPlaces = (p: IRPattern): void => {
+                            if (p.kind === 'bind') local.add(p.slot.place);
+                            else if (p.kind === 'tuple' || p.kind === 'constructor')
+                                p.items.forEach(patternPlaces);
+                        };
+                        const scan = (b: IRBlock): void => {
+                            for (const instruction of b.instructions) {
+                                if (instruction.op === 'bind') patternPlaces(instruction.pattern);
+                                else if (instruction.op === 'borrow') {
+                                    scopedLoans.add(instruction.loan);
+                                    const loan = loans.get(instruction.loan)!;
+                                    if (loan?.owners) local.add(loan.place);
+                                } else if (
+                                    instruction.op === 'move' ||
+                                    instruction.op === 'acquire'
+                                )
+                                    refs.push(instruction.slot);
+                                else if (instruction.op === 'scope') scan(instruction.body);
+                                else if (instruction.op === 'case')
+                                    for (const arm of instruction.cases) {
+                                        patternPlaces(arm.pattern);
+                                        scan(arm.body);
+                                        for (const a of [
+                                            ...(arm.setup ?? []),
+                                            ...(arm.restored ?? []),
+                                        ])
+                                            if (a.kind !== 'release') refs.push(a.slot);
+                                    }
+                                else if (instruction.op === 'manual') {
+                                    refs.push(...instruction.holds);
+                                    scan(instruction.cleanup);
+                                }
+                            }
+                            for (const a of b.cleanup) if (a.kind !== 'release') refs.push(a.slot);
+                        };
+                        scan(i.cleanup);
+                        const held = normalized(
+                            refs
+                                .filter((r) => !local.has(r.place))
+                                .map((r) => {
+                                    let permit = r.permit;
+                                    while (permit && scopedLoans.has(permit))
+                                        permit = loans.get(permit)?.parent;
+                                    return { ...r, permit };
+                                }),
+                        );
+                        const keys = (rs: SlotRef[]) =>
+                            normalized(rs)
+                                .map((r) => JSON.stringify([r.place, r.path, r.permit ?? null]))
+                                .sort();
+                        if (JSON.stringify(keys(held)) !== JSON.stringify(keys(i.holds)))
+                            fail('Manual cleanup dependency protection mismatch');
+                        i.holds.forEach((r) => access(s, r));
+                        result.cap = {
+                            kind: 'manual',
+                            inner: cap(frontend),
+                            holds: i.holds,
+                            cleanup: i.cleanup,
+                        };
+                        break;
+                    }
                     case 'scope':
                         result = verifyBlock(i.body, s);
                         feq(result.type, i.out.type);
@@ -795,6 +1004,7 @@ export function verifyTypedProgram(program: TypedProgram): void {
                 const escapes = (state: State, c: Cap): boolean => {
                     if (c.kind === 'choice') return c.arms.some((a) => escapes(a.state, a.cap));
                     if (c.kind === 'scope') return escapes(state, c.inner);
+                    if (c.kind === 'manual') return false;
                     if (c.kind === 'tuple') return c.items.some((v) => escapes(state, v));
                     if (c.kind === 'call') return c.effects.some((e) => escapes(state, e.cap));
                     const loan = [...state.loans.entries()].find(

@@ -314,12 +314,19 @@ export const linearToExpr = (ctx: Ctx, lin: Linear): Expr => {
 
 const cleanupFn = (cleanup: Expr[], loc: Loc): Expr => {
     if (!cleanup.length) {
-        return { type: 'fn', args: [], body: { type: 'const', loc, value: null }, loc };
+        return {
+            type: 'fn',
+            retained: true,
+            args: [],
+            body: { type: 'const', loc, value: null },
+            loc,
+        };
     }
     if (cleanup.length === 1 && cleanup[0].type === 'apply' && cleanup[0].args.length === 0)
         return cleanup[0].fn;
     return {
         type: 'fn',
+        retained: true,
         args: [],
         body: {
             type: 'block',
@@ -700,18 +707,28 @@ export const lensToRvalue = (
             }
         }
         case 'manual': {
+            const scoped =
+                lin.backend.type === 'fn' &&
+                lin.backend.args.length === 0 &&
+                lin.backend.body.type !== 'lens';
+            const backend: Expr = {
+                type: 'fn',
+                args: [],
+                retained: true,
+                loc: lin.loc,
+                body:
+                    scoped && lin.backend.type === 'fn' && lin.backend.body.type !== 'lens'
+                        ? linearToExpr(ctx, lin.backend.body)
+                        : {
+                              type: 'apply',
+                              args: [],
+                              fn: linearToExpr(ctx, lin.backend),
+                              loc: lin.loc,
+                          },
+            };
             return lensToRvalue(ctx, lin.frontend, (value, cleanup) =>
-                inner(value, [
-                    {
-                        type: 'apply',
-                        args: [],
-                        fn: linearToExpr(ctx, lin.backend),
-                        loc: lin.loc,
-                    },
-                    ...cleanup,
-                ]),
+                inner(value, [{ type: 'apply', args: [], fn: backend, loc: lin.loc }, ...cleanup]),
             );
-            // ohhhh this would need malloc and free tho
         }
     }
     throw new Error('nope' + JSON.stringify(lin));
