@@ -1,3 +1,5 @@
+import { Checker } from '../src/check.ts';
+import { Solver, TypeDiagnostic } from '../src/types.ts';
 import { closeSync, existsSync, openSync, readFileSync, readSync, writeFileSync } from 'fs';
 import { Decl, FileItem, Linear } from '../src/ast.ts';
 import { findDeepest, showDeepest, showFailure } from '../parser-generator/debugFailures.ts';
@@ -35,7 +37,12 @@ type TestCase = {
 const irNode = g.list(' ', g.list('', g.lit('ir'), g.lit('->')), g.rest('ir', 'any', false));
 type Comment = { type: 'comment'; text: string; multi: boolean; loc: number };
 
-export const runSnapshot = (raw: string, filePath: string, verbose = false) => {
+export const runSnapshot = (
+    raw: string,
+    filePath: string,
+    verbose = false,
+    options: { checked?: boolean } = {},
+) => {
     const comments: {
         text: string;
         at: { line: number; char: number };
@@ -53,6 +60,7 @@ export const runSnapshot = (raw: string, filePath: string, verbose = false) => {
         },
     });
 
+    const checker = options.checked ? new Checker() : undefined;
     const items: (Declaration | TestCase | Comment)[] = [];
     let decl: null | N<Decl> = null;
     let body: null | N<Linear> = null;
@@ -126,6 +134,12 @@ export const runSnapshot = (raw: string, filePath: string, verbose = false) => {
             continue;
         }
         if (node.type === 'decl') {
+            if (decl && checker)
+                throw new TypeDiagnostic(
+                    'orphan-declaration',
+                    decl.v.loc,
+                    'Declaration has no implementation',
+                );
             decl = { v: node, node: lnode };
             continue;
         }
@@ -143,6 +157,12 @@ export const runSnapshot = (raw: string, filePath: string, verbose = false) => {
         items.push({ type: 'test', body, expected: { v: node, node: lnode } });
         body = null;
     }
+    if (decl && checker)
+        throw new TypeDiagnostic(
+            'orphan-declaration',
+            decl.v.loc,
+            'Declaration has no implementation',
+        );
     if (verbose) {
         console.log(items.length, 'items found');
     }
@@ -286,15 +306,22 @@ Ok we've got our items. Next step:
                 out.push(stringify(item.impl.node));
                 const title = `Declaration at ${filePath}:${pos(item.impl.node.loc).line + 1}`;
                 try {
-                    const ir = linearToExpr(
-                        {
-                            counter: { current: 0 },
-                            scope: newScope({ ...globals, [item.name]: { type: 'stack', id: 0 } }),
-                        },
-                        item.impl.v,
-                    );
+                    const checked = checker?.check(item.impl.v, item.decl?.v);
+                    const ir = checked
+                        ? checker!.lower(checked)
+                        : linearToExpr(
+                              {
+                                  counter: { current: 0 },
+                                  scope: newScope({
+                                      ...globals,
+                                      [item.name]: { type: 'stack', id: 0 },
+                                  }),
+                              },
+                              item.impl.v,
+                          );
                     const impl = evalExpr(nctx(), ir);
                     globals[item.name] = impl;
+                    if (checked) checker!.publish(checked);
                     out.push('');
                     out.push('ir-> ' + stringify(lexpr(ir)));
                     testResults.push({ title });
@@ -329,17 +356,31 @@ Ok we've got our items. Next step:
                     console.log('####', title);
                 }
                 try {
-                    const ir = linearToExpr(
-                        { counter: { current: 0 }, scope: newScope(globals) },
-                        item.body.v,
-                    );
+                    const checkedBody = checker?.check(item.body.v);
+                    const checkedExpected = checker?.check(item.expected.v);
+                    if (checkedBody && checkedExpected) {
+                        const solver = new Solver();
+                        solver.unify(
+                            solver.instantiate(checkedBody.scheme),
+                            solver.instantiate(checkedExpected.scheme),
+                            item.expected.v.loc,
+                        );
+                    }
+                    const ir = checkedBody
+                        ? checker!.lower(checkedBody)
+                        : linearToExpr(
+                              { counter: { current: 0 }, scope: newScope(globals) },
+                              item.body.v,
+                          );
                     out.push('');
                     out.push('ir-> ' + stringify(lexpr(ir)));
                     const result = evalExpr(nctx(), ir);
-                    const rir = linearToExpr(
-                        { counter: { current: 0 }, scope: newScope(globals) },
-                        item.expected.v,
-                    );
+                    const rir = checkedExpected
+                        ? checker!.lower(checkedExpected)
+                        : linearToExpr(
+                              { counter: { current: 0 }, scope: newScope(globals) },
+                              item.expected.v,
+                          );
                     const rresult = evalExpr(nctx(), rir);
                     if (JSON.stringify(result) !== JSON.stringify(rresult)) {
                         if (verbose) {

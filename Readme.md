@@ -4,7 +4,7 @@ A linear/flow language, based on the paper [Flow Typing: A New Lens on Linearity
 
 ## Status
 
-I'm working my way through the paper, trying to implement a language that matches all of the runtime characteristics they describe. For the moment, I'm not bothering with type checking or inference; I'm simply doing a syntactic transformation from a c-style language that has lenses to typescript. It's been going quite well!
+I'm working my way through the paper, trying to implement a language that matches all of the runtime characteristics they describe. There is now an experimental [AST type inference pass](docs/type-inference.md) with HM-style polymorphism and type-changing lenses, which runs before IR decomposition through `Checker` or `checkFile`. The snapshot runner can opt into checking; existing runtime fixtures remain unchecked by default.
 
 I have many of the constructs implemented, but not yet all. Notably, `case` and `A & B` are missing, and `let pat = linear in lens` is only partially implemented.
 
