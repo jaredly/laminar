@@ -1,80 +1,140 @@
 import { freezeTree, type SemanticType } from './elaborated.ts';
-import { typeKey } from './typed-ir.ts';
+import { typeKey, mapSemantic } from './typed-ir.ts';
 import { BackendDiagnostic, targetConfig, targetKey, type TargetConfig } from './backend/target.ts';
-
+import { layoutDefinitionsKey, type NominalLayoutDefinition } from './layout-definitions.ts';
 export type LayoutId = string;
 export type Layout = {
     id: LayoutId;
     type: SemanticType;
-    storage: 'f64' | 'bool' | 'unit' | 'tuple';
+    storage: 'f64' | 'bool' | 'unit' | 'tuple' | 'nominal';
     dependencies: LayoutId[];
+    indirect?: boolean[];
 };
-
-/** Structural storage descriptions, not C sizeof/offsetof calculations. */
+/** Semantic storage descriptions. Pointer-recursive definitions are declared before being expanded. */
 export class LayoutTable {
     readonly target: TargetConfig;
     readonly targetKey: string;
+    readonly definitions: readonly NominalLayoutDefinition[];
     private readonly records = new Map<LayoutId, Layout>();
-
-    constructor(target: TargetConfig) {
+    private schemaKey: string;
+    constructor(
+        target: TargetConfig,
+        definitions: readonly NominalLayoutDefinition[] = [],
+        readonly maxLayouts = 512,
+    ) {
+        if (!Number.isSafeInteger(maxLayouts) || maxLayouts < 1)
+            throw new BackendDiagnostic(
+                'invalid-layout-budget',
+                'Layout budget must be a positive integer',
+            );
         this.target = targetConfig(target);
         this.targetKey = targetKey(this.target);
+        this.definitions = freezeTree(structuredClone([...definitions]));
+        this.schemaKey = definitions.length ? layoutDefinitionsKey(definitions) : '';
     }
-
     intern(type: SemanticType): LayoutId {
-        const id = JSON.stringify(['layout', this.targetKey, typeKey(type)]);
-        if (this.records.has(id)) return id;
-        let storage: Layout['storage'];
-        let dependencies: LayoutId[] = [];
-        switch (type.tag) {
-            case 'variable':
-                throw new BackendDiagnostic(
-                    'unsolved-layout',
-                    `Reachable layout contains type variable ${type.id}`,
-                );
-            case 'fn':
-                throw new BackendDiagnostic(
-                    'unsupported-callable-layout',
-                    'Callable storage requires an explicit closure representation',
-                );
-            case 'tuple':
-                dependencies = type.items.map((item) => this.intern(item));
-                storage = type.items.length ? 'tuple' : 'unit';
-                break;
-            case 'con':
-                if (type.args.length === 0 && type.name === 'Number') storage = 'f64';
-                else if (type.args.length === 0 && type.name === 'Bool') storage = 'bool';
-                else
-                    throw new BackendDiagnostic(
-                        'unsupported-layout',
-                        `No storage definition for ${type.name}`,
-                    );
+        const before = new Map(this.records);
+        try {
+            return this.internType(type);
+        } catch (error) {
+            this.records.clear();
+            before.forEach((v, k) => this.records.set(k, v));
+            throw error;
         }
+    }
+    private internType(type: SemanticType): LayoutId {
+        const id = JSON.stringify([
+            'layout',
+            this.targetKey,
+            typeKey(type),
+            ...(this.schemaKey ? [this.schemaKey] : []),
+        ]);
+        if (this.records.has(id)) return id;
+        if (this.records.size >= this.maxLayouts)
+            throw new BackendDiagnostic(
+                'layout-budget',
+                `Unbounded semantic layout expansion at ${typeKey(type)}`,
+            );
+        if (type.tag === 'variable')
+            throw new BackendDiagnostic(
+                'unsolved-layout',
+                `Reachable layout contains type variable ${type.id}`,
+            );
+        if (type.tag === 'fn')
+            throw new BackendDiagnostic(
+                'unsupported-callable-layout',
+                'Callable storage requires an explicit closure representation',
+            );
+        let storage: Layout['storage'];
+        let dependencies: SemanticType[] = [];
+        let indirect: boolean[] | undefined;
+        if (type.tag === 'tuple') {
+            storage = type.items.length ? 'tuple' : 'unit';
+            dependencies = type.items;
+        } else if (!type.args.length && type.name === 'Number') storage = 'f64';
+        else if (!type.args.length && type.name === 'Bool') storage = 'bool';
+        else {
+            const schema = this.definitions.find((d) => d.name === type.name);
+            if (!schema || schema.parameters.length !== type.args.length)
+                throw new BackendDiagnostic(
+                    'unsupported-layout',
+                    `No storage definition for ${type.name}`,
+                );
+            const substitution = new Map(schema.parameters.map((p, i) => [p, type.args[i]!]));
+            storage = 'nominal';
+            dependencies = schema.fields.map((f) =>
+                mapSemantic(f.type, (p) => substitution.get(p)),
+            );
+            indirect = schema.fields.map((f) => !!f.indirect);
+        }
+        // Reservation makes exact recursive type requests terminate; snapshot checks by-value cycles.
+        this.records.set(id, {
+            id,
+            type: structuredClone(type),
+            storage,
+            dependencies: [],
+            ...(indirect ? { indirect } : {}),
+        });
+        const children = dependencies.map((t) => this.internType(t));
         this.records.set(
             id,
-            freezeTree({ id, type: structuredClone(type), storage, dependencies }),
+            freezeTree({
+                id,
+                type: structuredClone(type),
+                storage,
+                dependencies: children,
+                ...(indirect ? { indirect } : {}),
+            }),
         );
         return id;
     }
-
     get(id: LayoutId): Layout {
-        const record = this.records.get(id);
-        if (!record) throw new BackendDiagnostic('invalid-layout', 'Unknown layout ID');
-        return record;
+        const r = this.records.get(id);
+        if (!r) throw new BackendDiagnostic('invalid-layout', 'Unknown layout ID');
+        return r;
     }
-
-    /** Stable dependency-first order, independent of discovery order. */
     snapshot(): readonly Layout[] {
-        const result: Layout[] = [],
-            seen = new Set<LayoutId>();
-        const visit = (id: LayoutId) => {
-            if (seen.has(id)) return;
-            seen.add(id);
-            const record = this.get(id);
-            record.dependencies.forEach(visit);
-            result.push(record);
+        const out: Layout[] = [],
+            done = new Set<string>(),
+            active = new Set<string>();
+        const visit = (id: string) => {
+            if (active.has(id))
+                throw new BackendDiagnostic(
+                    'infinite-layout',
+                    `Infinitely sized by-value layout ${id}`,
+                );
+            if (done.has(id)) return;
+            active.add(id);
+            const r = this.get(id);
+            r.dependencies.forEach((d, i) => {
+                this.get(d);
+                if (!r.indirect?.[i]) visit(d);
+            });
+            active.delete(id);
+            done.add(id);
+            out.push(r);
         };
         [...this.records.keys()].sort().forEach(visit);
-        return freezeTree(result);
+        return freezeTree(out);
     }
 }

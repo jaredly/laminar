@@ -1,3 +1,5 @@
+import { layoutDefinitionsKey } from './layout-definitions.ts';
+import { mapSemantic, type Instance } from './typed-ir.ts';
 import { createHash } from 'node:crypto';
 import type { SemanticType, SemanticFlow } from './elaborated.ts';
 import { BackendDiagnostic, targetKey } from './backend/target.ts';
@@ -48,7 +50,11 @@ export function verifyRepresentations(
     }
     verifyTypedProgram(source.program);
     if (analysis.schemaVersion !== 1) fail('Unknown representation analysis version');
-    if (!Array.isArray(analysis.roots) || !Array.isArray(analysis.entries))
+    if (
+        !Array.isArray(analysis.roots) ||
+        !Array.isArray(analysis.entries) ||
+        !Array.isArray(analysis.exports)
+    )
         fail('Missing analysis roots or entries');
     const repKey = (v: ValueRepresentation): string => {
         if (!v || typeof v !== 'object') return fail('Missing value representation');
@@ -72,6 +78,8 @@ export function verifyRepresentations(
         }
     };
     const target = targetKey(source.target);
+    const schemas = analysis.layoutDefinitions ?? [];
+    const schemaKey = schemas.length ? layoutDefinitionsKey(schemas) : '';
     const layouts = unique(analysis.layouts, (l) => l.id, 'layout');
     const shapes = unique(analysis.shapes, (s) => s.id, 'shape');
     const backings = unique(analysis.backings, (b) => b.id, 'backing');
@@ -83,7 +91,8 @@ export function verifyRepresentations(
     const imports = new Map(source.program.imports.map((i) => [i.definition, i]));
     const layout = (id: string): Layout => layouts.get(id) ?? fail('Missing or foreign layout');
     const shape = (id: string): LensRep => shapes.get(id) ?? fail('Missing or foreign lens shape');
-    const layoutId = (t: SemanticType): string => JSON.stringify(['layout', target, typeKey(t)]);
+    const layoutId = (t: SemanticType): string =>
+        JSON.stringify(['layout', target, typeKey(t), ...(schemaKey ? [schemaKey] : [])]);
     const typeEqual = (a: SemanticType, b: SemanticType) => {
         if (typeKey(a) !== typeKey(b)) fail('Representation semantic type mismatch');
     };
@@ -101,6 +110,13 @@ export function verifyRepresentations(
             ['Number', 'Bool'].includes(t.name)
         )
             return;
+        if (t.tag === 'con') {
+            const d = schemas.find((d) => d.name === t.name);
+            if (d && d.parameters.length === t.args.length) {
+                t.args.forEach(storageType);
+                return;
+            }
+        }
         fail('Unsupported concrete data layout');
     }
     for (const l of layouts.values()) {
@@ -109,11 +125,25 @@ export function verifyRepresentations(
         let storage: Layout['storage'],
             dependencies: string[] = [];
         switch (l.type.tag) {
-            case 'con':
-                if (l.type.args.length || !['Number', 'Bool'].includes(l.type.name))
-                    fail('Unsupported concrete data layout');
-                storage = l.type.name === 'Number' ? 'f64' : 'bool';
+            case 'con': {
+                if (!l.type.args.length && ['Number', 'Bool'].includes(l.type.name))
+                    storage = l.type.name === 'Number' ? 'f64' : 'bool';
+                else {
+                    const t = l.type,
+                        d = schemas.find((d) => d.name === t.name)!;
+                    const substitution = new Map(d.parameters.map((p, i) => [p, t.args[i]!]));
+                    storage = 'nominal';
+                    dependencies = d.fields.map((f) =>
+                        layoutId(mapSemantic(f.type, (p) => substitution.get(p))),
+                    );
+                    requireEqual(
+                        l.indirect,
+                        d.fields.map((f) => !!f.indirect),
+                        'Nominal indirection contract mismatch',
+                    );
+                }
                 break;
+            }
             case 'tuple':
                 storage = l.type.items.length ? 'tuple' : 'unit';
                 dependencies = l.type.items.map(layoutId);
@@ -127,9 +157,9 @@ export function verifyRepresentations(
             'Layout dependencies disagree with semantic tuple fields',
         );
         if (l.storage !== storage) fail('Incorrect storage kind');
-        dependencies.forEach((id) => {
+        dependencies.forEach((id, i) => {
             layout(id);
-            if (layoutOrder.get(id)! >= layoutOrder.get(l.id)!)
+            if (!l.indirect?.[i] && layoutOrder.get(id)! >= layoutOrder.get(l.id)!)
                 fail('Layout dependencies must precede users');
         });
     }
@@ -234,9 +264,40 @@ export function verifyRepresentations(
     });
     const get = (s: State, id: string): ValueRepresentation =>
         s.values.get(id) ?? fail('Missing operand annotation');
+    function checkConstructor(name: string, instance: Instance): void {
+        const t = instance.type;
+        if (t.tag !== 'fn' || t.result.tag !== 'plain' || t.result.value.tag !== 'con')
+            return fail('Constructor lacks nominal result');
+        const result = t.result.value,
+            d = schemas.find((d) => d.name === result.name);
+        if (!d) return fail('Constructor lacks a storage schema');
+        const substitution = new Map(d.parameters.map((p, i) => [p, result.args[i]!]));
+        const args = t.args.map((a) =>
+            a.tag === 'plain' ? a.value : fail('Constructor field is a lens'),
+        );
+        if (d.kind === 'record') {
+            if (d.fields.length !== args.length) fail('Record constructor/storage arity mismatch');
+            d.fields.forEach((f, i) =>
+                typeEqual(
+                    mapSemantic(f.type, (p) => substitution.get(p)),
+                    args[i]!,
+                ),
+            );
+        } else {
+            const field = d.fields.find((f) => f.name === name);
+            if (!field) return fail('Constructor tag is absent from union storage');
+            const payload: SemanticType =
+                args.length === 1 ? args[0]! : { tag: 'tuple', items: args };
+            typeEqual(
+                mapSemantic(field.type, (p) => substitution.get(p)),
+                payload,
+            );
+        }
+    }
     function bind(p: IRPattern, v: ValueRepresentation, s: State): void {
+        if (p.kind === 'constructor') checkConstructor(p.name, p.instance);
         if (p.kind === 'bind') s.places.set(p.slot.place, v);
-        else if (p.kind === 'tuple') {
+        else if (p.kind === 'tuple' || p.kind === 'constructor') {
             if (v.kind !== 'data') return fail('Tuple pattern needs data storage');
             p.items.forEach((child) =>
                 bind(child, { kind: 'data', layout: layoutId(child.type) }, s),
@@ -272,10 +333,13 @@ export function verifyRepresentations(
                 switch (i.op) {
                     case 'constant':
                     case 'string':
-                    case 'construct':
                     case 'tuple':
                     case 'swap':
                         if (v.kind !== 'data') fail('Data operation has a callable representation');
+                        break;
+                    case 'construct':
+                        if (v.kind !== 'data') fail('Constructor has a callable representation');
+                        checkConstructor(i.name, i.instance);
                         break;
                     case 'move': {
                         const stored = s.places.get(i.slot.place);
@@ -449,15 +513,33 @@ export function verifyRepresentations(
         const entry = analysis.entries[i]!,
             unit = units.get(root.unit) ?? fail('Unknown analysis root');
         if (entry.unit !== root.unit) fail('Entry root mismatch');
-        if (root.result.kind === 'callable' || root.result.kind === 'native')
-            fail('Callable roots require an explicit argument representation contract');
+        const exported = analysis.exports.filter((e) => e.entry === i);
+        if (root.result.kind === 'native') fail('Native entry roots require a host contract');
+        if (root.result.kind === 'callable') {
+            if (exported.length !== 1)
+                fail('Callable root requires one incoming representation contract');
+            const e = exported[0]!,
+                v = variants.get(e.variant) ?? fail('Missing exported variant');
+            if (v.unit !== root.result.unit || v.function !== root.result.function)
+                fail('Exported callable provenance mismatch');
+            requireEqual(v.captures, root.result.captures, 'Exported capture contract mismatch');
+            requireEqual(v.arguments, e.arguments, 'Exported argument contract mismatch');
+            requireEqual(v.result, e.result, 'Exported result contract mismatch');
+        } else if (exported.length) fail('Expression root has an invocation contract');
         fit(root.result, irPlain(unit.signature.type));
         requireEqual(
             root.result,
             verifyBody(unit, unit.entry, entry, fresh(), `entry:${i}`),
             'Root result differs from its entry',
         );
+        if (exported[0]) edges.get(`entry:${i}`)!.add(exported[0].variant);
     });
+    if (
+        analysis.exports.some(
+            (e) => !Number.isInteger(e.entry) || e.entry < 0 || e.entry >= analysis.roots.length,
+        )
+    )
+        fail('Unknown export entry');
     const reached = new Set<string>();
     const visit = (id: string): void => {
         if (reached.has(id)) return;

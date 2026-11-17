@@ -159,6 +159,8 @@ Work:
 
 ## Phase 3 — Infer representations and specialize reachable definitions
 
+Implemented through the concrete-IR exit gate; see [the concrete IR contract](concrete-ir.md) and [implementation record](backend-progress.md). Unsupported joins and unresolved reachable contracts remain explicit diagnostics; this milestone does not emit or execute C/Wasm.
+
 **Goal:** produce concrete typed IR with no unresolved ABI choices.
 
 Likely additions: `src/representations.ts`, `src/layouts.ts`, `src/specialize.ts`.

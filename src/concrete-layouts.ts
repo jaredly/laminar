@@ -1,0 +1,190 @@
+import { createHash } from 'node:crypto';
+import { BackendDiagnostic, targetKey, type TargetConfig } from './backend/target.ts';
+import { freezeTree, type SemanticType } from './elaborated.ts';
+import { mapSemantic, typeKey } from './typed-ir.ts';
+import type { ConcreteLayout, ConcreteField, ConcreteABI } from './concrete-ir.ts';
+
+export const concreteName = (prefix: string, key: string): string =>
+    `${prefix}_${createHash('sha256').update(key).digest('hex')}`;
+export type { NominalLayoutDefinition } from './layout-definitions.ts';
+import { layoutDefinitionsKey, type NominalLayoutDefinition } from './layout-definitions.ts';
+
+/** C storage descriptions. Pointer/code edges are distinct from by-value dependencies. */
+export class ConcreteLayoutTable {
+    readonly layouts = new Map<string, ConcreteLayout>();
+    readonly abis = new Map<string, ConcreteABI>();
+    readonly targetIdentity: string;
+    private active: string[] = [];
+    private schemaKey: string;
+    private nominal: Map<string, NominalLayoutDefinition>;
+    constructor(
+        target: TargetConfig,
+        definitions: readonly NominalLayoutDefinition[] = [],
+        readonly maxLayouts = 512,
+    ) {
+        if (!Number.isSafeInteger(maxLayouts) || maxLayouts < 1)
+            throw new BackendDiagnostic(
+                'invalid-layout-budget',
+                'Layout budget must be a positive integer',
+            );
+        this.targetIdentity = targetKey(target);
+        this.schemaKey = definitions.length ? layoutDefinitionsKey(definitions) : '';
+        this.nominal = new Map(definitions.map((d) => [d.name, structuredClone(d)]));
+        if (this.nominal.size !== definitions.length)
+            throw new BackendDiagnostic(
+                'invalid-layout-definition',
+                'Duplicate nominal definition',
+            );
+        for (const d of this.nominal.values()) {
+            if (
+                new Set(d.parameters).size !== d.parameters.length ||
+                new Set(d.fields.map((f) => f.name)).size !== d.fields.length
+            )
+                throw new BackendDiagnostic(
+                    'invalid-layout-definition',
+                    `Duplicate parameter or field in ${d.name}`,
+                );
+            d.fields.forEach((f) =>
+                mapSemantic(f.type, (id) => {
+                    if (!d.parameters.includes(id))
+                        throw new BackendDiagnostic(
+                            'invalid-layout-definition',
+                            `Unbound layout parameter ${id}`,
+                        );
+                    return undefined;
+                }),
+            );
+        }
+    }
+    record(keyParts: unknown[], kind: ConcreteLayout['kind'], fields: ConcreteField[]): string {
+        const key = JSON.stringify(['physical-layout', this.targetIdentity, ...keyParts]);
+        const id = concreteName('layout', key);
+        if (!this.layouts.has(id)) {
+            if (this.layouts.size >= this.maxLayouts)
+                throw new BackendDiagnostic(
+                    'layout-budget',
+                    `Layout budget exceeded: ${this.active.join(' -> ')}`,
+                );
+            this.layouts.set(id, freezeTree({ id, key, kind, fields: structuredClone(fields) }));
+        }
+        return id;
+    }
+    abi(args: string[], result: string): string {
+        const key = JSON.stringify([
+            'call-abi',
+            this.targetIdentity,
+            'opaque-pointer',
+            args,
+            result,
+        ]);
+        const id = concreteName('abi', key);
+        if (!this.abis.has(id))
+            this.abis.set(
+                id,
+                freezeTree({
+                    id,
+                    key,
+                    environment: 'opaque-pointer',
+                    arguments: [...args],
+                    result,
+                }),
+            );
+        return id;
+    }
+    data(type: SemanticType): string {
+        const before = new Map(this.layouts),
+            active = [...this.active];
+        try {
+            return this.dataType(type);
+        } catch (error) {
+            this.layouts.clear();
+            before.forEach((v, k) => this.layouts.set(k, v));
+            this.active = active;
+            throw error;
+        }
+    }
+    private dataType(type: SemanticType): string {
+        mapSemantic(type, (id) => {
+            throw new BackendDiagnostic('unsolved-layout', `Unsolved concrete data type ${id}`);
+        });
+        const typeIdentity = typeKey(type),
+            parts = ['data', typeIdentity, ...(this.schemaKey ? [this.schemaKey] : [])];
+        const key = JSON.stringify(['physical-layout', this.targetIdentity, ...parts]),
+            id = concreteName('layout', key);
+        // All recursive references use forward names. finish() checks only by-value edges.
+        if (this.active.includes(id)) return id;
+        if (this.layouts.has(id)) return id;
+        if (this.active.length + this.layouts.size >= this.maxLayouts)
+            throw new BackendDiagnostic(
+                'layout-budget',
+                `Unbounded layout expansion: ${[...this.active, typeIdentity].join(' -> ')}`,
+            );
+        this.active.push(id);
+        let kind: ConcreteLayout['kind'],
+            fields: ConcreteField[] = [];
+        if (type.tag === 'tuple') {
+            kind = type.items.length ? 'record' : 'unit';
+            fields = type.items.map((t, i) => ({
+                name: `item${i}`,
+                kind: 'value',
+                layout: this.dataType(t),
+            }));
+        } else if (
+            type.tag === 'con' &&
+            !type.args.length &&
+            ['Number', 'Bool'].includes(type.name)
+        )
+            kind = type.name === 'Number' ? 'f64' : 'bool';
+        else if (type.tag === 'con') {
+            const d = this.nominal.get(type.name);
+            if (!d || d.parameters.length !== type.args.length)
+                throw new BackendDiagnostic(
+                    'unsupported-layout',
+                    `Missing concrete layout schema for ${type.name}`,
+                );
+            const substitution = new Map(d.parameters.map((p, i) => [p, type.args[i]!]));
+            kind = d.kind;
+            fields = d.fields.map((f) => ({
+                name: f.name,
+                kind: f.indirect ? 'pointer' : 'value',
+                layout: this.dataType(mapSemantic(f.type, (p) => substitution.get(p))),
+            }));
+        } else
+            throw new BackendDiagnostic(
+                'unsupported-layout',
+                'Function data needs an explicit callable representation',
+            );
+        this.active.pop();
+        return this.record(parts, kind, fields);
+    }
+    /** Independently check all by-value edges, including cycles passing through indirect roots. */
+    finish(): { layouts: ConcreteLayout[]; abis: ConcreteABI[]; forward: string[] } {
+        const active = new Set<string>(),
+            done = new Set<string>(),
+            ordered: ConcreteLayout[] = [];
+        const visit = (id: string) => {
+            if (active.has(id))
+                throw new BackendDiagnostic(
+                    'infinite-layout',
+                    `Infinitely sized by-value layout ${id}`,
+                );
+            if (done.has(id)) return;
+            const l = this.layouts.get(id);
+            if (!l) throw new BackendDiagnostic('invalid-layout', 'Missing layout dependency');
+            active.add(id);
+            for (const f of l.fields)
+                if (f.kind === 'value') visit(f.layout);
+                else if (f.kind === 'pointer' && f.layout && !this.layouts.has(f.layout))
+                    throw new BackendDiagnostic('invalid-layout', 'Missing pointer referent');
+            active.delete(id);
+            done.add(id);
+            ordered.push(l);
+        };
+        [...this.layouts.keys()].sort().forEach(visit);
+        return {
+            layouts: ordered,
+            abis: [...this.abis.values()].sort((a, b) => (a.id < b.id ? -1 : 1)),
+            forward: [...this.layouts.keys()].sort(),
+        };
+    }
+}

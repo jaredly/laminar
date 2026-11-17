@@ -44,3 +44,7 @@ The verifier checks target-specific canonical layout/backing/shape IDs, scalar s
 Operation checks go beyond endpoint equality: replacing an explicit scattered tuple with a thin lens of the same semantic types is invalid. Divergent same-type callable branches also require an adapter. Native returned-lens checking currently covers the explicit `fst` projection contract; generic native instantiations remain checked by semantic IR verification.
 
 This establishes the analysis graph's contracts, not a physical ABI or the plan's independent concrete-IR exit gate. The verifier relies on the typed-IR verifier for affine ownership, permissions, lifetimes, and storage restoration. It does not validate C sizes/alignment, closure layouts/wrappers, recursive nominal layouts, or generated code. Representation-specific executable code records still need to be introduced and verified before an emitter can consume this work.
+
+## Phase 3 completion
+
+The analysis APIs now feed [concrete IR](concrete-ir.md) through `compileConcreteProgram` / `lowerConcreteProgram`. The concrete verifier is separate from analysis verification. Registered nominal schemas and explicit function-entry argument contracts are now supported; earlier slice limitations above describe the state at those handoffs. Generic metadata remains diagnostic, while every emitted code record has concrete output and call ABIs. Dynamic joins and unsolved recursive-result/host contracts continue to fail explicitly.

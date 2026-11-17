@@ -1,3 +1,4 @@
+import type { NominalLayoutDefinition } from './layout-definitions.ts';
 import { createHash } from 'node:crypto';
 import { freezeTree, type SemanticFlow, type SemanticType } from './elaborated.ts';
 import { BackendDiagnostic, targetKey } from './backend/target.ts';
@@ -34,10 +35,21 @@ export type RepresentationVariant = {
         result: ValueRepresentation;
     }[];
 };
+export type LensTopology = { kind: 'thin' } | { kind: 'tuple'; items: LensTopology[] };
+export type EntryRepresentationArgument =
+    | { kind: 'data' }
+    | { kind: 'lens'; topology: LensTopology };
 export type RepresentationAnalysis = {
     schemaVersion: 1;
+    layoutDefinitions: readonly NominalLayoutDefinition[];
     roots: { unit: string; result: ValueRepresentation }[];
     variants: RepresentationVariant[];
+    exports: {
+        entry: number;
+        variant: string;
+        arguments: ValueRepresentation[];
+        result: ValueRepresentation;
+    }[];
     entries: {
         unit: string;
         values: RepresentationVariant['values'];
@@ -56,7 +68,15 @@ type State = {
 /** Infer representation variants from explicit expression roots. No physical callable ABI is selected. */
 export function inferRepresentations(
     input: SpecializedProgram,
-    options: { maxVariants?: number } = {},
+    options: {
+        maxVariants?: number;
+        layoutDefinitions?: readonly NominalLayoutDefinition[];
+        entryArguments?: {
+            unit: string;
+            entry?: number;
+            arguments: EntryRepresentationArgument[];
+        }[];
+    } = {},
 ): RepresentationAnalysis {
     // Operate on a detached verified snapshot, including when the caller deserialized it.
     const source = freezeTree(structuredClone(input));
@@ -67,7 +87,26 @@ export function inferRepresentations(
             'invalid-representation-budget',
             'Representation budget must be a positive integer',
         );
-    const layouts = new LayoutTable(source.target),
+    const entryContracts = options.entryArguments ?? [];
+    if (
+        entryContracts.some(
+            (e) =>
+                !source.roots.includes(e.unit) ||
+                (e.entry !== undefined &&
+                    (!Number.isInteger(e.entry) || source.roots[e.entry] !== e.unit)),
+        ) ||
+        source.roots.some(
+            (id, i) =>
+                entryContracts.filter(
+                    (e) => e.unit === id && (e.entry === undefined || e.entry === i),
+                ).length > 1,
+        )
+    )
+        throw new BackendDiagnostic(
+            'invalid-entry-contract',
+            'Entry contracts must identify requested roots without overlap',
+        );
+    const layouts = new LayoutTable(source.target, options.layoutDefinitions),
         reps = new RepresentationTable(layouts);
     const units = new Map(source.program.units.map((u) => [u.id, u]));
     const definitions = new Map(
@@ -79,6 +118,7 @@ export function inferRepresentations(
     >();
     const entries: RepresentationAnalysis['entries'] = [];
     const roots: RepresentationAnalysis['roots'] = [];
+    const exports: RepresentationAnalysis['exports'] = [];
     const fresh = (): State => ({ values: new Map(), places: new Map(), lenses: new Map() });
     const clone = (s: State): State => ({
         values: new Map(s.values),
@@ -137,8 +177,11 @@ export function inferRepresentations(
         if (p.kind === 'bind') s.places.set(p.slot.place, v);
         else if (p.kind === 'tuple')
             p.items.forEach((child, i) => bind(child, projectValue(v, [i]), s));
-        else if (p.kind === 'constructor')
-            fail('Constructor patterns need nominal storage layouts');
+        else if (p.kind === 'constructor') {
+            if (v.kind !== 'data') return fail('Constructor pattern needs data storage');
+            // Constructor semantic field types are checked independently against import schemas.
+            p.items.forEach((child) => bind(child, data(child.type), s));
+        }
     };
     const nativeCall = (
         name: string,
@@ -335,7 +378,7 @@ export function inferRepresentations(
         }
         return get(s, body.result);
     }
-    for (const id of source.roots) {
+    for (const [rootIndex, id] of source.roots.entries()) {
         const unit = units.get(id) ?? fail('Unknown representation root');
         const entry = {
             unit: id,
@@ -343,15 +386,61 @@ export function inferRepresentations(
             calls: [] as RepresentationVariant['calls'],
         };
         const result = block(unit, unit.entry, fresh(), entry, []);
-        if (result.kind === 'callable' || result.kind === 'native')
-            fail('Callable entry roots require an explicit argument representation contract');
+        const incoming = options.entryArguments?.find(
+            (e) => e.unit === id && (e.entry === undefined || e.entry === rootIndex),
+        );
+        if (result.kind === 'native') fail('Native entry roots require a host contract');
+        if (result.kind === 'callable') {
+            const contract =
+                incoming ??
+                fail('Callable entry roots require an explicit argument representation contract');
+            const fn = units.get(result.unit)!.functions.find((f) => f.id === result.function)!;
+            if (contract.arguments.length !== fn.type.args.length)
+                fail('Entry representation argument arity mismatch');
+            const topology = (
+                t: LensTopology,
+                read: SemanticType,
+                write: SemanticType,
+            ): LensRepId => {
+                if (t.kind === 'thin') return reps.thin(read, write);
+                if (
+                    read.tag !== 'tuple' ||
+                    write.tag !== 'tuple' ||
+                    t.items.length !== read.items.length ||
+                    t.items.length !== write.items.length
+                )
+                    return fail('Entry lens topology does not match semantic endpoints');
+                return reps.tuple(
+                    t.items.map((child, i) => topology(child, read.items[i]!, write.items[i]!)),
+                );
+            };
+            const args = contract.arguments.map((a, i): ValueRepresentation => {
+                const expected = fn.type.args[i]!;
+                if (a.kind === 'data' && expected.tag === 'plain') return data(expected.value);
+                if (a.kind === 'lens' && expected.tag === 'flow')
+                    return {
+                        kind: 'lens',
+                        shape: topology(a.topology, expected.read, expected.write),
+                    };
+                return fail('Entry argument representation mode mismatch');
+            });
+            const called = invoke(result, args, []);
+            exports.push({
+                entry: roots.length,
+                variant: called.target,
+                arguments: args,
+                result: called.result,
+            });
+        } else if (incoming) fail('Expression root cannot have incoming arguments');
         entries.push(entry);
         roots.push({ unit: id, result });
     }
     const analysis: RepresentationAnalysis = {
         schemaVersion: 1,
+        layoutDefinitions: layouts.definitions,
         roots,
         entries,
+        exports,
         variants: [...variants.values()]
             .map((v) => ({ ...v, result: v.result ?? fail('Unsolved variant result') }))
             .sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0)),
