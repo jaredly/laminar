@@ -27,7 +27,7 @@ export type Decl = { type: 'decl'; name: Id; ann: Type; loc: number };
 
 export type Lens =
     | Id
-    | { type: 'manual'; frontend: Linear; backend: Linear; loc: Loc }
+    | { type: 'manual'; frontend: Lens; backend: Linear; loc: Loc }
     | { type: 'aslens'; pat: Pat; value: Linear; body: Linear; loc: Loc }
     | { type: 'let'; pat: Pat; value: Term; body: Lens; loc: Loc }
     | { type: 'apply'; fn: Linear; args: Term[]; loc: Loc }
@@ -156,10 +156,93 @@ export const free = (expr: Term | Lens): string[] => {
         case 'lens':
             return free(expr.lens);
         case 'constructor': {
-            throw new Error('nop');
+            return expr.args.flatMap(free);
         }
         case 'assign': {
             return free(expr.value).concat(free(expr.lens));
+        }
+    }
+};
+
+export const getFree = (
+    bound: Set<string>,
+    expr: Term | Lens,
+    ref: Set<string>,
+    deref: Set<string>,
+) => {
+    switch (expr.type) {
+        case 'aslens': {
+            getFree(bound, expr.value, ref, deref);
+            const lbound = names(expr.pat);
+            getFree(bound.union(new Set(lbound)), expr.body, ref, deref);
+            return;
+        }
+        case 'manual': {
+            getFree(bound, expr.frontend, ref, deref);
+            getFree(bound, expr.backend, ref, deref);
+            return;
+        }
+        case 'string': {
+            expr.interp.forEach((item) => {
+                getFree(bound, item.value, ref, deref);
+            });
+            return;
+        }
+        case 'id':
+        case 'op':
+            if (!bound.has(expr.text)) ref.add(expr.text);
+            return;
+        case 'bool':
+        case 'number':
+            return;
+        case 'let': {
+            getFree(bound, expr.value, ref, deref);
+            const lbound = names(expr.pat);
+            getFree(bound.union(new Set(lbound)), expr.body, ref, deref);
+            return;
+        }
+        case 'case': {
+            getFree(bound, expr.value, ref, deref);
+            expr.cases.forEach((kase) => {
+                const lbound = names(kase.pat);
+                getFree(bound.union(new Set(lbound)), kase.body, ref, deref);
+            });
+            return;
+        }
+        // case "additive_product":
+        //     throw new Error("not uet");
+        case 'tuple':
+            expr.items.forEach((item) => getFree(bound, item, ref, deref));
+            return;
+        // case "ifs":
+        //     throw new Error("nop");
+        case 'fn': {
+            const lbound = expr.args.flatMap((arg) => names(arg.pat));
+            getFree(bound.union(new Set(lbound)), expr.body, ref, deref);
+            return;
+        }
+        case 'apply': {
+            getFree(bound, expr.fn, ref, deref);
+            expr.args.forEach((item) => getFree(bound, item, ref, deref));
+            return;
+        }
+        case 'lens': {
+            const ign = new Set<string>();
+            getFree(bound, expr.lens, deref, ign);
+            if (ign.size) {
+                // console.log(deref, ign);
+                console.warn('lens has derefs?');
+            }
+            return;
+        }
+        case 'constructor': {
+            expr.args.forEach((item) => getFree(bound, item, ref, deref));
+            return;
+        }
+        case 'assign': {
+            getFree(bound, expr.value, ref, deref);
+            getFree(bound, expr.lens, deref, new Set());
+            return;
         }
     }
 };

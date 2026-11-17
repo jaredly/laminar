@@ -1,5 +1,11 @@
-import { FileItem, ConfigValue, Grammar, Pat, collectBindings } from './grammar-lexer.ts';
-import { stringify } from './lexer.ts';
+import {
+    FileItem,
+    ConfigValue,
+    Grammar,
+    Pat,
+    collectBindings,
+} from '../parser-generator/grammar-lexer.ts';
+import { stringify } from '../parser-generator/lexer.ts';
 
 export const toFile = (items: FileItem[], config: ToFileConfig) => {
     const imports = new Set<string>();

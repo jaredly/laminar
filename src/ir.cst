@@ -2,10 +2,12 @@ Expr {
     id:Idd -> id
     id:id -> ({type: "idd", text: id.text, id: -1, loc: id.loc})
     id:op -> ({type: "idd", text: id.text, id: -1, loc: id.loc})
-    // ["" "&" ...inner:*Expr] -> ({type:"addr", inner, loc: node.loc})
+    ["" "&" ...inner:*Expr] -> ({type:"ref", inner, loc: node.loc})
+    ["" "*" ...inner:*Expr] -> ({type:"deref", inner, loc: node.loc})
+    // ["" "closure" ["(," ["(," ...names:Idd] fn:Expr]] -> ({type: "closure", names, fn, loc:node.loc})
     swap:Swap -> swap
-    ["" "block" ["{;" ...block:Stmt] ["{" result:Expr] ["{;" ...cleanup:Swap]] -> ({type: "block", block, cleanup, result, loc: node.loc})
-    ["" "block" ["{\n" ...block:Stmt] ["{" result:Expr] ["{;" ...cleanup:Swap]] -> ({type: "block", block, cleanup, result, loc: node.loc})
+    ["" "block" ["{;" ...block:Stmt] ["{" result:Expr] ["{;" ...cleanup:Expr]] -> ({type: "block", block, cleanup, result, loc: node.loc})
+    ["" "block" ["{\n" ...block:Stmt] ["{" result:Expr] ["{;" ...cleanup:Expr]] -> ({type: "block", block, cleanup, result, loc: node.loc})
     ["" one:re"^[0-9]+$" "." two:re"^[0-9]+$"] -> ({type: "const", value: +(one.text + '.' + two.text), loc: node.loc})
     num:re"^\\d+$" -> ({type: "const", value: +num.text, loc: num.loc})
     "true" -> ({type: "const", value: true, loc: node.loc})
@@ -14,12 +16,13 @@ Expr {
     ["" ["(," ...args:Patd] "=>" ...body:*Block] -> ({type: "fn", args, body: bodyIffe(body), loc: node.loc})
     ["" ["(," ...args:Patd] "=>" ...body:*Expr] -> ({type: "fn", args, body, loc: node.loc})
     ["(," ...items:Expr] -> ({type: "tuple", items, loc: node.loc})
-    ["" fn:Expr ["(," ...args:Expr]] -> ({type: "apply", fn, args,loc:node.loc})
+    ["" fn:Expr ...suffixes:**ExprOps] -> handleSuffixes(fn, suffixes)
     ["" one:Expr] -> one
     id:id -> ({type: "idd", text: id.text, id: 0, loc: node.loc})
 
     ["["] -> ({type: "constructor", name: "nil",args:[], loc: node.loc})
     ["[," ...items:Expr] -> econs([...items, ({type: "constructor", name: "nil",args:[], loc: node.loc})], node.loc)
+    ["[," ...items:Expr ["" "...*" ...tail:*Expr]] -> econs([...items, {type: "deref", inner: tail, loc: tail.loc}], node.loc)
     ["[," ...items:Expr ["" "..." ...tail:*Expr]] -> econs([...items, tail], node.loc)
 
     [" " "match" value:Expr ["{\n" ...cases:Case]] -> ({type: "case", value, cases,loc:node.loc})
@@ -27,6 +30,25 @@ Expr {
     [" " "match" value:Expr ["{" kase:Case]] -> ({type: "case", value, cases: [kase],loc:node.loc})
     [" " one:Expr] -> one
     [";" one:Expr] -> one
+}
+
+ExprOps {
+    // ["" "." attr:id] -> ({type: "attr", attr: attr.text})
+    // ["" ["[" index:Linear]] -> ({type: "index", index})
+    ["" ["(," ...args:Expr]] -> ({type: "apply", args})
+    ["" ["(," arg:Expr]] -> ({type: "apply", args: [arg]})
+    ["" ["("]] -> ({type: "apply", args: []})
+}
+
+function handleSuffixes(head: Expr, suffixes: ExprOps[]): Expr {
+    return suffixes.reduce((head, suffix): Expr => {
+        switch (suffix.type) {
+            // case "attr": return {type: "attr", target: head, attr: suffix.attr,loc:head.loc}
+            // case "index": return {type: "index", index: suffix.index, target: head,loc:head.loc}
+            case "apply": return {type: "apply", fn: head, args: suffix.args,loc:head.loc}
+        }
+        throw new Error("bad suffix" + JSON.stringify(suffix))
+    }, head)
 }
 
 Case:{pat:Patd,body:Expr} {
@@ -69,15 +91,17 @@ Stmt {
 }
 
 Patd {
-    id:re"^_\\d+$" -> ({type: "drop", loc: node.loc, id: +id.text.slice(1)})
+    id:re"^_\\d+$" -> ({type: "idd", text: "_", loc: node.loc, id: +id.text.slice(1)})
     "true" -> ({type: "bool", loc: node.loc, value: true})
     "false" -> ({type: "bool", loc: node.loc, value: false})
+    ["" "&" ...inner:*Patd] -> ({type:"ref", inner, loc: node.loc})
+    ["" "*" ...inner:*Patd] -> ({type:"deref", inner, loc: node.loc})
 
     ["" one:re"^[0-9]+$" "." two:re"^[0-9]+$"] -> ({type: "number", value: +(one.text + '.' + two.text), loc: node.loc})
     num:re"^\\d+$" -> ({type: "number", value: +num.text, loc: num.loc})
 
     id:Idd -> id
-    "_" -> ({type: "drop", loc: node.loc, id: null})
+    // "_" -> ({type: "drop", loc: node.loc, id: null})
     ["(," ...items:Patd] -> ({type: "tuple", items, loc: node.loc})
     ["" name:re"^[A-Z]" ["(," ...args:Patd]] -> ({type: "constructor", name: name.text, args, loc: node.loc})
     ["\"" text:id] -> ({type: "string", text:text.text, loc: node.loc})

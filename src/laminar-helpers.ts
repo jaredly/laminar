@@ -1,5 +1,5 @@
 import { Linear, Id } from './ast.ts';
-import { Op } from './lexer.ts';
+import { Op } from '../parser-generator/lexer.ts';
 type Data<Expr> = {
     type: 'tmp';
     left: Expr | Data<Expr>;

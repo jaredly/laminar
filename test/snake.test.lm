@@ -6,16 +6,16 @@ fn rangeTo(at, end) {
     }
 }
 
-ir-> (at0, end1)=>(
-    match >=(block{let (r5, l6) = dup(at0)}{r5}{swap(at0, l6)}, block{let (r7, l8) = dup(end1)}{r7}{swap(end1, l8)}) {
-        true -> []
-        _2 -> [block{let (r3, l4) = dup(at0)}{r3}{swap(at0, l4)}, ...rangeTo(+(at0, 1), end1)]
+ir-> (*at0, *end1)=>(
+    match >=(dup(&at0), dup(&end1)) {
+        *true -> []
+        *_2 -> [dup(&at0), ...rangeTo(+(*at0, 1), *end1)]
     }
 )
 
 fn range(n) {rangeTo(0, 10)}
 
-ir-> (n0)=>rangeTo(0, 10)
+ir-> (*n0)=>rangeTo(0, 10)
 
 {range(10)}
 

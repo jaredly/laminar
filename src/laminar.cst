@@ -70,7 +70,7 @@ Lens {
     text:id -> ({type: "id", text: text.text, loc: node.loc})
     ["" one:Lens] -> one
     [" " one:Lens] -> one
-    ["" "@" ["(," frontend:Linear backend:Linear]] -> ({type: "manual", frontend, backend, loc: node.loc})
+    ["" "@" ["(," frontend:Lens backend:Linear]] -> ({type: "manual", frontend, backend, loc: node.loc})
     ["" fn:Linear ["(," ...args:Term]] -> ({type: "apply", fn, args, loc: node.loc})
     ["(," ...items:Lens] -> items.length === 1 ? items[0] : ({type: "tuple", items, loc: node.loc})
     ["("] -> ({type: "tuple", items: [], loc: node.loc})
@@ -79,6 +79,7 @@ Lens {
     ["{\n" [" " "let" pat:Pat "=" ...value:*Term] ...body:*Lens] -> ({type: "let", pat, value, body, loc: node.loc})
     ["{\n" [" " "lens" pat:Pat "<-" ...value:*Linear] ...body:*Linear] -> ({type: "aslens", pat, value, body, loc: node.loc})
     ["{\n" one:Lens] -> one
+    ["\n" one:Lens] -> one
     ["{\n" value:Term ...body:*Lens] -> ({type: "let", pat: {type: "drop", loc:node.loc}, value, body, loc: node.loc})
     [" " "match" value:Term ["{\n" ...cases:LensCase]] -> ({type: "case", value, cases,loc:node.loc})
     [" " "match" value:Term ["{;" ...cases:LensCase]] -> ({type: "case", value, cases,loc:node.loc})

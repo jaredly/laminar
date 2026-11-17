@@ -1,4 +1,44 @@
 
+Pointers, passing all the things I throw at them.
+Loving how heap allocation is working.
+
+---
+
+Ok folks, we have liftoff!
+
+Something to think about:
+-> do we need to bring back closures? probably. But only for "things owned by stacks we have access to".
+-> So like, bindings that are stack pointers.
+
+... so yeah we need to close. How to do it?
+-> we can close over things that are stack-declared in scope.
+
+-> ctx.scope needs to know type
+
+---
+
+
+Pointer (lmp) ... I want to verify the input/output expectations with the non-pointer version
+
+b/c I think
+
+let x = ~(a, b)
+... what does that turn into?
+
+let &x = &(a, b)?
+that means it's a compound pointer?
+idk if that is something I can support just yet.
+but it sounds like I'll need to.
+
+---
+
+So we've got .test.lm that handles the full flow.test.lm
+and systematic.test.lm
+
+Now I'm trying pointers. .lmp will be pointerfied
+
+---
+
 Ok so.
 I could really write a blog post about the runtime characteristics.
 BUT ALSO

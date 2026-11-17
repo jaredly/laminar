@@ -12,7 +12,7 @@ import {
     re,
     wrapper,
     manyItems,
-} from './grammar-lexer.ts';
+} from '../parser-generator/grammar-lexer.ts';
 import {
     File,
     FileItem,
@@ -275,12 +275,8 @@ grammar.add('Lens', [
     option(list(' ', b('one', 'Lens')), ({ one, node }: { one: Lens; node: Node }): Lens => one),
     // Lens:4
     option(
-        list(
-            '',
-            lit('@'),
-            wrapper('(', list(',', b('frontend', 'Linear'), b('backend', 'Linear'))),
-        ),
-        ({ frontend, backend, node }: { frontend: Linear; backend: Linear; node: Node }): Lens => ({
+        list('', lit('@'), wrapper('(', list(',', b('frontend', 'Lens'), b('backend', 'Linear')))),
+        ({ frontend, backend, node }: { frontend: Lens; backend: Linear; node: Node }): Lens => ({
             type: 'manual',
             frontend,
             backend,
@@ -363,6 +359,8 @@ grammar.add('Lens', [
         ({ one, node }: { one: Lens; node: Node }): Lens => one,
     ),
     // Lens:13
+    option(list('\n', b('one', 'Lens')), ({ one, node }: { one: Lens; node: Node }): Lens => one),
+    // Lens:14
     option(
         wrapper('{', list('\n', b('value', 'Term'), rest('body', 'Lens', false))),
         ({ value, body, node }: { value: Term; body: Lens; node: Node }): Lens => ({
@@ -373,7 +371,7 @@ grammar.add('Lens', [
             loc: node.loc,
         }),
     ),
-    // Lens:14
+    // Lens:15
     option(
         list(
             ' ',
@@ -388,7 +386,7 @@ grammar.add('Lens', [
             loc: node.loc,
         }),
     ),
-    // Lens:15
+    // Lens:16
     option(
         list(
             ' ',

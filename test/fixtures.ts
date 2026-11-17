@@ -1,13 +1,20 @@
-import { readFileSync, openSync, writeFileSync, readSync, closeSync, existsSync } from 'fs';
-import { compact, defaultConfig, locLines, readFile, readLines, stringify } from '../src/lexer.ts';
-import { grammar } from '../src/laminar-parser.ts';
+import { closeSync, existsSync, openSync, readFileSync, readSync, writeFileSync } from 'fs';
+import { Decl, FileItem, Linear } from '../src/ast.ts';
+import { findDeepest, showDeepest, showFailure } from '../parser-generator/debugFailures.ts';
+import { lexpr, linearToExpr, Scope } from '../src/decompose.ts';
+import { Ctx, dupAt, evalExpr, Frame, LocError, Mem, Pointer } from '../src/eval.ts';
+import { Expr } from '../src/expr.ts';
+import * as g from '../parser-generator/grammar-lexer.ts';
 import { grammar as ir } from '../src/ir-parser.ts';
-import { Decl, File, FileItem, Linear } from '../src/ast.ts';
-import { Expr } from '../src/expr1.ts';
-import { showFailure, findDeepest, showDeepest } from '../src/debugFailures.ts';
-import * as g from '../src/grammar-lexer.ts';
-import { lexpr, linearToExpr } from '../src/decompose.ts';
-import { evalExpr } from '../src/eval.ts';
+import { grammar } from '../src/laminar-parser.ts';
+import { defaultConfig, locLines, readLines, stringify } from '../parser-generator/lexer.ts';
+
+/**
+ * What does this do?
+ * It takes a `file.test.lm` or a `file.errors.lm`,
+ * recreates the snapshot, reformatting, creating IR,
+ * and checking results.
+ */
 
 type N<T> = { node: g.Node; v: T };
 
@@ -28,7 +35,7 @@ type TestCase = {
 const irNode = g.list(' ', g.list('', g.lit('ir'), g.lit('->')), g.rest('ir', 'any', false));
 type Comment = { type: 'comment'; text: string; multi: boolean; loc: number };
 
-const runSnapshot = (raw: string) => {
+export const runSnapshot = (raw: string, filePath: string, verbose = false) => {
     const comments: {
         text: string;
         at: { line: number; char: number };
@@ -58,6 +65,7 @@ const runSnapshot = (raw: string) => {
             rules: { ir: [{ pat: irNode, res: (v: { ir: g.Node }) => v.ir }] },
             config: {},
         });
+
         if (results.type !== 'failure') {
             let v = results.value;
             if (v.type === 'list' && v.children.length === 1) {
@@ -65,7 +73,9 @@ const runSnapshot = (raw: string) => {
             }
             const expr = ir.parse<Expr>('Expr', results.value);
             if (expr.type === 'failure') {
-                console.log(pos(lnode.loc));
+                if (verbose) {
+                    console.log(pos(lnode.loc));
+                }
                 // throw new Error('failed to parse ir');
                 const locToPos = (loc: number) => {
                     const { line, char } = pos(loc);
@@ -77,13 +87,14 @@ const runSnapshot = (raw: string) => {
                     text += '\n' + showDeepest(deepest, ir, text, locToPos);
                 }
 
-                throw new Error(text);
-            }
-            const last = items[items.length - 1];
-            if (last.type !== 'comment') {
-                last.ir = { v: expr.value, node: lnode };
+                console.warn(text);
             } else {
-                throw new Error('Cant have comment there');
+                const last = items[items.length - 1];
+                if (last.type !== 'comment') {
+                    last.ir = { v: expr.value, node: lnode };
+                } else {
+                    throw new Error('Cant have comment there');
+                }
             }
             continue;
         }
@@ -100,7 +111,7 @@ const runSnapshot = (raw: string) => {
                 text += '\n' + showDeepest(deepest, grammar, text, locToPos);
             }
 
-            throw new Error(text);
+            throw new Error(`Cnat do ir`);
         }
         const node = itemResult.value;
 
@@ -132,7 +143,9 @@ const runSnapshot = (raw: string) => {
         items.push({ type: 'test', body, expected: { v: node, node: lnode } });
         body = null;
     }
-    console.log(items.length, 'items found');
+    if (verbose) {
+        console.log(items.length, 'items found');
+    }
 
     /*
 
@@ -150,26 +163,38 @@ Ok we've got our items. Next step:
     let log: any[] = [];
     let input: string[] = [];
     const builtins = {
-        '+': (a: number, b: number) => a + b,
-        '-': (a: number, b: number) => a - b,
-        '*': (a: number, b: number) => a * b,
-        '/': (a: number, b: number) => a / b,
-        '==': (a: number, b: number) => a == b,
-        '>=': (a: number, b: number) => a >= b,
-        '<=': (a: number, b: number) => a <= b,
-        round: (n: number) => Math.round(n),
-        charList: (v: string) => [...v],
-        fst: ([a, b]: [any, any]) => {
-            return [a, (a: any) => [a, b]];
+        heapsize: (v: any) => {
+            throw new Error(`heap fn is handled specially by the eval`);
         },
-        dup: (x: any) => {
-            let d = typeof x === 'string' || typeof x === 'number' ? x : structuredClone(x);
-            return [d, x];
+        heap: (v: any) => {
+            throw new Error(`heap fn is handled specially by the eval`);
+        },
+        '+': (_: any, a: number, b: number) => a + b,
+        '-': (_: any, a: number, b: number) => a - b,
+        '*': (_: any, a: number, b: number) => a * b,
+        '/': (_: any, a: number, b: number) => a / b,
+        '==': (_: any, a: number, b: number) => a == b,
+        '>=': (_: any, a: number, b: number) => a >= b,
+        '<=': (_: any, a: number, b: number) => a <= b,
+        round: (_: any, n: number) => Math.round(n),
+        charList: (_: any, v: string) => {
+            console.log('got teh chars', v);
+            return [...v];
+        },
+        fst: (_stack: Frame[], pointer: Pointer): [Pointer, () => void] => {
+            if (pointer.type === 'tuple') {
+                return [pointer.items[0], () => {}];
+            }
+            return [{ ...pointer, path: pointer.path.concat([0]) }, () => {}];
+        },
+        dup: (mem: Mem, x: any) => {
+            // let d = typeof x === 'string' || typeof x === 'number' ? x : structuredClone(x);
+            return dupAt({ ...mem, scopes: [], builtins: {} }, x, -1);
         },
         drop(v: any) {},
         consume(v: any) {},
         inc: (v: number) => [null, v + 1],
-        log: (v: any) => {
+        log: (_: any, v: any) => {
             log.push(v);
         },
         setInput: (ins: string[]) => {
@@ -182,26 +207,28 @@ Ok we've got our items. Next step:
         },
         Some: (v: number) => ({ type: 'Some', args: [v] }),
         None: () => ({ type: 'None' }),
-        newlens: () => [5, () => void 0],
-        putStrLn: (v: any, w: any) => {
+        // newlens: () => [5, () => void 0],
+        putStrLn: (_: any, v: any, w: any) => {
             log.push(v);
             return [null, w];
         },
-        print: (v: any, w: any) => {
+        print: (_: any, v: any, w: any) => {
             log.push(v);
             return [null, w];
         },
-        openFile(fileName: string, w: any) {
+        openFile(_: any, fileName: string, w: any) {
             if (fileName === 'example.txt') {
-                console.log('opened');
-                return [-1, w];
+                if (verbose) console.log('opened');
+                return -1;
             }
-            return [openSync(fileName, 'r'), w];
+            return openSync(fileName, 'r');
         },
-        readFile([w, f]: [any, number]) {
+        readFile(stack: Mem, ok: Pointer) {
+            // console.log('readfile', JSON.stringify(ok));
+            const [w, f] = dupAt({ ...stack, builtins: {}, scopes: [] }, ok, -1);
             // if (f === -1) return ['one', [w, f]];
-            if (f === -1) return ['two\nthree four five\nsix seven height nine', [w, f]];
-            console.log('bot bas');
+            if (f === -1) return 'two\nthree four five\nsix seven height nine';
+            if (verbose) console.log('bot bas');
             const buffer = new Uint8Array(
                 new ArrayBuffer(4096, { maxByteLength: 10 * 1000 * 1000 }),
             );
@@ -212,25 +239,39 @@ Ok we've got our items. Next step:
                 read += num;
                 buffer.buffer.resize(read + 4096);
             }
-            return [new TextDecoder().decode(buffer.slice(0, read)), [w, f]];
+            return new TextDecoder().decode(buffer.slice(0, read));
         },
-        closeFile(f: number, w: any) {
+        closeFile(stack: any, f: number, w: any) {
             if (f === -1) return [null, w];
             closeSync(f);
             return [null, w];
         },
         logs() {
-            return log;
+            return log.slice();
         },
     };
 
-    const newScope = (globals: Record<string, any>) =>
-        Object.fromEntries(Object.keys(globals).map((name) => [name, -1]));
+    const newScope = (globals: Record<string, any>): Scope =>
+        Object.fromEntries(Object.keys(globals).map((name) => [name, { type: 'builtin' }]));
 
     const out = [];
     const globals: Record<string, any> = { ...builtins };
 
-    let errors = 0;
+    // let errors = 0;
+
+    const heap: Ctx['heap'] = { lid: 0, data: {} };
+
+    const nctx = (): Ctx => ({
+        builtins: globals,
+        scopes: [{ bindings: {} }],
+        stack: [{ values: [], id: '<root>' }],
+        heap,
+    });
+
+    const testResults: {
+        title: string;
+        failure?: Error | [string, string];
+    }[] = [];
 
     for (let item of items) {
         switch (item.type) {
@@ -243,31 +284,50 @@ Ok we've got our items. Next step:
                     out.push(stringify(item.decl.node));
                 }
                 out.push(stringify(item.impl.node));
+                const title = `Declaration at ${filePath}:${pos(item.impl.node.loc).line + 1}`;
                 try {
                     const ir = linearToExpr(
                         {
                             counter: { current: 0 },
-                            scope: newScope({ ...globals, [item.name]: 0 }),
+                            scope: newScope({ ...globals, [item.name]: { type: 'stack', id: 0 } }),
                         },
                         item.impl.v,
                     );
-                    const impl = evalExpr({ builtins: globals, scopes: [{}] }, ir);
+                    const impl = evalExpr(nctx(), ir);
                     globals[item.name] = impl;
                     out.push('');
                     out.push('ir-> ' + stringify(lexpr(ir)));
+                    testResults.push({ title });
                 } catch (err) {
-                    console.log('Error at line', pos(item.impl.node.loc).line + 1);
-                    console.log((err as Error).stack);
-                    errors++;
+                    if (err instanceof LocError) {
+                        err.message += ' at line ' + pos(err.loc).line + 1;
+                    }
+                    if (verbose) {
+                        console.log('Error at line', pos(item.impl.node.loc).line + 1);
+                        console.error(err);
+                    }
+                    testResults.push({
+                        title,
+                        failure: err as Error,
+                    });
+                    // errors++;
                     // throw err;
                 }
                 out.push('');
                 break;
             }
             case 'test': {
+                log = [];
+                // reset the heap
+                heap.lid = 0;
+                heap.data = {};
                 out.push(stringify(item.body.node));
                 out.push('');
                 out.push(stringify(item.expected.node));
+                const title = `Test at ${filePath}:${pos(item.expected.node.loc).line + 1}`;
+                if (verbose) {
+                    console.log('####', title);
+                }
                 try {
                     const ir = linearToExpr(
                         { counter: { current: 0 }, scope: newScope(globals) },
@@ -275,33 +335,49 @@ Ok we've got our items. Next step:
                     );
                     out.push('');
                     out.push('ir-> ' + stringify(lexpr(ir)));
-                    const result = evalExpr({ builtins: globals, scopes: [{}] }, ir);
+                    const result = evalExpr(nctx(), ir);
                     const rir = linearToExpr(
                         { counter: { current: 0 }, scope: newScope(globals) },
                         item.expected.v,
                     );
-                    const rresult = evalExpr({ builtins: globals, scopes: [{}] }, rir);
+                    const rresult = evalExpr(nctx(), rir);
                     if (JSON.stringify(result) !== JSON.stringify(rresult)) {
-                        console.error('Not equal at line ', pos(item.expected.node.loc).line + 1);
-                        console.error(result);
-                        errors++;
-                        console.error(rresult);
+                        if (verbose) {
+                            console.error(
+                                'Not equal at line ',
+                                pos(item.expected.node.loc).line + 1,
+                            );
+                            console.error('-> ', result);
+                            console.error('!> ', rresult);
+                        }
+                        testResults.push({
+                            title,
+                            failure: [JSON.stringify(result), JSON.stringify(rresult)],
+                        });
                     } else {
-                        console.log(
-                            `Test pass test/flow.test.lm:${pos(item.expected.node.loc).line + 1}`,
-                        );
+                        if (verbose) {
+                            console.log(
+                                `Test pass ${filePath}:${pos(item.expected.node.loc).line + 1}`,
+                            );
+                        }
+                        testResults.push({ title });
                     }
                 } catch (err) {
-                    console.log('Error at line', pos(item.expected.node.loc).line + 1);
-                    console.log((err as Error).stack);
-                    errors++;
+                    if (err instanceof LocError) {
+                        err.message += ' at line ' + (pos(err.loc).line + 1);
+                    }
+                    if (verbose) {
+                        console.log('Error at line', pos(item.expected.node.loc).line + 1);
+                        console.error(err);
+                    }
+                    testResults.push({ title, failure: err as Error });
                 }
                 out.push('');
             }
         }
     }
     comments.forEach((c) => out.push(c.text.trim()));
-    return { comments, errors, text: out.join('\n') };
+    return { comments, testResults, text: out.join('\n') };
 };
 
 if (import.meta.main) {
@@ -310,9 +386,13 @@ if (import.meta.main) {
         console.warn(`Usage: fixtures some.test.lm`);
         process.exit(2);
     }
-    const { comments, errors, text } = runSnapshot(readFileSync(path, 'utf-8'));
+    const { testResults, text } = runSnapshot(readFileSync(path, 'utf-8'), path, true);
 
-    console.log(comments.length);
-    console.log(`Errors: ${errors}`);
+    const errors = testResults.filter((r) => r.failure).length;
+    if (errors) {
+        console.error(`Errors: ${errors}`);
+    } else {
+        console.log('✅ All Clear!');
+    }
     writeFileSync(path, text);
 }

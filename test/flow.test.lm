@@ -7,7 +7,7 @@
 inc :: (~Int) => ()
 fn inc(~x) {x := x + 1}
 
-ir-> (x0)=>(swap(x0, +(x0, 1)), x0)
+ir-> (&x0)=>swap(&x0, +(*x0, 1))
 
 {
     let x = 5
@@ -18,18 +18,18 @@ ir-> (x0)=>(swap(x0, +(x0, 1)), x0)
 6
 
 ir-> block{
-    let x0 = 5;
-    let _ = block{let (r1, l2) = inc(x0)}{r1}{swap(x0, l2)}
-}{x0}{}
+    let *x0 = 5;
+    let *_1 = inc(&x0)
+}{*x0}{}
 
 fst :: ((a, b)/(a', b)) => a/a'
 fn fst(~(x, y)) ~x
 
-ir-> ((x0, y1))=>(x0, (back2)=>block{swap(x0, back2)}{(x0, y1)}{})
+ir-> (&(x0, y1))=>(&x0, ()=>null)
 
 fn snd(~(x, y)) ~y
 
-ir-> ((x0, y1))=>(y1, (back2)=>block{swap(y1, back2)}{(x0, y1)}{})
+ir-> (&(x0, y1))=>(&y1, ()=>null)
 
 {
     let x = (1, 2)
@@ -43,28 +43,17 @@ ir-> ((x0, y1))=>(y1, (back2)=>block{swap(y1, back2)}{(x0, y1)}{})
 (1, (5, 2))
 
 ir-> block{
-    let x0 = (1, 2);
-    let z1 = block{
-        let (t3, c4) = fst(x0);
-        let y2 = t3
-    }{swap(y2, 5)}{
-        swap(t3, y2);
-        swap(x0, c4(t3))
-    }
-}{(z1, x0)}{}
+    let *x0 = (1, 2);
+    let *z1 = block{
+        let (&t3, r4) = fst(&x0);
+        let &y2 = &t3
+    }{swap(&y2, 5)}{r4()}
+}{(*z1, *x0)}{}
 
 incFst :: (~(Int, a)) => ()
 fn incFst(~x) inc(~fst(~x))
 
-ir-> (x0)=>(
-    block{
-        let (t1, c2) = fst(x0);
-        let (r3, l4) = inc(t1)
-    }{r3}{
-        swap(t1, l4);
-        swap(x0, c2(t1))
-    }, x0
-)
+ir-> (&x0)=>block{let (&t1, r2) = fst(&x0)}{inc(&t1)}{r2()}
 
 {
     let x = (1, 4)
@@ -75,14 +64,14 @@ ir-> (x0)=>(
 (2, 4)
 
 ir-> block{
-    let x0 = (1, 4);
-    let _ = block{let (r1, l2) = incFst(x0)}{r1}{swap(x0, l2)}
-}{x0}{}
+    let *x0 = (1, 4);
+    let *_1 = incFst(&x0)
+}{*x0}{}
 
 idf :: (~a) => ()
 fn idf(~x) ()
 
-ir-> (x0)=>((), x0)
+ir-> (&x0)=>()
 
 {
     let x = 2
@@ -93,14 +82,14 @@ ir-> (x0)=>((), x0)
 2
 
 ir-> block{
-    let x0 = 2;
-    let _ = block{let (r1, l2) = idf(x0)}{r1}{swap(x0, l2)}
-}{x0}{}
+    let *x0 = 2;
+    let *_1 = idf(&x0)
+}{*x0}{}
 
 idl :: (a/b) => a/b
 fn idl(~x) ~x
 
-ir-> (x0)=>(x0, (back1)=>block{swap(x0, back1)}{x0}{})
+ir-> (&x0)=>(&x0, ()=>null)
 
 {
     let x = 2
@@ -114,20 +103,17 @@ ir-> (x0)=>(x0, (back1)=>block{swap(x0, back1)}{x0}{})
 (2, 4)
 
 ir-> block{
-    let x0 = 2;
-    let z1 = block{
-        let (t3, c4) = idl(x0);
-        let m2 = t3
-    }{swap(m2, 4)}{
-        swap(t3, m2);
-        swap(x0, c4(t3))
-    }
-}{(z1, x0)}{}
+    let *x0 = 2;
+    let *z1 = block{
+        let (&t3, r4) = idl(&x0);
+        let &m2 = &t3
+    }{swap(&m2, 4)}{r4()}
+}{(*z1, *x0)}{}
 
 united :: (~a) => ~()
 fn united(~x) ~()
 
-ir-> (x0)=>((), (back1)=>block{swap((), back1)}{x0}{})
+ir-> (&x0)=>(&(), ()=>null)
 
 {
     let x = 2
@@ -141,30 +127,21 @@ ir-> (x0)=>((), (back1)=>block{swap((), back1)}{x0}{})
 ((), 2)
 
 ir-> block{
-    let x0 = 2;
-    let z1 = block{
-        let (t3, c4) = united(x0);
-        let m2 = t3
-    }{swap(m2, ())}{
-        swap(t3, m2);
-        swap(x0, c4(t3))
-    }
-}{(z1, x0)}{}
+    let *x0 = 2;
+    let *z1 = block{
+        let (&t3, r4) = united(&x0);
+        let &m2 = &t3
+    }{swap(&m2, ())}{r4()}
+}{(*z1, *x0)}{}
 
 fn gimme(initial) ~{
     lens b <- initial
     drop(b)
 }
 
-ir-> (initial0)=>block{
-    let t1 = initial0;
-    let c2 = (b3)=>drop(b3)
-}{
+ir-> (*initial0)=>block{let (&t1, r2) = heap(*initial0)}{
     (
-        t1, (back4)=>block{
-            swap(t1, back4);
-            swap((), c2(t1))
-        }{()}{}
+        &t1, ()=>block{}{null}{block{let &b3 = &t1}{drop(*b3)}{r2()}}
     )
 }{}
 
@@ -180,15 +157,12 @@ ir-> (initial0)=>block{
 (5, 2)
 
 ir-> block{
-    let x0 = 2;
-    let z1 = block{
-        let (t3, c4) = gimme(5);
-        let m2 = t3
-    }{swap(m2, ())}{
-        swap(t3, m2);
-        swap((), c4(t3))
-    }
-}{(z1, x0)}{}
+    let *x0 = 2;
+    let *z1 = block{
+        let (&t3, r4) = gimme(5);
+        let &m2 = &t3
+    }{swap(&m2, ())}{r4()}
+}{(*z1, *x0)}{}
 
 /*
 This should fail, but doesn't.
@@ -222,21 +196,16 @@ but right now I don't.
 (10, 5)
 
 ir-> block{
-    let m0 = ();
-    let n1 = block{
-        let t3 = 5;
-        let c4 = (b5)=>swap(m0, b5);
-        let ok2 = t3
-    }{swap(ok2, 10)}{
-        swap(t3, ok2);
-        swap((), c4(t3))
-    }
-}{(m0, n1)}{}
+    let *m0 = ();
+    let *n1 = block{let (&t3, r4) = heap(5)}{
+        block{let &ok2 = &t3}{swap(&ok2, 10)}{block{let &b5 = &t3}{swap(&m0, *b5)}{r4()}}
+    }{}
+}{(*m0, *n1)}{}
 
 swap :: ((a, b)/(c, d)) => (b, a)/(d, c)
 fn swap(~(x, y)) ~(y, x)
 
-ir-> ((x0, y1))=>((y1, x0), (back2)=>block{swap((y1, x0), back2)}{(x0, y1)}{})
+ir-> (&(x0, y1))=>(&(y1, x0), ()=>null)
 
 {
     let x = (1, 2)
@@ -250,17 +219,12 @@ ir-> ((x0, y1))=>((y1, x0), (back2)=>block{swap((y1, x0), back2)}{(x0, y1)}{})
 (1, 3)
 
 ir-> block{
-    let x0 = (1, 2);
-    let _ = block{
-        let (t4, c5) = swap(x0);
-        let z1 = t4;
-        let (r2, l3) = incFst(z1)
-    }{r2}{
-        swap(z1, l3);
-        swap(t4, z1);
-        swap(x0, c5(t4))
-    }
-}{x0}{}
+    let *x0 = (1, 2);
+    let *_1 = block{
+        let (&t3, r4) = swap(&x0);
+        let &z2 = &t3
+    }{incFst(&z2)}{r4()}
+}{*x0}{}
 
 {
     let x = (1, 2)
@@ -271,20 +235,14 @@ ir-> block{
 (1, 3)
 
 ir-> block{
-    let x0 = (1, 2);
-    let _ = block{
-        let (t1, c2) = swap(x0);
-        let (r3, l4) = incFst(t1)
-    }{r3}{
-        swap(t1, l4);
-        swap(x0, c2(t1))
-    }
-}{x0}{}
+    let *x0 = (1, 2);
+    let *_1 = block{let (&t2, r3) = swap(&x0)}{incFst(&t2)}{r3()}
+}{*x0}{}
 
 united' :: (~a) => ()
 fn united'(~x) ()
 
-ir-> (x0)=>((), x0)
+ir-> (&x0)=>()
 
 {
     let x = 1
@@ -295,14 +253,14 @@ ir-> (x0)=>((), x0)
 1
 
 ir-> block{
-    let x0 = 1;
-    let _ = block{let (r1, l2) = united'(x0)}{r1}{swap(x0, l2)}
-}{x0}{}
+    let *x0 = 1;
+    let *_1 = united'(&x0)
+}{*x0}{}
 
 makeunit :: (()) => ~()
 fn makeunit(()) ~()
 
-ir-> (())=>((), (back0)=>block{swap((), back0)}{()}{})
+ir-> (*())=>(&(), ()=>null)
 
 {
     let x = 1
@@ -313,18 +271,15 @@ ir-> (())=>((), (back0)=>block{swap((), back0)}{()}{})
 1
 
 ir-> block{
-    let x0 = 1;
-    let (t2, c3) = makeunit(());
-    let m1 = t2
-}{x0}{
-    swap(t2, m1);
-    swap((), c3(t2))
-}
+    let *x0 = 1;
+    let (&t2, r3) = makeunit(());
+    let &m1 = &t2
+}{*x0}{r3()}
 
 take :: (a/()) => a
 fn take(~a) {a := ()}
 
-ir-> (a0)=>(swap(a0, ()), a0)
+ir-> (&a0)=>swap(&a0, ())
 
 {
     let x = 1
@@ -335,18 +290,18 @@ ir-> (a0)=>(swap(a0, ()), a0)
 ()
 
 ir-> block{
-    let x0 = 1;
-    let _ = block{let (r1, l2) = take(x0)}{r1}{swap(x0, l2)}
-}{x0}{}
+    let *x0 = 1;
+    let *_1 = take(&x0)
+}{*x0}{}
 
 map :: ((a) => b, a/b) => ()
 fn map(f, ~x) {x := f(x)}
 
-ir-> (f0, x1)=>(swap(x1, f0(x1)), x1)
+ir-> (*f0, &x1)=>swap(&x1, *f0(*x1))
 
 fn double(x) {(x * 2)}
 
-ir-> (x0)=>(*(x0, 2))
+ir-> (*x0)=>(*(*x0, 2))
 
 {
     let x = 10
@@ -357,9 +312,9 @@ ir-> (x0)=>(*(x0, 2))
 20
 
 ir-> block{
-    let x0 = 10;
-    let _ = block{let (r1, l2) = map(double, x0)}{r1}{swap(x0, l2)}
-}{x0}{}
+    let *x0 = 10;
+    let *_1 = map(double, &x0)
+}{*x0}{}
 
 {
     fn nothing() {4}
@@ -368,7 +323,7 @@ ir-> block{
 
 4
 
-ir-> block{let nothing0 = ()=>4}{nothing0()}{}
+ir-> block{let *nothing0 = ()=>4}{*nothing0()}{}
 
 {
     fn multi(a, b, c) {(a, b + c)}
@@ -377,7 +332,7 @@ ir-> block{let nothing0 = ()=>4}{nothing0()}{}
 
 (2, 7)
 
-ir-> block{let multi0 = (a1, b2, c3)=>(a1, +(b2, c3))}{multi0(2, 3, 4)}{}
+ir-> block{let *multi0 = (*a1, *b2, *c3)=>(*a1, +(*b2, *c3))}{*multi0(2, 3, 4)}{}
 
 unmap :: ((a/b) => (), a) => b
 fn unmap(f, x) {
@@ -385,7 +340,7 @@ fn unmap(f, x) {
     x
 }
 
-ir-> (f0, x1)=>block{let _ = block{let (r2, l3) = f0(x1)}{r2}{swap(x1, l3)}}{x1}{}
+ir-> (*f0, *x1)=>block{let *_2 = *f0(&x1)}{*x1}{}
 
 {unmap(inc, 5)}
 
@@ -405,26 +360,16 @@ ir-> unmap(inc, 5)
 (5, (1, 2))
 
 ir-> block{
-    let a0 = (1, 2);
-    let m1 = block{
-        let (t3, c4) = swap(a0);
-        let x2 = t3
-    }{5}{
-        swap(t3, x2);
-        swap(a0, c4(t3))
-    }
-}{(m1, a0)}{}
+    let *a0 = (1, 2);
+    let *m1 = block{
+        let (&t3, r4) = swap(&a0);
+        let &x2 = &t3
+    }{5}{r4()}
+}{(*m1, *a0)}{}
 
 fn swap2(~v) ~swap(~v)
 
-ir-> (v0)=>block{let (t1, c2) = swap(v0)}{
-    (
-        t1, (back3)=>block{
-            swap(t1, back3);
-            swap(v0, c2(t1))
-        }{v0}{}
-    )
-}{}
+ir-> (&v0)=>block{let (&t1, r2) = swap(&v0)}{(&t1, r2)}{}
 
 {
     let x = (1, 2)
@@ -435,33 +380,18 @@ ir-> (v0)=>block{let (t1, c2) = swap(v0)}{
 (1, 3)
 
 ir-> block{
-    let x0 = (1, 2);
-    let _ = block{
-        let (t1, c2) = swap2(x0);
-        let (t3, c4) = fst(t1);
-        let (r5, l6) = inc(t3)
-    }{r5}{
-        swap(t3, l6);
-        swap(t1, c4(t3));
-        swap(x0, c2(t1))
-    }
-}{x0}{}
+    let *x0 = (1, 2);
+    let *_1 = block{
+        let (&t2, r3) = block{let (&t4, r5) = swap2(&x0)}{fst(&t4)}{r5()}
+    }{inc(&t2)}{r3()}
+}{*x0}{}
 
 fcomp :: ((b/b') => c/c', (a/a') => b/b', a/a') => c/c'
 fn fcomp(g, f, ~x) {~g(~f(~x))}
 
-ir-> (g0, f1, x2)=>block{
-    let (t3, c4) = f1(x2);
-    let (t5, c6) = g0(t3)
-}{
-    (
-        t5, (back7)=>block{
-            swap(t5, back7);
-            swap(t3, c6(t5));
-            swap(x2, c4(t3))
-        }{x2}{}
-    )
-}{}
+ir-> (*g0, *f1, &x2)=>block{
+    let (&t3, r4) = block{let (&t5, r6) = *f1(&x2)}{*g0(&t5)}{r6()}
+}{(&t3, r4)}{}
 
 {
     let x = ((1, 2), 3)
@@ -472,9 +402,9 @@ ir-> (g0, f1, x2)=>block{
 ((5, 2), 3)
 
 ir-> block{
-    let x0 = ((1, 2), 3);
-    let _ = block{let (t1, c2) = fcomp(fst, fst, x0)}{swap(t1, 5)}{swap(x0, c2(t1))}
-}{x0}{}
+    let *x0 = ((1, 2), 3);
+    let *_1 = block{let (&t2, r3) = fcomp(fst, fst, &x0)}{swap(&t2, 5)}{r3()}
+}{*x0}{}
 
 over :: (((a) => b), ((c/d) => a/b), c) => d
 fn over(f, g, x) {
@@ -482,15 +412,9 @@ fn over(f, g, x) {
     x
 }
 
-ir-> (f0, g1, x2)=>block{
-    let _ = block{
-        let (t3, c4) = g1(x2);
-        let (r5, l6) = map(f0, t3)
-    }{r5}{
-        swap(t3, l6);
-        swap(x2, c4(t3))
-    }
-}{x2}{}
+ir-> (*f0, *g1, *x2)=>block{
+    let *_3 = block{let (&t4, r5) = *g1(&x2)}{map(*f0, &t4)}{r5()}
+}{*x2}{}
 
 {
     let x = (5, 2)
@@ -499,21 +423,20 @@ ir-> (f0, g1, x2)=>block{
 
 (10, 2)
 
-ir-> block{let x0 = (5, 2)}{over(double, fst, (5, 2))}{}
+ir-> block{let *x0 = (5, 2)}{over(double, fst, (5, 2))}{}
 
 // join :: ((a/a' => b/b'), (c/c' => d/d'), (a,c)/(a',c')) => (b,d)/(b',d')
 fn join(f, g, ~(x, y)) ~(f(~x), g(~y))
 
-ir-> (f0, g1, (x2, y3))=>block{
-    let (t4, c5) = f0(x2);
-    let (t6, c7) = g1(y3)
+ir-> (*f0, *g1, &(x2, y3))=>block{
+    let (&t4, r5) = *f0(&x2);
+    let (&t6, r7) = *g1(&y3)
 }{
     (
-        (t4, t6), (back8)=>block{
-            swap((t4, t6), back8);
-            swap(y3, c7(t6));
-            swap(x2, c5(t4))
-        }{(x2, y3)}{}
+        &(t4, t6), ()=>block{}{null}{
+            r5();
+            r7()
+        }
     )
 }{}
 
@@ -524,7 +447,7 @@ ir-> (f0, g1, (x2, y3))=>block{
 // swapPair :: (a, b)/(b, a) -> ()
 fn swapPair(~(x, y)) {y := x := y}
 
-ir-> ((x0, y1))=>(swap(y1, swap(x0, y1)), (x0, y1))
+ir-> (&(x0, y1))=>swap(&y1, swap(&x0, *y1))
 
 {
     let x = (1, 2)
@@ -535,9 +458,9 @@ ir-> ((x0, y1))=>(swap(y1, swap(x0, y1)), (x0, y1))
 (2, 1)
 
 ir-> block{
-    let x0 = (1, 2);
-    let _ = block{let (r1, l2) = swapPair(x0)}{r1}{swap(x0, l2)}
-}{x0}{}
+    let *x0 = (1, 2);
+    let *_1 = swapPair(&x0)
+}{*x0}{}
 
 /*
 // --------------------
@@ -580,7 +503,11 @@ fn pop(~xs) (
     }
 )
 
-ir-> (xs0)=>((match xs0 {[y1, ...ys2] -> block{let _ = swap(xs0, ys2)}{y1}{}}), xs0)
+ir-> (&xs0)=>(
+    match *xs0 {
+        *[y1, ...ys2] -> block{let *_3 = swap(&xs0, *ys2)}{*y1}{}
+    }
+)
 
 {
     let x = [1, 2, 3]
@@ -591,15 +518,15 @@ ir-> (xs0)=>((match xs0 {[y1, ...ys2] -> block{let _ = swap(xs0, ys2)}{y1}{}}), 
 [2, 3]
 
 ir-> block{
-    let x0 = [1, 2, 3];
-    let _ = block{let (r1, l2) = pop(x0)}{r1}{swap(x0, l2)}
-}{x0}{}
+    let *x0 = [1, 2, 3];
+    let *_1 = pop(&x0)
+}{*x0}{}
 
 // Push an element onto a list in-place.
 // push :: Int -> ~(List Int) -> ()
 fn push(x, ~xs) {xs := [x, ...xs]}
 
-ir-> (x0, xs1)=>(swap(xs1, [x0, ...xs1]), xs1)
+ir-> (*x0, &xs1)=>swap(&xs1, [*x0, ...*xs1])
 
 {
     let x = [1, 2]
@@ -610,9 +537,9 @@ ir-> (x0, xs1)=>(swap(xs1, [x0, ...xs1]), xs1)
 [5, 1, 2]
 
 ir-> block{
-    let x0 = [1, 2];
-    let _ = block{let (r1, l2) = push(5, x0)}{r1}{swap(x0, l2)}
-}{x0}{}
+    let *x0 = [1, 2];
+    let *_1 = push(5, &x0)
+}{*x0}{}
 
 // Making sure match on string works
 {
@@ -625,11 +552,11 @@ ir-> block{
 
 10
 
-ir-> block{let x0 = "Hello"}{
+ir-> block{let *x0 = "Hello"}{
     (
-        match x0 {
-            "One" -> 5
-            "Hello" -> 10
+        match *x0 {
+            *"One" -> 5
+            *"Hello" -> 10
         }
     )
 }{}
@@ -676,47 +603,27 @@ fn exec(is, ~(stk, w)) (
     }
 )
 
-ir-> (is0, (stk1, w2))=>(
-    (
-        match is0 {
-            [] -> ()
-            [Left(n3), ...is4] -> block{
-                let _ = block{let (r7, l8) = push(n3, stk1)}{r7}{swap(stk1, l8)};
-                let (r5, l6) = exec(is4, (stk1, w2))
-            }{r5}{swap((stk1, w2), l6)}
-            [Right("+"), ...is9] -> block{
-                let _ = block{let (r12, l13) = push(+(block{let (r14, l15) = pop(stk1)}{r14}{swap(stk1, l15)}, block{let (r16, l17) = pop(stk1)}{r16}{swap(stk1, l17)}), stk1)}{r12}{swap(stk1, l13)};
-                let (r10, l11) = exec(is9, (stk1, w2))
-            }{r10}{swap((stk1, w2), l11)}
-            [Right("-"), ...is18] -> block{
-                let _ = block{let (r21, l22) = push(-(block{let (r23, l24) = pop(stk1)}{r23}{swap(stk1, l24)}, block{let (r25, l26) = pop(stk1)}{r25}{swap(stk1, l26)}), stk1)}{r21}{swap(stk1, l22)};
-                let (r19, l20) = exec(is18, (stk1, w2))
-            }{r19}{swap((stk1, w2), l20)}
-            [Right("*"), ...is27] -> block{
-                let _ = block{let (r30, l31) = push((*(block{let (r32, l33) = pop(stk1)}{r32}{swap(stk1, l33)}, block{let (r34, l35) = pop(stk1)}{r34}{swap(stk1, l35)})), stk1)}{r30}{swap(stk1, l31)};
-                let (r28, l29) = exec(is27, (stk1, w2))
-            }{r28}{swap((stk1, w2), l29)}
-            [Right("/"), ...is36] -> block{
-                let _ = block{let (r39, l40) = push(/(block{let (r41, l42) = pop(stk1)}{r41}{swap(stk1, l42)}, block{let (r43, l44) = pop(stk1)}{r43}{swap(stk1, l44)}), stk1)}{r39}{swap(stk1, l40)};
-                let (r37, l38) = exec(is36, (stk1, w2))
-            }{r37}{swap((stk1, w2), l38)}
-            [Right("p"), ...is45] -> block{
-                let _ = block{let (r48, l49) = print(block{let (r50, l51) = pop(stk1)}{r50}{swap(stk1, l51)}, w2)}{r48}{swap(w2, l49)};
-                let (r46, l47) = exec(is45, (stk1, w2))
-            }{r46}{swap((stk1, w2), l47)}
-            [Right("d"), ...is52] -> block{
-                let x53 = block{let (r62, l63) = pop(stk1)}{r62}{swap(stk1, l63)};
-                let _ = block{let (r58, l59) = push(block{let (r60, l61) = dup(x53)}{r60}{swap(x53, l61)}, stk1)}{r58}{swap(stk1, l59)};
-                let _ = block{let (r56, l57) = push(x53, stk1)}{r56}{swap(stk1, l57)};
-                let (r54, l55) = exec(is52, (stk1, w2))
-            }{r54}{swap((stk1, w2), l55)}
-            [Right(x64), ...is65] -> block{
-                let _ = block{let (r70, l71) = putStrLn("Unrecognised operation:", w2)}{r70}{swap(w2, l71)};
-                let _ = block{let (r68, l69) = print(x64, w2)}{r68}{swap(w2, l69)};
-                let (r66, l67) = exec(is65, (stk1, w2))
-            }{r66}{swap((stk1, w2), l67)}
-        }
-    ), (stk1, w2)
+ir-> (*is0, &(stk1, w2))=>(
+    match *is0 {
+        *[] -> ()
+        *[Left(n3), ...is4] -> block{let *_5 = push(*n3, &stk1)}{exec(*is4, &(stk1, w2))}{}
+        *[Right("+"), ...is6] -> block{let *_7 = push(+(pop(&stk1), pop(&stk1)), &stk1)}{exec(*is6, &(stk1, w2))}{}
+        *[Right("-"), ...is8] -> block{let *_9 = push(-(pop(&stk1), pop(&stk1)), &stk1)}{exec(*is8, &(stk1, w2))}{}
+        *[Right("*"), ...is10] -> block{
+            let *_11 = push((*(pop(&stk1), pop(&stk1))), &stk1)
+        }{exec(*is10, &(stk1, w2))}{}
+        *[Right("/"), ...is12] -> block{let *_13 = push(/(pop(&stk1), pop(&stk1)), &stk1)}{exec(*is12, &(stk1, w2))}{}
+        *[Right("p"), ...is14] -> block{let *_15 = print(pop(&stk1), &w2)}{exec(*is14, &(stk1, w2))}{}
+        *[Right("d"), ...is16] -> block{
+            let *x17 = pop(&stk1);
+            let *_18 = push(dup(&x17), &stk1);
+            let *_19 = push(*x17, &stk1)
+        }{exec(*is16, &(stk1, w2))}{}
+        *[Right(x20), ...is21] -> block{
+            let *_22 = putStrLn("Unrecognised operation:", &w2);
+            let *_23 = print(*x20, &w2)
+        }{exec(*is21, &(stk1, w2))}{}
+    }
 )
 
 fn run(is) {
@@ -726,11 +633,11 @@ fn run(is) {
     stk
 }
 
-ir-> (is0)=>block{
-    let stk1 = [];
-    let w2 = 0;
-    let _ = block{let (r3, l4) = exec(is0, (stk1, w2))}{r3}{swap((stk1, w2), l4)}
-}{stk1}{}
+ir-> (*is0)=>block{
+    let *stk1 = [];
+    let *w2 = 0;
+    let *_3 = exec(*is0, &(stk1, w2))
+}{*stk1}{}
 
 {run([Left(5), Left(3), Right("+")])}
 
@@ -738,11 +645,19 @@ ir-> (is0)=>block{
 
 ir-> run([Left(5), Left(3), Right("+")])
 
-run([Left(5), Left(10), Right("*"), Left(52), Right("-")])
+run(
+    [
+        Left(5), Left(10), Right("*"), Left(52), Right("-")
+    ]
+)
 
 [2]
 
-ir-> run([Left(5), Left(10), Right("*"), Left(52), Right("-")])
+ir-> run(
+    [
+        Left(5), Left(10), Right("*"), Left(52), Right("-")
+    ]
+)
 
 // --------------------
 // Examples from "From Linearity to Borrowing", Wagner et al.
@@ -758,10 +673,10 @@ fn not(b) (
     }
 )
 
-ir-> (b0)=>(
-    match b0 {
-        true -> false
-        false -> true
+ir-> (*b0)=>(
+    match *b0 {
+        *true -> false
+        *false -> true
     }
 )
 
@@ -783,10 +698,10 @@ fn length'(xs) (
     }
 )
 
-ir-> (xs0)=>(
-    match xs0 {
-        [] -> 0
-        [y1, ...ys2] -> block{let _ = drop(y1)}{+(1, length'(ys2))}{}
+ir-> (*xs0)=>(
+    match *xs0 {
+        *[] -> 0
+        *[y1, ...ys2] -> block{let *_3 = drop(*y1)}{+(1, length'(*ys2))}{}
     }
 )
 
@@ -804,13 +719,11 @@ fn length(~xs) (
     }
 )
 
-ir-> (xs0)=>(
-    (
-        match xs0 {
-            [] -> block{}{0}{swap(xs0, [])}
-            [y1, ...ys2] -> block{}{+(1, block{let (r3, l4) = length(ys2)}{r3}{swap(ys2, l4)})}{swap(xs0, [y1, ...ys2])}
-        }
-    ), xs0
+ir-> (&xs0)=>(
+    match &xs0 {
+        &[] -> 0
+        &[y1, ...ys2] -> +(1, length(&ys2))
+    }
 )
 
 {
@@ -820,7 +733,7 @@ ir-> (xs0)=>(
 
 (3, [1, 2, 3])
 
-ir-> block{let x0 = [1, 2, 3]}{(block{let (r1, l2) = length(x0)}{r1}{swap(x0, l2)}, x0)}{}
+ir-> block{let *x0 = [1, 2, 3]}{(length(&x0), *x0)}{}
 
 // split :: Char -> String -> (String, String)
 fn split(c, xs) (
@@ -845,16 +758,16 @@ fn split(c, xs) (
     }
 )
 
-ir-> (c0, xs1)=>(
-    match xs1 {
-        [] -> block{let _ = consume(c0)}{([], [])}{}
-        [x2, ...xs3] -> (
-            match ==(block{let (r6, l7) = dup(x2)}{r6}{swap(x2, l7)}, block{let (r8, l9) = dup(c0)}{r8}{swap(c0, l9)}) {
-                true -> block{
-                    let _ = consume(x2);
-                    let _ = consume(c0)
-                }{([], xs3)}{}
-                false -> block{let (y4, z5) = split(c0, xs3)}{([x2, ...y4], z5)}{}
+ir-> (*c0, *xs1)=>(
+    match *xs1 {
+        *[] -> block{let *_2 = consume(*c0)}{([], [])}{}
+        *[x3, ...xs4] -> (
+            match ==(dup(&x3), dup(&c0)) {
+                *true -> block{
+                    let *_5 = consume(*x3);
+                    let *_6 = consume(*c0)
+                }{([], *xs4)}{}
+                *false -> block{let *(y7, z8) = split(*c0, *xs4)}{([*x3, ...*y7], *z8)}{}
             }
         )
     }
@@ -883,10 +796,10 @@ fn splitMany(c, xs) (
     }
 )
 
-ir-> (c0, xs1)=>(
-    match split(block{let (r5, l6) = dup(c0)}{r5}{swap(c0, l6)}, xs1) {
-        (word2, []) -> block{let _ = consume(c0)}{[word2]}{}
-        (word3, tail4) -> [word3, ...splitMany(c0, tail4)]
+ir-> (*c0, *xs1)=>(
+    match split(dup(&c0), *xs1) {
+        *(word2, []) -> block{let *_3 = consume(*c0)}{[*word2]}{}
+        *(word4, tail5) -> [*word4, ...splitMany(*c0, *tail5)]
     }
 )
 
@@ -899,39 +812,40 @@ ir-> splitMany(" ", charList("A B C"))
 // words :: String -> List String
 fn words(text) splitMany(" ", text)
 
-ir-> (text0)=>splitMany(" ", text0)
+ir-> (*text0)=>splitMany(" ", *text0)
 
 // lines :: String -> List String
 fn lines(text) splitMany("\n", text)
 
-ir-> (text0)=>splitMany("\n", text0)
+ir-> (*text0)=>splitMany("\n", *text0)
 
 // fileWords :: ~(World, Handle) -> Int
 fn fileWords(~(w, f)) length'(words(charList(readFile(~(w, f)))))
 
-ir-> ((w0, f1))=>(length'(words(charList(block{let (r2, l3) = readFile((w0, f1))}{r2}{swap((w0, f1), l3)}))), (w0, f1))
+ir-> (&(w0, f1))=>length'(words(charList(readFile(&(w0, f1)))))
 
 // fileLines :: ~(World, Handle) -> Int
 fn fileLines(~(w, f)) length'(lines(charList(readFile(~(w, f)))))
 
-ir-> ((w0, f1))=>(length'(lines(charList(block{let (r2, l3) = readFile((w0, f1))}{r2}{swap((w0, f1), l3)}))), (w0, f1))
+ir-> (&(w0, f1))=>length'(lines(charList(readFile(&(w0, f1)))))
 
 // avg :: ~World -> ()
 fn avg(fileName, ~w) {
     let f = openFile(fileName, ~w)
-    putStrLn("This source file has the following average number of words per line:", ~w)
+    putStrLn(
+        "This source file has the following average number of words per line:", ~w
+    )
     print(fileWords(~(w, f)) / fileLines(~(w, f)), ~w)
     closeFile(f, ~w)
 }
 
-ir-> (fileName0, w1)=>(
-    block{
-        let f2 = block{let (r13, l14) = openFile(fileName0, w1)}{r13}{swap(w1, l14)};
-        let _ = block{let (r11, l12) = putStrLn("This source file has the following average number of words per line:", w1)}{r11}{swap(w1, l12)};
-        let _ = block{let (r5, l6) = print(/(block{let (r7, l8) = fileWords((w1, f2))}{r7}{swap((w1, f2), l8)}, block{let (r9, l10) = fileLines((w1, f2))}{r9}{swap((w1, f2), l10)}), w1)}{r5}{swap(w1, l6)};
-        let (r3, l4) = closeFile(f2, w1)
-    }{r3}{swap(w1, l4)}, w1
-)
+ir-> (*fileName0, &w1)=>block{
+    let *f2 = openFile(*fileName0, &w1);
+    let *_3 = putStrLn(
+        "This source file has the following average number of words per line:", &w1
+    );
+    let *_4 = print(/(fileWords(&(w1, f2)), fileLines(&(w1, f2))), &w1)
+}{closeFile(*f2, &w1)}{}
 
 // We run into call stack issues
 {
@@ -940,11 +854,13 @@ ir-> (fileName0, w1)=>(
     logs()
 }
 
-["This source file has the following average number of words per line:", 2]
+[
+    "This source file has the following average number of words per line:", 2
+]
 
 ir-> block{
-    let w0 = 0;
-    let _ = block{let (r1, l2) = avg("example.txt", w0)}{r1}{swap(w0, l2)}
+    let *w0 = 0;
+    let *_1 = avg("example.txt", &w0)
 }{logs()}{}
 
 {
@@ -954,34 +870,40 @@ ir-> block{
 
 4.6
 
-ir-> block{let x0 = +(3.4, 1.2)}{x0}{}
+ir-> block{let *x0 = +(3.4, 1.2)}{*x0}{}
 
 fn aside(~(a, b)) ~{
     lens c <- (a + b)
     c
 }
 
-ir-> ((a0, b1))=>block{
-    let t2 = +(a0, b1);
-    let c3 = (c4)=>c4
-}{(t2, (b5)=>block{swap(t2, b5)}{c3(t2)}{})}{}
+ir-> (&(a0, b1))=>block{let (&t2, r3) = heap(+(*a0, *b1))}{
+    (
+        &t2, ()=>block{}{null}{block{let &c4 = &t2}{*c4}{r3()}}
+    )
+}{}
 
 fn useFile(name, ~w) ~{
-    lens (fd, w) <- (openFile(name, ~w), w)
+    lens (fd, w2) <- (openFile(name, ~w), w)
     closeFile(fd)
-    w
+    w := w2
 }
 
-ir-> (name0, w1)=>block{
-    let t2 = (block{let (r4, l5) = openFile(name0, w1)}{r4}{swap(w1, l5)}, w1);
-    let c3 = ((fd6, w7))=>block{let _ = closeFile(fd6)}{w7}{}
-}{(t2, (b8)=>block{swap(t2, b8)}{c3(t2)}{})}{}
+ir-> (*name0, &w1)=>block{let (&t2, r3) = heap((openFile(*name0, &w1), *w1))}{
+    (
+        &t2, ()=>block{}{null}{
+            block{let &(fd4, w25) = &t2}{
+                block{let *_6 = closeFile(*fd4)}{swap(&w1, *w25)}{}
+            }{r3()}
+        }
+    )
+}{}
 
 {
     let ops = []
     let text = {
-        let (file, ops) = ~useFile("example.txt", ~ops)
-        readFile(~(ops, file))
+        let (file, ops2) = ~useFile("example.txt", ~ops)
+        readFile(~(ops2, file))
     }
     (text, ops)
 }
@@ -989,17 +911,12 @@ ir-> (name0, w1)=>block{
 ("two\nthree four five\nsix seven height nine", [])
 
 ir-> block{
-    let ops0 = [];
-    let text1 = block{
-        let (t6, c7) = useFile("example.txt", ops0);
-        let (file2, ops3) = t6;
-        let (r4, l5) = readFile((ops3, file2))
-    }{r4}{
-        swap((ops3, file2), l5);
-        swap(t6, (file2, ops3));
-        swap(ops0, c7(t6))
-    }
-}{(text1, ops0)}{}
+    let *ops0 = [];
+    let *text1 = block{
+        let (&t4, r5) = useFile("example.txt", &ops0);
+        let &(file2, ops23) = &t4
+    }{readFile(&(ops23, file2))}{r5()}
+}{(*text1, *ops0)}{}
 
 /*
 
@@ -1053,9 +970,7 @@ execDemo ~w =
   exec instrs ~(stack, w)
   putStrLn "Final stack was:" ~w
   print stack ~w
-
-
-*/
+  */
 fn range(n) {
     match n {
         0 -> []
@@ -1063,10 +978,10 @@ fn range(n) {
     }
 }
 
-ir-> (n0)=>(
-    match n0 {
-        0 -> []
-        n1 -> [block{let (r2, l3) = dup(n1)}{r2}{swap(n1, l3)}, ...range(-(n1, 1))]
+ir-> (*n0)=>(
+    match *n0 {
+        *0 -> []
+        *n1 -> [dup(&n1), ...range(-(*n1, 1))]
     }
 )
 

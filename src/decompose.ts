@@ -1,98 +1,755 @@
-/*
+import { free, getFree, Lens, Linear, names, Pat } from './ast.ts';
+import { Expr, Idd, Patd, Ref, Stmt } from './expr.ts';
+import { string } from '../parser-generator/grammar-lexer.ts';
 
-Here's where I turn a Term into an Expr.
-Let's make this happen.
+export type Scope = Record<
+    string,
+    { type: 'builtin' } | { type: 'stack'; id: number } | { type: 'ref'; id: number }
+>;
+type Ctx = { scope: Scope; counter: { current: number } };
 
-# PAT
-vbl
-(pat, pat)
-()
+export const subScope = (ctx: Ctx) => ({ ...ctx, scope: { ...ctx.scope } });
+// One thing we should do:
+// - first, extract all nested lens calls
 
-# LIN
--> finished
-vbl
-(lin, lin)
-let pat = lin in lin
-fn(pat) => lin
-lin(lin)
-()
-lens := lin
-let pat = ~lens in lin
-fn(pat) => ~lens
-Left(lin)
-Right(lin)
-case lin
-    Left(pat) -> lin
-    Right(pat) -> lin
-case ~lens
-    Left(pat) -> lin
-    Right(pat) -> lin
-
--> easy
-lin & lin // SPLIT
-fst(lin)
-snd(lin)
-
--> hard
-unlens lens in lin
-false(term) ???
-true(lin)
-promote??discard??copy??derelict??
-
-
-There's this funny thing where, a plain variable `id`
-can be either a lens or a linear, just based on whether it's
-used as one or the other. By contrast, a function invocation
-can only be one or the other, based on that function's type signature.
-
-
-# LENS
--> finished
-vbl : A/A'
-(lens, lens) : (A,B)/(A',B')
-lin(lin) : A/A'
-lin(~lens) : A/A'
-aslens vbl <- lin in lin : A/A'
-case ~lens
-    Left(pat) -> lens
-    Right(pat) -> lens
-case lin
-    Left(pat) -> lens
-    Right(pat) -> lens
-
--> easier
-() : ()/A'
-
--> harder???
-let pat = lin in lens
-let pat = ~lens in lens
-false(term)
-
-
-So that's the language level syntax.
-BUT
-we can replace all of the lenses with, like, lambda functions. right?
-
-
-
-*/
-
-import { Lens, Linear, Pat } from './ast.ts';
-import { Expr, Idd, Patd, Stmt, Swap } from './expr1.ts';
-import { Node } from './lexer.ts';
-
-type Ctx = { scope: Record<string, number>; counter: { current: number } };
-
-const subScope = (ctx: Ctx) => ({ ...ctx, scope: { ...ctx.scope } });
-
-export const sstmt = (stmt: Stmt): string => {
-    switch (stmt.type) {
-        case 'let':
-            return `let ${spat(stmt.pat)} = ${sexpr(stmt.value)}`;
-        default:
-            return sexpr(stmt);
+const collectStackIds = (pat: Patd, found: (id: Idd) => void) => {
+    switch (pat.type) {
+        case 'idd':
+            found(pat);
+            return;
+        case 'string':
+        case 'number':
+        case 'bool':
+            return;
+        case 'ref':
+            return;
+        case 'deref':
+            collectStackIds(pat.inner, found);
+            return;
+        case 'tuple':
+            pat.items.forEach((pat) => collectStackIds(pat, found));
+            return;
+        case 'constructor':
+            pat.args.forEach((pat) => collectStackIds(pat, found));
+            return;
     }
 };
+
+// export const addClosures = (expr: Expr, stack: string[][], capture: Idd[]): Expr => {
+//     switch (expr.type) {
+//         case 'block': {
+//             const sub: Idd[] = [];
+//             // let letIds: Idd[] = [];
+//             const mine: string[] = [];
+//             const subStack = [...stack, mine];
+//             const block = expr.block.map((stmt) => {
+//                 if (stmt.type === 'let') {
+//                     let got: string[] = [];
+//                     collectStackIds(stmt.pat, (id) => {
+//                         // letIds.push(id);
+//                         got.push(id.text + id.id);
+//                     });
+//                     const res: Stmt = { ...stmt, value: addClosures(stmt.value, subStack, sub) };
+//                     mine.push(...got);
+//                     return res;
+//                 } else {
+//                     return addClosures(stmt, subStack, sub);
+//                 }
+//             });
+//
+//             const res = {
+//                 ...expr,
+//                 block,
+//                 result: addClosures(expr.result, subStack, sub),
+//                 cleanup: expr.cleanup.map((e) => addClosures(e, subStack, sub)),
+//             };
+//
+//             if (sub.length) {
+//                 return {
+//                     type: 'closure',
+//                     names: sub,
+//                     fn: res,
+//                     loc: expr.loc,
+//                 };
+//             }
+//
+//             return res;
+//         }
+//         case 'idd':
+//             for (let i = 0; i < stack.length - 1; i++) {
+//                 if (stack[i].includes(expr.text + expr.id)) {
+//                     capture.push(expr);
+//                     break;
+//                 }
+//             }
+//             return expr;
+//         case 'ref':
+//             return expr; // ignoring refs
+//         case 'deref':
+//             return { ...expr, inner: addClosures(expr.inner, stack, capture) };
+//         case 'string':
+//             return {
+//                 ...expr,
+//                 interp: expr.interp.map((i) => ({
+//                     ...i,
+//                     value: addClosures(i.value, stack, capture),
+//                 })),
+//             };
+//         case 'swap': {
+//             // collectPatdNames(expr.pat, (id) => {
+//             //     for (let i = 0; i < stack.length - 1; i++) {
+//             //         if (stack[i].includes(id.text + id.id)) {
+//             //             capture.push(id);
+//             //             break;
+//             //         }
+//             //     }
+//             // });
+//             return { ...expr, value: addClosures(expr.value, stack, capture) };
+//         }
+//         case 'const':
+//             return expr;
+//         case 'tuple':
+//             return { ...expr, items: expr.items.map((e) => addClosures(e, stack, capture)) };
+//         case 'apply':
+//             return {
+//                 ...expr,
+//                 fn: addClosures(expr.fn, stack, capture),
+//                 args: expr.args.map((a) => addClosures(a, stack, capture)),
+//             };
+//         case 'constructor':
+//             return { ...expr, args: expr.args.map((a) => addClosures(a, stack, capture)) };
+//         case 'closure':
+//             return expr; // assume we've already handled things??
+//         case 'fn':
+//             return expr; // TODO
+//         case 'case':
+//             return {
+//                 ...expr,
+//                 value: addClosures(expr.value, stack, capture),
+//                 cases: expr.cases.map(({ pat, body }) => {
+//                     const self = [...stack];
+//                     self[self.length - 1] = self[self.length - 1].slice();
+//                     collectStackIds(pat, (id) => {
+//                         self[self.length - 1].push(id.text + id.id);
+//                     });
+//                     // TODO: should I add a closure here?
+//                     return { pat, body: addClosures(body, self, capture) };
+//                 }),
+//             };
+//     }
+// };
+
+export const collectPatdNames = (pat: Patd, found: (id: Idd) => void) => {
+    switch (pat.type) {
+        case 'idd':
+            found(pat);
+            return;
+        case 'number':
+        case 'bool':
+        case 'string':
+            return;
+        // case 'list':
+        //     return pat.items.flatMap(names).concat(pat.tail ? names(pat.tail) : []);
+        case 'tuple':
+            return pat.items.forEach((p) => collectPatdNames(p, found));
+        case 'constructor':
+            return pat.args.forEach((p) => collectPatdNames(p, found));
+        case 'deref':
+        case 'ref':
+            collectPatdNames(pat.inner, found);
+            return;
+    }
+};
+
+export const linearToExpr = (ctx: Ctx, lin: Linear): Expr => {
+    switch (lin.type) {
+        case 'bool':
+        case 'number':
+            return { type: 'const', value: lin.value, loc: lin.loc };
+        case 'id':
+        case 'op': {
+            const id = ctx.scope[lin.text];
+            if (id == null) throw new Error(`unbound ${lin.text}`);
+            if (id.type === 'builtin') {
+                return { ...lin, type: 'idd', id: -1 };
+            }
+            return { type: 'deref', loc: lin.loc, inner: { ...lin, type: 'idd', id: id.id } };
+        }
+        case 'string':
+            return {
+                ...lin,
+                interp: lin.interp.map((l) => ({ ...l, value: linearToExpr(ctx, l.value) })),
+            };
+        case 'tuple':
+            return { ...lin, items: lin.items.map((lin) => linearToExpr(ctx, lin)) };
+        case 'constructor': {
+            return {
+                ...lin,
+                args: lin.args.map((l) => linearToExpr(ctx, l)),
+            };
+        }
+        case 'apply': {
+            const last = lin.args[lin.args.length - 1];
+            if (last && last.type === 'lens') {
+                return lensToRvalue(ctx, last.lens, (value, cleanup) =>
+                    withCleanup(
+                        {
+                            ...lin,
+                            fn: linearToExpr(ctx, lin.fn),
+                            args: lin.args.map((arg, i) => {
+                                if (i === lin.args.length - 1) return eref(value);
+                                if (arg.type === 'lens')
+                                    throw new Error(`lens only allowed in final position`);
+                                return linearToExpr(ctx, arg);
+                            }),
+                        },
+                        cleanup,
+                    ),
+                );
+            }
+            return {
+                ...lin,
+                fn: linearToExpr(ctx, lin.fn),
+                args: lin.args.map((arg) => {
+                    if (arg.type === 'lens') throw new Error(`lens only allowed in final position`);
+                    return linearToExpr(ctx, arg);
+                }),
+            };
+        }
+        case 'assign': {
+            return lensToRvalue(ctx, lin.lens, (ref, cleanup) =>
+                withCleanup(
+                    {
+                        type: 'swap',
+                        pat: pref(ref),
+                        loc: lin.loc,
+                        value: linearToExpr(ctx, lin.value),
+                    },
+                    cleanup,
+                ),
+            );
+        }
+        case 'let':
+            return letToExpr(ctx, lin);
+        case 'fn': {
+            let last: Patd | null = null;
+            const args: Patd[] = [];
+            lin.args.forEach((arg, i) => {
+                if (arg.pat.type === 'lens') {
+                    if (i !== lin.args.length - 1) {
+                        throw new Error(`lens arg must be last`);
+                    }
+                    last = patToPatd(ctx, arg.pat.inner, true);
+                } else {
+                    args.push({
+                        type: 'deref',
+                        inner: patToPatd(ctx, arg.pat, false),
+                        loc: arg.pat.loc,
+                    });
+                }
+            });
+            const argnames = lin.args.flatMap((v) => names(v.pat));
+            const ref = new Set<string>();
+            getFree(
+                new Set(
+                    argnames.concat(
+                        Object.keys(ctx.scope).filter((n) => ctx.scope[n].type === 'builtin'),
+                    ),
+                ),
+                lin.body,
+                ref,
+                new Set<string>(),
+            );
+            const self = [...ref]
+                .map((name): Idd | null => {
+                    const id = ctx.scope[name];
+                    if (id == null) throw new Error(`unbound ${name}`);
+                    if (id.type === 'ref' || id.type === 'builtin') return null;
+                    return { type: 'idd', id: id.id, text: name, loc: lin.loc };
+                })
+                .filter(notEmpty);
+            const result: Expr =
+                lin.body.type === 'lens'
+                    ? {
+                          type: 'fn',
+                          args: last ? args.concat([pref(last)]) : args,
+                          body: lensToRvalue(ctx, lin.body.lens, (inner, cleanup): Expr => {
+                              return {
+                                  type: 'tuple',
+                                  loc: lin.loc,
+                                  items: [eref(inner), cleanupFn(cleanup, inner.loc)],
+                              };
+                          }),
+                          loc: lin.loc,
+                      }
+                    : last
+                      ? {
+                            type: 'fn',
+                            args: args.concat([pref(last)]),
+                            body: linearToExpr(ctx, lin.body),
+                            loc: lin.loc,
+                        }
+                      : {
+                            type: 'fn',
+                            args: args,
+                            body: linearToExpr(ctx, lin.body),
+                            loc: lin.loc,
+                        };
+            if (self.length) {
+                return {
+                    type: 'closure',
+                    names: self,
+                    fn: result,
+                    loc: lin.loc,
+                };
+            } else {
+                return result;
+            }
+        }
+        case 'case': {
+            if (lin.value.type === 'lens') {
+                return lensToRvalue(ctx, lin.value.lens, (inner, cleanup) =>
+                    withCleanup(
+                        makeCase(ctx, { type: 'ref', inner, loc: lin.loc }, lin, true),
+                        cleanup,
+                    ),
+                );
+            }
+            return makeCase(ctx, linearToExpr(ctx, lin.value), lin, false);
+        }
+    }
+    throw new Error('bat lintoexp');
+};
+
+const cleanupFn = (cleanup: Expr[], loc: Loc): Expr => {
+    if (!cleanup.length) {
+        return { type: 'fn', args: [], body: { type: 'const', loc, value: null }, loc };
+    }
+    if (cleanup.length === 1 && cleanup[0].type === 'apply' && cleanup[0].args.length === 0)
+        return cleanup[0].fn;
+    return {
+        type: 'fn',
+        args: [],
+        body: {
+            type: 'block',
+            block: [],
+            result: { type: 'const', loc, value: null },
+            loc,
+            cleanup,
+        },
+        loc,
+    };
+};
+
+const lensCaseResult = (inner: Expr, cleanup: Expr[]): Expr => ({
+    type: 'tuple',
+    loc: inner.loc,
+    items: [{ type: 'ref', inner, loc: inner.loc }, cleanupFn(cleanup, inner.loc)],
+});
+
+const makeLensCase = (
+    ctx: Ctx,
+    value: Expr,
+    lin: Lens & { type: 'case' },
+    ref: boolean,
+    inner: (inner: Expr, cleanup: Expr[]) => Expr,
+): Expr => {
+    return {
+        type: 'case',
+        value,
+        loc: lin.loc,
+        cases: lin.cases.map((kase) => {
+            const sub = subScope(ctx);
+            return {
+                pat: {
+                    type: ref ? 'ref' : 'deref',
+                    loc: lin.loc,
+                    inner: patToPatd(sub, kase.pat, ref),
+                },
+                body: lensToRvalue(sub, kase.body, inner),
+            };
+        }),
+    };
+};
+
+const makeCase = (ctx: Ctx, value: Expr, lin: Linear & { type: 'case' }, ref: boolean): Expr => {
+    return {
+        type: 'case',
+        value,
+        loc: lin.loc,
+        cases: lin.cases.map((kase) => {
+            const sub = subScope(ctx);
+            return {
+                pat: {
+                    type: ref ? 'ref' : 'deref',
+                    loc: lin.loc,
+                    inner: patToPatd(sub, kase.pat, ref),
+                },
+                body: linearToExpr(sub, kase.body),
+            };
+        }),
+    };
+};
+
+export const lensAsRef = (ctx: Ctx, lens: Lens): Ref => {
+    switch (lens.type) {
+        case 'tuple':
+            return { ...lens, items: lens.items.map((item) => lensAsRef(ctx, item)) };
+        case 'id': {
+            const id = ctx.scope[lens.text];
+            if (id == null) throw new Error(`unbound ${lens.text}`);
+            return {
+                type: 'ref',
+                loc: lens.loc,
+                inner: { ...lens, type: 'idd', id: id.type === 'builtin' ? -1 : id.id },
+            };
+        }
+        case 'manual':
+        case 'aslens':
+        case 'let':
+        case 'apply':
+        case 'case':
+            throw new Error(`complex lens`);
+    }
+};
+
+const withCleanup = (expr: Expr, cleanup: Expr[]): Expr =>
+    cleanup.length ? { type: 'block', cleanup, result: expr, block: [], loc: expr.loc } : expr;
+
+export const lensToRvalue = (
+    ctx: Ctx,
+    lin: Lens,
+    inner: (v: Ref, cleanup: Expr[]) => Expr,
+): Expr => {
+    switch (lin.type) {
+        case 'id': {
+            const id = ctx.scope[lin.text];
+            if (id == null) throw new Error(`unbound ${lin.text}`);
+            return inner({ ...lin, type: 'idd', id: id.type === 'builtin' ? -1 : id.id }, []);
+        }
+        case 'apply': {
+            const tid = ctx.counter.current++;
+            const rid = ctx.counter.current++;
+            return collapseIffe({
+                type: 'block',
+                block: [
+                    {
+                        type: 'let',
+                        pat: {
+                            type: 'tuple',
+                            items: [
+                                {
+                                    type: 'ref',
+                                    inner: { type: 'idd', id: tid, text: 't', loc: lin.loc },
+                                    loc: lin.loc,
+                                },
+                                { type: 'idd', id: rid, text: 'r', loc: lin.loc },
+                            ],
+                            loc: lin.loc,
+                        },
+                        loc: lin.loc,
+                        value: linearToExpr(ctx, lin),
+                    },
+                ],
+                loc: lin.loc,
+                result: inner({ type: 'idd', id: tid, text: 't', loc: lin.loc }, [
+                    {
+                        type: 'apply',
+                        fn: { type: 'idd', id: rid, loc: lin.loc, text: 'r' },
+                        loc: lin.loc,
+                        args: [],
+                    },
+                ]),
+                cleanup: [],
+            });
+        }
+        case 'tuple': {
+            let next = (i: number, items: Ref[], cleanup: Expr[]): Expr => {
+                if (i >= lin.items.length) {
+                    return inner({ type: 'tuple', items, loc: lin.loc }, cleanup);
+                } else {
+                    return lensToRvalue(ctx, lin.items[i], (value, more) =>
+                        next(i + 1, [...items, value], [...cleanup, ...more]),
+                    );
+                }
+            };
+            return next(0, [], []);
+        }
+        case 'aslens': {
+            const tid = ctx.counter.current++;
+            const rid = ctx.counter.current++;
+            const sub = subScope(ctx);
+            // START HERE: the VALUE of the LET needs to be
+            // wrapped in a `heap()`, otherwise all will be lost
+            return {
+                type: 'block',
+                block: [
+                    {
+                        type: 'let',
+                        pat: {
+                            type: 'tuple',
+                            items: [
+                                {
+                                    type: 'ref',
+                                    inner: { type: 'idd', id: tid, text: 't', loc: lin.loc },
+                                    loc: lin.loc,
+                                },
+                                {
+                                    type: 'idd',
+                                    id: rid,
+                                    text: 'r',
+                                    loc: lin.loc,
+                                },
+                            ],
+                            loc: lin.loc,
+                        },
+                        loc: lin.loc,
+                        value: {
+                            type: 'apply',
+                            fn: { type: 'idd', text: 'heap', id: -1, loc: lin.loc },
+                            args: [linearToExpr(ctx, lin.value)],
+                            loc: lin.loc,
+                        },
+                    },
+                ],
+                loc: lin.loc,
+                result: inner({ type: 'idd', id: tid, text: 't', loc: lin.loc }, [
+                    {
+                        type: 'block',
+                        block: [
+                            {
+                                type: 'let',
+                                pat: {
+                                    type: 'ref',
+                                    inner: patToPatd(sub, lin.pat, true),
+                                    loc: lin.loc,
+                                },
+                                loc: lin.loc,
+                                value: {
+                                    type: 'ref',
+                                    inner: { type: 'idd', id: tid, text: 't', loc: lin.loc },
+                                    loc: lin.loc,
+                                },
+                            },
+                        ],
+                        result: linearToExpr(sub, lin.body),
+                        cleanup: [
+                            {
+                                type: 'apply',
+                                args: [],
+                                loc: lin.loc,
+                                fn: { type: 'idd', text: 'r', id: rid, loc: lin.loc },
+                            },
+                        ],
+                        loc: lin.loc,
+                    },
+                ]),
+                cleanup: [],
+            };
+        }
+        case 'case': {
+            const tid = ctx.counter.current++;
+            const rid = ctx.counter.current++;
+
+            return collapseIffe({
+                type: 'block',
+                block: [
+                    {
+                        type: 'let',
+                        pat: {
+                            type: 'tuple',
+                            items: [
+                                {
+                                    type: 'ref',
+                                    inner: { type: 'idd', id: tid, text: 't', loc: lin.loc },
+                                    loc: lin.loc,
+                                },
+                                { type: 'idd', id: rid, text: 'r', loc: lin.loc },
+                            ],
+                            loc: lin.loc,
+                        },
+                        loc: lin.loc,
+                        value:
+                            lin.value.type === 'lens'
+                                ? lensToRvalue(ctx, lin.value.lens, (inner, cleanup) =>
+                                      withCleanup(
+                                          makeLensCase(
+                                              ctx,
+                                              { type: 'ref', inner, loc: lin.loc },
+                                              lin,
+                                              true,
+                                              lensCaseResult,
+                                          ),
+                                          cleanup,
+                                      ),
+                                  )
+                                : makeLensCase(
+                                      ctx,
+                                      linearToExpr(ctx, lin.value),
+                                      lin,
+                                      false,
+                                      lensCaseResult,
+                                  ),
+                        // linearToExpr(ctx, lin.value),
+                    },
+                ],
+                loc: lin.loc,
+                result: inner({ type: 'idd', id: tid, text: 't', loc: lin.loc }, [
+                    {
+                        type: 'apply',
+                        fn: { type: 'idd', id: rid, loc: lin.loc, text: 'r' },
+                        loc: lin.loc,
+                        args: [],
+                    },
+                ]),
+                cleanup: [],
+            });
+        }
+        case 'let': {
+            const sub = subScope(ctx);
+            const rpat: Pat =
+                lin.pat.type === 'drop' && lin.value.type === 'fn' && lin.value.name
+                    ? { type: 'id', text: lin.value.name, loc: lin.value.loc }
+                    : lin.pat;
+            let pat = patToPatd(sub, rpat, lin.value.type === 'lens');
+            if (lin.value.type === 'lens') {
+                return lensToRvalue(ctx, lin.value.lens, (value, cleanup) =>
+                    collapseIffe({
+                        type: 'block',
+                        block: [
+                            {
+                                type: 'let',
+                                pat: pref(pat),
+                                loc: lin.loc,
+                                value: eref(value),
+                            },
+                        ],
+                        loc: lin.loc,
+                        result: lensToRvalue(sub, lin.body, (inner2, cleanup2) =>
+                            inner(inner2, [...cleanup2, ...cleanup]),
+                        ),
+                        cleanup: [],
+                    }),
+                );
+            } else {
+                return collapseIffe({
+                    type: 'block',
+                    block: [
+                        {
+                            type: 'let',
+                            pat: pderef(pat),
+                            loc: lin.loc,
+                            value: linearToExpr(ctx, lin.value),
+                        },
+                    ],
+                    loc: lin.loc,
+                    result: lensToRvalue(sub, lin.body, inner),
+                    cleanup: [],
+                });
+            }
+        }
+        case 'manual': {
+            return lensToRvalue(ctx, lin.frontend, (value, cleanup) =>
+                inner(value, [
+                    {
+                        type: 'apply',
+                        args: [],
+                        fn: linearToExpr(ctx, lin.backend),
+                        loc: lin.loc,
+                    },
+                    ...cleanup,
+                ]),
+            );
+            // ohhhh this would need malloc and free tho
+        }
+    }
+    throw new Error('nope' + JSON.stringify(lin));
+};
+
+export const letToExpr = (ctx: Ctx, lin: Linear & { type: 'let' }): Expr => {
+    const sub = subScope(ctx);
+    const rpat: Pat =
+        lin.pat.type === 'drop' && lin.value.type === 'fn' && lin.value.name
+            ? { type: 'id', text: lin.value.name, loc: lin.value.loc }
+            : lin.pat;
+    let pat = patToPatd(sub, rpat, lin.value.type === 'lens');
+    if (lin.value.type === 'lens') {
+        return lensToRvalue(ctx, lin.value.lens, (value, cleanup) =>
+            collapseIffe({
+                type: 'block',
+                block: [
+                    {
+                        type: 'let',
+                        pat: pref(pat),
+                        loc: lin.loc,
+                        value: eref(value),
+                    },
+                ],
+                loc: lin.loc,
+                result: linearToExpr(sub, lin.body),
+                cleanup,
+            }),
+        );
+    } else {
+        return collapseIffe({
+            type: 'block',
+            block: [
+                {
+                    type: 'let',
+                    pat: pderef(pat),
+                    loc: lin.loc,
+                    value: linearToExpr(ctx, lin.value),
+                },
+            ],
+            loc: lin.loc,
+            result: linearToExpr(sub, lin.body),
+            cleanup: [],
+        });
+    }
+};
+
+const pref = (pat: Patd): Patd => ({ type: 'ref', inner: pat, loc: pat.loc });
+const pderef = (pat: Patd): Patd => ({ type: 'deref', inner: pat, loc: pat.loc });
+const eref = (pat: Expr): Expr => ({ type: 'ref', inner: pat, loc: pat.loc });
+
+export const collapseIffe = (expr: Expr): Expr => {
+    if (expr.type === 'block' && expr.result.type === 'block') {
+        const result = collapseIffe(expr.result) as Expr & { type: 'block' };
+        return {
+            ...expr,
+            block: [...expr.block, ...result.block],
+            result: result.result,
+            cleanup: [...result.cleanup, ...expr.cleanup],
+        };
+    }
+    return expr;
+};
+
+export const patToPatd = (ctx: Ctx, pat: Pat, ref: boolean): Patd => {
+    switch (pat.type) {
+        case 'id': {
+            const id = ctx.counter.current++;
+            ctx.scope[pat.text] = { type: ref ? 'ref' : 'stack', id };
+            return { ...pat, type: 'idd', id };
+        }
+        case 'string':
+        case 'number':
+        case 'bool':
+            return pat;
+        case 'drop':
+            return { ...pat, type: 'idd', text: '_', id: ctx.counter.current++ };
+        // return { ...pat, id: ctx.counter.current++ };
+        case 'tuple':
+            return { ...pat, items: pat.items.map((p) => patToPatd(ctx, p, ref)) };
+        case 'constructor':
+            return { ...pat, args: pat.args.map((p) => patToPatd(ctx, p, ref)) };
+        case 'lens':
+            throw new Error(`pat lens cant be deified`);
+        // return { ...pat, inner: patToPatd(ctx, pat.inner) };
+    }
+};
+
+import { dsl as l, Loc, Node, stringify } from '../parser-generator/lexer.ts';
 
 export const lstmt = (stmt: Stmt): Node => {
     switch (stmt.type) {
@@ -105,79 +762,6 @@ export const lstmt = (stmt: Stmt): Node => {
     }
 };
 
-export const spat = (pat: Patd): string => {
-    switch (pat.type) {
-        case 'idd':
-            return pat.id === -1 ? pat.text : pat.text + pat.id;
-        case 'number':
-        case 'bool':
-            return pat.value + '';
-        case 'string':
-            return `"${pat.text}"`;
-        case 'drop':
-            return '_' + (pat.id ?? '');
-        case 'tuple':
-            return `(${pat.items.map(spat).join(',')})`;
-        case 'constructor':
-            const list = unwrapp(pat);
-            if (list) {
-                return `[${list.items
-                    .map(spat)
-                    .concat(list.tail ? ['...' + spat(list.tail)] : [])
-                    .join(',')}]`;
-            }
-            return `${pat.name}(${pat.args.map(spat).join(',')})`;
-        // case 'lens':
-        //     return '~' + spat(pat.inner);
-    }
-};
-
-export const unwrapp = (expr: Patd): null | { items: Patd[]; tail: null | Patd } => {
-    if (expr.type !== 'constructor') return null;
-    if (expr.name === 'nil') return { items: [], tail: null };
-    if (expr.name === 'cons') {
-        const items: Patd[] = [];
-        while (expr.type === 'constructor' && expr.name === 'cons') {
-            const args: Patd[] = expr.args;
-            if (args.length !== 2) throw new Error(`cons needs 2 args, found ${args.length}`);
-            items.push(args[0]);
-            expr = args[1];
-            // console.log('args', args);
-        }
-        // console.log('UNWRAP', items, expr);
-        if (expr.type !== 'constructor' || expr.name !== 'nil') {
-            return { items, tail: expr };
-        } else {
-            return { items, tail: null };
-        }
-    }
-    return null;
-};
-
-export const unwrap = (expr: Expr): null | { items: Expr[]; tail: null | Expr } => {
-    if (expr.type !== 'constructor') return null;
-    if (expr.name === 'nil') return { items: [], tail: null };
-    if (expr.name === 'cons') {
-        const items: Expr[] = [];
-        while (expr.type === 'constructor' && expr.name === 'cons') {
-            const args: Expr[] = expr.args;
-            if (args.length !== 2) throw new Error(`cons needs 2 args, found ${args.length}`);
-            items.push(args[0]);
-            expr = args[1];
-            // console.log('args', args);
-        }
-        // console.log('UNWRAP', items, expr);
-        if (expr.type !== 'constructor' || expr.name !== 'nil') {
-            return { items, tail: expr };
-        } else {
-            return { items, tail: null };
-        }
-    }
-    return null;
-};
-
-import { dsl as l } from './lexer.ts';
-
 export const lpat = (pat: Patd): Node => {
     switch (pat.type) {
         case 'idd':
@@ -187,8 +771,12 @@ export const lpat = (pat: Patd): Node => {
             return l.i(pat.value + '');
         case 'string':
             return l.l('"', [pat.text]);
-        case 'drop':
-            return l.i('_' + (pat.id ?? ''));
+        // case 'drop':
+        //     return l.i('_' + (pat.id ?? ''));
+        case 'deref':
+            return l.l(``, [l.i('*'), lpat(pat.inner)]);
+        case 'ref':
+            return l.l(``, [l.i('&'), lpat(pat.inner)]);
         case 'tuple':
             return l.l(`(,`, pat.items.map(lpat));
         case 'constructor':
@@ -207,6 +795,15 @@ export const lpat = (pat: Patd): Node => {
 
 export const lexpr = (expr: Expr): Node => {
     switch (expr.type) {
+        case 'closure':
+            return l.l(``, [
+                l.i('closure'),
+                l.l('(,', [l.l('(,', expr.names.map(lexpr)), lexpr(expr.fn)]),
+            ]);
+        case 'deref':
+            return l.l(``, [l.i('*'), lexpr(expr.inner)]);
+        case 'ref':
+            return l.l(``, [l.i('&'), lexpr(expr.inner)]);
         case 'constructor': {
             const list = unwrap(expr);
             if (list)
@@ -281,712 +878,48 @@ const maybeWrap = (node: Node): Node =>
           }
         : node;
 
-export const sexpr = (expr: Expr): string => {
-    switch (expr.type) {
-        case 'constructor': {
-            const list = unwrap(expr);
-            if (list)
-                return `[${list.items
-                    .map((i) => sexpr(i))
-                    .concat(list.tail ? ['...' + sexpr(list.tail)] : [])
-                    .join(', ')}]`;
-            return `${expr.name}(${expr.args.map(sexpr).join(',')})`;
+export const unwrapp = (expr: Patd): null | { items: Patd[]; tail: null | Patd } => {
+    if (expr.type !== 'constructor') return null;
+    if (expr.name === 'nil') return { items: [], tail: null };
+    if (expr.name === 'cons') {
+        const items: Patd[] = [];
+        while (expr.type === 'constructor' && expr.name === 'cons') {
+            const args: Patd[] = expr.args;
+            if (args.length !== 2) throw new Error(`cons needs 2 args, found ${args.length}`);
+            items.push(args[0]);
+            expr = args[1];
+            // console.log('args', args);
         }
-        // case 'addr':
-        //     return `&${sexpr(expr.inner)}`;
-        case 'string':
-            return `"${expr.head}${expr.interp.map((i) => '${' + sexpr(i.value) + '}' + i.tail).join('')}"`;
-        case 'idd':
-            return expr.id === -1 ? expr.text : expr.text + expr.id;
-        case 'swap':
-            return `swap(${spat(expr.pat)},${sexpr(expr.value)})`;
-        case 'const':
-            return expr.value + '';
-        case 'block': {
-            return `block{${expr.block.map(sstmt).join(';\n')}}{${sexpr(expr.result)}}{${expr.cleanup.map(sexpr).join(';\n')}}`;
+        // console.log('UNWRAP', items, expr);
+        if (expr.type !== 'constructor' || expr.name !== 'nil') {
+            return { items, tail: expr };
+        } else {
+            return { items, tail: null };
         }
-        case 'fn':
-            return `(${expr.args.map(spat)})=>${
-                Array.isArray(expr.body) ? `{${expr.body.map(sstmt).join(';')}}` : sexpr(expr.body)
-            }`;
-        case 'apply':
-            return `${sexpr(expr.fn)}(${expr.args.map(sexpr).join(',')})`;
-        case 'case':
-            return `(match ${sexpr(expr.value)} {${expr.cases.map((c) => `${spat(c.pat)} -> ${sexpr(c.body)}`).join('\n')}})`;
-        case 'tuple':
-            if (expr.items.length === 1) return sexpr(expr.items[0]);
-            return `(${expr.items.map(sexpr).join(',')})`;
     }
+    return null;
 };
 
-export const patToPatd = (ctx: Ctx, pat: Pat, allTags: boolean): Patd => {
-    switch (pat.type) {
-        case 'id': {
-            const id = ctx.counter.current++;
-            ctx.scope[pat.text] = id;
-            return { ...pat, type: 'idd', id };
+export const unwrap = (expr: Expr): null | { items: Expr[]; tail: null | Expr } => {
+    if (expr.type !== 'constructor') return null;
+    if (expr.name === 'nil') return { items: [], tail: null };
+    if (expr.name === 'cons') {
+        const items: Expr[] = [];
+        while (expr.type === 'constructor' && expr.name === 'cons') {
+            const args: Expr[] = expr.args;
+            if (args.length !== 2) throw new Error(`cons needs 2 args, found ${args.length}`);
+            items.push(args[0]);
+            expr = args[1];
+            // console.log('args', args);
         }
-        case 'string':
-        case 'number':
-        case 'bool':
-            return pat;
-        case 'drop':
-            return { ...pat, id: allTags ? ctx.counter.current++ : null };
-        case 'tuple':
-            return { ...pat, items: pat.items.map((p) => patToPatd(ctx, p, allTags)) };
-        case 'constructor':
-            return { ...pat, args: pat.args.map((p) => patToPatd(ctx, p, allTags)) };
-        case 'lens':
-            throw new Error(`pat lens cant be deified`);
-        // return { ...pat, inner: patToPatd(ctx, pat.inner) };
+        // console.log('UNWRAP', items, expr);
+        if (expr.type !== 'constructor' || expr.name !== 'nil') {
+            return { items, tail: expr };
+        } else {
+            return { items, tail: null };
+        }
     }
+    return null;
 };
 
-export const patValue = (ctx: Ctx, pat: Pat): Expr => {
-    switch (pat.type) {
-        case 'id': {
-            const id = ctx.scope[pat.text];
-            if (id == null) throw new Error(`unbound ${pat.text}`);
-            return { ...pat, type: 'idd', id };
-        }
-        case 'number':
-        case 'bool':
-            return { type: 'const', value: pat.value, loc: pat.loc };
-        case 'string':
-            return { type: 'string', head: pat.text, interp: [], loc: pat.loc };
-        case 'drop':
-            throw new Error(`cant make expr out of _`);
-        case 'tuple':
-            return { ...pat, items: pat.items.map((p) => patValue(ctx, p)) };
-        case 'constructor':
-            throw new Error('nope');
-        case 'lens':
-            throw new Error(`cant make expr out of lens`);
-    }
-};
-
-export const patdToExpr = (pat: Patd): Expr => {
-    switch (pat.type) {
-        case 'idd':
-            return pat;
-        case 'number':
-        case 'bool':
-            return { type: 'const', value: pat.value, loc: pat.loc };
-        case 'string':
-            return { type: 'string', head: pat.text, interp: [], loc: pat.loc };
-        case 'drop':
-            if (pat.id == null) throw new Error(`drop not initialized with an id`);
-            return { type: 'idd', text: '_', id: pat.id, loc: pat.loc };
-        case 'tuple':
-            return { ...pat, items: pat.items.map(patdToExpr) };
-        case 'constructor':
-            return {
-                type: 'constructor',
-                name: pat.name,
-                args: pat.args.map(patdToExpr),
-                loc: pat.loc,
-            };
-    }
-};
-
-export const collapseIffe = (expr: Expr): Expr => {
-    if (expr.type === 'block' && expr.result.type === 'block') {
-        const result = collapseIffe(expr.result) as Expr & { type: 'block' };
-        return {
-            ...expr,
-            block: [...expr.block, ...result.block],
-            result: result.result,
-            cleanup: [...result.cleanup, ...expr.cleanup],
-        };
-    }
-    return expr;
-};
-
-export const linearToExpr = (ctx: Ctx, lin: Linear): Expr => {
-    switch (lin.type) {
-        case 'bool':
-        case 'number':
-            return { type: 'const', value: lin.value, loc: lin.loc };
-        case 'op':
-        case 'id': {
-            const id = ctx.scope[lin.text];
-            if (id == null) throw new Error(`unbound ${lin.text}`);
-            return { ...lin, type: 'idd', id };
-        }
-        case 'string':
-            return {
-                ...lin,
-                interp: lin.interp.map((l) => ({ ...l, value: linearToExpr(ctx, l.value) })),
-            };
-        case 'let': {
-            const sub = subScope(ctx);
-            const pat =
-                lin.pat.type === 'drop' && lin.value.type === 'fn' && lin.value.name
-                    ? patToPatd(
-                          sub,
-                          { type: 'id', text: lin.value.name, loc: lin.value.loc },
-                          false,
-                      )
-                    : patToPatd(sub, lin.pat, lin.value.type === 'lens');
-            const next = linearToExpr(sub, lin.body);
-            const cleanup: Swap[] = [];
-            let lest: Stmt;
-            if (lin.value.type === 'lens') {
-                return collapseIffe(
-                    lensToExpr(ctx, lin.value.lens, (lpat) => {
-                        return {
-                            type: 'block',
-                            block: [
-                                {
-                                    type: 'let',
-                                    pat,
-                                    loc: lin.loc,
-                                    value: patdToExpr(lpat),
-                                },
-                            ],
-                            result: next,
-                            cleanup: [
-                                {
-                                    type: 'swap',
-                                    pat: lpat,
-                                    value: patdToExpr(pat),
-                                    loc: -1,
-                                },
-                            ],
-                            loc: lin.loc,
-                        };
-                    }),
-                );
-            } else {
-                lest = {
-                    type: 'let',
-                    pat,
-                    loc: lin.loc,
-                    value: linearToExpr(ctx, lin.value),
-                };
-            }
-            return next.type === 'block'
-                ? { ...next, block: [lest, ...next.block], cleanup: [...cleanup, ...next.cleanup] }
-                : { type: 'block', block: [lest], cleanup, result: next, loc: -1 };
-        }
-        case 'fn': {
-            const last = lin.args[lin.args.length - 1];
-            const sub = subScope(ctx);
-            if (lin.body.type === 'lens') {
-                if (last?.pat.type === 'lens') {
-                    const inner = last.pat.inner;
-                    const args = lin.args.map((a, i) =>
-                        i === lin.args.length - 1
-                            ? patToPatd(sub, inner, false)
-                            : patToPatd(sub, a.pat, false),
-                    );
-                    const block: Stmt[] = [];
-                    const body =
-                        lin.body.lens.type === 'manual'
-                            ? {
-                                  type: 'tuple' as const,
-                                  items: [
-                                      linearToExpr(sub, lin.body.lens.frontend),
-                                      linearToExpr(sub, lin.body.lens.backend),
-                                  ],
-                                  loc: lin.body.lens.loc,
-                              }
-                            : lin.body.lens.type === 'aslens'
-                              ? ((): Expr => {
-                                    return asLens(sub, lin.body.lens);
-                                })()
-                              : lensToExpr(sub, lin.body.lens, (pat): Expr => {
-                                    const id = ctx.counter.current++;
-                                    const iid: Idd = { type: 'idd', id, text: 'back', loc: -1 };
-                                    block.push({ type: 'swap', pat, value: iid, loc: -1 });
-                                    return {
-                                        type: 'tuple',
-                                        items: [
-                                            patdToExpr(pat),
-                                            {
-                                                type: 'fn',
-                                                args: [iid],
-                                                body: {
-                                                    type: 'block',
-                                                    block,
-                                                    result: patdToExpr(args[args.length - 1]),
-                                                    cleanup: [],
-                                                    loc: lin.loc,
-                                                },
-                                                loc: lin.loc,
-                                            },
-                                        ],
-                                        loc: lin.loc,
-                                    };
-                                });
-                    const pushCleanupInside = (expr: Expr) => {
-                        if (expr.type === 'block') {
-                            block.push(...expr.cleanup);
-                            expr.cleanup = [];
-                            pushCleanupInside(expr.result);
-                        }
-                    };
-                    pushCleanupInside(body);
-                    return {
-                        ...lin,
-                        args,
-                        body,
-                    };
-                }
-
-                const args = lin.args.map((a) => patToPatd(sub, a.pat, false));
-                const block: Stmt[] = [];
-                const body =
-                    lin.body.lens.type === 'manual'
-                        ? {
-                              type: 'tuple' as const,
-                              items: [
-                                  linearToExpr(sub, lin.body.lens.frontend),
-                                  linearToExpr(sub, lin.body.lens.backend),
-                              ],
-                              loc: lin.body.lens.loc,
-                          }
-                        : lensToExpr(sub, lin.body.lens, (pat): Expr => {
-                              const id = ctx.counter.current++;
-                              const iid: Idd = { type: 'idd', id, text: 'back', loc: -1 };
-                              block.push({ type: 'swap', pat, value: iid, loc: -1 });
-                              return {
-                                  type: 'tuple',
-                                  items: [
-                                      patdToExpr(pat),
-                                      {
-                                          type: 'fn',
-                                          args: [iid],
-                                          body: {
-                                              type: 'block',
-                                              block,
-                                              result: { type: 'tuple', items: [], loc: -1 },
-                                              cleanup: [],
-                                              loc: lin.loc,
-                                          },
-                                          loc: lin.loc,
-                                      },
-                                  ],
-                                  loc: lin.loc,
-                              };
-                          });
-                const pushCleanupInside = (expr: Expr) => {
-                    if (expr.type === 'block') {
-                        block.push(...expr.cleanup);
-                        expr.cleanup = [];
-                        pushCleanupInside(expr.result);
-                    }
-                };
-                pushCleanupInside(body);
-                return {
-                    ...lin,
-                    args,
-                    body,
-                };
-            }
-
-            if (last?.pat.type === 'lens') {
-                const inner = last.pat.inner;
-                const args = lin.args.map((a, i) =>
-                    i === lin.args.length - 1
-                        ? patToPatd(sub, inner, false)
-                        : patToPatd(sub, a.pat, false),
-                );
-                const body = linearToExpr(sub, lin.body);
-                return {
-                    ...lin,
-                    args,
-                    body: {
-                        type: 'tuple',
-                        items: [body, patdToExpr(args[args.length - 1])],
-                        loc: lin.loc,
-                    },
-                };
-            }
-            const args = lin.args.map((a) => patToPatd(sub, a.pat, false));
-            const body = linearToExpr(sub, lin.body);
-            return {
-                ...lin,
-                args,
-                body,
-            };
-        }
-        case 'apply':
-            const last = lin.args[lin.args.length - 1];
-            if (last?.type === 'lens') {
-                return lensToExpr(ctx, last.lens, (tmp: Patd): Expr => {
-                    const rid = ctx.counter.current++;
-                    const lid = ctx.counter.current++;
-                    return {
-                        type: 'block',
-                        block: [
-                            {
-                                type: 'let',
-                                pat: {
-                                    type: 'tuple',
-                                    items: [
-                                        { type: 'idd', text: 'r', id: rid, loc: -1 },
-                                        { type: 'idd', text: 'l', id: lid, loc: -1 },
-                                    ],
-                                    loc: -1,
-                                },
-                                loc: -1,
-                                value: {
-                                    ...lin,
-                                    fn: linearToExpr(ctx, lin.fn),
-                                    args: lin.args.map((arg, i) => {
-                                        if (i === lin.args.length - 1) return patdToExpr(tmp);
-                                        if (arg.type === 'lens') throw 5;
-                                        return linearToExpr(ctx, arg);
-                                    }),
-                                },
-                            },
-                        ],
-                        result: { type: 'idd', text: 'r', id: rid, loc: -1 },
-                        cleanup: [
-                            {
-                                type: 'swap',
-                                pat: tmp,
-                                value: { type: 'idd', text: 'l', id: lid, loc: -1 },
-                                loc: -1,
-                            },
-                        ],
-                        loc: -1,
-                    };
-                });
-            }
-
-            return {
-                ...lin,
-                fn: linearToExpr(ctx, lin.fn),
-                args: lin.args.map((arg) => {
-                    if (arg.type === 'lens') throw new Error('only last can be lens');
-                    return linearToExpr(ctx, arg);
-                }),
-            };
-        case 'tuple':
-            return { ...lin, items: lin.items.map((lin) => linearToExpr(ctx, lin)) };
-        case 'assign': {
-            return lensToExpr(ctx, lin.lens, (pat) => {
-                return { type: 'swap', pat, value: linearToExpr(ctx, lin.value), loc: lin.loc };
-            });
-        }
-        // here we do a thing
-        case 'constructor': {
-            return {
-                ...lin,
-                args: lin.args.map((l) => linearToExpr(ctx, l)),
-            };
-        }
-        case 'case': {
-            if (lin.value.type !== 'lens') {
-                return {
-                    ...lin,
-                    cases: lin.cases.map((l) => {
-                        const sub = subScope(ctx);
-                        return {
-                            ...l,
-                            pat: patToPatd(sub, l.pat, true),
-                            body: linearToExpr(sub, l.body),
-                        };
-                    }),
-
-                    value: linearToExpr(ctx, lin.value),
-                };
-            }
-            return lensToExpr(ctx, lin.value.lens, (pat): Expr => {
-                return {
-                    ...lin,
-                    cases: lin.cases.map((l) => {
-                        // OK SO, if the value was a lens, then
-                        // ALL THE PATS must be lenses
-                        // and we'll need to reconstruct the original value dealio
-                        // at the end.
-                        const pd = patToPatd(ctx, l.pat, true);
-                        return {
-                            ...l,
-                            pat: pd,
-                            body: collapseIffe({
-                                type: 'block',
-                                block: [],
-                                result: linearToExpr(ctx, l.body),
-                                cleanup: [
-                                    { type: 'swap', pat, value: patdToExpr(pd), loc: lin.loc },
-                                ],
-                                loc: lin.loc,
-                            }),
-                        };
-                    }),
-                    value: patdToExpr(pat),
-                };
-            });
-        }
-    }
-    throw new Error('not support yet ' + (lin as any).type);
-};
-
-export const lensToExpr = (ctx: Ctx, lens: Lens, inner: (name: Patd) => Expr): Expr => {
-    switch (lens.type) {
-        case 'manual': {
-            throw new Error(`manual lenses only allowed in certain contexts`);
-        }
-        case 'id': {
-            const id = ctx.scope[lens.text];
-            if (id == null) throw new Error(`unbound ${lens.text}`);
-            return inner({ ...lens, type: 'idd', id });
-        }
-        // case 'constructor': {
-        //     let next = (i: number, args: Patd[]): Expr => {
-        //         if (i === lens.args.length) {
-        //             return inner({ type: 'constructor', name: lens.name, args, loc: lens.loc });
-        //         }
-        //         return lensToExpr(ctx, lens.args[i], (name) => next(i + 1, [...args, name]));
-        //     };
-        //     return next(0, []);
-        // }
-        case 'tuple': {
-            let next = (i: number, items: Patd[]): Expr => {
-                if (i === lens.items.length) {
-                    return inner({ type: 'tuple', items, loc: lens.loc });
-                }
-                return lensToExpr(ctx, lens.items[i], (name) => next(i + 1, [...items, name]));
-            };
-            return next(0, []);
-        }
-        case 'apply': {
-            const finish = (tmp?: Patd): Expr => {
-                const tid = ctx.counter.current++;
-                const cid = ctx.counter.current++;
-                return collapseIffe({
-                    type: 'block',
-                    block: [
-                        {
-                            type: 'let',
-                            pat: {
-                                type: 'tuple',
-                                items: [
-                                    { type: 'idd', text: 't', id: tid, loc: -1 },
-                                    { type: 'idd', text: 'c', id: cid, loc: -1 },
-                                ],
-                                loc: -1,
-                            },
-                            value: {
-                                type: 'apply',
-                                fn: linearToExpr(ctx, lens.fn),
-                                args: lens.args.map((arg, i) => {
-                                    if (tmp && i === lens.args.length - 1) return patdToExpr(tmp);
-                                    if (arg.type === 'lens')
-                                        throw new Error('only last can be lens');
-                                    return linearToExpr(ctx, arg);
-                                }),
-                                loc: -1,
-                            },
-                            loc: -1,
-                        },
-                    ],
-                    result: inner({ type: 'idd', id: tid, text: 't', loc: -1 }),
-                    cleanup: [
-                        {
-                            type: 'swap',
-                            pat: tmp ?? { type: 'tuple', items: [], loc: -1 },
-                            value: {
-                                type: 'apply',
-                                fn: { type: 'idd', id: cid, text: 'c', loc: -1 },
-                                args: [{ type: 'idd', id: tid, text: 't', loc: -1 }],
-                                loc: -1,
-                            },
-                            loc: -1,
-                        },
-                    ],
-                    loc: -1,
-                });
-            };
-            const last = lens.args[lens.args.length - 1];
-            if (last?.type !== 'lens') return finish();
-            return lensToExpr(ctx, last.lens, finish);
-        }
-        case 'aslens': {
-            return asLens(ctx, lens, inner);
-        }
-        case 'case': {
-            const tid = ctx.counter.current++;
-            const cid = ctx.counter.current++;
-            const finish = (tmp?: Patd) =>
-                collapseIffe({
-                    type: 'block',
-                    block: [
-                        {
-                            type: 'let',
-                            pat: {
-                                type: 'tuple',
-                                items: [
-                                    { type: 'idd', text: 't', id: tid, loc: -1 },
-                                    { type: 'idd', text: 'c', id: cid, loc: -1 },
-                                ],
-                                loc: -1,
-                            },
-                            value: {
-                                type: 'case',
-                                value: tmp
-                                    ? patdToExpr(tmp)
-                                    : linearToExpr(ctx, lens.value as Linear),
-                                cases: lens.cases.map(({ pat, body }) => {
-                                    const sub = subScope(ctx);
-                                    const cpat = patToPatd(sub, pat, true);
-                                    return {
-                                        pat: cpat,
-                                        body:
-                                            body.type === 'manual'
-                                                ? {
-                                                      type: 'tuple',
-                                                      items: [
-                                                          linearToExpr(sub, body.frontend),
-                                                          linearToExpr(sub, body.backend),
-                                                      ],
-                                                      loc: lens.loc,
-                                                  }
-                                                : lensToExpr(sub, body, (bpat): Expr => {
-                                                      // const hasBindings = patdBinds(bpat);
-                                                      const id = ctx.counter.current++;
-                                                      return {
-                                                          type: 'tuple',
-                                                          items: [
-                                                              patdToExpr(bpat),
-                                                              {
-                                                                  type: 'fn',
-                                                                  args: [
-                                                                      {
-                                                                          type: 'idd',
-                                                                          id,
-                                                                          loc: -1,
-                                                                          text: 'back',
-                                                                      },
-                                                                  ],
-                                                                  body: collapseIffe({
-                                                                      type: 'block',
-                                                                      result: patdToExpr(cpat),
-                                                                      loc: -1,
-                                                                      block: [
-                                                                          {
-                                                                              type: 'swap',
-                                                                              value: {
-                                                                                  type: 'idd',
-                                                                                  id,
-                                                                                  loc: -1,
-                                                                                  text: 'back',
-                                                                              },
-                                                                              pat: bpat,
-                                                                              loc: -1,
-                                                                          },
-                                                                      ],
-                                                                      cleanup: [],
-                                                                  }),
-                                                                  loc: lens.loc,
-                                                              },
-                                                          ],
-                                                          loc: lens.loc,
-                                                      };
-                                                  }),
-                                    };
-                                }),
-                                // args: lens.args.map((arg, i) => {
-                                //     if (tmp && i === lens.args.length - 1) return patdToExpr(tmp);
-                                //     if (arg.type === 'lens')
-                                //         throw new Error('only last can be lens');
-                                //     return linearToExpr(ctx, arg);
-                                // }),
-                                loc: -1,
-                            },
-                            loc: -1,
-                        },
-                    ],
-                    result: inner({ type: 'idd', id: tid, text: 't', loc: -1 }),
-                    cleanup: [
-                        {
-                            type: 'swap',
-                            pat: tmp ?? { type: 'drop', loc: -1, id: null }, // { type: 'tuple', items: [], loc: -1 },
-                            value: {
-                                type: 'apply',
-                                fn: { type: 'idd', id: cid, text: 'c', loc: -1 },
-                                args: [{ type: 'idd', id: tid, text: 't', loc: -1 }],
-                                loc: -1,
-                            },
-                            loc: -1,
-                        },
-                    ],
-                    loc: -1,
-                });
-            if (lens.value.type !== 'lens') return finish();
-            return lensToExpr(ctx, lens.value.lens, finish);
-        }
-        case 'let':
-            throw new Error('not yet');
-    }
-    throw new Error('not support yet ' + (lens as any).type);
-};
-
-/**
- * when `inner` is provided, we're in a normal lens context.
- * When it is absent, we are the body of a function that takes a lens parameter,
- * and so the final value of the aslens must be the new value of that lens parameter, on the back end.
- */
-function asLens(sub: Ctx, lens: Lens & { type: 'aslens' }, inner?: (id: Patd) => Expr): Expr {
-    const tid: Idd = { type: 'idd', text: 't', id: sub.counter.current++, loc: -1 };
-    const cid: Idd = { type: 'idd', text: 'c', id: sub.counter.current++, loc: -1 };
-    const subFinish = subScope(sub);
-    const cleanup: Swap[] = [];
-
-    const block: Stmt[] = [
-        { type: 'let', pat: tid, value: linearToExpr(sub, lens.value), loc: lens.loc },
-        {
-            type: 'let',
-            pat: cid,
-            value: {
-                type: 'fn',
-                args: [patToPatd(subFinish, lens.pat, false)],
-                body: linearToExpr(subFinish, lens.body),
-                loc: lens.loc,
-            },
-            loc: lens.loc,
-        },
-    ];
-
-    let result: Expr;
-    if (inner) {
-        result = inner(tid);
-        cleanup.push({
-            type: 'swap',
-            pat: { type: 'tuple', items: [], loc: lens.loc },
-            value: { type: 'apply', fn: cid, args: [tid], loc: -1 },
-            loc: -1,
-        });
-    } else {
-        const bid: Idd = { type: 'idd', text: 'b', id: sub.counter.current++, loc: -1 };
-        result = {
-            type: 'tuple',
-            items: [
-                tid,
-                {
-                    type: 'fn',
-                    body: {
-                        type: 'block',
-                        block: [{ type: 'swap', pat: tid, value: bid, loc: -1 }],
-                        loc: -1,
-                        result: { type: 'apply', fn: cid, args: [tid], loc: -1 },
-                        cleanup: [],
-                    },
-                    args: [bid],
-                    loc: -1,
-                },
-            ],
-            loc: -1,
-        };
-    }
-    return {
-        type: 'block',
-        block,
-        result,
-        loc: lens.loc,
-        cleanup,
-    };
-}
+export const notEmpty = <T>(v: T | null): v is NonNullable<T> => v != null;
