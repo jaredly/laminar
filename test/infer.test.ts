@@ -67,46 +67,183 @@ describe('AST inference', () => {
         rejects('Missing(1)', 'unknown-constructor');
         rejects('round(1, 2)', 'arity-mismatch');
     });
-    it('generalizes closed local functions with independent occurrence types', () => {
-        expect(
-            type(`{
-            let id = fn (x) x
-            (id(1), id(true))
-        }`),
-        ).toBe('(Number, Bool)');
-        rejects('fn (f) (f(1), f(true))', 'type-mismatch');
-    });
-    it('does not generalize applications or mutable captured state', () => {
+    it('keeps first-class functions affine while top-level schemes remain reusable', () => {
         rejects(
             `{
-            let make = fn (unused) {fn (x) x}
-            let id = make(())
+            let id = fn (x) x
             (id(1), id(true))
         }`,
-            'type-mismatch',
+            'use-after-move',
         );
+        rejects('fn (f) (f(1), f(true))', 'use-after-move');
+        const checker = new Checker();
+        checker.define(expression('fn id(x) x') as Linear & { type: 'fn' });
+        expect(type('(id(1), id(true))', checker)).toBe('(Number, Bool)');
+        rejects(
+            `{
+            let id = id
+            (id(1), id(true))
+        }`,
+            'use-after-move',
+            checker,
+        );
+    });
+    it('moves closure captures at definition time and allows unused local values', () => {
+        expect(
+            type(`{
+            let x = 1
+            let unused = true
+            let f = fn (()) x
+            f(())
+        }`),
+        ).toBe('Number');
         rejects(
             `{
             let x = 1
             let f = fn (()) x
-            f(())
+            x
         }`,
-            'unsupported-capture',
+            'use-after-move',
         );
-    });
-    it('forbids overwriting reusable polymorphic definitions', () => {
         rejects(
             `{
+            let x = 1
+            let f = fn (()) {x := 2}
+            f(())
+        }`,
+            'borrowed-capture',
+        );
+        rejects(
+            `{
+            let x = (1, 2)
+            let f = fn (()) {fst(~x) := true}
+            f(())
+        }`,
+            'borrowed-capture',
+        );
+        rejects(
+            `{
+            let x = 1
+            let f = fn (()) dup(~x)
+            f(())
+        }`,
+            'borrowed-capture',
+        );
+    });
+    it('allows replacing a local function but keeps its use affine', () => {
+        expect(
+            type(`{
             let id = fn (x) x
             id := fn (x) {x + 1}
-            id(true)
+            id(2)
+        }`),
+        ).toBe('Number');
+    });
+    it('requires moved lens contents to be restored before scope exit', () => {
+        rejects(
+            `{
+            let x = 1
+            let y = ~x
+            let f = fn (()) y
+            f
         }`,
-            'immutable-definition',
+            'unrestored-lens',
         );
+        expect(
+            type(`{
+            let x = 1
+            let y = ~x
+            let f = fn (()) y
+            y := 2
+            f(())
+        }`),
+        ).toBe('Number');
+        rejects('fn (~x) x', 'unrestored-lens');
+        expect(type('fn (~x) {let old = x\n x := true\n old}')).toBe('(a/Bool) => a');
+    });
+    it('tracks independent tuple components and nested exclusive borrows', () => {
+        expect(
+            type(`{
+            let x = (1, 2)
+            {
+                let (a, b) = ~x
+                let old = a
+                b := true
+                a := old
+            }
+            x
+        }`),
+        ).toBe('(Number, Bool)');
+        rejects(
+            `{
+            let x = 1
+            let y = ~x
+            let z = ~y
+            y := 2
+        }`,
+            'use-while-borrowed',
+        );
+        expect(
+            type(`{
+            let x = 1
+            {
+                let y = ~x
+                {
+                    let z = ~y
+                    z := true
+                }
+                y := "restored"
+            }
+            x
+        }`),
+        ).toBe('String');
+        rejects(
+            `{
+            let x = (1, 2)
+            let (a, b) = ~x
+            a
+        }`,
+            'unrestored-lens',
+        );
+    });
+    it('joins affine availability conservatively across branches', () => {
+        rejects(
+            `{
+            let x = 1
+            match true {true -> {x\n ()}; false -> ()}
+            x
+        }`,
+            'use-after-move',
+        );
+        expect(
+            type(`{
+            let x = 1
+            match true {true -> x; false -> x}
+        }`),
+        ).toBe('Number');
+        rejects(
+            `{
+            let x = 1
+            let y = ~x
+            match true {true -> {y\n ()}; false -> ()}
+        }`,
+            'unrestored-lens',
+        );
+        expect(
+            type(`{
+            let x = 1
+            {
+                let y = ~x
+                match true {true -> {y\n ()}; false -> ()}
+                y := true
+            }
+            x
+        }`),
+        ).toBe('Bool');
     });
     it('rejects invalid patterns and infinite types', () => {
         rejects('fn (x, x) x', 'duplicate-pattern');
-        rejects('fn (x) x(x)', 'infinite-type');
+        rejects('fn (x) x(x)', 'use-after-move');
         rejects(
             `{
             let (x, y) = 1
@@ -130,23 +267,35 @@ describe('AST inference', () => {
         }`),
         ).toBe('Bool');
     });
-    it('propagates alias writes through the owner, including tuple components', () => {
-        expect(
-            type(`{
+    it('prevents owner access until all persistent aliases leave scope', () => {
+        rejects(
+            `{
             let x = (1, 2)
             let (a, b) = ~x
             a := true
             (x, b)
-        }`),
-        ).toBe('((Bool, Number), Number)');
-        expect(
-            type(`{
+        }`,
+            'use-while-borrowed',
+        );
+        rejects(
+            `{
             let x = 1
             let y = ~x
             y := true
             x
+        }`,
+            'use-while-borrowed',
+        );
+        expect(
+            type(`{
+            let x = (1, 2)
+            {
+                let (a, b) = ~x
+                a := true
+            }
+            x
         }`),
-        ).toBe('Bool');
+        ).toBe('(Bool, Number)');
     });
     it('rejects overlapping tuple lenses', () => {
         rejects(
@@ -172,7 +321,7 @@ describe('AST inference', () => {
     it('infers flow endpoints for swaps and returned tuple lenses', () => {
         expect(type('fn (~x) {x := ()}')).toBe('(a/()) => a');
         expect(type('fn (~(x, y)) ~x')).toBe('((a, b)/(c, b)) => a/c');
-        expect(type('fn (f, ~x) {x := f(x)}')).toBe('((a) => b, a/b) => a');
+        expect(type('fn (f, ~x) {x := f(x)}')).toBe('((a) => b, a/b) => ()');
         rejects('fn (~x, y) y', 'lens-position');
         rejects('round(~x)', 'unbound-name');
     });
@@ -258,7 +407,7 @@ describe('checked compilation', () => {
             x := true
             a
         }`,
-            'alias-shape',
+            'use-while-borrowed',
         );
     });
     it('does not permit replacing globally resolved definitions', () => {
@@ -273,9 +422,7 @@ describe('checked compilation', () => {
             TypeDiagnostic,
         );
         expect(checkFile(parse('take :: (a/()) => a\nfn take(~x) {x := ()}')).ir).toHaveLength(1);
-        expect(() => checkFile(parse('inc :: (~Int) => ()\nfn inc(~x) {x := x + 1}'))).toThrow(
-            TypeDiagnostic,
-        );
+        expect(checkFile(parse('inc :: (~Int) => ()\nfn inc(~x) {x := x + 1}')).ir).toHaveLength(1);
     });
     it('diagnoses mismatched and orphan declarations without publishing failures', () => {
         expect(() => checkFile(parse('other :: (a) => a\nfn id(x) x'))).toThrow(TypeDiagnostic);
@@ -316,8 +463,10 @@ describe('checked compilation', () => {
     it('executes checked type-changing tuple aliases and computed lenses', () => {
         const source = `{
     let x = (1, 2)
-    let (a, b) = ~x
-    a := true
+    {
+        let (a, b) = ~x
+        a := true
+    }
     x
 }
 (true, 2)
@@ -336,5 +485,41 @@ describe('checked compilation', () => {
         const result = runSnapshot('{let x = 1\n x}\ntrue', 'in-memory', false, { checked: true });
         expect(result.testResults[0].failure).toBeInstanceOf(TypeDiagnostic);
         expect(result.text).not.toContain('ir->');
+    });
+    it('moves closure captures by value, retaining the alias storage for restoration', () => {
+        const source = `{
+    let x = 1
+    let f = {
+        let y = ~x
+        let f = fn (()) y
+        y := 2
+        f
+    }
+    (f(()), x)
+}
+(1, 2)
+{
+    let x = 1
+    let f = fn (()) x
+    f(())
+}
+1`;
+        const checked = runSnapshot(source, 'in-memory', false, { checked: true });
+        expect(checked.testResults).toHaveLength(2);
+        expect(checked.testResults.map((r) => r.failure)).toEqual([undefined, undefined]);
+    });
+    it('captures first-class callees used inside lens expressions by value', () => {
+        const source = `{
+    let g = {
+        let f = fn (~x) ~x
+        fn (~y) ~f(~y)
+    }
+    let x = 1
+    g(~x) := true
+    x
+}
+true`;
+        const result = runSnapshot(source, 'in-memory', false, { checked: true });
+        expect(result.testResults.map((r) => r.failure)).toEqual([undefined]);
     });
 });

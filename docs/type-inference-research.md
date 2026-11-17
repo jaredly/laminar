@@ -2,6 +2,12 @@
 
 Research date: 2026-11-16. Scope: the language and pointer evaluator in `ts/`, with inference on the source AST before `decompose.ts`. This is a design recommendation, not an implementation or a claim of soundness for the extended language.
 
+## Update after language feedback (2026-11-17)
+
+The implementation now follows the clarified affine resource model, superseding the local-polymorphism and alias-access recommendations below. Only top-level definitions are reusable schemes; first-class functions and other local values may be consumed at most once, with unused values allowed. Persistent aliases exclusively borrow their owners until scope exit. Closures move free values at definition time and cannot borrow outer storage. Capturing an alias value is valid if that alias is replenished before its lifetime ends. Type and availability states are joined across branches.
+
+The original examples that access `x` while `y` or `(a, b)` still borrow it are invalid use-while-borrowed programs. End the alias scope before accessing the owner. Likewise, consuming a value on the RHS of assignment empties the target before the swap, so `inc` and `map` can correctly return unit; the earlier annotation-mismatch discussion missed this resource transition.
+
 ## Recommendation
 
 Add an AST inference/elaboration pass using first-order unification, fresh instantiation, and restricted rank-1 let-polymorphism. Preserve Laminar's distinction between ordinary values and lenses in the inferred function signatures. Thread a typing context through inference so lens updates can change the types of subsequent uses. A single immutable mapping from names to HM types cannot express the existing language.

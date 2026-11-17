@@ -1,4 +1,5 @@
-import { free, getFree, Lens, Linear, names, Pat } from './ast.ts';
+import { captureUses } from './captures.ts';
+import { free, Lens, Linear, names, Pat } from './ast.ts';
 import { Expr, Idd, Patd, Ref, Stmt } from './expr.ts';
 import { string } from '../parser-generator/grammar-lexer.ts';
 
@@ -249,22 +250,12 @@ export const linearToExpr = (ctx: Ctx, lin: Linear): Expr => {
                 }
             });
             const argnames = lin.args.flatMap((v) => names(v.pat));
-            const ref = new Set<string>();
-            getFree(
-                new Set(
-                    argnames.concat(
-                        Object.keys(ctx.scope).filter((n) => ctx.scope[n].type === 'builtin'),
-                    ),
-                ),
-                lin.body,
-                ref,
-                new Set<string>(),
-            );
+            const { values: ref } = captureUses(lin.body, new Set(argnames));
             const self = [...ref]
                 .map((name): Idd | null => {
                     const id = ctx.scope[name];
                     if (id == null) throw new Error(`unbound ${name}`);
-                    if (id.type === 'ref' || id.type === 'builtin') return null;
+                    if (id.type === 'builtin') return null;
                     return { type: 'idd', id: id.id, text: name, loc: lin.loc };
                 })
                 .filter(notEmpty);

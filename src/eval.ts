@@ -248,18 +248,6 @@ const findPointer = (ctx: Ctx, id: Idd) => {
     }
 };
 
-const consumePointer = (ctx: Ctx, id: Idd) => {
-    const key = id.text + id.id;
-    for (let i = ctx.scopes.length - 1; i >= 0; i--) {
-        const scope = ctx.scopes[i];
-        if (Object.hasOwn(scope.bindings, key)) {
-            const ptr = scope.bindings[key];
-            delete scope.bindings[key];
-            return ptr;
-        }
-    }
-};
-
 const resolvePointer = (ctx: Ctx, expr: Expr | Patd): Pointer | void => {
     if (expr.type === 'idd') return findPointer(ctx, expr);
     if (expr.type === 'tuple') {
@@ -482,7 +470,8 @@ export const evalExpr = (ctx: Ctx, expr: Expr): any => {
         }
         case 'closure': {
             const items = expr.names.map((name): { id: Patd; value: any } => {
-                const ptr = consumePointer(ctx, name);
+                // Move the contents, retaining the storage binding so a lens can be restored.
+                const ptr = findPointer(ctx, name);
                 if (!ptr) throw new Error(`could not resolve ${stringify(lexpr(name))}`);
                 return {
                     id: { type: 'deref', inner: name, loc: name.loc },

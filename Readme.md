@@ -8,7 +8,7 @@ I'm working my way through the paper, trying to implement a language that matche
 
 I have many of the constructs implemented, but not yet all. Notably, `case` and `A & B` are missing, and `let pat = linear in lens` is only partially implemented.
 
-My language uses runtime checks to guarantee linearity instead of compile-time checks. After I have the runtime working properly, I'll probably move on to doing the type checking and inference.
+The checked path enforces affine use (at most once), exclusive alias scopes, and restoration of lens contents. Closures move captured values at creation. Runtime checks remain in place, and the unchecked runner is available for experiments with lens forms that the checker does not yet support.
 
 ## What it looks like
 

@@ -1,13 +1,5 @@
-import {
-    free,
-    names,
-    type Linear,
-    type Lens,
-    type Pat,
-    type Term,
-    type Type,
-    type Decl,
-} from './ast.ts';
+import { captureUses } from './captures.ts';
+import { names, type Linear, type Lens, type Pat, type Term, type Type, type Decl } from './ast.ts';
 import {
     Solver,
     TypeDiagnostic,
@@ -23,8 +15,9 @@ import {
     type Scheme,
 } from './types.ts';
 
-type Root = { type: Ty };
-type Binding = { root: Root; path: number[]; scheme?: Scheme };
+type Borrow = { path: number[]; parent?: Borrow };
+type Root = { type: Ty; empty: number[][]; borrows: Set<Borrow> };
+type Binding = { root: Root; path: number[]; scheme?: Scheme; permit?: Borrow };
 type Env = Map<string, Binding>;
 type View = { read: Ty; put: (type: Ty) => void; targets: Binding[] };
 export type TypeEnvironment = ReadonlyMap<string, Scheme>;
@@ -90,13 +83,39 @@ export class Inferencer {
     }
     private env(): Env {
         return new Map(
-            [...this.globals].map(([n, s]) => [n, { root: { type: s.body }, path: [], scheme: s }]),
+            [...this.globals].map(([n, s]) => [
+                n,
+                {
+                    root: { type: s.body, empty: [], borrows: new Set<Borrow>() },
+                    path: [],
+                    scheme: s,
+                },
+            ]),
         );
     }
     private lookup(env: Env, name: string, loc: number): Binding {
         return env.get(name) ?? this.error('unbound-name', loc, `Unbound name ${name}`);
     }
+    private overlaps(a: number[], b: number[]): boolean {
+        return a.slice(0, Math.min(a.length, b.length)).every((v, i) => v === b[i]);
+    }
+    private accessible(b: Binding, loc: number): void {
+        const permits = new Set<Borrow>();
+        for (let p = b.permit; p; p = p.parent) permits.add(p);
+        for (const borrow of b.root.borrows) {
+            if (this.overlaps(b.path, borrow.path) && !permits.has(borrow))
+                this.error(
+                    'use-while-borrowed',
+                    loc,
+                    'Binding is exclusively borrowed until its aliases leave scope',
+                );
+        }
+    }
+    private available(b: Binding): boolean {
+        return !b.root.empty.some((path) => this.overlaps(path, b.path));
+    }
     private get(b: Binding, loc: number): Ty {
+        this.accessible(b, loc);
         let t = b.root.type;
         for (const i of b.path) {
             const p = this.solver.prune(t);
@@ -111,6 +130,7 @@ export class Inferencer {
         return t;
     }
     private put(b: Binding, value: Ty, loc: number): void {
+        this.accessible(b, loc);
         if (b.scheme)
             this.error('immutable-definition', loc, 'Reusable definitions cannot be lens targets');
         const update = (t: Ty, path: number[]): Ty => {
@@ -121,9 +141,27 @@ export class Inferencer {
             return tuple(...p.items.map((v, i) => (i === path[0] ? update(v, path.slice(1)) : v)));
         };
         b.root.type = update(b.root.type, b.path);
+        b.root.empty = b.root.empty.filter((path) => !this.overlaps(path, b.path));
+    }
+    private consume(b: Binding, loc: number): Ty {
+        const type = this.get(b, loc);
+        if (!this.available(b))
+            this.error('use-after-move', loc, 'Value has already been consumed');
+        this.put(b, tuple(), loc);
+        b.root.empty.push(b.path);
+        return type;
+    }
+    private restored(b: Binding, loc: number): void {
+        this.accessible(b, loc);
+        if (!this.available(b))
+            this.error(
+                'unrestored-lens',
+                loc,
+                'Lens must contain a value at the end of its lifetime',
+            );
     }
     private freshBinding(type: Ty): Binding {
-        return { root: { type }, path: [] };
+        return { root: { type, empty: [], borrows: new Set() }, path: [] };
     }
     private record(node: object, t: FlowTy): void {
         this.types.set(node, t);
@@ -283,7 +321,7 @@ export class Inferencer {
             case 'op': {
                 const b = this.lookup(env, n.text, n.loc);
                 this.bindings.set(n, b);
-                return b.scheme ? this.solver.instantiate(b.scheme) : this.get(b, n.loc);
+                return b.scheme ? this.solver.instantiate(b.scheme) : this.consume(b, n.loc);
             }
             case 'number':
                 return con('Number');
@@ -332,18 +370,22 @@ export class Inferencer {
     }
     private lambda(n: Linear & { type: 'fn' }, env: Env): Ty {
         const bound = new Set(n.args.flatMap((a) => names(a.pat)));
-        for (const name of free(n.body)) {
-            if (!bound.has(name) && !env.has(name))
-                this.error('unbound-name', n.loc, `Unbound name ${name}`);
-            if (!bound.has(name) && !env.get(name)?.scheme)
-                this.error(
-                    'unsupported-capture',
-                    n.loc,
-                    `Closure captures mutable local ${name}; capture effects are not yet supported`,
-                );
-        }
+        const { values: captures, lenses: borrowed } = captureUses(n.body, bound);
         const sub = new Map(env),
             vars = new Map<string, Ty>();
+        for (const name of borrowed) {
+            const b = this.lookup(env, name, n.loc);
+            if (!b.scheme)
+                this.error(
+                    'borrowed-capture',
+                    n.loc,
+                    `Closure cannot borrow outer binding ${name}`,
+                );
+        }
+        for (const name of captures) {
+            const b = this.lookup(env, name, n.loc);
+            if (!b.scheme) sub.set(name, this.freshBinding(this.consume(b, n.loc)));
+        }
         const exits: { root: Binding; read: Ty; write: Ty }[] = [];
         const seen = new Set<string>();
         const args = n.args.map((a, i): FlowTy => {
@@ -374,7 +416,10 @@ export class Inferencer {
             view.put(write);
             result = flow(read, write);
         } else result = plain(this.linear(n.body, sub));
-        exits.forEach((v) => this.solver.unify(v.write, this.get(v.root, n.loc), n.loc));
+        exits.forEach((v) => {
+            this.restored(v.root, n.loc);
+            this.solver.unify(v.write, this.get(v.root, n.loc), n.loc);
+        });
         if (n.ann) this.solver.unifyFlow(result, this.annotation(n.ann, vars), n.loc);
         return fn(args, result);
     }
@@ -402,24 +447,33 @@ export class Inferencer {
                 : n.pat;
         if (n.value.type === 'lens') {
             const b = this.alias(n.value.lens, env);
-            this.pattern(p, this.get(b, n.loc), sub, b);
-        } else {
-            const type = this.linear(n.value, env);
-            this.pattern(p, type, sub);
-            // Generalized bindings are immutable: borrowing them is rejected at every use.
-            // This conservative rule avoids needing a whole-program address-taken analysis.
-            if (
-                p.type === 'id' &&
-                n.value.type === 'fn' &&
-                free(n.value).every((name) => env.get(name)?.scheme)
-            ) {
-                const b = sub.get(p.text)!;
-                b.scheme = this.solver.generalize(
-                    type,
-                    [...env.values()].map((v) => v.scheme ?? mono(this.get(v, n.loc))),
-                );
+            const type = this.get(b, n.loc);
+            const borrow: Borrow = { path: b.path, parent: b.permit };
+            b.root.borrows.add(borrow);
+            const alias = { ...b, permit: borrow };
+            this.pattern(p, type, sub, alias);
+            const close = () => {
+                // End the borrow before checking the owner's restored state.
+                b.root.borrows.delete(borrow);
+                this.restored(b, n.loc);
+            };
+            if (isLens) {
+                const view = this.lens(n.body as Lens, sub);
+                return {
+                    ...view,
+                    put: (t) => {
+                        view.put(t);
+                        close();
+                    },
+                };
             }
+            const result = this.linear(n.body as Linear, sub);
+            close();
+            return result;
         }
+        const type = this.linear(n.value, env);
+        this.pattern(p, type, sub);
+        // First-class functions are affine monotypes; only top-level definitions are reusable schemes.
         return isLens ? this.lens(n.body as Lens, sub) : this.linear(n.body as Linear, sub);
     }
     private lens(n: Lens, env: Env): View {
@@ -544,18 +598,37 @@ export class Inferencer {
             result = this.solver.fresh();
         if (!n.cases.length) this.error('empty-case', n.loc, 'Case requires at least one branch');
         const roots = [...new Set([...env.values()].map((b) => b.root))];
-        const initial = roots.map((r) => r.type);
-        let joined: Ty[] | undefined;
+        const initial = roots.map((r) => ({ type: r.type, empty: [...r.empty] }));
+        let joined: { type: Ty; empty: number[][] }[] | undefined;
         for (const branch of n.cases) {
-            roots.forEach((r, i) => (r.type = initial[i]));
+            roots.forEach((r, i) => {
+                r.type = initial[i].type;
+                r.empty = [...initial[i].empty];
+            });
             const sub = new Map(env);
             this.pattern(branch.pat, scrutinee, sub);
             this.solver.unify(result, this.linear(branch.body, sub), branch.body.loc);
-            if (!joined) joined = roots.map((r) => r.type);
+            if (!joined) joined = roots.map((r) => ({ type: r.type, empty: [...r.empty] }));
             else
                 roots.forEach((r, i) => {
                     try {
-                        this.solver.unify(joined![i], r.type, n.loc);
+                        const empty = [...joined![i].empty, ...r.empty];
+                        const erase = (type: Ty): Ty => {
+                            const root: Root = { type, empty: [], borrows: new Set() };
+                            for (const path of empty.sort((a, b) => b.length - a.length)) {
+                                // An empty ancestor subsumes all of its descendants.
+                                if (
+                                    !empty.some(
+                                        (p) => p.length < path.length && this.overlaps(p, path),
+                                    )
+                                )
+                                    this.put({ root, path }, tuple(), n.loc);
+                            }
+                            return root.type;
+                        };
+                        const type = erase(joined![i].type);
+                        this.solver.unify(type, erase(r.type), n.loc);
+                        joined![i] = { type, empty };
                     } catch (e) {
                         if (e instanceof TypeDiagnostic)
                             this.error(
@@ -567,7 +640,10 @@ export class Inferencer {
                     }
                 });
         }
-        roots.forEach((r, i) => (r.type = joined![i]));
+        roots.forEach((r, i) => {
+            r.type = joined![i].type;
+            r.empty = joined![i].empty;
+        });
         return result;
     }
 }

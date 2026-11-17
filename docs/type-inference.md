@@ -25,20 +25,23 @@ const compiled = checkFile(file);
 
 ## Implemented
 
-- First-order unification with occurs checks, rank-1 schemes, fresh instantiation, and stable type printing.
+- First-order unification with occurs checks, rank-1 top-level schemes, fresh instantiation, and stable type printing.
 - Literals, tuples, homogeneous lists, registered constructors, pattern destructuring, functions, higher-order calls, monomorphic recursion, ordinary cases, and branch state joins.
 - Declared signatures checked with rigid variables. A narrower declaration controls the exported scheme. Argument/return annotation syntax is supported; `Int` aliases JavaScript-style `Number`, and `~A` means `A/A`.
 - Distinct value/lens modes and n-ary arity checks. Lens arguments must be final.
 - Type-changing swaps, variable aliases, tuple aliases, tuple lenses, lens-returning functions, and computed lens assignments. Swaps return the previous value's type. Inference follows decomposition's lens setup order.
-- Generalization of closed function lets whose free names are reusable definitions. Generalized definitions are immutable lens targets; application results and ordinary mutable storage are monomorphic.
+- Top-level definitions are reusable polymorphic schemes. All local values, including function literals and local copies of top-level functions, are affine monotypes: they may be unused, but each stored value may be consumed at most once. Writing a new value replenishes the storage.
+- Persistent aliases exclusively borrow their owner until scope exit. Nested aliases suspend access through the parent alias. Lens contents may be consumed, but every borrowed focus and lens parameter must hold a value when its lifetime ends.
+- Closures move captured values when created, including values taken from aliases. Borrowing an outer variable inside a closure is rejected. A captured alias must be replenished before its enclosing alias scope ends.
+- Branch joins track both types and availability: a value consumed on any branch is unavailable after the join until replenished.
 - Structured `TypeDiagnostic` errors with a code and source location. No implicit `any` fallback.
 
 `builtinTypes()` contains audited signatures for arithmetic, numeric comparisons, `round`, `heapsize`, `charList`, `fst`, and `dup`. `constructorTypes()` registers `nil` and `cons`. Supply additional closed schemes through `new Checker(environment, constructors)`; all free metavariables in external signatures must be quantified. Types/schemes are separate from parsed annotation syntax. Parameterized types such as `List<a>` are currently internal/printed types, without new surface annotation syntax.
 
 ## Current restrictions
 
-Complex lens restoration remains explicit future work. Manual cleanup, `aslens`, lens cases, constructor alias patterns, and persistent aliases of computed lenses produce unsupported-form diagnostics. Returned lenses must be based on a lens parameter; local storage cannot escape. Closures capturing mutable local storage are rejected until capture effects are represented. Overlapping tuple lenses and changes to the owner of an active computed lens are rejected conservatively. Resource consumption, duplication, unused bindings, and exhaustiveness remain runtime checks or future analysis; a successful inference result does not establish static linearity.
+Complex lens restoration remains explicit future work. Manual cleanup, `aslens`, lens cases, constructor alias patterns, and persistent aliases of computed lenses produce unsupported-form diagnostics. Returned lenses must be based on a lens parameter; local storage cannot escape. Overlapping tuple lenses and changes to the owner of an active computed lens are rejected conservatively. Affine use and lens restoration are checked statically. Unused owned bindings are permitted; exhaustiveness and a stricter exactly-once resource discipline remain future work. Runtime checks remain in place.
 
-Some existing functions declare a unit result but have a swap as their body. A checked signature must describe the old value returned by that swap, or the source must explicitly end with `()` to discard it. Existing snapshots were left intact for evaluator coverage.
+Assignment returns the value currently in its target when the swap happens. If the RHS has already consumed that value, the empty slot has unit type: `fn inc(~x) { x := x + 1 }` therefore returns unit. Swapping a full slot, as in `fn take(~x) { x := () }`, returns its old type. This distinction is tracked separately from whether a slot contains an actual unit value. Existing unchecked snapshots remain available for evaluator coverage.
 
 Run `bun test test/infer.test.ts` for inference/checked integration tests, `bun test` for the full suite, and `bunx tsc --noEmit` for TypeScript checking. The design background and remaining restoration work are described in [the research note](type-inference-research.md).
