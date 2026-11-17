@@ -11,6 +11,7 @@ import {
 import type { SpecializedProgram } from './specialize.ts';
 import type { IRUnit, IRBlock, IRPattern } from './typed-ir.ts';
 import { verifyTypedProgram } from './verify-ir.ts';
+import { verifyRepresentations } from './verify-representations.ts';
 
 export type ValueRepresentation =
     | { kind: 'data'; layout: LayoutId }
@@ -347,7 +348,7 @@ export function inferRepresentations(
         entries.push(entry);
         roots.push({ unit: id, result });
     }
-    return freezeTree({
+    const analysis: RepresentationAnalysis = {
         schemaVersion: 1,
         roots,
         entries,
@@ -357,5 +358,7 @@ export function inferRepresentations(
         layouts: layouts.snapshot(),
         shapes: reps.snapshot(),
         backings: reps.backingSnapshot(),
-    });
+    };
+    verifyRepresentations(source, analysis);
+    return freezeTree(analysis);
 }

@@ -75,3 +75,15 @@ Semantic specialization was committed as `d78dbe7` (`Specialize reachable typed 
 This is a representation analysis graph, not emitted concrete IR or the phase-3 exit gate. Physical closure/native ABIs, callable wrappers, symbolic generic-body constraints, recursive nominal layouts, rewriting code records to representation variants, and independent concrete-IR verification remain open. Unsolved recursive returned representations, callable entry roots without an argument contract, and nominal data layouts are diagnosed explicitly. No C/Wasm emitter or fallback was added.
 
 Verification: 447 passing tests, 39 existing skips, zero failures across 20 files; `bunx tsc --noEmit` passes. These checks establish analysis behavior, not native/Wasm execution.
+
+## Continued slice: independent representation analysis verification (phase 3)
+
+Reachable representation analysis was committed as `5f86933` (`Infer reachable lens shapes and representation-specific function variants`). The next slice adds:
+
+- `src/verify-representations.ts`: independent validation of serialized analysis against verified semantic IR, without calling inference. It checks canonical target-specific layout/backing/shape identities, concrete storage kinds, layout dependency order, recursive shape endpoints, backing access conventions, variant names/keys, complete temporary/call coverage, type correspondence, callable provenance/captures, lens topology, call variant contracts, root coverage, and variant reachability.
+- `inferRepresentations` now verifies its completed analysis before returning its immutable snapshot. Representation consistency failures use `invalid-representation-analysis` diagnostics; semantic ownership/lifetime checking remains the typed-IR verifier's responsibility.
+- `test/verify-representations.test.ts`: 58 tests including serialized corpus analyses, higher-order/returned-lens/multiple-shape contracts, object-property reordering, target mismatch, malformed/missing/duplicate records, corrupted annotations and call contracts, unreachable variants, and adversarial same-type topology/callable substitutions. A coherent thin lens cannot replace a scattered tuple merely because its endpoint types match; a forged same-type callable branch join is independently rejected.
+
+This verifies the analysis graph, not physical executable concrete IR. The phase-3 exit gate remains open: representation-specific code records, physical callable/native ABIs and wrappers, recursive nominal layouts, and concrete-IR verification still need implementation before C/Wasm emission. API and limits are recorded in [representations.md](representations.md).
+
+Verification: 505 passing tests, 39 existing skips, zero failures across 21 files; `bunx tsc --noEmit` and `git diff --check` pass. No C/Wasm execution is claimed.
