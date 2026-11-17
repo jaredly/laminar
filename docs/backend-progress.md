@@ -40,3 +40,13 @@ See [the typed IR documentation](typed-ir.md) for API and invariants.
 Consume verified generic typed IR, retain generic code for diagnostics, infer recursive lens representation shapes, and specialize the reachable call graph using concrete semantic types and representation arguments. Validate concrete call ABIs and target-specific cache keys before introducing a C emitter. Preserve explicit unsupported diagnostics for unresolved representation joins until their adapters exist.
 
 Subsequent phases remain as described in [the plan](c-codegen-plan.md): representation specialization, the first native/Wasm execution milestone, type-changing backing/restoration, affine closure ABIs and joins, then heap data/runtime integration. No emitter or untyped fallback has been introduced in this slice.
+
+## Started slice: concrete representation vocabulary (phase 3)
+
+- `src/layouts.ts`: target-specific interning of concrete scalar/unit/tuple storage descriptions, immutable detached semantic types, explicit dependencies, and deterministic dependency-first snapshots. Keys use structural semantic types and canonical target configuration; insertion order and source place identities do not participate. These descriptions do not calculate C sizes, alignment, or field offsets.
+- `src/representations.ts`: interned thin locations and recursive tuples of locations, including nested mixed shapes. Backing records retain independent read/replacement layout IDs and distinguish same-layout access from separate typed slots. Projection preserves scattered child shapes. Joins accept identical representations and explicitly diagnose shapes that need adapters.
+- `test/representations.test.ts`: layout reuse, semantic distinctions, immutability, deterministic dependency ordering, target separation, thin/scattered distinction, mixed nested projection, type-changing/unit backing, and unsupported layout/join diagnostics.
+
+This is the first foundation of phase 3, not its exit gate. The tables are standalone and are not yet wired into generic typed lowering. Representation constraints, reachable specialization and recursion budgets, callable ABIs/wrappers, recursive nominal data definitions, deterministic emitted names, and independent concrete-IR verification remain to be implemented. Reachable type variables, functions without a closure representation, and nominal types without a storage definition are explicitly rejected by the layout API; no generic erasure or opaque pointer fallback is provided.
+
+Verification: `bun test` passes with 394 passing tests, 39 existing skips, and zero failures across 18 files; `bunx tsc --noEmit` passes. No generated C/Wasm execution is claimed.
