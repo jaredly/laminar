@@ -318,6 +318,7 @@ export function verifyRepresentations(
             usedCalls = new Set<string>();
         edges.set(owner, new Set());
         function block(b: IRBlock, s: State): ValueRepresentation {
+            const deferred: IRBlock[] = [];
             for (const i of b.instructions) {
                 if (i.op === 'bind') {
                     bind(i.pattern, get(s, i.value), s);
@@ -362,9 +363,9 @@ export function verifyRepresentations(
                         break;
                     }
                     case 'manual':
-                        return fail(
-                            'Manual restoration requires a deferred-cleanup representation adapter',
-                        );
+                        topology(lens(get(s, i.lens)), lens(v));
+                        deferred.push(i.cleanup);
+                        break;
                     case 'lens-tuple': {
                         const actual = lens(v);
                         if (actual.kind !== 'tuple') return fail('Lens tuple lost its topology');
@@ -467,7 +468,9 @@ export function verifyRepresentations(
                 }
                 s.values.set(i.out.id, v);
             }
-            return get(s, b.result);
+            const result = get(s, b.result);
+            for (const cleanup of deferred.reverse()) block(cleanup, clone(s));
+            return result;
         }
         const result = block(body, state);
         if (usedValues.size !== annotations.size || usedCalls.size !== calls.size)

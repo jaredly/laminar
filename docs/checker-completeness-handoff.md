@@ -112,8 +112,8 @@ fn shifted(~x) ~{
 Concrete compilation currently stops with:
 
 ```text
-unsupported-representation
-Manual restoration requires a deferred-cleanup representation adapter
+unsupported-concrete
+Manual restoration requires a concrete deferred-cleanup adapter
 ```
 
 ### Existing semantic and executable contract
@@ -154,9 +154,13 @@ Implementation anchors:
 
 ### Backend changes still needed
 
-- `src/infer-representations.ts` and `src/verify-representations.ts` currently
-  reject `manual`. Analyze the deferred block with its **restoration-time** storage
-  state and callable provenance; do not analyze or execute it as setup work.
+- `src/infer-representations.ts` and `src/verify-representations.ts` now cover
+  deferred cleanup regions, retaining frontend topology with manual endpoints and
+  complete temporary/call coverage. Data moves use independently verified
+  restoration-time semantic annotations; protected lexical callable dependencies
+  retain their provenance. Analysis visits deferred regions after setup without
+  applying cleanup effects to the setup state. This is representation analysis,
+  not a physical staging or lifetime adapter.
 - Audit every nested-block walker. A manual cleanup block is a new executable
   region, alongside scopes, branches, and function bodies. Semantic specialization
   recursively rewrites objects, but other analyses/indexers may require explicit
@@ -191,10 +195,13 @@ focuses, and an owned cleanup result. `test/manual-restoration.test.ts` runs eve
 case through checked legacy execution, JSON-detached typed execution, and
 JSON-detached semantic-specialized typed execution. The dedicated event-order,
 disposal-count, ownership-negative, and artifact-corruption tests remain in place.
-This is reference acceptance coverage only: representation, concrete, and C/Wasm
-manual adapters remain pending, with their existing explicit diagnostics.
+Every case also passes representation analysis and independent serialized analysis
+verification. Corruption tests reject missing cleanup temporaries, missing calls,
+and substituted callable provenance. Callable focus replacement retains its existing
+closure-storage representation diagnostic. Concrete and C/Wasm manual adapters remain
+pending, with explicit concrete diagnostics.
 
-Start from all 35 tests in `test/manual-restoration.test.ts`. Carry the supported
+Start from all 39 tests in `test/manual-restoration.test.ts`. Carry the supported
 subset into shared C execution samples rather than replacing reference tests.
 Cover shifted owned focuses, final-type changes, tuple staging, manual around a
 branch, branch-selected manual cleanup, nested ordering, owned callback parameters,

@@ -266,7 +266,7 @@ export function lowerConcreteProgram(
                 if (i.op === 'manual')
                     throw new BackendDiagnostic(
                         'unsupported-concrete',
-                        'Manual restoration requires a deferred-cleanup representation adapter',
+                        'Manual restoration requires a concrete deferred-cleanup adapter',
                     );
                 const out = { ...i.out, layout: layout(values.get(i.out.id)!) };
                 if (i.op === 'scope') return { ...i, out, body: lower(i.body) };

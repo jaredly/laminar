@@ -266,6 +266,10 @@ export function inferRepresentations(
         record: Pick<RepresentationVariant, 'values' | 'calls'>,
         chain: string[],
     ): ValueRepresentation {
+        // Cleanup is a separate executable region. Its data moves carry the
+        // restoration-time types verified by typed IR, rather than setup types.
+        // Callable dependencies retain their protected lexical provenance.
+        const deferred: IRBlock[] = [];
         for (const i of body.instructions) {
             if (i.op === 'bind') {
                 bind(i.pattern, get(s, i.value), s);
@@ -311,9 +315,13 @@ export function inferRepresentations(
                     break;
                 }
                 case 'manual':
-                    return fail(
-                        'Manual restoration requires a deferred-cleanup representation adapter',
-                    );
+                    if (i.out.type.tag !== 'flow') return fail('Manual produced data');
+                    out = {
+                        kind: 'lens',
+                        shape: retype(shape(get(s, i.lens)), i.out.type.read, i.out.type.write),
+                    };
+                    deferred.push(i.cleanup);
+                    break;
                 case 'lens-tuple':
                     out = {
                         kind: 'lens',
@@ -387,7 +395,11 @@ export function inferRepresentations(
             s.values.set(i.out.id, out);
             record.values.push({ value: i.out.id, representation: out });
         }
-        return get(s, body.result);
+        const result = get(s, body.result);
+        // Analyze retained regions independently after setup, without applying
+        // cleanup effects to setup state. Runtime staging/order remains in typed IR.
+        for (const cleanup of deferred.reverse()) block(unit, cleanup, clone(s), record, chain);
+        return result;
     }
     for (const [rootIndex, id] of source.roots.entries()) {
         const unit = units.get(id) ?? fail('Unknown representation root');

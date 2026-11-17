@@ -76,8 +76,8 @@ adapter, and borrowed lenses cannot escape the test entry boundary. Existing
 checker restrictions still apply: matching borrowed scrutinees is unsupported,
 and raw owned-local lenses cannot escape through function returns. Explicit manual
 restoration may retain owned focuses in typed/legacy execution, but its physical
-adapter is pending and reports `unsupported-representation`: “Manual restoration
-requires a deferred-cleanup representation adapter”. No manual C/Wasm execution
+adapter is pending and reports `unsupported-concrete`: “Manual restoration
+requires a concrete deferred-cleanup adapter”. No manual C/Wasm execution
 is claimed. Lens-valued
 branches normalize their focus into thin storage and retain a selector plus each
 arm’s original restoration operation. Only the selected arm runs setup,

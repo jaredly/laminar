@@ -13,6 +13,8 @@ import { BackendDiagnostic, wasm32Emscripten } from '../src/backend/target.ts';
 import { compileConcreteProgram } from '../src/lower-concrete.ts';
 import { manualRestorationSamples as samples } from './backend/manual-restoration-samples.ts';
 import { specializeProgram } from '../src/specialize.ts';
+import { inferRepresentations } from '../src/infer-representations.ts';
+import { verifyRepresentations } from '../src/verify-representations.ts';
 
 for (const sample of samples)
     it(`manual restoration: ${sample.name}`, () => {
@@ -26,6 +28,8 @@ for (const sample of samples)
         const detached = JSON.parse(JSON.stringify(specialized.program));
         verifyTypedProgram(detached);
         expect(executeTypedProgram(detached)).toEqual(sample.expected);
+        const analysis = JSON.parse(JSON.stringify(inferRepresentations(specialized)));
+        verifyRepresentations(JSON.parse(JSON.stringify(specialized)), analysis);
     });
 for (const [source, code] of [
     [
@@ -52,7 +56,7 @@ for (const [source, code] of [
             expect((e as TypeDiagnostic).code).toBe(code);
         }
     });
-it('stops before representation lowering requires a deferred-cleanup adapter', () => {
+it('stops at concrete lowering until the deferred-cleanup adapter exists', () => {
     const p = typedProgram(samples[1].source);
     try {
         compileConcreteProgram(p, wasm32Emscripten('test'), [
@@ -61,9 +65,9 @@ it('stops before representation lowering requires a deferred-cleanup adapter', (
         throw Error('Expected backend restriction');
     } catch (e) {
         expect(e).toBeInstanceOf(BackendDiagnostic);
-        expect((e as BackendDiagnostic).code).toBe('unsupported-representation');
+        expect((e as BackendDiagnostic).code).toBe('unsupported-concrete');
         expect((e as Error).message).toBe(
-            'Manual restoration requires a deferred-cleanup representation adapter',
+            'Manual restoration requires a concrete deferred-cleanup adapter',
         );
     }
 });
@@ -177,4 +181,49 @@ it('retains and independently validates restoration-time metadata', () => {
     const phase = JSON.parse(JSON.stringify(original));
     delete phase.manuals[0].cleaned;
     expect(() => verifyElaboration(phase)).toThrow('Missing manual restoration phase');
+});
+
+for (const corruption of ['temporary', 'call', 'provenance'] as const)
+    it(`rejects corrupted deferred-cleanup ${corruption} annotations`, () => {
+        const p = typedProgram(
+            samples.find((s) => s.name === 'cleanup calls reusable definition')!.source,
+        );
+        const source = specializeProgram(p, wasm32Emscripten('test'), [
+            { unit: p.units.at(-1)!.id, arguments: [] },
+        ]);
+        const analysis = JSON.parse(JSON.stringify(inferRepresentations(source)));
+        const cleanup = manual(source.program).cleanup;
+        const call = cleanup.instructions.find((i) => i.op === 'call');
+        if (!call || call.op !== 'call') throw Error('Missing deferred call');
+        const record = [...analysis.entries, ...analysis.variants].find((r) =>
+            r.calls.some((c: { value: string }) => c.value === call.out.id),
+        );
+        if (!record) throw Error('Missing deferred call record');
+        if (corruption === 'temporary')
+            record.values = record.values.filter((v: { value: string }) => v.value !== call.callee);
+        else if (corruption === 'call')
+            record.calls = record.calls.filter((c: { value: string }) => c.value !== call.out.id);
+        else
+            record.values.find((v: { value: string }) => v.value === call.callee).representation = {
+                kind: 'native',
+                definition: source.program.imports[0]!.definition,
+            };
+        expect(() => verifyRepresentations(JSON.parse(JSON.stringify(source)), analysis)).toThrow(
+            corruption === 'temporary'
+                ? 'Missing temporary annotation'
+                : corruption === 'call'
+                  ? 'Missing call annotation'
+                  : 'Global callable provenance changed',
+        );
+    });
+
+it('keeps callable focus replacement explicit at the representation boundary', () => {
+    const p = typedProgram('{let x = 1\n {let f = ~{@(x, fn () {x()})}\n f := fn () 2}\n ()}');
+    expect(executeTypedProgram(JSON.parse(JSON.stringify(p)))).toBe(null);
+    const source = specializeProgram(p, wasm32Emscripten('test'), [
+        { unit: p.units.at(-1)!.id, arguments: [] },
+    ]);
+    expect(() => inferRepresentations(source)).toThrow(
+        'Callable storage requires an explicit closure representation',
+    );
 });

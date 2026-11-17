@@ -133,6 +133,8 @@ staged/cleaned/restored storage states.
 The typed interpreter executes this detached block and retains its frame until
 restoration completes. The legacy pointer path uses retained scoped cleanup
 thunks, so reading a temporary or owned callback after a function return sees its
-final contents and live lexical storage. Representation analysis and verification
-currently reject manual instructions with the precise deferred-cleanup adapter
-diagnostic; no manual concrete/C/Wasm execution is claimed.
+final contents and live lexical storage. Representation analysis and independent
+verification cover manual topology and deferred cleanup temporaries/calls, using
+restoration-time data annotations and protected callable provenance. Concrete
+lowering still rejects manual instructions with `unsupported-concrete` and the
+concrete deferred-cleanup adapter diagnostic; no manual C/Wasm execution is claimed.
