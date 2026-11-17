@@ -271,7 +271,11 @@ export function inferRepresentations(
                 bind(i.pattern, get(s, i.value), s);
                 continue;
             }
-            if (i.op === 'borrow') continue; // SlotRef permissions were independently verified.
+            if (i.op === 'borrow') {
+                const loan = unit.loans.find((l) => l.id === i.loan)!;
+                if (loan.owners) s.lenses.set(loan.place, shape(get(s, i.lens)));
+                continue;
+            }
             let out: ValueRepresentation;
             switch (i.op) {
                 case 'constant':

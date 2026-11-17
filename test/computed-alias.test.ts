@@ -1,0 +1,115 @@
+import { expect, it } from 'bun:test';
+import { typedProgram } from './backend/typed-program.ts';
+import { legacyReference } from './backend/legacy-reference.ts';
+import { executeTypedProgram } from '../src/eval-typed.ts';
+import { verifyTypedProgram } from '../src/verify-ir.ts';
+import { BackendDiagnostic } from '../src/backend/target.ts';
+import { TypeDiagnostic } from '../src/types.ts';
+
+import { computedAliases } from './backend/computed-alias-samples.ts';
+const first = 'fn first(~(x, y)) ~x\n';
+for (const sample of computedAliases)
+    it(`computed alias: ${sample.name}`, () => {
+        const artifact = JSON.parse(JSON.stringify(typedProgram(sample.source)));
+        verifyTypedProgram(artifact);
+        expect(executeTypedProgram(artifact)).toEqual(sample.expected);
+        expect(legacyReference(sample.source)).toEqual(sample.expected);
+    });
+for (const [body, code] of [
+    ['pair', 'use-while-borrowed'],
+    ['focus', 'unrestored-lens'],
+    ['{let inner = ~focus\n focus := true}', 'use-while-borrowed'],
+])
+    it(`computed alias rejects ${code}: ${body}`, () => {
+        try {
+            typedProgram(
+                first + `{let pair = (1, 2)\n {let focus = ~first(~pair)\n ${body}}\n ()}`,
+            );
+            throw new Error('Expected rejection');
+        } catch (e) {
+            expect(e).toBeInstanceOf(TypeDiagnostic);
+            expect((e as TypeDiagnostic).code).toBe(code);
+        }
+    });
+
+it('rejects removed or forged computed owner protection before execution', () => {
+    for (const damage of [
+        (p: ReturnType<typeof typedProgram>) => {
+            p.units.at(-1)!.loans[0].owners = [];
+        },
+        (p: ReturnType<typeof typedProgram>) => {
+            p.units.at(-1)!.loans[0].owners = undefined;
+        },
+        (p: ReturnType<typeof typedProgram>) => {
+            p.units.at(-1)!.loans[0].owners![0].path = [1];
+        },
+    ]) {
+        const p = JSON.parse(JSON.stringify(typedProgram(computedAliases[0].source)));
+        damage(p);
+        expect(() => verifyTypedProgram(p)).toThrow(BackendDiagnostic);
+    }
+});
+
+it('preserves empty slots when a tuple lens becomes a persistent alias', () => {
+    expect(() =>
+        typedProgram('{let a = 1\n let b = 2\n let old = a\n {let f = ~(a, b)\n ()}\n ()}'),
+    ).toThrow(TypeDiagnostic);
+    const source =
+        '{let a = 1\n let b = 2\n let old = a\n {let (x, y) = ~(a, b)\n x := true}\n (a, b)}';
+    expect(executeTypedProgram(JSON.parse(JSON.stringify(typedProgram(source))))).toEqual([
+        true,
+        2,
+    ]);
+    expect(legacyReference(source)).toEqual([true, 2]);
+});
+
+it('requires computed alias restoration and rejects premature release', () => {
+    for (const premature of [false, true]) {
+        const p = JSON.parse(JSON.stringify(typedProgram(computedAliases[0].source)));
+        const visit = (b: import('../src/typed-ir.ts').IRBlock): boolean => {
+            const borrow = b.instructions.find((i) => i.op === 'borrow');
+            if (borrow?.op === 'borrow') {
+                b.cleanup = b.cleanup.filter((c) => c.kind !== 'release' || c.loan !== borrow.loan);
+                if (premature)
+                    b.instructions.splice(1, 0, {
+                        op: 'scope',
+                        origin: borrow.origin,
+                        out: {
+                            id: 'premature-release',
+                            type: { tag: 'plain', value: { tag: 'tuple', items: [] } },
+                        },
+                        body: {
+                            origin: borrow.origin,
+                            instructions: [
+                                {
+                                    op: 'constant',
+                                    origin: borrow.origin,
+                                    out: {
+                                        id: 'release-unit',
+                                        type: { tag: 'plain', value: { tag: 'tuple', items: [] } },
+                                    },
+                                    value: null,
+                                },
+                            ],
+                            result: 'release-unit',
+                            cleanup: [{ kind: 'release', loan: borrow.loan }],
+                        },
+                    });
+                return true;
+            }
+            return b.instructions.some((i) => i.op === 'scope' && visit(i.body));
+        };
+        expect(visit(p.units.at(-1)!.entry)).toBe(true);
+        expect(() => verifyTypedProgram(p)).toThrow(BackendDiagnostic);
+    }
+});
+
+it('retains one active loan identity for multiple projections of the same owner', () => {
+    const source =
+        '{let pair = (1, 2)\n {let (a, b) = ~pair\n {let f = ~(a, b)\n match true {true -> {f := (true, false)\n ()}; false -> {f := (false, true)\n ()}}}}\n pair}';
+    expect(executeTypedProgram(JSON.parse(JSON.stringify(typedProgram(source))))).toEqual([
+        true,
+        false,
+    ]);
+    expect(legacyReference(source)).toEqual([true, false]);
+});

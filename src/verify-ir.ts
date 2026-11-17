@@ -174,7 +174,12 @@ export function verifyTypedProgram(program: TypedProgram): void {
             }
             for (const [id] of s.loans) {
                 const loan = loans.get(id)!;
-                if (loan.place === r.place && overlap(loan.path, r.path) && !permits.has(id))
+                if (
+                    [{ place: loan.place, path: loan.path }, ...(loan.owners ?? [])].some(
+                        (owner) => owner.place === r.place && overlap(owner.path, r.path),
+                    ) &&
+                    !permits.has(id)
+                )
                     fail('Use while exclusively borrowed');
             }
             return slot;
@@ -220,6 +225,20 @@ export function verifyTypedProgram(program: TypedProgram): void {
                   : c.kind === 'scope'
                     ? read(s, c.inner)
                     : c.read;
+        const empty = (s: State, c: Cap): number[][] => {
+            switch (c.kind) {
+                case 'place':
+                    return access(s, c.slot)
+                        .empty.filter((p) => overlap(p, c.slot.path))
+                        .map((p) => p.slice(c.slot.path.length));
+                case 'tuple':
+                    return c.items.flatMap((v, i) => empty(s, v).map((p) => [i, ...p]));
+                case 'scope':
+                    return empty(s, c.inner);
+                case 'call':
+                    return [];
+            }
+        };
         const apply = (s: State, c: Cap, type: SemanticType): void => {
             switch (c.kind) {
                 case 'place':
@@ -242,7 +261,7 @@ export function verifyTypedProgram(program: TypedProgram): void {
                     apply(s, c.inner, type);
                     cleanup(s, c.cleanup);
                     c.retire.forEach((p) => {
-                        if (full(s, { place: p, path: [] }))
+                        if (s.slots.has(p) && full(s, { place: p, path: [] }))
                             fail('Deferred scope value has no disposal');
                         s.slots.delete(p);
                     });
@@ -254,6 +273,16 @@ export function verifyTypedProgram(program: TypedProgram): void {
                 if (action.kind === 'release') {
                     const borrowed = s.loans.get(action.loan) ?? fail('Unbalanced loan release');
                     s.loans.delete(action.loan);
+                    const loan = loans.get(action.loan)!;
+                    if (loan.owners) {
+                        const focus = { place: loan.place, path: [] };
+                        if (!full(s, focus)) fail('Unrestored borrowed focus');
+                        const replacement = read(s, { kind: 'place', slot: focus });
+                        eq(replacement, borrowed.type.write);
+                        apply(s, borrowed.cap, replacement);
+                        s.slots.delete(loan.place);
+                        continue;
+                    }
                     const refs = targets(borrowed.cap);
                     if (refs.some((r) => !full(s, r))) fail('Unrestored borrowed focus');
                     eq(read(s, borrowed.cap), borrowed.type.write);
@@ -360,6 +389,24 @@ export function verifyTypedProgram(program: TypedProgram): void {
                     const v = take(s, i.lens),
                         c = cap(v),
                         loan = loans.get(i.loan) ?? fail('Unknown lexical loan');
+                    if (loan.owners) {
+                        if (s.loans.has(i.loan) || loan.path.length || loan.parent)
+                            fail('Invalid computed loan acquisition');
+                        const refs = targets(c);
+                        const key = (r: SlotRef) =>
+                            JSON.stringify([r.place, r.path, r.permit ?? null]);
+                        if (JSON.stringify(refs.map(key)) !== JSON.stringify(loan.owners.map(key)))
+                            fail('Computed loan owner protection mismatch');
+                        refs.forEach((r) => access(s, r));
+                        eq(read(s, c), (v.type as SemanticFlow & { tag: 'flow' }).read);
+                        allocate(s, loan.place, (v.type as SemanticFlow & { tag: 'flow' }).read);
+                        s.slots.get(loan.place)!.empty = empty(s, c);
+                        s.loans.set(i.loan, {
+                            cap: c,
+                            type: v.type as SemanticFlow & { tag: 'flow' },
+                        });
+                        continue;
+                    }
                     if (
                         s.loans.has(i.loan) ||
                         c.kind !== 'place' ||
@@ -566,7 +613,8 @@ export function verifyTypedProgram(program: TypedProgram): void {
             else {
                 cleanup(s, b.cleanup);
                 retire.forEach((id) => {
-                    if (full(s, { place: id, path: [] })) fail('Owned scope value has no disposal');
+                    if (s.slots.has(id) && full(s, { place: id, path: [] }))
+                        fail('Owned scope value has no disposal');
                     s.slots.delete(id);
                 });
             }
@@ -596,7 +644,17 @@ export function verifyTypedProgram(program: TypedProgram): void {
             feq(result.type, f.type.result);
             if (result.type.tag === 'flow') {
                 const c = cap(result);
-                if (targets(c).some((r) => !lensPlaces.has(r.place)))
+                const owners = (r: SlotRef): SlotRef[] => {
+                    const loan = [...loans.values()].find(
+                        (l) => state.loans.has(l.id) && l.place === r.place && l.owners,
+                    );
+                    return loan ? loan.owners!.flatMap(owners) : [r];
+                };
+                if (
+                    targets(c)
+                        .flatMap(owners)
+                        .some((r) => !lensPlaces.has(r.place))
+                )
                     fail('Lens return escapes owned local storage', f.origin);
                 eq(read(state, c), result.type.read);
                 apply(state, c, result.type.write);

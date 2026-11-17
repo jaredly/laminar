@@ -323,7 +323,11 @@ export function verifyRepresentations(
                     bind(i.pattern, get(s, i.value), s);
                     continue;
                 }
-                if (i.op === 'borrow') continue;
+                if (i.op === 'borrow') {
+                    const loan = unit.loans.find((l) => l.id === i.loan)!;
+                    if (loan.owners) s.lenses.set(loan.place, lens(get(s, i.lens)));
+                    continue;
+                }
                 const v =
                     annotations.get(i.out.id)?.representation ??
                     fail('Missing temporary annotation');

@@ -396,7 +396,10 @@ export function executeTypedProgram(
                 continue;
             }
             if (i.op === 'borrow') {
-                f.loans.set(i.loan, lens(take(f, i.lens)));
+                const borrowed = lens(take(f, i.lens));
+                f.loans.set(i.loan, borrowed);
+                const loan = u.loans.find((l) => l.id === i.loan)!;
+                if (loan.owners) f.places.set(loan.place, borrowed);
                 continue;
             }
             let result: Argument;

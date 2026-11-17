@@ -1,0 +1,87 @@
+const first = 'fn first(~(x, y)) ~x\n';
+export const computedAliases = [
+    {
+        name: 'returned',
+        source: first + '{let pair = (1, 2)\n {let focus = ~first(~pair)\n focus := true}\n pair}',
+        expected: [true, 2],
+    },
+    {
+        name: 'growth',
+        source:
+            first +
+            '{let pair = (1, 2)\n {let focus = ~first(~pair)\n focus := (true, 3, 4)}\n pair}',
+        expected: [[true, 3, 4], 2],
+    },
+    {
+        name: 'tuple',
+        source: '{let a = 1\n let b = 2\n {let (x, y) = ~(a, b)\n x := true\n y := false}\n (a, b)}',
+        expected: [true, false],
+    },
+    {
+        name: 'nested',
+        source:
+            first +
+            '{let pair = (1, 2)\n {let focus = ~first(~pair)\n {let inner = ~focus\n inner := true}\n focus := false}\n pair}',
+        expected: [false, 2],
+    },
+    {
+        name: 'refill',
+        source:
+            first +
+            '{let pair = (1, 2)\n {let focus = ~first(~pair)\n let old = focus\n focus := true}\n pair}',
+        expected: [true, 2],
+    },
+    {
+        name: 'scattered-computed-alias',
+        source: first + '{let a = 1\n let b = 2\n {let f = ~first(~(a, b))\n f := true}\n (a, b)}',
+        expected: [true, 2],
+    },
+    {
+        name: 'nested-computed-alias',
+        source:
+            first + '{let pair = ((1, 2), 3)\n {let f = ~first(~first(~pair))\n f := true}\n pair}',
+        expected: [[true, 2], 3],
+    },
+    {
+        name: 'deferred-computed-alias',
+        source:
+            first +
+            'fn scoped(~p) ~{let f = ~first(~p)\n f}\n{let pair = (1, 2)\n {let f = ~scoped(~pair)\n f := true}\n pair}',
+        expected: [true, 2],
+    },
+    {
+        name: 'repeated-computed-alias',
+        source:
+            first +
+            '{let pair = (1, 2)\n {let f = ~first(~pair)\n f := (true, 3)\n f := false}\n pair}',
+        expected: [false, 2],
+    },
+    {
+        name: 'captured-computed-alias',
+        source:
+            first +
+            '{let pair = (1, 2)\n {let f = ~first(~pair)\n let unused = fn (()) f\n f := true}\n pair}',
+        expected: [true, 2],
+    },
+    {
+        name: 'inline-deferred-computed-alias',
+        source:
+            first +
+            '{let pair = (1, 2)\n {let f = ~{let g = ~first(~pair)\n g}\n f := true}\n pair}',
+        expected: [true, 2],
+    },
+    {
+        name: 'projected-computed-alias',
+        source:
+            first +
+            '{let pair = ((1, 2), 3)\n {let (x, y) = ~first(~pair)\n x := (true, 4, 5)\n y := false}\n pair}',
+        expected: [[[true, 4, 5], false], 3],
+    },
+    {
+        name: 'computed-alias-setup-once',
+        source:
+            first +
+            'fn counted(~(pair, count)) ~{count := count + 1\n first(~pair)}\n{let pair = (1, 2)\n let count = 0\n {let f = ~counted(~(pair, count))\n let copy = dup(~f)\n f := true}\n (pair, count)}',
+        expected: [[true, 2], 1],
+    },
+];

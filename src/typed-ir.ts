@@ -79,7 +79,7 @@ export type IRUnit = {
     signature: { quantified: string[]; type: SemanticType };
     origins: { id: string; loc?: number }[];
     bindings: BindingRecord[];
-    loans: { id: string; place: string; path: number[]; parent?: string }[];
+    loans: { id: string; place: string; path: number[]; parent?: string; owners?: SlotRef[] }[];
     functions: IRFunction[];
     entry: IRBlock;
 };

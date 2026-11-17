@@ -63,3 +63,21 @@ Empty unit focuses are materialized at call boundaries: a callee's read contract
 `test/typed-ir.test.ts` covers the shared acceptance corpus, serialized IR, independent corruption rejection, differential evaluation, branch-specific disposal, nested aliases, returned and scattered lenses, capture/refill closures, registered constructor patterns, numeric edge cases, unmatched-case traps, and API ownership. `test/backend/legacy-reference.ts` is only a test adapter; it is not part of typed execution.
 
 Run `bun test test/typed-ir.test.ts`, `bun test`, and `bunx tsc --noEmit`. Phase 3 must add reachable specialization and recursive representation constraints before this IR can be described as concrete. Phase 4 remains the first native C/Emscripten execution milestone. The reference interpreter passing a case is not evidence of C/Wasm code generation.
+
+## Persistent computed aliases
+
+A loan with an `owners` array introduces an independent focus at its `place`
+(with an empty projection and no parent). Its `borrow` operand supplies the
+computed lens capability and owns the deferred restoration. The ordered owner
+references, including parent permits, must exactly match the capability's targets;
+the verifier derives those targets independently. An empty owner array represents
+a focus with no external owners, rather than a direct-place loan.
+
+Alias bindings refer to the focus place with the loan's permit. Active loans
+protect both that focus and all retained owners. `release` requires an initialized
+focus of the replacement type, applies the original capability, and retires the
+focus. Lens-valued scopes defer release until their result is restored. Returned
+focus provenance is traced through computed loans to lens parameters; owned local
+storage still cannot escape. The detached reference interpreter maps the focus
+to the retained lens and invokes its restoration once at release. Representation
+analysis and its independent verifier preserve the computed focus topology.

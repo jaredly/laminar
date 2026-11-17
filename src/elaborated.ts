@@ -40,7 +40,15 @@ export type Elaboration = {
     nodes: { id: NodeId; kind: string; loc?: number; type?: SemanticFlow }[];
     bindings: BindingRecord[];
     uses: { node: NodeId; binding: BindingId; mode: 'value' | 'lens' }[];
-    borrows: { id: string; node: NodeId; place: PlaceId; path: number[]; parent?: string }[];
+    borrows: {
+        id: string;
+        node: NodeId;
+        place: PlaceId;
+        path: number[];
+        parent?: string;
+        /** Present for independent computed focuses; absent for direct aliases. */
+        owners?: { place: PlaceId; path: number[]; permit?: string }[];
+    }[];
     instantiations: {
         node: NodeId;
         definition: DefinitionId;

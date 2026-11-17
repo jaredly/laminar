@@ -89,8 +89,7 @@ export function verifyElaboration(e: Elaboration): void {
         if (b.borrow && !loans.has(b.borrow)) fail('Binding refers to an unknown borrow');
         // Lens parameters receive their protection from the caller's flow contract.
         const parameter = e.functions.some((f) => f.parameters.some((ps) => ps.includes(b.id)));
-        if (b.kind === 'alias' && !b.borrow && !parameter)
-            fail('Alias has no owner protection');
+        if (b.kind === 'alias' && !b.borrow && !parameter) fail('Alias has no owner protection');
         if (b.borrow) {
             const loan = e.borrows.find((loan) => loan.id === b.borrow)!;
             if (
@@ -106,6 +105,14 @@ export function verifyElaboration(e: Elaboration): void {
     e.borrows.forEach((b) => {
         node(b.node);
         path(b.path);
+        if (b.owners) {
+            if (b.path.length || b.parent) fail('Computed focus has a parent or projection');
+            b.owners.forEach((owner) => {
+                if (!owner.place.startsWith(`${e.id}/p`)) fail('Unscoped computed owner');
+                path(owner.path);
+                if (owner.permit && !loans.has(owner.permit)) fail('Unknown computed owner permit');
+            });
+        }
         const seen = new Set([b.id]);
         let parent = b.parent;
         while (parent) {

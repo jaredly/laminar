@@ -86,7 +86,37 @@ Checkpoint verification: `bun test` reports 684 passing tests, the same 39 skips
 and zero failures across 26 files, including native and Wasm execution.
 `bunx tsc --noEmit` and `git diff --check` pass. No new backend behavior is claimed.
 
-### 1. Persistent aliases to computed lenses
+### Computed-alias implementation slice
+
+Persistent returned-call and tuple aliases now use a fresh logical focus with an
+ordered list of protected owner references and permits. Inference defers the
+original view's `put` until alias scope exit. Retained elaboration and typed loans
+preserve the focus/owner distinction; typed verification derives owner references
+from capabilities, validates protection, checks refill, applies restoration, and
+retires the focus. Direct aliases keep their existing representation. The typed
+interpreter exposes the computed focus through the retained runtime lens.
+Representation analysis and verification now carry its topology into subsequent
+acquisitions. Existing concrete/C borrow mapping and release already consume this
+focus/finish relationship, without a new syntax-printing path.
+
+`test/computed-alias.test.ts` exercises serialized typed artifacts against checked
+legacy execution. Shared samples in `test/backend/computed-alias-samples.ts` also
+run through concrete verification and native/Wasm execution. They cover returned
+and tuple focuses, thin/scattered inputs, nested calls and aliases, replacement
+growth and nested projections, repeated type changes, move/refill, discarded
+captures, and deferred scopes through both calls and inline lens blocks.
+Corruption tests remove or forge owner protection. The remaining scoped forms
+below are still open; this slice does not establish complete lens semantics.
+
+Slice verification: 730 passing tests, the same 39 existing skips, zero failures
+across 27 files. Thirteen computed-alias samples pass serialized typed execution,
+checked legacy execution, native strict/optimized/sanitized C, and Emscripten/Node
+at both optimization levels. TypeScript and whitespace checks pass. Additional
+negative tests reject missing cleanup, premature release, forged owner protection,
+and an empty focus at scope exit. Shared-owner projection tests preserve one loan
+identity across branch state snapshots. No remote CI execution is claimed.
+
+### 1. Persistent aliases to computed lenses (original gap description)
 
 `src/infer.ts`, `Inferencer.alias` (approximately line 614), explicitly requires an
 identifier. `Inferencer.letBody` (approximately line 632) uses that helper for every

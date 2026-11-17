@@ -73,8 +73,10 @@ Implemented imports are numeric `+`, `-`, `*`, `/`, `==`, `>=`, `<=`, data `dup`
 and logical `fst`. `dup` of a computed focus restores that focus after copying it.
 There is no evaluator fallback. Function roots with parameters need a future host
 adapter, and borrowed lenses cannot escape the test entry boundary. Existing
-checker restrictions still apply: persistent aliases must bind variable lenses,
-lens cases are unsupported, and local storage cannot escape through returned lenses.
+checker restrictions still apply: lens cases are unsupported, and local storage
+cannot escape through returned lenses. Persistent computed aliases retain their
+focus and restoration operation until lexical release; thin, scattered, nested,
+and type-changing cases are exercised by the execution harness.
 Malformed concrete IR fails verification before storage lowering.
 
 The harness uses strict C11 (`-Wall -Wextra -Werror -pedantic`), `-O0` and `-O2`.

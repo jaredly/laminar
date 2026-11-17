@@ -24,10 +24,17 @@ import {
 } from './types.ts';
 
 type Borrow = { path: number[]; parent?: Borrow; id: string };
-type Root = { place?: string; type: Ty; empty: number[][]; borrows: Set<Borrow> };
+type Root = {
+    /** Provenance retained while this computed focus owns deferred restoration. */
+    owners?: Binding[];
+    place?: string;
+    type: Ty;
+    empty: number[][];
+    borrows: Set<Borrow>;
+};
 type Binding = { id?: string; root: Root; path: number[]; scheme?: Scheme; permit?: Borrow };
 type Env = Map<string, Binding>;
-type View = { read: Ty; put: (type: Ty) => void; targets: Binding[] };
+type View = { empty?: number[][]; read: Ty; put: (type: Ty) => void; targets: Binding[] };
 export type TypeEnvironment = ReadonlyMap<string, Scheme>;
 export type Inference = {
     type: Ty;
@@ -140,7 +147,7 @@ export class Inferencer {
             place: root.place!,
             type: root.type,
             empty: root.empty.map((p) => [...p]),
-            borrows: [...root.borrows].map((b) => b.id),
+            borrows: [...new Set([...root.borrows].map((b) => b.id))],
         };
     }
     private states(env: Env): RawState[] {
@@ -589,7 +596,11 @@ export class Inferencer {
         if (n.body.type === 'lens') {
             const view = this.lens(n.body.lens, sub),
                 write = this.solver.fresh();
-            if (view.targets.some((t) => !exits.some((e) => e.root.root === t.root)))
+            const owners = (b: Binding): Binding[] =>
+                b.root.owners ? b.root.owners.flatMap(owners) : [b];
+            if (
+                view.targets.flatMap(owners).some((t) => !exits.some((e) => e.root.root === t.root))
+            )
                 this.error('escaping-lens', n.loc, 'Returned lens must refer to a lens parameter');
             const read = view.read;
             view.put(write);
@@ -633,6 +644,8 @@ export class Inferencer {
             n.pat.type === 'drop' && n.value.type === 'fn' && n.value.name
                 ? { type: 'id', text: n.value.name, loc: n.value.loc }
                 : n.pat;
+        if (n.value.type === 'lens' && n.value.lens.type !== 'id')
+            return this.computedAlias(n, env, sub, p, isLens);
         if (n.value.type === 'lens') {
             const b = this.alias(n.value.lens, env);
             const type = this.get(b, n.loc);
@@ -701,6 +714,64 @@ export class Inferencer {
         close();
         return result;
     }
+    private computedAlias(
+        n: (Linear | Lens) & { type: 'let' },
+        env: Env,
+        sub: Env,
+        p: Pat,
+        isLens: boolean,
+    ): Ty | View {
+        if (n.value.type !== 'lens') throw new Error('Expected lens');
+        const view = this.lens(n.value.lens, env);
+        const read = view.read;
+        const focus = this.freshBinding(read);
+        focus.root.owners = view.targets;
+        focus.root.empty = view.empty?.map((p) => [...p]) ?? [];
+        const loan: Borrow = { path: [], id: this.builder.borrow() };
+        const protections = view.targets.map((target) => {
+            this.accessible(target, n.loc);
+            const borrow: Borrow = { path: target.path, parent: target.permit, id: loan.id };
+            target.root.borrows.add(borrow);
+            return { target, borrow };
+        });
+        this.builder.borrows.push({
+            id: loan.id,
+            node: this.builder.node(n),
+            place: focus.root.place!,
+            path: [],
+            owners: view.targets.map((b) => ({
+                place: b.root.place!,
+                path: [...b.path],
+                permit: b.permit?.id,
+            })),
+        });
+        focus.root.borrows.add(loan);
+        this.pattern(p, read, sub, { ...focus, permit: loan });
+        const close = () => {
+            focus.root.borrows.delete(loan);
+            this.restored(focus, n.loc);
+            protections.forEach(({ target, borrow }) => target.root.borrows.delete(borrow));
+            view.put(this.get(focus, n.loc));
+            this.builder.scopes.push({
+                node: this.builder.node(n),
+                bindings: names(p).map((name) => sub.get(name)!.id!),
+                exit: [this.state(focus.root), ...view.targets.map((b) => this.state(b.root))],
+            });
+        };
+        if (isLens) {
+            const result = this.lens(n.body as Lens, sub);
+            return {
+                ...result,
+                put: (type) => {
+                    result.put(type);
+                    close();
+                },
+            };
+        }
+        const result = this.linear(n.body as Linear, sub);
+        close();
+        return result;
+    }
     private lens(n: Lens, env: Env): View {
         const v = this.lensInner(n, env);
         // A lens occurrence has its own replacement metavariable for tooling.
@@ -709,6 +780,9 @@ export class Inferencer {
         return {
             get read() {
                 return v.read;
+            },
+            get empty() {
+                return v.empty;
             },
             targets: v.targets,
             put: (t) => {
@@ -728,6 +802,11 @@ export class Inferencer {
                     get read() {
                         return self.get(b, n.loc);
                     },
+                    get empty() {
+                        return b.root.empty
+                            .filter((p) => self.overlaps(p, b.path))
+                            .map((p) => p.slice(b.path.length));
+                    },
                     put: (t) => this.put(b, t, n.loc),
                     targets: [b],
                 };
@@ -739,6 +818,9 @@ export class Inferencer {
                 return {
                     get read() {
                         return tuple(...views.map((v) => v.read));
+                    },
+                    get empty() {
+                        return views.flatMap((v, i) => (v.empty ?? []).map((p) => [i, ...p]));
                     },
                     targets,
                     put: (t) =>
