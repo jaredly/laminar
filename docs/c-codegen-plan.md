@@ -182,6 +182,10 @@ Work:
 
 ## Phase 4 — Emit and execute the first native C and Wasm subset
 
+Implemented for the milestone subset; see [C backend](c-backend.md) and the
+[implementation record](backend-progress.md). Native and Emscripten/Node execution
+are tested locally; the pinned backend CI workflow is checked in.
+
 **Goal:** deliver an early end-to-end C backend and prove its portability by executing the same generated-language subset natively and as Wasm.
 
 Likely additions: `src/c/emit.ts`, `src/c/names.ts`, a compile driver, and `test/c/`.

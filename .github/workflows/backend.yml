@@ -1,0 +1,30 @@
+name: C and Emscripten backend
+on: [push, pull_request]
+jobs:
+  backend:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.2
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24.13.1
+      - name: Provision pinned Emscripten SDK
+        run: |
+          git clone https://github.com/emscripten-core/emsdk.git "$RUNNER_TEMP/emsdk"
+          git -C "$RUNNER_TEMP/emsdk" checkout c0bb220cb6e6f4e0fabb6f6db9efd53390ef5e56
+          "$RUNNER_TEMP/emsdk/emsdk" install 4.0.23
+          "$RUNNER_TEMP/emsdk/emsdk" activate 4.0.23
+      - run: bun install
+      - name: Required native and Wasm execution
+        run: |
+          source "$RUNNER_TEMP/emsdk/emsdk_env.sh"
+          bun test
+          bunx tsc --noEmit
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: backend-failures
+          path: /tmp/laminar-c-*

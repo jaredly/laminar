@@ -104,3 +104,48 @@ The phase-3 exit gate is met for accepted inputs: every emitted value/function h
 Verification: 558 passing tests, the same 39 existing skips, zero failures across 22 files; `bunx tsc --noEmit` and `git diff --check` pass. This is concrete-IR verification, not generated C/Wasm execution. Phase 4 is next. See [concrete-ir.md](concrete-ir.md) for API, ABI conventions, erasure rules, and the later-phase boundary.
 
 The concrete IR also has a lexer-node diagnostic printer (`src/print-concrete.ts`): `lconcrete` composes with the lexer's `stringify`, and `printConcreteProgram` is its convenience API. Compact source/SSA names, typed invocation slots, captures, loans, and deferred cleanup are visible by default; full canonical IDs and source origins are optional. All expected printer outputs are inline in `test/print-concrete.test.ts` (22 tests, 23 inline snapshots). Final verification including the printer: 580 passing tests, 39 existing skips, zero failures across 23 files; TypeScript and diff checks pass.
+
+## Completed slice: first native C and Emscripten/Node execution (phase 4)
+
+Phase 3 was committed as `c312abb`; its baseline is 580 passing tests and 39
+existing skips. Phase 4 adds:
+
+- `src/c/lower.ts`: independently verifies the concrete input, then resolves
+  logical places, homogeneous thin/scattered lens backing, projections, moves,
+  refills and swaps into explicit ordered statements. Empty swap results produce
+  unit without loading storage; full swaps preserve the old value before writing.
+  Homogeneous restoration updates caller storage directly. Type-changing backing,
+  returned lenses, captured/indirect callables and heap/runtime data retain explicit
+  backend diagnostics.
+- `src/c/syntax.ts`, `src/c/emit.ts`: syntax-only statement-tree printing and its
+  composition with storage lowering. Emission declares concrete types, exact ABI
+  pointer types, prototypes, capture-free direct function definitions, and an entry
+  adapter. Direct calls preserve the opaque environment argument, use verified
+  concrete wrapper contracts, and do not allocate callable environments.
+- `src/c/build.ts`: separate strict C11 compilation/execution, optimized builds,
+  optional native ASan/UBSan, Emscripten/Node builds, tagged special-number results,
+  toolchain metadata, and retained C/JS/Wasm/commands/runtime diagnostics on failure.
+- `test/c/`: full inline expected printer output for tuple/thin/scattered examples;
+  typed-IR/native/Wasm differential execution of all phase-4 acceptance cases;
+  lexical alias restoration, empty swaps, full/nested assignment order, fractional
+  division and special-double regressions; native sanitizer execution; actual
+  unmatched-case traps on both targets; explicit later-phase/corrupt-IR rejection.
+- `.github/workflows/backend.yml`: a required-tool execution job provisions
+  Emscripten 4.0.23 through emsdk commit
+  `c0bb220cb6e6f4e0fabb6f6db9efd53390ef5e56`, Node 24.13.1 and Bun 1.4.2.
+  Missing local tools report skips; CI treats missing backend tools as failures.
+  Failed backend artifacts are uploaded. Remote CI execution/branch protection
+  remain external to local verification.
+
+The phase-4 native and Wasm acceptance corpus executes generated code with both
+pointer representations and ordered effects. No JavaScript evaluator fallback is
+used by emitted code or the build driver. The evaluator is used only by tests for
+comparison. Full ABI/storage examples, APIs, native-import coverage and explicit
+restrictions are in [c-backend.md](c-backend.md). Phase 5 is next.
+
+Verification after phase 4: `bun test` reports 627 passing tests, the same 39
+existing skips, zero failures across 26 files (47 new tests). `bunx tsc --noEmit`
+and `git diff --check` pass. All 18 positive execution samples pass native strict
+C11 at `-O0`, `-O2`, and ASan/UBSan, and Emscripten/Node at `-O0` and `-O2`.
+Both targets also execute the unmatched-case trap test. Complete expected printer
+output remains inline, with no generated snapshot files.
