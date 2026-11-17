@@ -50,3 +50,15 @@ Subsequent phases remain as described in [the plan](c-codegen-plan.md): represen
 This is the first foundation of phase 3, not its exit gate. The tables are standalone and are not yet wired into generic typed lowering. Representation constraints, reachable specialization and recursion budgets, callable ABIs/wrappers, recursive nominal data definitions, deterministic emitted names, and independent concrete-IR verification remain to be implemented. Reachable type variables, functions without a closure representation, and nominal types without a storage definition are explicitly rejected by the layout API; no generic erasure or opaque pointer fallback is provided.
 
 Verification: `bun test` passes with 394 passing tests, 39 existing skips, and zero failures across 18 files; `bunx tsc --noEmit` passes. No generated C/Wasm execution is claimed.
+
+## Continued slice: reachable semantic specialization (phase 3)
+
+The representation vocabulary was committed as `8ea051b` (`Add concrete layout and recursive lens representation tables`). The next slice adds:
+
+- `src/specialize.ts`: explicit entry roots, retained semantic substitutions, a target-specific cache of reachable definition/import instances, deterministic SHA-256 names, dependency-first emission, and monomorphic user-definition references. Cache entries are reserved before body traversal for ordinary recursion. Changing-specialization recursion and instance-budget exhaustion report the definition chain. Generic IR remains frozen and available for diagnostics; unused top-level definitions/imports are omitted.
+- Specialized user units pass the existing typed-IR verifier. Global binding schemes are provenance-only metadata and are kept in the generic snapshot, rather than copied as unresolved storage annotations. Native/constructor import schemas remain generic for compatibility with typed verification/reference execution; the instance graph records their concrete uses separately.
+- `test/specialize.test.ts`: 27 tests covering reference execution of all acceptance cases after semantic specialization, instance reuse, numeric/boolean separation, recursion, first-class functions, reachability, deterministic target separation, explicit root/budget errors, unresolved local annotations, and verified generic IR with changing-specialization recursion.
+
+This slice does not connect representation constraints to specialization keys or establish physical call ABIs. Thin/scattered specialization variants, recursive nominal layouts, callable wrappers, and the independent concrete-IR verifier remain open. The semantic output is not the phase-3 exit artifact. API details and limitations are documented in [representations.md](representations.md).
+
+Verification: 421 passing tests, 39 existing skips, zero failures across 19 files; `bunx tsc --noEmit` passes. No C/Wasm execution is claimed.
