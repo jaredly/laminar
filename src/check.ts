@@ -5,6 +5,10 @@ import { Inferencer, type Inference, type TypeEnvironment } from './infer.ts';
 import { builtinTypes, constructorTypes } from './builtins.ts';
 import { TypeDiagnostic, type Scheme } from './types.ts';
 import { verifyElaboration } from './backend/verify-elaboration.ts';
+import type { Elaboration } from './elaborated.ts';
+import { importScheme, lowerTypedProgram, lowerTypedUnit } from './lower-typed.ts';
+import type { IRScheme, IRUnit, TypedProgram } from './typed-ir.ts';
+import { verifyTypedProgram } from './verify-ir.ts';
 
 export type CheckedExpression = Inference & { readonly ast: Linear };
 
@@ -15,7 +19,14 @@ export class Checker {
     private nextExpression = 0;
     private checked = new WeakMap<
         CheckedExpression,
-        { ast: Linear; names: string[]; scheme: Scheme; definitionId: string }
+        {
+            ast: Linear;
+            names: string[];
+            scheme: Scheme;
+            definitionId: string;
+            elaboration: Elaboration;
+            imports: IRScheme[];
+        }
     >();
     constructor(
         environment: TypeEnvironment = builtinTypes(),
@@ -51,6 +62,15 @@ export class Checker {
             names: [...this.environment.keys()],
             scheme: structuredClone(inference.scheme),
             definitionId: inference.elaboration.id,
+            elaboration: inference.elaboration,
+            imports: [
+                ...[...this.environment].map(([name, scheme]) =>
+                    importScheme(this.definitionIds.get(name)!, scheme),
+                ),
+                ...[...this.constructors].map(([name, scheme]) =>
+                    importScheme(`constructor/${name}`, scheme),
+                ),
+            ],
         });
         return result;
     }
@@ -63,6 +83,13 @@ export class Checker {
         if (stored.ast.type === 'fn' && stored.ast.name)
             scope[stored.ast.name] = { type: 'builtin' };
         return linearToExpr({ scope, counter: { current: 0 } }, stored.ast);
+    }
+    lowerTyped(expression: CheckedExpression): IRUnit {
+        const stored = this.checked.get(expression);
+        if (!stored) throw new Error('Expression was not checked by this checker');
+        const unit = lowerTypedUnit(stored.elaboration);
+        verifyTypedProgram({ schemaVersion: 1, imports: stored.imports, units: [unit] });
+        return unit;
     }
     publish(expression: CheckedExpression): void {
         const stored = this.checked.get(expression);
@@ -101,6 +128,41 @@ export function checkFile(
     ir: Expr[];
     definitions: TypeEnvironment;
 } {
+    const { checker, expressions } = checkItems(file, environment, constructors, unitId);
+    return {
+        expressions,
+        ir: expressions.map((e) => checker.lower(e)),
+        definitions: checker.definitions,
+    };
+}
+
+/** Checked, verified generic IR, with no legacy decomposition or source re-inference. */
+export function checkTypedFile(
+    file: File,
+    environment: TypeEnvironment = builtinTypes(),
+    constructors: TypeEnvironment = constructorTypes(),
+    unitId = 'unit',
+): { program: TypedProgram; definitions: TypeEnvironment } {
+    const { checker, expressions } = checkItems(file, environment, constructors, unitId);
+    const imports = [
+        ...[...environment].map(([name, scheme]) => importScheme(`native/${name}`, scheme)),
+        ...[...constructors].map(([name, scheme]) => importScheme(`constructor/${name}`, scheme)),
+    ];
+    return {
+        program: lowerTypedProgram(
+            expressions.map((e) => e.elaboration),
+            imports,
+        ),
+        definitions: checker.definitions,
+    };
+}
+
+function checkItems(
+    file: File,
+    environment: TypeEnvironment,
+    constructors: TypeEnvironment,
+    unitId: string,
+): { checker: Checker; expressions: CheckedExpression[] } {
     const checker = new Checker(environment, constructors, unitId);
     const expressions: CheckedExpression[] = [];
     let declaration: Decl | undefined;
@@ -126,9 +188,5 @@ export function checkFile(
             declaration.loc,
             'Declaration has no implementation',
         );
-    return {
-        expressions,
-        ir: expressions.map((e) => checker.lower(e)),
-        definitions: checker.definitions,
-    };
+    return { checker, expressions };
 }

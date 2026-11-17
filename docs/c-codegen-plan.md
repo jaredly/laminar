@@ -1,6 +1,6 @@
 # Plan: typed lowering, representation specialization, and C/Wasm code generation
 
-Status: implementation started, 2026-11-17. The phase-0 contracts/acceptance corpus and phase-1 durable elaboration are implemented; phases 2–8 remain. C/Wasm emission is not implemented yet. See [the implementation record](backend-progress.md) and [backend contract](backend-contract.md). Each phase should be independently reviewable and leave the existing checked and unchecked execution paths working.
+Status: implementation started, 2026-11-17. The phase-0 contracts/acceptance corpus, phase-1 durable elaboration, and phase-2 generic typed IR/verifier/reference execution are implemented; phases 3–8 remain. C/Wasm emission is not implemented yet. See [the implementation record](backend-progress.md), [backend contract](backend-contract.md), and [typed IR API](typed-ir.md). Each phase should be independently reviewable and leave the existing checked and unchecked execution paths working.
 
 ## Outcome and scope
 
