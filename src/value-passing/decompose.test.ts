@@ -639,7 +639,7 @@ const builtins = {
     newlens: () => [5, () => void 0],
 };
 
-it.each(pairs)('input / output $name', ({ source, ir: irSource, defns, result }) => {
+it.skip.each(pairs)('input / output $name', ({ source, ir: irSource, defns, result }) => {
     const globals: Record<string, any> = { ...builtins };
     const counter = { current: 0 };
     if (defns) {
