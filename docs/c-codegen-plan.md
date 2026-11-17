@@ -209,6 +209,11 @@ Work:
 
 ## Phase 5 — Type-changing storage and returned lenses
 
+Implemented for accepted typed/concrete IR, including thin/scattered and nested
+returned-lens execution on native C and Emscripten/Node. See
+[C backend](c-backend.md) for storage versions, restoration lifetimes and remaining
+checker/phase-6 restrictions.
+
 **Goal:** compile the defining `A/B` behavior safely and predictably.
 
 Work:

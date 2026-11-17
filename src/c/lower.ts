@@ -1,10 +1,12 @@
 import type { ConcreteProgram, ConcreteBlock } from '../concrete-ir.ts';
+import { Storage, type Data, type View } from './storage.ts';
 import type { IRPattern, SlotRef } from '../typed-ir.ts';
 import { verifyConcreteProgram } from '../verify-concrete.ts';
 import { BackendDiagnostic } from '../backend/target.ts';
 import { identifier, type Statement, type TranslationUnit } from './syntax.ts';
 
-type Storage = { expr: string; layout: string } | Storage[];
+type Lens = { view: View; finish: (body: Statement[]) => void };
+type Variable = { name: string; type: string };
 const unsupported = (message: string): never => {
     throw new BackendDiagnostic('unsupported-c', message);
 };
@@ -20,70 +22,74 @@ export function lowerC(program: ConcreteProgram): TranslationUnit {
     const unit = program.layouts.find((l) => l.kind === 'unit')!;
     const zero = (id: string) => `(${type(id)}){0}`;
     const field = (expr: string, n: number) => `(${expr}).item${n}`;
-    const children = (s: Storage): Storage[] =>
-        Array.isArray(s)
-            ? s
-            : layout(s.layout).fields.map((f, i) => {
-                  if (f.kind !== 'value') return unsupported('Non-data projection');
-                  return { expr: field(s.expr, i), layout: f.layout };
-              });
-    const project = (s: Storage, path: number[]): Storage =>
-        path.reduce((s, n) => children(s)[n]!, s);
-    const read = (s: Storage, id: string): string => {
+    const storage = new Storage((s) =>
+        layout(s.layout).fields.map((f, i) => {
+            if (f.kind !== 'value' || !f.name.startsWith('item'))
+                return unsupported('Non-data projection');
+            return { expression: field(s.expression, i), layout: f.layout };
+        }),
+    );
+    const read = (data: Data, id: string): string => {
         if (layout(id).kind === 'unit') return zero(id);
-        if (!Array.isArray(s) && s.layout === id) return s.expr;
-        const parts = children(s);
-        if (!layout(id).fields.length) return unsupported('Mismatched storage read');
-        return `(${type(id)}){${parts.map((x, i) => read(x, (layout(id).fields[i] as { layout: string }).layout)).join(', ') || '0'}}`;
+        if (!Array.isArray(data) && data.layout === id) return data.expression;
+        const parts = storage.parts(data),
+            fields = layout(id).fields;
+        if (!fields.length || parts.length !== fields.length)
+            return unsupported('Mismatched storage read');
+        return `(${type(id)}){${parts.map((d, i) => read(d, (fields[i] as { layout: string }).layout)).join(', ') || '0'}}`;
     };
-    const write = (s: Storage, expr: string, id: string, body: Statement[]) => {
-        if (Array.isArray(s))
-            s.forEach((x, i) =>
-                write(x, field(expr, i), (layout(id).fields[i] as { layout: string }).layout, body),
-            );
-        else if (s.layout !== id) unsupported('Type-changing storage requires phase 5');
-        else body.push(`${s.expr} = ${expr};`);
+    const endpoint = (id: string, which: 'read' | 'replacement'): string => {
+        const l = layout(id),
+            f = l.fields.find((f) => f.name === which) ?? l.fields.find((f) => f.name === 'read');
+        if (f?.kind === 'pointer' && f.layout) return f.layout;
+        const abi = l.fields.find((f) => f.name === 'restore');
+        if (abi?.kind !== 'code') return unsupported('Missing restoration ABI');
+        if (which === 'replacement')
+            return program.abis.find((a) => a.id === abi.abi)!.arguments[0]!;
+        const children = l.fields
+            .filter((f) => f.name.startsWith('item'))
+            .map((f) => endpoint((f as { layout: string }).layout, which));
+        return (
+            program.layouts.find(
+                (l) =>
+                    l.kind === 'record' &&
+                    l.fields.length === children.length &&
+                    l.fields.every((f, i) => f.kind === 'value' && f.layout === children[i]),
+            )?.id ?? unsupported('Missing lens read aggregate')
+        );
     };
-    const fromLens = (expr: string, id: string): Storage => {
-        const l = layout(id);
-        const input = l.fields.find((f) => f.name === 'read'),
-            output = l.fields.find((f) => f.name === 'replacement');
-        if (
-            input?.kind === 'pointer' &&
-            output?.kind === 'pointer' &&
-            input.layout !== output.layout &&
-            layout(input.layout!).kind !== 'unit'
-        )
-            unsupported('Type-changing lens ABI requires phase 5');
-        const ptr =
-            l.fields.find((f) => f.name === 'replacement') ??
-            l.fields.find((f) => f.name === 'read');
-        if (ptr?.kind === 'pointer' && ptr.layout)
-            return { expr: `*(${expr}).${ptr.name}`, layout: ptr.layout };
+    const noFinish = (_body: Statement[]) => {};
+    const incoming = (expression: string, id: string): View => {
+        const l = layout(id),
+            f = l.fields.find((f) => f.name === 'read');
+        if (f?.kind === 'pointer' && f.layout)
+            return storage.own({ expression: `*(${expression}).read`, layout: f.layout });
         return l.fields
             .filter((f) => f.name.startsWith('item'))
-            .map((f) => {
-                if (f.kind !== 'value') return unsupported('Invalid scattered lens');
-                return fromLens(`(${expr}).${identifier(f.name)}`, f.layout);
-            });
+            .map((f) =>
+                incoming(`(${expression}).${identifier(f.name)}`, (f as { layout: string }).layout),
+            );
     };
-    const lensValue = (s: Storage, id: string): string => {
-        const l = layout(id);
-        if (l.fields.some((f) => f.name === 'read')) {
-            if (Array.isArray(s)) return unsupported('Scattered to thin adapter');
-            const ptr =
+    const flush = (expression: string, id: string, data: Data, body: Statement[]) => {
+        const l = layout(id),
+            f =
                 l.fields.find((f) => f.name === 'replacement') ??
-                l.fields.find((f) => f.name === 'read')!;
-            if (ptr.kind !== 'pointer' || ptr.layout !== s.layout)
-                return unsupported('Type-changing storage requires phase 5');
-            return `(${type(id)}){.${ptr.name} = &(${s.expr})}`;
+                l.fields.find((f) => f.name === 'read');
+        if (f?.kind === 'pointer' && f.layout) {
+            body.push(`*(${expression}).${f.name} = ${read(data, f.layout)};`);
+            return;
         }
-        return `(${type(id)}){${children(s)
-            .map(
-                (x, i) =>
-                    ` .item${i} = ${lensValue(x, (l.fields[i] as { layout: string }).layout)}`,
-            )
-            .join(', ')}}`;
+        const parts = storage.parts(data);
+        l.fields
+            .filter((f) => f.name.startsWith('item'))
+            .forEach((f, i) =>
+                flush(
+                    `(${expression}).${identifier(f.name)}`,
+                    (f as { layout: string }).layout,
+                    parts[i]!,
+                    body,
+                ),
+            );
     };
     const declarations = [
         '#include <stdio.h>',
@@ -112,29 +118,175 @@ export function lowerC(program: ConcreteProgram): TranslationUnit {
         }
     const signature = (c: ConcreteProgram['code'][number]) =>
         `${type(c.body.layout)} ${codes.get(c.id)}(void *environment${c.parameters.map((p, i) => `, ${type(p.layout)} arg${i}`).join('')})`;
+    declarations.push(
+        'static size_t live_contexts = 0;',
+        'void *allocate_context(size_t size);',
+        'void release_context(void *context);',
+    );
     program.code.forEach((c) => declarations.push(signature(c) + ';'));
+    const helpers: TranslationUnit['functions'] = [];
+    let helperCounter = 0;
     const functions = program.code.map((c) => {
         if (c.captures.length) unsupported('Captured closures require phase 6');
         const values = new Map<string, string>(),
-            lenses = new Map<string, Storage>(),
-            places = new Map<string, Storage>(),
+            lenses = new Map<string, Lens>(),
+            places = new Map<string, View>(),
             direct = new Map<string, string>();
         let counter = 0;
         const fresh = () => `v${counter++}`;
-        const bind = (p: IRPattern, s: Storage) => {
-            if (p.kind === 'bind') places.set(p.slot.place, s);
-            else if (p.kind === 'tuple') p.items.forEach((p, i) => bind(p, children(s)[i]!));
+        const variables: Variable[] = c.parameters.map((p, i) => ({
+            name: `arg${i}`,
+            type: type(p.layout),
+        }));
+        const declare = (
+            id: string,
+            expression: string,
+            body: Statement[],
+            name = fresh(),
+        ): string => {
+            variables.push({ name, type: type(id) });
+            body.push(`${type(id)} ${name} = ${expression};`, `(void)${name};`);
+            return name;
+        };
+        const bind = (p: IRPattern, data: Data) => {
+            if (p.kind === 'bind') places.set(p.slot.place, storage.own(data));
+            else if (p.kind === 'tuple')
+                p.items.forEach((p, i) => bind(p, storage.parts(data)[i]!));
             else if (p.kind === 'constructor') unsupported('Constructor pattern requires phase 7');
         };
-        c.parameters.forEach((p, i) =>
-            p.lensPlace
-                ? places.set(p.lensPlace, fromLens(`arg${i}`, p.layout))
-                : bind(p.pattern, { expr: `arg${i}`, layout: p.layout }),
-        );
+        const parameters: { expression: string; layout: string; view: View }[] = [];
+        c.parameters.forEach((p, i) => {
+            if (p.lensPlace) {
+                const view = incoming(`arg${i}`, p.layout);
+                places.set(p.lensPlace, view);
+                parameters.push({ expression: `arg${i}`, layout: p.layout, view });
+            } else bind(p.pattern, { expression: `arg${i}`, layout: p.layout });
+        });
+        const flushParameters = (body: Statement[]) =>
+            parameters.forEach((p) => flush(p.expression, p.layout, storage.get(p.view), body));
         const ref = (s: SlotRef) =>
-            project(places.get(s.place) ?? unsupported('Unavailable C place'), s.path);
+            storage.project(places.get(s.place) ?? unsupported('Unavailable C place'), s.path);
         const value = (id: string) =>
             values.get(id) ?? unsupported('Indirect/function value requires phase 6');
+        // Adapt input/output backing at calls. Escaping calls use heap backing, so
+        // a returned continuation never retains a pointer into the caller frame.
+        const adapt = (
+            lens: Lens,
+            id: string,
+            escapes: boolean,
+            body: Statement[],
+        ): { expression: string; finish: (body: Statement[]) => void } => {
+            const index = helperCounter++,
+                name = `back${index}`,
+                fields: string[] = [],
+                init: Statement[] = [];
+            const build = (id: string, path: string): string => {
+                const l = layout(id),
+                    input = l.fields.find((f) => f.name === 'read');
+                if (input?.kind === 'pointer' && input.layout) {
+                    const output = l.fields.find((f) => f.name === 'replacement');
+                    const n = fields.length,
+                        r = `read${n}`,
+                        w = output ? `write${n}` : r;
+                    fields.push(`${type(input.layout)} ${r};`);
+                    const d = storage.get(
+                        storage.project(lens.view, path ? path.split('.').map(Number) : []),
+                    );
+                    init.push(`${name}${escapes ? '->' : '.'}${r} = ${read(d, input.layout)};`);
+                    if (output?.kind === 'pointer' && output.layout) {
+                        fields.push(`${type(output.layout)} ${w};`);
+                        init.push(`${name}${escapes ? '->' : '.'}${w} = ${zero(output.layout)};`);
+                    }
+                    return `(${type(id)}){.read=&${name}${escapes ? '->' : '.'}${r}${output ? `, .replacement=&${name}${escapes ? '->' : '.'}${w}` : ''}}`;
+                }
+                return `(${type(id)}){${
+                    l.fields
+                        .filter((f) => f.name.startsWith('item'))
+                        .map(
+                            (f, i) =>
+                                `.${f.name}=${build((f as { layout: string }).layout, path ? path + '.' + i : String(i))}`,
+                        )
+                        .join(', ') || '0'
+                }}`;
+            };
+            const expression = build(id, '');
+            const backingType = `Backing${index}`;
+            declarations.push(
+                `typedef struct { ${fields.join(' ') || 'unsigned char inhabitant;'} } ${backingType};`,
+            );
+            variables.push({ name, type: backingType + (escapes ? ' *' : '') });
+            body.push(
+                escapes
+                    ? `${backingType} *${name} = allocate_context(sizeof *${name});`
+                    : `${backingType} ${name} = {0};`,
+            );
+            body.push(`(void)${name};`);
+            if (escapes) body.push({ head: `if (!${name})`, body: ['abort();'] });
+            body.push(...init);
+            const arg = declare(id, expression, body);
+            const outputs = (expr: string, id: string): Data => {
+                const l = layout(id),
+                    f =
+                        l.fields.find((f) => f.name === 'replacement') ??
+                        l.fields.find((f) => f.name === 'read');
+                if (f?.kind === 'pointer' && f.layout)
+                    return { expression: `*(${expr}).${f.name}`, layout: f.layout };
+                return l.fields
+                    .filter((f) => f.name.startsWith('item'))
+                    .map((f) => outputs(`(${expr}).${f.name}`, (f as { layout: string }).layout));
+            };
+            return {
+                expression: arg,
+                finish: (body) => {
+                    // Copy before freeing backing; subsequent versions never reference freed memory.
+                    const result = declare(
+                        endpoint(id, 'replacement'),
+                        read(outputs(arg, id), endpoint(id, 'replacement')),
+                        body,
+                    );
+                    storage.put(lens.view, {
+                        expression: result,
+                        layout: endpoint(id, 'replacement'),
+                    });
+                    lens.finish(body);
+                    body.push(`(void)${name};`);
+                    if (escapes) body.push(`release_context(${name});`);
+                },
+            };
+        };
+        const runtimeLens = (
+            name: string,
+            id: string,
+            after: (body: Statement[]) => void,
+        ): Lens => {
+            const view = incoming(name, id);
+            return {
+                view,
+                finish: (body) => {
+                    const replacement = declare(
+                        endpoint(id, 'replacement'),
+                        read(storage.get(view), endpoint(id, 'replacement')),
+                        body,
+                    );
+                    body.push(
+                        {
+                            head: `if ((${name}).restore)`,
+                            body: [`(${name}).restore((${name}).context, ${replacement});`],
+                        },
+                        {
+                            head: 'else',
+                            body: (() => {
+                                const b: Statement[] = [];
+                                flush(name, id, storage.get(view), b);
+                                return b;
+                            })(),
+                        },
+                    );
+                    after(body);
+                },
+            };
+        };
+        const loans = new Map<string, Lens>();
         const literal = (v: unknown, id: string): string =>
             v === null
                 ? zero(id)
@@ -161,7 +313,10 @@ export function lowerC(program: ConcreteProgram): TranslationUnit {
         const block = (b: ConcreteBlock, body: Statement[]): string => {
             for (const i of b.instructions) {
                 if (i.op === 'bind') {
-                    bind(i.pattern, { expr: value(i.value), layout: outputLayouts.get(i.value)! });
+                    bind(i.pattern, {
+                        expression: value(i.value),
+                        layout: outputLayouts.get(i.value)!,
+                    });
                     continue;
                 }
                 if (i.op === 'borrow') {
@@ -169,7 +324,9 @@ export function lowerC(program: ConcreteProgram): TranslationUnit {
                         .find((u) => u.id === c.unit)
                         ?.loans.find((l) => l.id === i.loan);
                     if (!loan) unsupported('Missing loan');
-                    places.set(loan!.place, lenses.get(i.lens)!);
+                    const lens = lenses.get(i.lens)!;
+                    places.set(loan!.place, lens.view);
+                    loans.set(i.loan, lens);
                     continue;
                 }
                 const id = i.out.layout,
@@ -177,8 +334,15 @@ export function lowerC(program: ConcreteProgram): TranslationUnit {
                 let expr!: string;
                 switch (i.op) {
                     case 'make-callable':
-                        if (i.captures.length) unsupported('Captured closures require phase 6');
+                        if (
+                            i.captures.length &&
+                            program.callables.find((c) => c.id === i.callable)!.entries.length
+                        )
+                            unsupported('Captured closures require phase 6');
+                        // Invocation-erased environments contain only this backend's scalar/tuple data.
+                        // Capture moves are already explicit; discarding those values requires no runtime drop.
                         direct.set(i.out.id, i.callable);
+                        values.set(i.out.id, zero(id));
                         continue;
                     case 'constant':
                         expr = literal(i.value, id);
@@ -187,47 +351,89 @@ export function lowerC(program: ConcreteProgram): TranslationUnit {
                         expr = `(${type(id)}){${i.items.map(value).join(', ') || '0'}}`;
                         break;
                     case 'move':
-                        expr = read(ref(i.slot), id);
+                        expr = read(storage.get(ref(i.slot)), id);
                         break;
                     case 'acquire':
-                        lenses.set(i.out.id, ref(i.slot));
+                        lenses.set(i.out.id, { view: ref(i.slot), finish: noFinish });
                         continue;
                     case 'lens-tuple':
-                        lenses.set(
-                            i.out.id,
-                            i.items.map((v) => lenses.get(v)!),
-                        );
+                        lenses.set(i.out.id, {
+                            view: i.items.map((v) => lenses.get(v)!.view),
+                            finish: (body) => i.items.forEach((v) => lenses.get(v)!.finish(body)),
+                        });
                         continue;
-                    case 'swap':
-                        expr =
-                            layout(id).kind === 'unit' ? zero(id) : read(lenses.get(i.lens)!, id);
-                        body.push(`${type(id)} ${name} = ${expr};`, `(void)${name};`);
-                        write(
-                            lenses.get(i.lens)!,
-                            value(i.value),
-                            outputLayouts.get(i.value)!,
-                            body,
-                        );
+                    case 'swap': {
+                        const lens = lenses.get(i.lens)!;
+                        expr = read(storage.get(lens.view), id);
+                        declare(id, expr, body, name);
+                        storage.put(lens.view, {
+                            expression: value(i.value),
+                            layout: outputLayouts.get(i.value)!,
+                        });
+                        lens.finish(body);
                         values.set(i.out.id, name);
                         continue;
-                    case 'scope':
-                        expr = block(i.body, body);
+                    }
+                    case 'scope': {
+                        const result = block(i.body, body);
+                        if (lenses.has(i.body.result)) {
+                            lenses.set(i.out.id, lenses.get(i.body.result)!);
+                            continue;
+                        }
+                        expr = result;
                         break;
+                    }
                     case 'case': {
-                        body.push(`${type(id)} ${name};`);
-                        i.cases.forEach((arm, n) => {
+                        if (layout(id).fields.some((f) => f.name === 'restore'))
+                            unsupported('Lens representation joins require phase 6');
+                        declare(id, zero(id), body, name);
+                        const before = storage.snapshot(),
+                            outerVariables = variables.length;
+                        const arms = i.cases.map((arm) => {
+                            storage.reset(before);
                             const nested: Statement[] = [];
                             bind(arm.pattern, {
-                                expr: value(i.value),
+                                expression: value(i.value),
                                 layout: outputLayouts.get(i.value)!,
                             });
                             const result = block(arm.body, nested);
                             nested.push(`${name} = ${result};`);
+                            const state = storage.snapshot();
+                            variables.length = outerVariables;
+                            return { nested, state };
+                        });
+                        storage.reset(before);
+                        const merge = (data: Data[]): Data => {
+                            if (data.every((d) => JSON.stringify(d) === JSON.stringify(data[0])))
+                                return data[0]!;
+                            const first = data[0]!;
+                            if (
+                                !Array.isArray(first) &&
+                                data.every((d) => !Array.isArray(d) && d.layout === first.layout)
+                            ) {
+                                const phi = declare(first.layout, zero(first.layout), body);
+                                arms.forEach((arm, n) =>
+                                    arm.nested.push(`${phi} = ${read(data[n]!, first.layout)};`),
+                                );
+                                return { expression: phi, layout: first.layout };
+                            }
+                            const parts = data.map((d) => storage.parts(d));
+                            if (
+                                !parts[0]?.length ||
+                                parts.some((p) => p.length !== parts[0]!.length)
+                            )
+                                return unsupported('Storage version join requires an adapter');
+                            return parts[0].map((_, n) => merge(parts.map((p) => p[n]!)));
+                        };
+                        before.forEach(
+                            (_, cell) => (cell.data = merge(arms.map((a) => a.state.get(cell)!))),
+                        );
+                        i.cases.forEach((arm, n) =>
                             body.push({
                                 head: `${n ? 'else if' : 'if'} (${matches(arm.pattern, value(i.value))})`,
-                                body: nested,
-                            });
-                        });
+                                body: arms[n]!.nested,
+                            }),
+                        );
                         body.push({ head: 'else', body: ['abort();'] });
                         values.set(i.out.id, name);
                         continue;
@@ -235,31 +441,83 @@ export function lowerC(program: ConcreteProgram): TranslationUnit {
                     case 'invoke': {
                         const callable =
                             program.callables.find((x) => x.id === direct.get(i.callee)) ??
+                            program.callables.find(
+                                (x) =>
+                                    x.layout === outputLayouts.get(i.callee) &&
+                                    x.entries.some((e) => e.wrapper === i.wrapper),
+                            ) ??
                             unsupported('Indirect call requires phase 6');
                         if (!callable.entries.some((e) => e.wrapper === i.wrapper))
                             unsupported('Invalid direct call');
                         const w = program.wrappers.find((w) => w.id === i.wrapper)!;
                         const abi = program.abis.find((a) => a.id === i.abi)!;
-                        const args = i.args.map((v, n) =>
-                            lenses.has(v) ? lensValue(lenses.get(v)!, abi.arguments[n]!) : value(v),
-                        );
-                        if (w.kind === 'invoke')
-                            expr = `${codes.get(w.code)}(NULL${args.map((a) => `, ${a}`).join('')})`;
-                        else if (w.kind === 'native') {
-                            const op = w.definition.slice(7);
-                            if (['+', '-', '*', '/', '==', '>=', '<='].includes(op))
-                                expr = `(${args[0]} ${op} ${args[1]})`;
-                            else if (op === 'dup') expr = read(lenses.get(i.args[0]!)!, id);
-                            else unsupported(`Native import ${w.definition}`);
-                        } else return unsupported('Disposer invocation');
-                        break;
+                        const isLens = layout(id).fields.some((f) => f.name === 'restore');
+                        const adapters: { finish: (body: Statement[]) => void }[] = [];
+                        let args: string[] = [];
+                        if (w.kind === 'native' && w.definition === 'native/dup') {
+                            const lens = lenses.get(i.args[0]!)!;
+                            expr = read(storage.get(lens.view), id);
+                            adapters.push({ finish: lens.finish });
+                        } else if (w.kind === 'native' && w.definition === 'native/fst') {
+                            const parent = lenses.get(i.args[0]!)!;
+                            lenses.set(i.out.id, {
+                                view: storage.project(parent.view, [0]),
+                                finish: parent.finish,
+                            });
+                            continue;
+                        } else {
+                            args = i.args.map((v, n) => {
+                                if (!lenses.has(v)) return value(v);
+                                const a = adapt(lenses.get(v)!, abi.arguments[n]!, isLens, body);
+                                adapters.push(a);
+                                return a.expression;
+                            });
+                            if (w.kind === 'invoke')
+                                expr = `${codes.get(w.code)}(NULL${args.map((a) => `, ${a}`).join('')})`;
+                            else if (w.kind === 'native') {
+                                const op = w.definition.slice(7);
+                                if (['+', '-', '*', '/', '==', '>=', '<='].includes(op))
+                                    expr = `(${args[0]} ${op} ${args[1]})`;
+                                else unsupported(`Native import ${w.definition}`);
+                            } else return unsupported('Disposer invocation');
+                        }
+                        declare(id, expr, body, name);
+                        values.set(i.out.id, name);
+                        if (isLens)
+                            lenses.set(
+                                i.out.id,
+                                runtimeLens(name, id, (body) =>
+                                    adapters.forEach((a) => a.finish(body)),
+                                ),
+                            );
+                        else adapters.forEach((a) => a.finish(body));
+                        continue;
                     }
                     default:
                         return unsupported(`Operation ${i.op} requires a later backend phase`);
                 }
-                body.push(`${type(id)} ${name} = ${expr};`, `(void)${name};`);
+                declare(id, expr, body, name);
                 values.set(i.out.id, name);
             }
+            const finish = (body: Statement[]) =>
+                b.cleanup.forEach((c) => {
+                    if (c.kind === 'release') {
+                        const lens = loans.get(c.loan);
+                        if (lens) lens.finish(body);
+                    }
+                });
+            if (lenses.has(b.result)) {
+                const lens = lenses.get(b.result)!;
+                lenses.set(b.result, {
+                    view: lens.view,
+                    finish: (body) => {
+                        lens.finish(body);
+                        finish(body);
+                    },
+                });
+                return '';
+            }
+            finish(body);
             return value(b.result);
         };
         const outputLayouts = new Map<string, string>();
@@ -275,9 +533,123 @@ export function lowerC(program: ConcreteProgram): TranslationUnit {
             ...c.parameters.map((_, i) => `(void)arg${i};`),
         ];
         const result = block(c.body, body);
-        body.push(`return ${result};`);
+        if (lenses.has(c.body.result)) {
+            const lens = lenses.get(c.body.result)!;
+            const h = helperCounter++,
+                context = `Restore${h}`,
+                restore = `restore${h}`;
+            const candidates = [...variables];
+            const contextFields: string[] = [];
+            const initial: Statement[] = [];
+            const build = (view: View, id: string, path: string): string => {
+                const l = layout(id),
+                    input = l.fields.find((f) => f.name === 'read');
+                if (input?.kind === 'pointer' && input.layout) {
+                    const r = `focus${path}`,
+                        output = l.fields.find((f) => f.name === 'replacement');
+                    contextFields.push(`${type(input.layout)} ${r};`);
+                    initial.push(`ctx->${r} = ${read(storage.get(view), input.layout)};`);
+                    if (output?.kind === 'pointer' && output.layout)
+                        contextFields.push(`${type(output.layout)} ${r}out;`);
+                    return `(${type(id)}){.read=&ctx->${r}${output ? `, .replacement=&ctx->${r}out` : ''}}`;
+                }
+                return `(${type(id)}){${
+                    l.fields
+                        .filter((f) => f.name.startsWith('item'))
+                        .map(
+                            (f, i) =>
+                                `.${f.name}=${build(storage.project(view, [i]), (f as { layout: string }).layout, path + '_' + i)}`,
+                        )
+                        .join(', ') || '0'
+                }}`;
+            };
+            const resultExpression = build(lens.view, c.body.layout, '');
+            const replacement = endpoint(c.body.layout, 'replacement');
+            const saved = storage.snapshot();
+            storage.put(lens.view, { expression: 'replacement', layout: replacement });
+            const cleanup: Statement[] = [];
+            lens.finish(cleanup);
+            flushParameters(cleanup);
+            storage.reset(saved);
+            const references = new Set<string>();
+            const inspect = (body: Statement[]) =>
+                body.forEach((s) => {
+                    if (typeof s === 'string')
+                        for (const name of s.matchAll(/\b[A-Za-z_][A-Za-z_0-9]*\b/g))
+                            references.add(name[0]);
+                    else {
+                        for (const name of s.head.matchAll(/\b[A-Za-z_][A-Za-z_0-9]*\b/g))
+                            references.add(name[0]);
+                        inspect(s.body);
+                    }
+                });
+            inspect(cleanup);
+            const captured = candidates.filter((v) => references.has(v.name));
+            contextFields.unshift(...captured.map((v) => `${v.type} ${v.name};`));
+            const names = new Set(captured.map((v) => v.name));
+            const rewrite = (s: string) =>
+                s.replace(/\b[A-Za-z_][A-Za-z_0-9]*\b/g, (n) => (names.has(n) ? `ctx->${n}` : n));
+            const translate = (b: Statement[]): Statement[] =>
+                b.map((s) =>
+                    typeof s === 'string'
+                        ? rewrite(s)
+                        : { head: rewrite(s.head), body: translate(s.body) },
+                );
+            declarations.push(
+                `typedef struct { ${contextFields.join(' ') || 'unsigned char inhabitant;'} } ${context};`,
+            );
+            declarations.push(
+                `${type(unit.id)} ${restore}(void *opaque, ${type(replacement)} replacement);`,
+            );
+            helpers.push({
+                signature: `${type(unit.id)} ${restore}(void *opaque, ${type(replacement)} replacement)`,
+                body: [
+                    `${context} *ctx = opaque;`,
+                    '(void)replacement;',
+                    ...translate(cleanup),
+                    'release_context(ctx);',
+                    `return ${zero(unit.id)};`,
+                ],
+            });
+            body.push(`${context} *ctx = allocate_context(sizeof *ctx);`, {
+                head: 'if (!ctx)',
+                body: ['abort();'],
+            });
+            captured.forEach((v) => body.push(`ctx->${v.name} = ${v.name};`));
+            body.push(...initial);
+            const out = fresh();
+            body.push(
+                `${type(c.body.layout)} ${out} = ${resultExpression};`,
+                `${out}.restore = ${restore};`,
+                `${out}.context = ctx;`,
+                `return ${out};`,
+            );
+        } else {
+            flushParameters(body);
+            body.push(`return ${result};`);
+        }
         return { signature: signature(c), body };
     });
+    functions.push(
+        ...helpers,
+        {
+            signature: 'void *allocate_context(size_t size)',
+            body: [
+                'void *context = malloc(size);',
+                { head: 'if (!context)', body: ['abort();'] },
+                '++live_contexts;',
+                'return context;',
+            ],
+        },
+        {
+            signature: 'void release_context(void *context)',
+            body: [
+                { head: 'if (!context || live_contexts == 0)', body: ['abort();'] },
+                '--live_contexts;',
+                'free(context);',
+            ],
+        },
+    );
     // Test-only structured result adapter; never exports borrowed storage.
     const print = (expr: string, id: string, body: Statement[]) => {
         const l = layout(id);
@@ -320,7 +692,7 @@ export function lowerC(program: ConcreteProgram): TranslationUnit {
         print(v, c.body.layout, main);
         main.push('putchar(10);');
     }
-    main.push('return 0;');
+    main.push({ head: 'if (live_contexts != 0)', body: ['abort();'] }, 'return 0;');
     functions.push({ signature: 'int main(void)', body: main });
     return { declarations, functions };
 }

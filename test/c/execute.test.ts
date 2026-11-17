@@ -5,6 +5,7 @@ import { afterAll } from 'bun:test';
 import { it, expect } from 'bun:test';
 import { spawnSync } from 'node:child_process';
 import { typedProgram } from '../backend/typed-program.ts';
+import { phase5Samples } from './phase5-samples.ts';
 import { backendCorpus } from '../backend/corpus.ts';
 import { compileConcreteProgram } from '../../src/lower-concrete.ts';
 import { targetConfig, wasm32Emscripten } from '../../src/backend/target.ts';
@@ -50,7 +51,8 @@ const native =
           })
         : undefined;
 const samples = [
-    ...backendCorpus.filter((s) => s.phase === 4),
+    ...backendCorpus.filter((s) => s.phase <= 5),
+    ...phase5Samples,
     { name: 'lexical-alias', source: '{let x = 1\n {let y = ~x\n y := y + 1}\n x}', expected: 2 },
     { name: 'empty-swap', source: '{let x = 1\n x := x + 1}', expected: null },
     { name: 'full-swap-order', source: '{let x = 1\n (x := 2, x := 3, x)}', expected: [1, 2, 3] },

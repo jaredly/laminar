@@ -29,7 +29,12 @@ export async function buildAndRun(source: string, options: BuildOptions): Promis
         output,
         '-lm',
     ];
-    if (options.sanitize) args.push('-fsanitize=address,undefined', '-fno-omit-frame-pointer');
+    if (options.sanitize)
+        args.push(
+            '-fsanitize=address,undefined',
+            '-fno-omit-frame-pointer',
+            '-fno-sanitize-recover=all',
+        );
     if (options.wasm) args.push('-sENVIRONMENT=node', '-sEXIT_RUNTIME=1', '-sASSERTIONS=1');
     await writeFile(input, source);
     const compilerVersion = spawnSync(options.compiler, ['--version'], { encoding: 'utf8' }).stdout;
@@ -42,6 +47,10 @@ export async function buildAndRun(source: string, options: BuildOptions): Promis
     );
     const run = (command: string, args: string[], stage: 'c-build' | 'c-runtime') => {
         const env = { ...process.env };
+        if (options.sanitize)
+            env.ASAN_OPTIONS = [env.ASAN_OPTIONS, 'detect_stack_use_after_return=1']
+                .filter(Boolean)
+                .join(':');
         // Host SDK include injection breaks Emscripten and bypasses native system-header treatment.
         delete env.CPATH;
         delete env.C_INCLUDE_PATH;

@@ -1,8 +1,9 @@
-# C backend: phase 4
+# C backend: phases 4–5
 
 `src/c/lower.ts` consumes independently verified concrete IR. It resolves logical
-places, projections, thin/scattered lenses, and homogeneous restoration into a
-statement tree. `src/c/syntax.ts` only formats that tree; it does not infer
+places, projections, thin/scattered lenses, typed storage versions, and restoration
+into a statement tree. `src/c/storage.ts` retains logical cell/path identities
+independently of C aggregate versions. `src/c/syntax.ts` only formats that tree; it does not infer
 storage, inspect source, or execute language code. `emitC` composes these passes.
 Building and running are separate operations in `src/c/build.ts`.
 
@@ -25,27 +26,59 @@ opaque environment argument, and a test-only `main` adapter. Each expression
 entry prints one JSON result line. Special doubles use the backend contract's
 tagged number protocol. This is not a public host ABI.
 
-Phase 4 supports Number (`double`), Bool, inhabited unit, tuples, first-match
-control flow, unmatched-case aborts, direct calls and recursion, homogeneous
-thin and recursively scattered lens parameters, moves, swaps and refills.
-Empty swap results become unit without loading storage. Full swaps save the old
-value before writing. Ordered IR temporaries sequence all effects. Homogeneous
-restoration writes directly into caller storage; lexical release/drop operations
-for this non-owning subset require no runtime continuation or destructor.
-Restoration fields remain null and are never invoked by this subset.
+The executable subset supports Number (`double`), Bool, inhabited unit, tuples,
+first-match control flow, unmatched-case aborts, direct calls and recursion,
+thin and recursively scattered lenses, moves, swaps and refills. Empty swap
+results become unit without loading storage. Full swaps save the old value
+before installing a replacement. Ordered IR temporaries sequence all effects.
 
-Capture-free `make-callable` instructions retain static provenance until a direct
-invocation chooses its verified wrapper/ABI. No environment is allocated. Calls
-through parameters, local first-class callable moves, captured environments,
-returned lenses, type-changing backing, nominal/heap data, and unsupported
-native imports report `unsupported-c`. Phase 4 implements numeric `+`, `-`, `*`,
-`/`, `==`, `>=`, `<=` and data `dup`; there is no host/evaluator fallback.
-Function roots with parameters require a future host adapter. Expression roots
-are executable now. Source errors and malformed concrete IR still fail in their
-existing verifiers before emission.
+Phase 5 gives each logical place a current typed storage version. A view retains
+its logical cell and projection path; replacing a field updates that mapping,
+rather than leaving aliases pointing into the old physical aggregate. Reads
+reconstruct aggregates from the current component versions, preserving unaffected
+fields with their original types. Branches merge versions through typed temporaries.
+No layout sizes, offsets, union punning or incompatible pointer casts are used.
+
+Each lens call adapts the caller's logical view into concrete typed read and
+replacement backing. Homogeneous backing can share one typed buffer; different
+layouts use independent buffers. Plain-result calls use stack backing and commit
+output immediately afterward. Lens-result calls allocate backing on the heap:
+that backing can outlive the call frame and stays owned until restoration.
+
+A function returning a lens allocates a concrete residual context. Its read focus
+is materialized in that context; only values referenced by deferred restoration
+are captured. A generated function with the exact concrete restoration ABI accepts
+the replacement, rebuilds the parent aggregate, runs deferred cleanup, writes the
+parameter outputs, and releases the context. Nested returned calls retain heap
+backing through the whole chain, copy outputs before releasing it, and restore
+in source order. Native `fst` is an explicit logical projection; user-defined
+lens functions execute real calls and typed restoration routines. Lexical alias
+release uses the same cleanup path.
+
+The entry adapter checks the number of live restoration/backing allocations is
+zero. Allocation failure traps. Native sanitizers additionally detect invalid
+access and double disposal, with stack-use-after-return detection enabled and
+undefined behavior configured to stop execution.
+
+Statically known, capture-free function values retain compile-time provenance,
+including specialized higher-order parameters used by `map`. Their finite call
+contracts select verified direct wrappers; no runtime code pointer is invoked.
+Invocation-erased closures containing this subset's scalar/tuple captures preserve
+the explicit capture moves and need no runtime destructor. The discarded-capture
+refill test exercises this rule. Invoking captured closures, dynamic callable/lens
+joins, nominal/heap data, and unsupported native imports retain explicit backend
+diagnostics. Executing captured closure bodies remains phase 6.
+
+Implemented imports are numeric `+`, `-`, `*`, `/`, `==`, `>=`, `<=`, data `dup`,
+and logical `fst`. `dup` of a computed focus restores that focus after copying it.
+There is no evaluator fallback. Function roots with parameters need a future host
+adapter, and borrowed lenses cannot escape the test entry boundary. Existing
+checker restrictions still apply: persistent aliases must bind variable lenses,
+lens cases are unsupported, and local storage cannot escape through returned lenses.
+Malformed concrete IR fails verification before storage lowering.
 
 The harness uses strict C11 (`-Wall -Wextra -Werror -pedantic`), `-O0` and `-O2`.
-Native tests additionally use ASan/UBSan. It removes inherited host include-path
+Native tests additionally use ASan/UBSan and stack-use-after-return detection. It removes inherited host include-path
 injection when spawning tools, so Emscripten uses its own sysroot. Failed builds,
 traps, malformed results and expected-result mismatches retain their temporary
 `laminar-c-*` directory, generated C/JS/Wasm, exact command arguments and observed
@@ -66,8 +99,11 @@ native/Wasm corpus and uploads failure artifacts. This configuration is checked
 in; remote CI execution and branch-protection requirements are not established
 by local verification.
 
-Complete expected C output for tuple, thin and scattered examples is inline in
-`test/c/print.test.ts`. Execution tests compare typed IR, native and Wasm with the
-same expected structured results, including recursion, temporary consumption,
-full and nested swap ordering, fractional division, NaN, infinity and negative
-zero. Later-phase restrictions and corrupt concrete artifacts have negative tests.
+Complete expected C output for tuples, thin/scattered calls, returned lenses,
+and branch version joins is inline in `test/c/print.test.ts`. Execution tests
+compare typed IR, native and Wasm with the same expected results. In addition to
+the phase-4 corpus, cases cover Number/Bool and small/large transitions, nested
+mixed shapes, offset-changing aggregate reconstruction, `take`, `map`, native and
+user-defined focus assignment, repeated and nested returned calls, alias refill,
+discarded captures, computed-focus `dup`, branch changes, and empty/unit lenses.
+Invoked captured closures and corrupt concrete artifacts retain negative tests.

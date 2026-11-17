@@ -4,7 +4,7 @@ import { backendCorpus } from '../backend/corpus.ts';
 import { compileConcreteProgram } from '../../src/lower-concrete.ts';
 import { wasm32Emscripten } from '../../src/backend/target.ts';
 import { emitC } from '../../src/c/emit.ts';
-for (const sample of backendCorpus.filter((s) => s.phase > 4 && s.phase < 7))
+for (const sample of backendCorpus.filter((s) => s.phase === 6))
     it(`diagnoses later-phase ${sample.name}`, () => {
         const p = typedProgram(sample.source);
         const c = compileConcreteProgram(p, wasm32Emscripten('test'), [

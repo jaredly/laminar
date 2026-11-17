@@ -46,7 +46,7 @@ The phase 3 exit gate is satisfied for accepted inputs: every emitted value and 
 
 ## Phase boundary
 
-Tests validate the concrete transformation and its independent verifier, including the phase 4–6 acceptance inputs and a registered recursive list schema. They do not execute concrete IR or generated C/Wasm. Phase 4 now consumes this artifact through the [C backend](c-backend.md), with separate storage lowering, syntax printing, and native/Emscripten execution. Type-changing backing/restoration, dynamic closure joins, runtime allocation/builtin implementations, and optimization remain in their planned later phases. The explicit unsupported recursive-result and host-callable contracts must remain diagnostics until additional constraints or host adapters are available.
+Tests validate the concrete transformation and its independent verifier, including the phase 4–6 acceptance inputs and a registered recursive list schema. They do not execute concrete IR or generated C/Wasm. Phase 4 now consumes this artifact through the [C backend](c-backend.md), with separate storage lowering, syntax printing, and native/Emscripten execution. Phase 5 adds typed backing versions, aggregate reconstruction and generated restoration contexts for returned lenses. Dynamic closure joins, general heap data/runtime coverage, and optimization remain in their planned later phases. The explicit unsupported recursive-result and host-callable contracts must remain diagnostics until additional constraints or host adapters are available.
 
 ## Readable output
 

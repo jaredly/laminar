@@ -149,3 +149,50 @@ and `git diff --check` pass. All 18 positive execution samples pass native stric
 C11 at `-O0`, `-O2`, and ASan/UBSan, and Emscripten/Node at `-O0` and `-O2`.
 Both targets also execute the unmatched-case trap test. Complete expected printer
 output remains inline, with no generated snapshot files.
+
+## Completed slice: type-changing storage and returned lenses (phase 5)
+
+Phase 4 was committed as `35173ae`, with 627 passing tests and 39 existing skips.
+Phase 5 extends that backend without changing the typed/concrete input contracts:
+
+- `src/c/storage.ts` retains logical cells and projection paths independently of
+  physical C storage. Replacements create typed versions; aliases resolve through
+  the current version. Nested aggregate reconstruction preserves unaffected fields,
+  and control-flow joins materialize typed merged versions.
+- `src/c/lower.ts` adapts thin, scattered and mixed call arguments using independent
+  typed input/output backing when layouts differ. Plain-result call backing is
+  stack-resident. Lens-result call backing is heap-resident until restoration, so
+  nested returned calls do not retain pointers into expired caller frames.
+- Returned user lenses materialize their read focus in a concrete heap context and
+  capture only values referenced by deferred restoration. Generated functions use
+  the exact concrete restoration ABI, commit the replacement, reconstruct parent
+  outputs, run deferred lexical/call cleanup in order, and release the context.
+  Output values are copied before their backing is released. Native `fst` uses its
+  explicit logical projection contract. Computed-focus `dup` also runs restoration.
+- Allocation failure traps, and the entry adapter asserts that all restoration and
+  backing allocations have been released. ASan/UBSan runs now enable stack-use-after-
+  return detection and stop on sanitizer failures.
+- Statically known capture-free function arguments support specialized `map` calls
+  through verified direct contracts. Invocation-erased scalar/tuple capture
+  environments preserve their explicit capture moves and need no runtime drop;
+  a discarded captured-alias/refill regression covers this rule. Invoking captured
+  closures and dynamic representation joins remain phase 6.
+- `test/c/phase5-samples.ts` adds the growth, nested/mixed reconstruction, thin and
+  scattered `take`/`map`, native/user focus assignment, nested/repeated returns,
+  branch joins, alias refill, discarded capture, computed `dup`, and empty/unit
+  cases. All phase-5 acceptance inputs now execute. Complete expected C output for
+  returned thin/scattered lenses and branch versions is inline in printer tests;
+  earlier complete expectations were updated for the new backing/runtime routines.
+
+Existing checker boundaries remain explicit: persistent aliases bind variable
+lenses, local storage cannot escape through returned lenses, and lens cases remain
+unsupported. No checker rule was weakened and no evaluator fallback was added.
+See [c-backend.md](c-backend.md) for APIs, ownership/lifetime rules and restrictions.
+
+Verification: `bun test` reports 683 passing tests, the same 39 existing skips,
+zero failures across 26 files. All 46 positive execution samples match typed IR
+under native strict C11 at `-O0`, `-O2`, and ASan/UBSan with stack-use-after-return
+checks, and under Emscripten/Node at `-O0` and `-O2`. Both targets also execute the
+unmatched-case trap test. Six printer expectations contain complete output inline.
+`bunx tsc --noEmit` and `git diff --check` pass. Remote CI was not required or run.
+Phase 6 is next.
