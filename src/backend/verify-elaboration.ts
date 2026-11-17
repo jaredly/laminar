@@ -87,6 +87,19 @@ export function verifyElaboration(e: Elaboration): void {
         if (b.declaration) node(b.declaration);
         if (!b.place.startsWith(`${e.id}/p`)) fail('Unscoped binding place');
         if (b.borrow && !loans.has(b.borrow)) fail('Binding refers to an unknown borrow');
+        // Lens parameters receive their protection from the caller's flow contract.
+        const parameter = e.functions.some((f) => f.parameters.some((ps) => ps.includes(b.id)));
+        if (b.kind === 'alias' && !b.borrow && !parameter)
+            fail('Alias has no owner protection');
+        if (b.borrow) {
+            const loan = e.borrows.find((loan) => loan.id === b.borrow)!;
+            if (
+                loan.place !== b.place ||
+                loan.path.length > b.path.length ||
+                loan.path.some((part, i) => part !== b.path[i])
+            )
+                fail('Alias is outside its borrowed focus');
+        }
         path(b.path);
         type(b.initialType);
     });

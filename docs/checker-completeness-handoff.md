@@ -63,6 +63,29 @@ line numbers can move as the uncommitted implementation evolves.
 
 ## Confirmed checker gaps
 
+### Implementation checkpoint: retained alias protection
+
+The phase-5 implementation is committed as `c0d870d`. The first follow-up
+hardens `verifyElaboration`: a lexical alias must retain a borrow, and its place
+and projection must lie within that borrow's focus. Lens parameter bindings are
+exempt from the lexical-borrow requirement because their protection comes from
+the caller's flow contract. Serialized corruption tests cover removed protection,
+changed alias owners, changed borrow owners, and incompatible projections.
+
+This checkpoint does not accept any new source forms. In particular, the
+motivating computed alias still reports `unsupported-alias`. The next change
+needs separate identities for the focus and the protected owners: today's typed
+`borrow` verifier requires a `place` capability with exactly the loan's owner and
+path, so it cannot represent a returned call capability. Updating inference alone
+would therefore fail independent typed verification. The evaluator's `release`
+already calls the retained lens's `finish`, but that runtime mechanism does not
+establish the missing static relationship. Keep the existing owner/path invariant
+for direct aliases when introducing a distinct computed-restoration record.
+
+Checkpoint verification: `bun test` reports 684 passing tests, the same 39 skips,
+and zero failures across 26 files, including native and Wasm execution.
+`bunx tsc --noEmit` and `git diff --check` pass. No new backend behavior is claimed.
+
 ### 1. Persistent aliases to computed lenses
 
 `src/infer.ts`, `Inferencer.alias` (approximately line 614), explicitly requires an

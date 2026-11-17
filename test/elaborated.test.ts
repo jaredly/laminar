@@ -282,3 +282,27 @@ it('retains a wildcard lens parameter place even when no name is declared', () =
     expect(e.functions[0].parameterPlaces[0]).toHaveLength(1);
     expect(e.functions[0].entry[0].place).toBe(e.functions[0].parameterPlaces[0][0]);
 });
+
+it('rejects serialized aliases with missing or unrelated owner protection', () => {
+    const source = '{let pair = (1, 2)\n let (a, b) = ~pair\n a := true\n ()}';
+    const original = elaborate(source).results[0];
+    expect(() => verifyElaboration(JSON.parse(JSON.stringify(original)))).not.toThrow();
+    for (const damage of [
+        (e: Elaboration) => {
+            named(e, 'a')[0].borrow = undefined;
+        },
+        (e: Elaboration) => {
+            named(e, 'a')[0].place = `${e.id}/p999`;
+        },
+        (e: Elaboration) => {
+            e.borrows[0].path = [1];
+        },
+        (e: Elaboration) => {
+            e.borrows[0].place = `${e.id}/p999`;
+        },
+    ]) {
+        const e = structuredClone(original);
+        damage(e);
+        expect(() => verifyElaboration(e)).toThrow(BackendDiagnostic);
+    }
+});
