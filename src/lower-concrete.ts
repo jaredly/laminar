@@ -270,6 +270,25 @@ export function lowerConcreteProgram(
                         ...i,
                         out,
                         cases: i.cases.map((c) => ({ ...c, body: lower(c.body) })),
+                        ...(i.out.type.tag === 'flow'
+                            ? {
+                                  lensJoin: {
+                                      kind: 'selected' as const,
+                                      arms: i.cases.map(
+                                          (c) =>
+                                              (
+                                                  values.get(c.body.result)! as {
+                                                      kind: 'lens';
+                                                      shape: string;
+                                                  }
+                                              ).shape,
+                                      ),
+                                      result: (
+                                          values.get(i.out.id)! as { kind: 'lens'; shape: string }
+                                      ).shape,
+                                  },
+                              }
+                            : {}),
                     };
                 if (i.op === 'global' || i.op === 'closure') {
                     const c = callable(group(values.get(i.out.id)!));

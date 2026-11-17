@@ -65,7 +65,7 @@ including specialized higher-order parameters used by `map`. Their finite call
 contracts select verified direct wrappers; no runtime code pointer is invoked.
 Invocation-erased closures containing this subset's scalar/tuple captures preserve
 the explicit capture moves and need no runtime destructor. The discarded-capture
-refill test exercises this rule. Invoking captured closures, dynamic callable/lens
+refill test exercises this rule. Invoking captured closures, dynamic callable
 joins, nominal/heap data, and unsupported native imports retain explicit backend
 diagnostics. Executing captured closure bodies remains phase 6.
 
@@ -75,9 +75,12 @@ There is no evaluator fallback. Function roots with parameters need a future hos
 adapter, and borrowed lenses cannot escape the test entry boundary. Existing
 checker restrictions still apply: matching borrowed scrutinees is unsupported,
 and owned local storage cannot escape through returned function lenses. Lens-valued
-branches now pass checking and typed/legacy reference execution, but representation
-lowering reports `unsupported-representation` with “Lens-valued branches require a
-selected-branch restoration adapter”; C/Wasm execution of those branches is pending. Persistent computed aliases retain their
+branches normalize their focus into thin storage and retain a selector plus each
+arm’s original restoration operation. Only the selected arm runs setup,
+normalization, and cleanup. Deferred branch variables are initialized outside the
+conditional and captured when a returned lens needs them; escaping call backing
+remains heap-resident. Thin/scattered joins, nested local storage, selected setup
+effects, and type-changing replacements execute on native C and Wasm. Persistent computed aliases retain their
 focus and restoration operation until lexical release; thin, scattered, nested,
 and type-changing cases are exercised by the execution harness.
 Malformed concrete IR fails verification before storage lowering.

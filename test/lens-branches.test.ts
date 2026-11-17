@@ -12,41 +12,9 @@ import { TypeDiagnostic } from '../src/types.ts';
 import { BackendDiagnostic, wasm32Emscripten } from '../src/backend/target.ts';
 import { compileConcreteProgram } from '../src/lower-concrete.ts';
 
+import { lensBranchSamples as samples } from './backend/lens-branch-samples.ts';
+import { verifyConcreteProgram } from '../src/verify-concrete.ts';
 const first = 'fn first(~(x, y)) ~x\n';
-const samples = [
-    {
-        name: 'true selection',
-        source: 'fn choose(b, ~(x, y)) ~{match b {true -> x; false -> y}}\n{let pair = (1, 2)\n choose(true, ~pair) := 3\n pair}',
-        expected: [3, 2],
-    },
-    {
-        name: 'false selection',
-        source: 'fn choose(b, ~(x, y)) ~{match b {true -> x; false -> y}}\n{let pair = (1, 2)\n choose(false, ~pair) := 3\n pair}',
-        expected: [1, 3],
-    },
-    {
-        name: 'type changing alias',
-        source: '{let x = 1\n {let f = ~{match true {true -> x; false -> x}}\n f := (true, 3)}\n x}',
-        expected: [true, 3],
-    },
-    {
-        name: 'deferred alias in selected branch',
-        source:
-            first +
-            '{let p = (1, 2)\n {let f = ~{match false {true -> first(~p); false -> {let g = ~first(~p)\n g}}}\n f := true}\n p}',
-        expected: [true, 2],
-    },
-    {
-        name: 'branch pattern storage',
-        source: '{let f = ~{match (true, 1) {(true, n) -> n; (false, n) -> n}}\n f := true}',
-        expected: 1,
-    },
-    {
-        name: 'setup availability join',
-        source: '{let x = 1\n let spare = 2\n {let f = ~{match false {true -> {spare\n x}; false -> x}}\n f := true}\n spare := 3\n (x, spare)}',
-        expected: [true, 3],
-    },
-];
 for (const sample of samples)
     it(`lens branch: ${sample.name}`, () => {
         const p = JSON.parse(JSON.stringify(typedProgram(sample.source)));
@@ -75,20 +43,12 @@ for (const [source, code] of [
             expect((e as TypeDiagnostic).code).toBe(code);
         }
     });
-it('keeps unsupported branch adapters outside semantic checking', () => {
+it('retains a verified selected-branch adapter through concrete serialization', () => {
     const p = typedProgram(samples[0].source);
-    try {
-        compileConcreteProgram(p, wasm32Emscripten('test'), [
-            { unit: p.units.at(-1)!.id, arguments: [] },
-        ]);
-        throw Error('Expected backend restriction');
-    } catch (e) {
-        expect(e).toBeInstanceOf(BackendDiagnostic);
-        expect((e as BackendDiagnostic).code).toBe('unsupported-representation');
-        expect((e as Error).message).toBe(
-            'Lens-valued branches require a selected-branch restoration adapter',
-        );
-    }
+    const c = compileConcreteProgram(p, wasm32Emscripten('test'), [
+        { unit: p.units.at(-1)!.id, arguments: [] },
+    ]);
+    verifyConcreteProgram(JSON.parse(JSON.stringify(c)));
 });
 
 for (const [condition, count] of [
@@ -191,4 +151,80 @@ it('retains and independently validates branch restoration states', () => {
     expect(e.branches[0].restored.length).toBeGreaterThan(0);
     delete e.branches[0].arms[0].restored;
     expect(() => verifyElaboration(e)).toThrow('Lens branch is missing restoration states');
+});
+
+it('independently rejects missing or corrupted selected-branch adapters', () => {
+    const source = samples.find((s) => s.name === 'mixed topology false')!.source;
+    const p = typedProgram(source);
+    const original = compileConcreteProgram(p, wasm32Emscripten('test'), [
+        { unit: p.units.at(-1)!.id, arguments: [] },
+    ]);
+    const find = (c: typeof original) => {
+        const visit = (
+            b: import('../src/concrete-ir.ts').ConcreteBlock,
+        ):
+            | Extract<import('../src/concrete-ir.ts').ConcreteInstruction, { op: 'case' }>
+            | undefined => {
+            for (const i of b.instructions) {
+                if (i.op === 'case' && i.lensJoin) return i;
+                if (i.op === 'scope') {
+                    const found = visit(i.body);
+                    if (found) return found;
+                }
+            }
+        };
+        return c.code.map((code) => visit(code.body)).find(Boolean)!;
+    };
+    for (const damage of [
+        (c: typeof original) => {
+            find(c).lensJoin = undefined;
+        },
+        (c: typeof original) => {
+            find(c).lensJoin!.arms[0] = 'forged-shape';
+        },
+        (c: typeof original) => {
+            find(c).lensJoin!.result = find(c).lensJoin!.arms[1]!;
+        },
+    ]) {
+        const c = JSON.parse(JSON.stringify(original));
+        damage(c);
+        expect(() => verifyConcreteProgram(c)).toThrow(
+            'Selected-branch restoration adapter changed',
+        );
+    }
+    const c = JSON.parse(JSON.stringify(original)) as typeof original;
+    const branch = find(c);
+    for (const record of [...c.analysis.entries, ...c.analysis.variants]) {
+        const value = record.values.find((v) => v.value === branch.out.id);
+        if (value?.representation.kind === 'lens')
+            value.representation.shape = branch.lensJoin!.arms[1]!;
+    }
+    expect(() => verifyConcreteProgram(c)).toThrow(
+        'Selected-branch adapter must expose a thin focus',
+    );
+});
+
+it('rejects lost normalization at the concrete boundary', () => {
+    const p = typedProgram(samples[5].source);
+    const c = JSON.parse(
+        JSON.stringify(
+            compileConcreteProgram(p, wasm32Emscripten('test'), [
+                { unit: p.units.at(-1)!.id, arguments: [] },
+            ]),
+        ),
+    );
+    const visit = (b: import('../src/concrete-ir.ts').ConcreteBlock): boolean => {
+        for (const i of b.instructions) {
+            if (i.op === 'case' && i.lensJoin) {
+                i.cases[1]!.setup = [];
+                return true;
+            }
+            if (i.op === 'scope' && visit(i.body)) return true;
+        }
+        return false;
+    };
+    expect(
+        c.code.some((code: import('../src/concrete-ir.ts').ConcreteCode) => visit(code.body)),
+    ).toBe(true);
+    expect(() => verifyConcreteProgram(c)).toThrow('Case setup normalization changed');
 });

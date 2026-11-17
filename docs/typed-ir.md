@@ -103,7 +103,10 @@ states separately and rejects missing restoration-state records.
 
 The serialized typed interpreter and active legacy pointer evaluator execute these
 branches. Legacy decomposition retains owned pattern and lens-block storage on
-the heap until selected cleanup finishes. Representation inference currently
-reports an explicit `unsupported-representation` diagnostic for lens-valued
-branches; its independent verifier also rejects analyses claiming an adapter that
-has not been implemented. No new concrete/C/Wasm branch execution is claimed.
+the heap until selected cleanup finishes. Representation inference normalizes branch results to a common thin focus while
+preserving each arm’s original topology. Concrete IR retains a `lensJoin` contract
+with the selected adapter kind, ordered source shapes, and result shape. Independent
+verification checks this contract and both normalization edges against typed IR.
+C storage lowering dispatches deferred restoration using the retained selector,
+reconstructs selected owner outputs, and merges their logical storage versions.
+Scalar/tuple cases, including thin/scattered joins, execute on native C and Wasm.

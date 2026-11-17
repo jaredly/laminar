@@ -352,6 +352,7 @@ export function lowerC(program: ConcreteProgram): TranslationUnit {
                         break;
                     case 'move':
                         expr = read(storage.get(ref(i.slot)), id);
+                        storage.put(ref(i.slot), { expression: zero(unit.id), layout: unit.id });
                         break;
                     case 'acquire':
                         lenses.set(i.out.id, { view: ref(i.slot), finish: noFinish });
@@ -384,8 +385,154 @@ export function lowerC(program: ConcreteProgram): TranslationUnit {
                         break;
                     }
                     case 'case': {
-                        if (layout(id).fields.some((f) => f.name === 'restore'))
-                            unsupported('Lens representation joins require phase 6');
+                        if (i.lensJoin) {
+                            const before = storage.snapshot();
+                            const selected = fresh();
+                            variables.push({ name: selected, type: 'int' });
+                            body.push(`int ${selected} = 0;`, `(void)${selected};`);
+                            const input = endpoint(id, 'read');
+                            const focus = declare(input, zero(input), body);
+                            const joined = storage.own({ expression: focus, layout: input });
+                            const normalize = (actions: (typeof i.cases)[number]['setup']) =>
+                                actions?.forEach((a) => {
+                                    if (a.kind !== 'drop-place')
+                                        return unsupported('Invalid branch normalization');
+                                    storage.put(ref(a.slot), {
+                                        expression: zero(unit.id),
+                                        layout: unit.id,
+                                    });
+                                });
+                            const merge = (
+                                arms: {
+                                    nested: Statement[];
+                                    state: Map<import('./storage.ts').Cell, Data>;
+                                }[],
+                                into: Statement[],
+                            ) => {
+                                const join = (data: Data[]): Data => {
+                                    if (
+                                        data.every(
+                                            (d) => JSON.stringify(d) === JSON.stringify(data[0]),
+                                        )
+                                    )
+                                        return data[0]!;
+                                    const first = data[0]!;
+                                    if (
+                                        !Array.isArray(first) &&
+                                        data.every(
+                                            (d) => !Array.isArray(d) && d.layout === first.layout,
+                                        )
+                                    ) {
+                                        const phi = declare(first.layout, zero(first.layout), into);
+                                        arms.forEach((arm, n) =>
+                                            arm.nested.push(
+                                                `${phi} = ${read(data[n]!, first.layout)};`,
+                                            ),
+                                        );
+                                        return { expression: phi, layout: first.layout };
+                                    }
+                                    const parts = data.map((d) => storage.parts(d));
+                                    if (
+                                        !parts[0]?.length ||
+                                        parts.some((p) => p.length !== parts[0]!.length)
+                                    )
+                                        return unsupported(
+                                            'Branch owner storage requires an adapter',
+                                        );
+                                    return parts[0].map((_, n) => join(parts.map((p) => p[n]!)));
+                                };
+                                before.forEach(
+                                    (_, cell) =>
+                                        (cell.data = join(arms.map((a) => a.state.get(cell)!))),
+                                );
+                            };
+                            const arms = i.cases.map((arm, n) => {
+                                storage.reset(before);
+                                const start = variables.length;
+                                const nested: Statement[] = [];
+                                bind(arm.pattern, {
+                                    expression: value(i.value),
+                                    layout: outputLayouts.get(i.value)!,
+                                });
+                                block(arm.body, nested);
+                                normalize(arm.setup);
+                                const lens = lenses.get(arm.body.result)!;
+                                nested.push(
+                                    `${selected} = ${n};`,
+                                    `${focus} = ${read(storage.get(lens.view), input)};`,
+                                );
+                                // Lift setup storage out of the conditional so deferred cleanup can
+                                // retain it. Only the selected arm assigns or allocates its backing.
+                                const locals = variables.slice(start);
+                                locals.forEach((v) =>
+                                    body.push(`${v.type} ${v.name} = {0};`, `(void)${v.name};`),
+                                );
+                                const lift = (statements: Statement[]): Statement[] =>
+                                    statements.map((s) => {
+                                        if (typeof s !== 'string')
+                                            return { ...s, body: lift(s.body) };
+                                        for (const v of locals) {
+                                            const match = s.match(
+                                                new RegExp(`^(.+?)\\b${v.name}\\s*=\\s*(.*);$`),
+                                            );
+                                            if (
+                                                match &&
+                                                match[1]!.replace(/\s/g, '') ===
+                                                    v.type.replace(/\s/g, '')
+                                            ) {
+                                                const rhs = match[2]!.startsWith('{')
+                                                    ? `(${v.type})${match[2]}`
+                                                    : match[2];
+                                                return `${v.name} = ${rhs};`;
+                                            }
+                                        }
+                                        return s;
+                                    });
+                                return {
+                                    nested: lift(nested),
+                                    state: storage.snapshot(),
+                                    lens,
+                                    arm,
+                                };
+                            });
+                            storage.reset(before);
+                            merge(arms, body);
+                            i.cases.forEach((arm, n) =>
+                                body.push({
+                                    head: `${n ? 'else if' : 'if'} (${matches(arm.pattern, value(i.value))})`,
+                                    body: arms[n]!.nested,
+                                }),
+                            );
+                            body.push({ head: 'else', body: ['abort();'] });
+                            lenses.set(i.out.id, {
+                                view: joined,
+                                finish: (output) => {
+                                    const current = storage.snapshot();
+                                    const replacement = storage.get(joined);
+                                    const restored = arms.map((arm) => {
+                                        storage.reset(arm.state);
+                                        before.forEach(
+                                            (_, cell) => (cell.data = current.get(cell)!),
+                                        );
+                                        storage.put(arm.lens.view, replacement);
+                                        const nested: Statement[] = [];
+                                        arm.lens.finish(nested);
+                                        normalize(arm.arm.restored);
+                                        return { nested, state: storage.snapshot() };
+                                    });
+                                    storage.reset(current);
+                                    merge(restored, output);
+                                    restored.forEach((arm, n) =>
+                                        output.push({
+                                            head: `${n ? 'else if' : 'if'} (${selected} == ${n})`,
+                                            body: arm.nested,
+                                        }),
+                                    );
+                                    output.push({ head: 'else', body: ['abort();'] });
+                                },
+                            });
+                            continue;
+                        }
                         declare(id, zero(id), body, name);
                         const before = storage.snapshot(),
                             outerVariables = variables.length;
@@ -504,6 +651,8 @@ export function lowerC(program: ConcreteProgram): TranslationUnit {
                     if (c.kind === 'release') {
                         const lens = loans.get(c.loan);
                         if (lens) lens.finish(body);
+                    } else if (c.kind === 'drop-place') {
+                        storage.put(ref(c.slot), { expression: zero(unit.id), layout: unit.id });
                     }
                 });
             if (lenses.has(b.result)) {

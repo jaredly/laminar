@@ -396,7 +396,31 @@ export function verifyConcreteProgram(p: ConcreteProgram): void {
                         o.cases.length !== i.cases.length
                     )
                         fail('Case contract changed');
+                    const join =
+                        i.out.type.tag === 'flow'
+                            ? {
+                                  kind: 'selected',
+                                  arms: i.cases.map(
+                                      (c) =>
+                                          (
+                                              reps.get(c.body.result)! as {
+                                                  kind: 'lens';
+                                                  shape: string;
+                                              }
+                                          ).shape,
+                                  ),
+                                  result: (reps.get(i.out.id)! as { kind: 'lens'; shape: string })
+                                      .shape,
+                              }
+                            : undefined;
+                    eq(o.lensJoin, join, 'Selected-branch restoration adapter changed');
                     i.cases.forEach((c, j) => {
+                        eq(o.cases[j]!.setup, c.setup, 'Case setup normalization changed');
+                        eq(
+                            o.cases[j]!.restored,
+                            c.restored,
+                            'Case restoration normalization changed',
+                        );
                         eq(o.cases[j]!.pattern, c.pattern, 'Case pattern changed');
                         walk(c.body, o.cases[j]!.body);
                     });

@@ -414,18 +414,14 @@ export function verifyRepresentations(
                         );
                         break;
                     case 'case':
-                        if (i.out.type.tag === 'flow')
-                            fail(
-                                'Lens-valued branches require a selected-branch restoration adapter',
-                            );
+                        if (i.out.type.tag === 'flow' && lens(v).kind !== 'thin')
+                            fail('Selected-branch adapter must expose a thin focus');
                         i.cases.forEach((arm) => {
                             const branch = clone(s);
                             bind(arm.pattern, get(s, i.value), branch);
-                            requireEqual(
-                                v,
-                                block(arm.body, branch),
-                                'Branch needs a representation adapter',
-                            );
+                            const result = block(arm.body, branch);
+                            if (i.out.type.tag === 'flow') lens(result);
+                            else requireEqual(v, result, 'Branch needs a representation adapter');
                         });
                         break;
                     case 'call': {

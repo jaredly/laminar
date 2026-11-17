@@ -59,7 +59,13 @@ export type ConcreteInstruction =
           op: 'case';
           origin: string;
           value: string;
-          cases: { pattern: IRPattern; body: ConcreteBlock }[];
+          cases: {
+              pattern: IRPattern;
+              body: ConcreteBlock;
+              setup?: Cleanup[];
+              restored?: Cleanup[];
+          }[];
+          lensJoin?: { kind: 'selected'; arms: string[]; result: string };
       } & ConcreteOutput)
     | ({
           op: 'invoke';

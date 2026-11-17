@@ -157,15 +157,43 @@ provenance still rejects lenses into owned local storage.
 type changes, differing owners, nested selections, deferred aliases and closure
 disposal, branch-local storage release, ownership negatives, missing normalization
 and cleanup, missing retained restoration metadata, and unmatched-case traps.
-Representation inference deliberately stops with `unsupported-representation`:
+At the semantic checkpoint (`1a9d2e4`), representation inference stopped with `unsupported-representation`:
 “Lens-valued branches require a selected-branch restoration adapter”. Implementing
-that adapter and concrete/C/Wasm execution is the next backend slice. Matching a
+that adapter and concrete/C/Wasm execution was deferred to the backend slice below. Matching a
 borrowed scrutinee remains separate unsupported checker work.
 
 Branch-slice verification: 750 passing tests, the same 39 existing skips, and
 zero failures across 28 files. TypeScript and whitespace checks pass. The existing
 native/optimized/sanitized and Emscripten/Node corpus still executes; new branch
 execution is tested only in serialized typed IR and the checked legacy evaluator.
+
+### Selected-branch backend adapter
+
+Representation analysis now normalizes a branch lens to a thin focus, while
+retaining and independently validating the original arm topologies. Concrete IR
+records a selected `lensJoin` adapter and both normalization edges. C storage
+lowering retains the selector, lifts setup storage needed by deferred cleanup,
+restores only the selected source lens, and merges owner versions after setup and
+restoration. Returned contexts capture selected state without pointers to expired
+branch stack frames. Owned moves mark logical slots empty before normalization.
+
+Shared branch samples run through serialized typed/legacy execution, independently
+verified concrete artifacts, native strict/optimized/sanitized C, and Wasm. They
+cover true/false selection, deferred aliases, owned pattern storage, availability
+joins, selected-only setup effects, mixed thin/scattered topologies, nested local
+storage, and replacements that change nested field offsets. Corruption tests
+reject missing or altered adapter contracts, incorrect normalized topology, and
+lost normalization edges. Complete C and concrete printer expectations are inline
+in `test/c/branch-print.test.ts`. Captured closure invocation and nominal/runtime
+data still retain their existing backend restrictions.
+
+Adapter verification: 784 passing tests, the same 39 existing skips, zero failures
+across 29 files. Twelve shared branch samples execute on native strict C11 at
+`-O0`, `-O2`, and ASan/UBSan with stack-use-after-return detection, and on
+Emscripten/Node at `-O0` and `-O2`, matching typed and legacy reference results.
+TypeScript, whitespace checks, and complete inline printer expectations pass.
+The existing ordinary branch and recursion cases also pass after logical moves
+and affine cleanup drops were made consistent. No remote CI execution is claimed.
 
 ### 2. Lens-valued branches (original gap description)
 

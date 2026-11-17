@@ -64,3 +64,23 @@ console.log(printConcreteProgram(concrete, { ids: 'full', origins: true }));
 ```
 
 The default view uses `L0`, `abi0`, `wrap0`, source-named functions such as `id0`, SSA values such as `%0`, and source-named places such as `$x`. Names are local to the printed artifact/function and do not change canonical IR identities. Shadowed places get distinct names. Layouts, forward declarations, ABI signatures, callable slots, ownership conventions, captures, projections, loans, block returns, and cleanup remain visible; generic snapshots and cache keys are omitted. `cleanup after-restore` distinguishes deferred lens cleanup from ordinary block cleanup. This view is diagnostic, not a round-trip IR serialization format. Complete expected-output examples are inline in `test/print-concrete.test.ts`.
+
+## Selected lens branches
+
+A flow-valued `case` carries `lensJoin: { kind: 'selected', arms, result }`.
+The ordered `arms` entries are the source lens shape IDs; `result` is a thin
+focus with the common read/replacement contract. Shapes may differ across arms.
+The arm's `setup` and `restored` normalization edges are retained alongside its
+body and checked independently against typed IR. The concrete verifier derives
+all adapter shapes from verified representation annotations and rejects missing
+or altered contracts. The diagnostic printer shows `selected-focus`, every arm's
+topology, and nonempty normalization edges.
+
+C lowering retains the selector and original restoration operations. It copies
+the selected read focus into common logical storage, commits its final contents
+only through the selected restoration, then merges the owner versions. Returned
+lens contexts capture the selector and required branch storage; only selected
+backing is allocated or released. Owned moves now mark logical storage empty,
+so setup availability normalization agrees with typed verification. Native
+strict/optimized/sanitized and Emscripten/Node execution cover these adapters;
+dynamic callable joins and nominal/runtime data retain their existing restrictions.

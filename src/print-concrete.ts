@@ -332,13 +332,41 @@ export function lconcrete(program: ConcreteProgram, options: ConcretePrintOption
                 case 'scope':
                     expression = words('scope', block(i.body));
                     break;
-                case 'case':
+                case 'case': {
+                    const topology = (id: string): Node => {
+                        const shape = program.analysis.shapes.find((s) => s.id === id)!;
+                        return shape.kind === 'thin'
+                            ? l.i('thin')
+                            : call('tuple', shape.items.map(topology));
+                    };
                     expression = words(
                         'match',
                         value(i.value),
-                        braces(i.cases.map((c) => words(pattern(c.pattern), '->', block(c.body)))),
+                        ...(i.lensJoin
+                            ? [
+                                  call('selected-focus', i.lensJoin.arms.map(topology)),
+                                  '->',
+                                  topology(i.lensJoin.result),
+                              ]
+                            : []),
+                        braces(
+                            i.cases.map((c) =>
+                                words(
+                                    pattern(c.pattern),
+                                    '->',
+                                    ...(c.setup?.length
+                                        ? [words('setup', braces(c.setup.map(cleanup)))]
+                                        : []),
+                                    block(c.body),
+                                    ...(c.restored?.length
+                                        ? [words('restored', braces(c.restored.map(cleanup)))]
+                                        : []),
+                                ),
+                            ),
+                        ),
                     );
                     break;
+                }
                 default: {
                     const unknown: never = i;
                     throw new Error(`Unknown concrete operation: ${JSON.stringify(unknown)}`);

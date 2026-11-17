@@ -367,19 +367,18 @@ export function inferRepresentations(
                 case 'scope':
                     out = block(unit, i.body, clone(s), record, chain);
                     break;
-                case 'case':
-                    if (i.out.type.tag === 'flow')
-                        return fail(
-                            'Lens-valued branches require a selected-branch restoration adapter',
-                        );
-                    out = join(
-                        i.cases.map((arm) => {
-                            const state = clone(s);
-                            bind(arm.pattern, get(s, i.value), state);
-                            return block(unit, arm.body, state, record, chain);
-                        }),
-                    );
+                case 'case': {
+                    const branches = i.cases.map((arm) => {
+                        const state = clone(s);
+                        bind(arm.pattern, get(s, i.value), state);
+                        return block(unit, arm.body, state, record, chain);
+                    });
+                    out =
+                        i.out.type.tag === 'flow'
+                            ? { kind: 'lens', shape: reps.thin(i.out.type.read, i.out.type.write) }
+                            : join(branches);
                     break;
+                }
             }
             s.values.set(i.out.id, out);
             record.values.push({ value: i.out.id, representation: out });
