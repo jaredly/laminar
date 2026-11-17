@@ -62,3 +62,16 @@ The representation vocabulary was committed as `8ea051b` (`Add concrete layout a
 This slice does not connect representation constraints to specialization keys or establish physical call ABIs. Thin/scattered specialization variants, recursive nominal layouts, callable wrappers, and the independent concrete-IR verifier remain open. The semantic output is not the phase-3 exit artifact. API details and limitations are documented in [representations.md](representations.md).
 
 Verification: 421 passing tests, 39 existing skips, zero failures across 19 files; `bunx tsc --noEmit` passes. No C/Wasm execution is claimed.
+
+## Continued slice: reachable representation analysis (phase 3)
+
+Semantic specialization was committed as `d78dbe7` (`Specialize reachable typed IR definitions by concrete semantic arguments`). The next slice adds:
+
+- `src/infer-representations.ts`: expression-rooted analysis over verified semantic-specialized IR. Layout/shape annotations cover temporaries, captures, arguments, results, and calls. Function variants are cached by target, semantic function identity, and incoming argument/capture representations, so thin and scattered calls at identical semantic types remain distinct. Ordinary recursive variants are reserved before body analysis; changing-representation recursion and budget exhaustion produce call-chain diagnostics.
+- Lens acquisitions retain incoming parameter topology through projection and typed backing changes; owned acquisitions remain thin. Mixed recursive lens tuples and user-returned lens results propagate to consumers. `native/fst` has an explicit projection contract. Known first-class functions pass through places, higher-order parameters, captures, and results without being rewritten into direct source calls. Divergent callable joins require adapters and are explicitly unsupported.
+- `RepresentationTable.backingSnapshot()` exposes immutable backing records alongside layout/shape snapshots. `test/backend/typed-program.ts` shares source-to-typed-IR setup between semantic specialization and representation tests.
+- `test/infer-representations.test.ts`: 26 tests covering phase 4–6 corpus shape analysis, equivalent-call reuse, thin/scattered variants at identical endpoint types, mixed shapes and type-changing backing, known higher-order calls, ordinary and changing-shape recursion, user-returned lenses, target separation, serialization determinism, budgets, and explicit unsupported cases.
+
+This is a representation analysis graph, not emitted concrete IR or the phase-3 exit gate. Physical closure/native ABIs, callable wrappers, symbolic generic-body constraints, recursive nominal layouts, rewriting code records to representation variants, and independent concrete-IR verification remain open. Unsolved recursive returned representations, callable entry roots without an argument contract, and nominal data layouts are diagnosed explicitly. No C/Wasm emitter or fallback was added.
+
+Verification: 447 passing tests, 39 existing skips, zero failures across 20 files; `bunx tsc --noEmit` passes. These checks establish analysis behavior, not native/Wasm execution.

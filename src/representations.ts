@@ -113,6 +113,11 @@ export class RepresentationTable {
             [...this.shapes.values()].sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0)),
         );
     }
+    backingSnapshot(): readonly Backing[] {
+        return freezeTree(
+            [...this.backings.values()].sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0)),
+        );
+    }
     private add(shape: LensRep): LensRepId {
         if (!this.shapes.has(shape.id)) this.shapes.set(shape.id, freezeTree(shape));
         return shape.id;
