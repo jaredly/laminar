@@ -40,6 +40,7 @@ export const patAs = (pat: Pat): string => {
         case 'lens':
             throw new TSError(pat, 'not pat lens');
     }
+    throw new Error('not uyet');
 };
 
 type Tail = null | {
@@ -281,8 +282,8 @@ export const _toTS = (ctx: Ctx, expr: Term | Lens, tail: Tail = null): string =>
                 throw new Error('bad tilde ~');
             }
             return back(ctx, JSON.stringify(expr.text));
-        case 'const':
-            return expr.value + '';
+        // case 'const':
+        //     return expr.value + '';
         case 'string': {
             return (
                 '`' +
@@ -389,6 +390,7 @@ export const _toTS = (ctx: Ctx, expr: Term | Lens, tail: Tail = null): string =>
         case 'constructor':
             throw new Error('not ' + expr.type);
     }
+    throw new Error('not yet');
 };
 
 const withRecv = (ctx: Ctx, name: string | null | undefined, defn: string) =>

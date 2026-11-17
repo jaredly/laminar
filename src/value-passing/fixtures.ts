@@ -1,0 +1,318 @@
+import { readFileSync, openSync, writeFileSync, readSync, closeSync, existsSync } from 'fs';
+import { compact, defaultConfig, locLines, readFile, readLines, stringify } from '../lexer.ts';
+import { grammar } from '../laminar-parser.ts';
+import { grammar as ir } from './ir-parser.ts';
+import { Decl, File, FileItem, Linear } from '../ast.ts';
+import { Expr } from './expr1.ts';
+import { showFailure, findDeepest, showDeepest } from '../debugFailures.ts';
+import * as g from '../grammar-lexer.ts';
+import { lexpr, linearToExpr } from './decompose.ts';
+import { evalExpr } from './eval.ts';
+
+type N<T> = { node: g.Node; v: T };
+
+type Declaration = {
+    type: 'decl';
+    name: string;
+    decl: N<Decl> | null;
+    impl: N<Linear & { type: 'fn' }>;
+    ir?: N<Expr>;
+};
+type TestCase = {
+    type: 'test';
+    body: N<Linear>;
+    expected: N<Linear>;
+    ir?: N<Expr>;
+};
+
+const irNode = g.list(' ', g.list('', g.lit('ir'), g.lit('->')), g.rest('ir', 'any', false));
+type Comment = { type: 'comment'; text: string; multi: boolean; loc: number };
+
+const runSnapshot = (raw: string) => {
+    const comments: {
+        text: string;
+        at: { line: number; char: number };
+        loc: number;
+        multi: boolean;
+    }[] = [];
+    const pos = locLines(raw.split('\n'));
+    const lexed = readLines(raw, {
+        ...defaultConfig,
+        onComment(text, loc, multi) {
+            const at = pos(loc);
+            if (at.char === 0) {
+                comments.push({ text, at, loc, multi });
+            }
+        },
+    });
+
+    const items: (Declaration | TestCase | Comment)[] = [];
+    let decl: null | N<Decl> = null;
+    let body: null | N<Linear> = null;
+
+    for (let lnode of lexed.nodes) {
+        while (comments.length && comments[0].loc < lnode.loc) {
+            items.push({ ...comments.shift()!, type: 'comment' });
+        }
+        const results = g.parse<g.Node>('ir', lnode, {
+            rules: { ir: [{ pat: irNode, res: (v: { ir: g.Node }) => v.ir }] },
+            config: {},
+        });
+        if (results.type !== 'failure') {
+            let v = results.value;
+            if (v.type === 'list' && v.children.length === 1) {
+                v = v.children[0];
+            }
+            const expr = ir.parse<Expr>('Expr', results.value);
+            if (expr.type === 'failure') {
+                console.log(pos(lnode.loc));
+                // throw new Error('failed to parse ir');
+                const locToPos = (loc: number) => {
+                    const { line, char } = pos(loc);
+                    return `${line + 1}:${char}`;
+                };
+                let text = `Failed to parse at ${showFailure(expr.failure, locToPos)}`;
+                const deepest = findDeepest(expr.failure);
+                if (deepest) {
+                    text += '\n' + showDeepest(deepest, ir, text, locToPos);
+                }
+
+                throw new Error(text);
+            }
+            const last = items[items.length - 1];
+            if (last.type !== 'comment') {
+                last.ir = { v: expr.value, node: lnode };
+            } else {
+                throw new Error('Cant have comment there');
+            }
+            continue;
+        }
+
+        const itemResult = grammar.parse<FileItem>('FileItem', lnode);
+        if (itemResult.type === 'failure') {
+            const locToPos = (loc: number) => {
+                const { line, char } = pos(loc);
+                return `${line + 1}:${char}`;
+            };
+            let text = `Failed to parse at ${showFailure(itemResult.failure, locToPos)}`;
+            const deepest = findDeepest(itemResult.failure);
+            if (deepest) {
+                text += '\n' + showDeepest(deepest, grammar, text, locToPos);
+            }
+
+            throw new Error(text);
+        }
+        const node = itemResult.value;
+
+        if (
+            body == null &&
+            (node.type === 'let' ||
+                node.type === 'apply' ||
+                node.type === 'constructor' ||
+                node.type === 'case')
+        ) {
+            body = { v: node, node: lnode };
+            continue;
+        }
+        if (node.type === 'decl') {
+            decl = { v: node, node: lnode };
+            continue;
+        }
+        if (node.type === 'fn') {
+            if (!node.name) {
+                throw new Error(`nameless fn at line ${pos(node.loc).line + 1}`);
+            }
+            items.push({ type: 'decl', name: node.name, decl, impl: { v: node, node: lnode } });
+            decl = null;
+            continue;
+        }
+        if (!body) {
+            throw new Error(`what is this ${node.type} at line ${pos(node.loc).line + 1}`);
+        }
+        items.push({ type: 'test', body, expected: { v: node, node: lnode } });
+        body = null;
+    }
+    console.log(items.length, 'items found');
+
+    /*
+
+Ok we've got our items. Next step:
+-> for each item:
+    -> generate IR
+    -> run tests
+    -> output w/ values and/or errors
+    -> parse errors ... become files w/ dump maybe?
+        -> for now we'll hard fail
+    -> also let's preserve comments
+
+*/
+
+    let log: any[] = [];
+    let input: string[] = [];
+    const builtins = {
+        '+': (a: number, b: number) => a + b,
+        '-': (a: number, b: number) => a - b,
+        '*': (a: number, b: number) => a * b,
+        '/': (a: number, b: number) => a / b,
+        '==': (a: number, b: number) => a == b,
+        '>=': (a: number, b: number) => a >= b,
+        '<=': (a: number, b: number) => a <= b,
+        round: (n: number) => Math.round(n),
+        charList: (v: string) => [...v],
+        fst: ([a, b]: [any, any]) => {
+            return [a, (a: any) => [a, b]];
+        },
+        dup: (x: any) => {
+            let d = typeof x === 'string' || typeof x === 'number' ? x : structuredClone(x);
+            return [d, x];
+        },
+        drop(v: any) {},
+        consume(v: any) {},
+        inc: (v: number) => [null, v + 1],
+        log: (v: any) => {
+            log.push(v);
+        },
+        setInput: (ins: string[]) => {
+            input = ins;
+        },
+        getInput(text: string) {
+            if (!input.length) throw new Error('no more input');
+            log.push(text);
+            return input.shift();
+        },
+        Some: (v: number) => ({ type: 'Some', args: [v] }),
+        None: () => ({ type: 'None' }),
+        newlens: () => [5, () => void 0],
+        putStrLn: (v: any, w: any) => {
+            log.push(v);
+            return [null, w];
+        },
+        print: (v: any, w: any) => {
+            log.push(v);
+            return [null, w];
+        },
+        openFile(fileName: string, w: any) {
+            if (fileName === 'example.txt') {
+                console.log('opened');
+                return [-1, w];
+            }
+            return [openSync(fileName, 'r'), w];
+        },
+        readFile([w, f]: [any, number]) {
+            // if (f === -1) return ['one', [w, f]];
+            if (f === -1) return ['two\nthree four five\nsix seven height nine', [w, f]];
+            console.log('bot bas');
+            const buffer = new Uint8Array(
+                new ArrayBuffer(4096, { maxByteLength: 10 * 1000 * 1000 }),
+            );
+            let read = 0;
+            while (true) {
+                const num = readSync(f, buffer, read, 4096, read);
+                if (num === 0) break;
+                read += num;
+                buffer.buffer.resize(read + 4096);
+            }
+            return [new TextDecoder().decode(buffer.slice(0, read)), [w, f]];
+        },
+        closeFile(f: number, w: any) {
+            if (f === -1) return [null, w];
+            closeSync(f);
+            return [null, w];
+        },
+        logs() {
+            return log;
+        },
+    };
+
+    const newScope = (globals: Record<string, any>) =>
+        Object.fromEntries(Object.keys(globals).map((name) => [name, -1]));
+
+    const out = [];
+    const globals: Record<string, any> = { ...builtins };
+
+    let errors = 0;
+
+    for (let item of items) {
+        switch (item.type) {
+            case 'comment': {
+                out.push(item.text.trim());
+                break;
+            }
+            case 'decl': {
+                if (item.decl) {
+                    out.push(stringify(item.decl.node));
+                }
+                out.push(stringify(item.impl.node));
+                try {
+                    const ir = linearToExpr(
+                        {
+                            counter: { current: 0 },
+                            scope: newScope({ ...globals, [item.name]: 0 }),
+                        },
+                        item.impl.v,
+                    );
+                    const impl = evalExpr({ builtins: globals, scopes: [{}] }, ir);
+                    globals[item.name] = impl;
+                    out.push('');
+                    out.push('ir-> ' + stringify(lexpr(ir)));
+                } catch (err) {
+                    console.log('Error at line', pos(item.impl.node.loc).line + 1);
+                    console.log((err as Error).stack);
+                    errors++;
+                    // throw err;
+                }
+                out.push('');
+                break;
+            }
+            case 'test': {
+                out.push(stringify(item.body.node));
+                out.push('');
+                out.push(stringify(item.expected.node));
+                try {
+                    const ir = linearToExpr(
+                        { counter: { current: 0 }, scope: newScope(globals) },
+                        item.body.v,
+                    );
+                    out.push('');
+                    out.push('ir-> ' + stringify(lexpr(ir)));
+                    const result = evalExpr({ builtins: globals, scopes: [{}] }, ir);
+                    const rir = linearToExpr(
+                        { counter: { current: 0 }, scope: newScope(globals) },
+                        item.expected.v,
+                    );
+                    const rresult = evalExpr({ builtins: globals, scopes: [{}] }, rir);
+                    if (JSON.stringify(result) !== JSON.stringify(rresult)) {
+                        console.error('Not equal at line ', pos(item.expected.node.loc).line + 1);
+                        console.error(result);
+                        errors++;
+                        console.error(rresult);
+                    } else {
+                        console.log(
+                            `Test pass test/flow.test.lm:${pos(item.expected.node.loc).line + 1}`,
+                        );
+                    }
+                } catch (err) {
+                    console.log('Error at line', pos(item.expected.node.loc).line + 1);
+                    console.log((err as Error).stack);
+                    errors++;
+                }
+                out.push('');
+            }
+        }
+    }
+    comments.forEach((c) => out.push(c.text.trim()));
+    return { comments, errors, text: out.join('\n') };
+};
+
+if (import.meta.main) {
+    const [_, __, path] = process.argv;
+    if (!path || !path.endsWith('.test.lm') || !existsSync(path)) {
+        console.warn(`Usage: fixtures some.test.lm`);
+        process.exit(2);
+    }
+    const { comments, errors, text } = runSnapshot(readFileSync(path, 'utf-8'));
+
+    console.log(comments.length);
+    console.log(`Errors: ${errors}`);
+    writeFileSync(path, text);
+}

@@ -103,6 +103,7 @@ export const match = (pat: Pat, value: Value, gamma: Gamma): boolean => {
         case 'lens':
             throw new EvalError(pat, 'cant do lenses yet');
     }
+    throw new EvalError(pat, 'not yet');
 };
 
 export const evaluate = (expr: Term, gamma: Gamma): [Value, Gamma] => {
@@ -150,15 +151,15 @@ export const evaluate = (expr: Term, gamma: Gamma): [Value, Gamma] => {
             }
             throw new EvalError(expr, 'no matching case');
         }
-        case 'const':
-            return [
-                typeof expr.value === 'boolean'
-                    ? { type: 'bool', value: expr.value }
-                    : expr.value === null
-                      ? { type: 'unit' }
-                      : { type: 'int', value: expr.value },
-                gamma,
-            ];
+        // case 'const':
+        //     return [
+        //         typeof expr.value === 'boolean'
+        //             ? { type: 'bool', value: expr.value }
+        //             : expr.value === null
+        //               ? { type: 'unit' }
+        //               : { type: 'int', value: expr.value },
+        //         gamma,
+        //     ];
         case 'let': {
             const [value, g2] = evaluate(expr.value, gamma);
             gamma = g2;
@@ -227,4 +228,5 @@ export const evaluate = (expr: Term, gamma: Gamma): [Value, Gamma] => {
         case 'assign':
             throw new Error('no assign yet');
     }
+    throw new EvalError(expr, 'not yet');
 };

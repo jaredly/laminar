@@ -1,0 +1,105 @@
+Expr {
+    id:Idd -> id
+    id:id -> ({type: "idd", text: id.text, id: -1, loc: id.loc})
+    id:op -> ({type: "idd", text: id.text, id: -1, loc: id.loc})
+    // ["" "&" ...inner:*Expr] -> ({type:"addr", inner, loc: node.loc})
+    swap:Swap -> swap
+    ["" "block" ["{;" ...block:Stmt] ["{" result:Expr] ["{;" ...cleanup:Swap]] -> ({type: "block", block, cleanup, result, loc: node.loc})
+    ["" "block" ["{\n" ...block:Stmt] ["{" result:Expr] ["{;" ...cleanup:Swap]] -> ({type: "block", block, cleanup, result, loc: node.loc})
+    ["" one:re"^[0-9]+$" "." two:re"^[0-9]+$"] -> ({type: "const", value: +(one.text + '.' + two.text), loc: node.loc})
+    num:re"^\\d+$" -> ({type: "const", value: +num.text, loc: num.loc})
+    "true" -> ({type: "const", value: true, loc: node.loc})
+    "false" -> ({type: "const", value: false, loc: node.loc})
+    ["\"" head:id ...interp:(value:Expr tail:id)] -> ({type:"string",head:head.text, interp:interp.map(({value,tail})=> ({value, tail: tail.text})), loc:node.loc})
+    ["" ["(," ...args:Patd] "=>" ...body:*Block] -> ({type: "fn", args, body: bodyIffe(body), loc: node.loc})
+    ["" ["(," ...args:Patd] "=>" ...body:*Expr] -> ({type: "fn", args, body, loc: node.loc})
+    ["(," ...items:Expr] -> ({type: "tuple", items, loc: node.loc})
+    ["" fn:Expr ["(," ...args:Expr]] -> ({type: "apply", fn, args,loc:node.loc})
+    ["" one:Expr] -> one
+    id:id -> ({type: "idd", text: id.text, id: 0, loc: node.loc})
+
+    ["["] -> ({type: "constructor", name: "nil",args:[], loc: node.loc})
+    ["[," ...items:Expr] -> econs([...items, ({type: "constructor", name: "nil",args:[], loc: node.loc})], node.loc)
+    ["[," ...items:Expr ["" "..." ...tail:*Expr]] -> econs([...items, tail], node.loc)
+
+    [" " "match" value:Expr ["{\n" ...cases:Case]] -> ({type: "case", value, cases,loc:node.loc})
+    [" " "match" value:Expr ["{;" ...cases:Case]] -> ({type: "case", value, cases,loc:node.loc})
+    [" " "match" value:Expr ["{" kase:Case]] -> ({type: "case", value, cases: [kase],loc:node.loc})
+    [" " one:Expr] -> one
+    [";" one:Expr] -> one
+}
+
+Case:{pat:Patd,body:Expr} {
+    [" " pat:Patd "->" ...body:*Expr] -> ({pat, body})
+}
+
+function econs(items:Expr[], loc:number) {
+    let last = items[items.length - 1]
+    for (let i=items.length-2;i>=0;i--) {
+        last = {type:"constructor",name:"cons",args:[items[i], last],loc}
+    }
+    return last
+}
+
+function pcons(items:Patd[], loc:number) {
+    let last = items[items.length - 1]
+    for (let i=items.length-2;i>=0;i--) {
+        last = {type:"constructor",name:"cons",args:[items[i], last],loc}
+    }
+    return last
+}
+
+
+function bodyIffe(body:Stmt[]):Expr {
+    let last = body[body.length - 1]
+    if (!body.length || last.type === "let") return {type: "block", block:body, result: {type: "tuple",items:[],loc:-1},cleanup:[],loc:-1}
+    return {type: "block", block: body.slice(0, -1), result: last,cleanup:[],loc:-1}
+}
+
+Block:Stmt[] {
+    ["{;" ...stmts:Stmt] -> stmts
+    ["{\n" ...stmts:Stmt] -> stmts
+}
+
+Stmt {
+    [" " "let" ["" pat:Patd "=" ...value:*Expr]] -> ({type: "let", pat, value, loc: node.loc})
+    [" " "let" pat:Patd "=" ...value:*Expr] -> ({type: "let", pat, value, loc: node.loc})
+    // [" " "return" value:Expr] -> ({type: "return", value, loc: node.loc})
+    expr:Expr -> expr
+}
+
+Patd {
+    id:re"^_\\d+$" -> ({type: "drop", loc: node.loc, id: +id.text.slice(1)})
+    "true" -> ({type: "bool", loc: node.loc, value: true})
+    "false" -> ({type: "bool", loc: node.loc, value: false})
+
+    ["" one:re"^[0-9]+$" "." two:re"^[0-9]+$"] -> ({type: "number", value: +(one.text + '.' + two.text), loc: node.loc})
+    num:re"^\\d+$" -> ({type: "number", value: +num.text, loc: num.loc})
+
+    id:Idd -> id
+    "_" -> ({type: "drop", loc: node.loc, id: null})
+    ["(," ...items:Patd] -> ({type: "tuple", items, loc: node.loc})
+    ["" name:re"^[A-Z]" ["(," ...args:Patd]] -> ({type: "constructor", name: name.text, args, loc: node.loc})
+    ["\"" text:id] -> ({type: "string", text:text.text, loc: node.loc})
+
+    ["["] -> ({type: "constructor", name: "nil",args:[], loc: node.loc})
+    ["[," ...items:Patd] -> pcons([...items, ({type: "constructor", name: "nil",args:[], loc: node.loc})], node.loc)
+    ["[," ...items:Patd ["" "..." ...tail:*Patd]] -> pcons([...items, tail], node.loc)
+    ["" one:Patd] -> one
+}
+
+Swap {
+    ["" "swap" ["(," pat:Patd value:Expr]] -> ({type: "swap", pat, value, loc: node.loc})
+}
+
+Idd {
+    id:re"^[a-zA-Z_]+\\d+$" -> {
+        let num = id.text.match(new RegExp("\\d+$"))!;
+        return {
+            type: "idd",
+            id: +num[0],
+            text: id.text.slice(0, -num[0].length),
+            loc: id.loc,
+        }
+    }
+}

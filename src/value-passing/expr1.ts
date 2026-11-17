@@ -1,4 +1,4 @@
-import { Loc } from './ast.ts';
+import { Loc } from '../ast.ts';
 
 // pat w/ debruijn
 
