@@ -230,6 +230,13 @@ export function verifyConcreteProgram(p: ConcreteProgram): void {
         const k = representationKey(descriptor);
         if (!contracts.has(k)) contracts.set(k, new Map());
         contracts.get(k)!.set(contractKey(c), c);
+        const raw = p.analysis.variants.find((v) => v.id === c.target)?.result;
+        if (
+            descriptor.kind === 'callable' &&
+            raw &&
+            representationKey(raw) !== representationKey(c.result)
+        )
+            addContract(descriptor, { ...c, result: raw });
         if (descriptor.kind === 'callable-choice') {
             if (!('targets' in c) || !Array.isArray(c.targets))
                 return fail('Missing dispatch targets');
@@ -389,13 +396,69 @@ export function verifyConcreteProgram(p: ConcreteProgram): void {
                     ]);
                     const memberWrapper = wrapper(concreteName('wrapper', memberKey));
                     if (
-                        !['invoke', 'native'].includes(memberWrapper.kind) ||
+                        !['invoke', 'native', 'adapt-result'].includes(memberWrapper.kind) ||
                         memberWrapper.abi !== w.abi
                     )
                         return fail('Dynamic callable ABI mismatch');
                     return { callable: member.id, wrapper: memberWrapper.id };
                 });
                 eq(w.targets, expected, 'Dynamic callable dispatch coverage mismatch');
+            } else if (w.kind === 'adapt-result') {
+                const variant =
+                    p.analysis.variants.find((v) => v.id === contract.target) ??
+                    fail('Missing adapted target');
+                const rawContract = { ...contract, result: variant.result };
+                const rawABI = aid(contract.arguments.map(storage), storage(variant.result));
+                const rawKey = JSON.stringify([
+                    'wrapper',
+                    target,
+                    graphKey,
+                    k,
+                    contractKey(rawContract),
+                    rawABI,
+                    c.environment,
+                ]);
+                const source = wrapper(concreteName('wrapper', rawKey));
+                const from =
+                    callableByDescriptor.get(representationKey(variant.result)) ??
+                    fail('Missing result source');
+                const to =
+                    callableByDescriptor.get(representationKey(contract.result)) ??
+                    fail('Missing result target');
+                if (
+                    source.kind !== 'invoke' ||
+                    w.source !== source.id ||
+                    w.from !== from.id ||
+                    w.to !== to.id ||
+                    w.ownership !== 'transfer-result' ||
+                    to.descriptor.kind !== 'callable-choice'
+                )
+                    fail('Invalid result transfer adapter');
+                const entries = to.entries.map((entry) => {
+                    const dispatch = wrapper(entry.wrapper);
+                    if (dispatch.kind !== 'dispatch')
+                        return fail('Result target lacks dispatch contract');
+                    const candidate =
+                        from.entries.find((e) => {
+                            const member = wrapper(e.wrapper);
+                            return (
+                                e.abi === entry.abi &&
+                                (member.kind === 'dispatch'
+                                    ? member.targets.every((t) =>
+                                          dispatch.targets.some(
+                                              (d) =>
+                                                  d.callable === t.callable &&
+                                                  d.wrapper === t.wrapper,
+                                          ),
+                                      )
+                                    : dispatch.targets.some(
+                                          (t) => t.callable === from.id && t.wrapper === e.wrapper,
+                                      ))
+                            );
+                        }) ?? fail('Result source lacks compatible invocation entry');
+                    return { source: candidate.field, target: entry.field };
+                });
+                eq(w.entries, entries, 'Result invocation entry mapping changed');
             } else if (w.kind === 'invoke') {
                 const callee = code.get(w.code) ?? fail('Wrapper references absent code');
                 if (
@@ -607,28 +670,25 @@ export function verifyConcreteProgram(p: ConcreteProgram): void {
                     const entry =
                         c.entries.find((e) => {
                             const w = wrapper(e.wrapper);
+                            if (
+                                e.abi !==
+                                aid(contract.arguments.map(storage), storage(contract.result))
+                            )
+                                return false;
+                            const matchesTarget = (id: string, target: string): boolean => {
+                                let candidate = wrapper(id);
+                                if (candidate.kind === 'adapt-result')
+                                    candidate = wrapper(candidate.source);
+                                return candidate.kind === 'invoke'
+                                    ? candidate.code === codeName(target)
+                                    : candidate.kind === 'native' &&
+                                          candidate.definition === target;
+                            };
                             return w.kind === 'dispatch'
-                                ? w.targets.every((t, n) => {
-                                      const member = wrapper(t.wrapper);
-                                      return member.kind === 'invoke'
-                                          ? member.code === codeName(contract.targets![n]!)
-                                          : member.kind === 'native' &&
-                                                member.definition === contract.targets![n]!;
-                                  }) &&
-                                      e.abi ===
-                                          aid(
-                                              contract.arguments.map(storage),
-                                              storage(contract.result),
-                                          )
-                                : w.kind === 'invoke'
-                                  ? w.code === codeName(contract.target)
-                                  : w.kind === 'native' &&
-                                    w.definition === contract.target &&
-                                    e.abi ===
-                                        aid(
-                                            contract.arguments.map(storage),
-                                            storage(contract.result),
-                                        );
+                                ? w.targets.every((t, n) =>
+                                      matchesTarget(t.wrapper, contract.targets![n]!),
+                                  )
+                                : matchesTarget(w.id, contract.target);
                         }) ?? fail('Missing invocation slot');
                     eq(
                         o,

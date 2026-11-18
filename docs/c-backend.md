@@ -78,8 +78,8 @@ returned and captured joined callees, and thin/scattered lens arguments and
 returned focuses use the same ownership and restoration paths. There is no extra
 join allocation or function-pointer cast.
 
-Calls whose alternatives return different representations, callable focus storage,
-nominal/heap data, and unsupported native imports retain explicit diagnostics. Dynamic callable entry roots require a host
+Differing dynamic lens-result shapes, callable focus storage, nominal/heap data,
+and unsupported native imports retain explicit diagnostics. Dynamic callable entry roots require a host
 adapter. This remains partial phase-6 support.
 
 Implemented imports are numeric `+`, `-`, `*`, `/`, `==`, `>=`, `<=`, data `dup`,
@@ -201,8 +201,8 @@ returned joined closures, deferred cleanup callbacks, unused nested closures,
 nested subset joins, alias
 capture followed by refill, and higher-order thin/scattered calls carrying or
 returning lenses. A single-artifact case also exercises both thin and scattered
-invocation entries on the same joined callable. Both alternatives of a call must
-currently have the same result representation. The compiler emits all reachable alternatives and uses the
+invocation entries on the same joined callable. Callable results can normalize through typed result adapters; differing lens-result
+shapes remain explicit restrictions. The compiler emits all reachable alternatives and uses the
 selected runtime code pointer; specialization does not pick a branch. Independent
 analysis/concrete verification checks canonical alternative sets, target coverage,
 exact argument/result ABIs, environment ownership, and every branch entry mapping.
@@ -225,3 +225,22 @@ nested direct `fst` regression also checks that the typed reference interpreter
 lets the call boundary own argument completion, preventing duplicate restoration.
 Native wrappers have the same target-aware ABI and verification as user members;
 unsupported imports such as `round` still diagnose explicitly during C lowering.
+
+## Dynamic calls returning different closures
+
+Dynamic callees can return distinct user/native callable descriptors. Inference
+joins their result alternatives while retaining each body's original result ABI.
+Concrete `adapt-result` wrappers call the selected body with that ABI and move its
+returned environment, disposer, and mapped invocation entries into the common
+callable layout. The adapter neither allocates nor disposes the returned
+environment. Both its source ABI and common destination ABI remain exact C
+function-pointer types. Nested callable results and narrower result choices
+compose through the same adapters. Differing lens-result shapes retain their
+separate explicit diagnostic.
+
+Nineteen shared samples in `test/backend/callable-result-samples.ts` cover both
+selections, differing capture environments, unused results, nested results, native
+results, subset joins, returned lens callees with both pointer forms, both lens
+ABIs in one artifact, and alias capture/refill. Corruption tests independently
+reject altered source wrappers, source/destination layouts, ownership, field
+mappings, and ABIs before emission.

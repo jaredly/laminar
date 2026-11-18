@@ -1,3 +1,4 @@
+import { callableResultSamples } from '../backend/callable-result-samples.ts';
 import { nativeJoinSamples } from '../backend/native-join-samples.ts';
 import { cp, mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -65,6 +66,7 @@ const samples = [
     ...indirectCallSamples,
     ...callableJoinSamples,
     ...nativeJoinSamples,
+    ...callableResultSamples,
     ...phase5Samples,
     ...computedAliases,
     ...lensBranchSamples,

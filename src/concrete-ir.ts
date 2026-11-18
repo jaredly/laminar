@@ -30,6 +30,14 @@ export type ConcreteWrapper = {
 } & (
     | { kind: 'invoke'; code: string; ownership: 'transfer-captures-and-free' }
     | { kind: 'native'; definition: string; ownership: 'no-environment' }
+    | {
+          kind: 'adapt-result';
+          source: string;
+          from: string;
+          to: string;
+          entries: { source: string; target: string }[];
+          ownership: 'transfer-result';
+      }
     | { kind: 'dispose'; captures: string[]; ownership: 'drop-captures-and-free' }
     | {
           kind: 'dispatch';

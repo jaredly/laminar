@@ -1,3 +1,4 @@
+import { callableResultSamples } from './backend/callable-result-samples.ts';
 import { nativeJoinSamples } from './backend/native-join-samples.ts';
 import { expect, it } from 'bun:test';
 import { callableJoinSamples } from './backend/callable-join-samples.ts';
@@ -13,7 +14,7 @@ import { verifyRepresentations } from '../src/verify-representations.ts';
 import { printConcreteProgram } from '../src/print-concrete.ts';
 import { emitC } from '../src/c/emit.ts';
 
-for (const sample of [...callableJoinSamples, ...nativeJoinSamples])
+for (const sample of [...callableJoinSamples, ...nativeJoinSamples, ...callableResultSamples])
     it(`normalizes callable joins: ${sample.name}`, () => {
         const p = typedProgram(sample.source);
         expect<unknown>(executeTypedProgram(p)).toEqual(sample.expected);
@@ -115,12 +116,12 @@ for (const mutation of [
         if (mutation === 'adapter') delete join.callableJoin;
         rejects(() => emitC(c), 'invalid-concrete-ir');
     });
-it('keeps incompatible dynamic result representations explicit', () => {
+it('normalizes differing callable result representations', () => {
     expect(() =>
         compile(
             '{let f = match true {true -> fn () {fn (x) x}; false -> fn () {fn (x) x}}\n let g = f()\n g(1)}',
         ),
-    ).toThrow('Dynamic callable results require a common representation');
+    ).not.toThrow();
 });
 it('requires a host adapter for dynamic callable entry roots', () => {
     expect(() => compile('match true {true -> fn (()) 1; false -> fn (()) 2}')).toThrow(
@@ -204,4 +205,56 @@ it('keeps unsupported native imports explicit through runtime joins', () => {
         { unit: p.units.at(-1)!.id, arguments: [] },
     ]);
     expect(() => emitC(c)).toThrow('Native import native/round');
+});
+
+for (const mutation of ['source', 'from', 'to', 'ownership', 'entries', 'abi'] as const)
+    it(`rejects corrupt result adapter ${mutation}`, () => {
+        const p = typedProgram(callableResultSamples[0]!.source);
+        const c = structuredClone(
+            compileConcreteProgram(p, wasm32Emscripten('test'), [
+                { unit: p.units.at(-1)!.id, arguments: [] },
+            ]),
+        );
+        const w = c.wrappers.find((w) => w.kind === 'adapt-result')!;
+        if (w.kind !== 'adapt-result') throw Error('Expected result adapter');
+        if (mutation === 'source') w.source = c.wrappers.find((w) => w.kind === 'dispose')!.id;
+        if (mutation === 'from') w.from = w.to;
+        if (mutation === 'to') w.to = w.from;
+        if (mutation === 'ownership') (w as any).ownership = 'no-environment';
+        if (mutation === 'entries') w.entries[0]!.source = 'dispose';
+        if (mutation === 'abi') w.abi = 'forged';
+        expect(() => emitC(c)).toThrow();
+    });
+
+it('keeps differing dynamic lens results explicit', () => {
+    const p = typedProgram(
+        '{let f = match true {true -> fn (~p) ~p; false -> fn (~(x, y)) ~(x, y)}\n let p = (1, 2)\n f(~p) := (true, 3)\n p}',
+    );
+    expect(() =>
+        compileConcreteProgram(p, wasm32Emscripten('test'), [
+            { unit: p.units.at(-1)!.id, arguments: [] },
+        ]),
+    ).toThrow('Dynamic lens results require a common representation');
+});
+it('retains both result-adapted lens ABIs in one graph', () => {
+    const p = typedProgram(
+        callableResultSamples.find((s) => s.name === 'dynamic callable result with both lens ABIs')!
+            .source,
+    );
+    const c = compileConcreteProgram(p, wasm32Emscripten('test'), [
+        { unit: p.units.at(-1)!.id, arguments: [] },
+    ]);
+    expect(c.wrappers.some((w) => w.kind === 'adapt-result' && w.entries.length === 2)).toBe(true);
+});
+
+it('prints callable result transfer adapters', () => {
+    const p = typedProgram(callableResultSamples[0]!.source);
+    const c = compileConcreteProgram(p, wasm32Emscripten('test'), [
+        { unit: p.units.at(-1)!.id, arguments: [] },
+    ]);
+    expect(printConcreteProgram(c)).toContain('adapt-result');
+    expect(printConcreteProgram(c)).toContain('transfer-result');
+    expect(emitC(c)).toMatch(
+        /return \(L\d+\)\{\.environment=result\.environment, \.dispose=result\.dispose/,
+    );
 });

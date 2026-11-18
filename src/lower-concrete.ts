@@ -84,6 +84,13 @@ export function lowerConcreteProgram(
         JSON.stringify([c.target, c.arguments.map(representationKey), representationKey(c.result)]);
     function addContract(g: Group, call: Contract): void {
         g.contracts.set(contractKey(call), call);
+        const raw = variants.get(call.target)?.result;
+        if (
+            g.descriptor.kind === 'callable' &&
+            raw &&
+            representationKey(raw) !== representationKey(call.result)
+        )
+            addContract(g, { ...call, result: raw });
         if (g.descriptor.kind === 'callable-choice')
             g.descriptor.options.forEach((option, n) =>
                 addContract(group(option), {
@@ -240,6 +247,28 @@ export function lowerConcreteProgram(
                 environment,
                 targets,
                 ownership: 'selected-environment',
+            };
+            wrappers.set(id, w);
+            return w;
+        }
+        const raw = variants.get(c.target)?.result;
+        if (raw && representationKey(raw) !== representationKey(c.result)) {
+            if (c.result.kind !== 'callable-choice') return fail('Unsupported result adapter');
+            const source = wrapper(g, { ...c, result: raw }, environment);
+            const from = callable(group(raw)),
+                to = callable(group(c.result));
+            const adapter = joinArm(from, to);
+            const w: ConcreteWrapper = {
+                id,
+                key,
+                kind: 'adapt-result',
+                abi,
+                environment,
+                source: source.id,
+                from: from.id,
+                to: to.id,
+                entries: adapter.entries,
+                ownership: 'transfer-result',
             };
             wrappers.set(id, w);
             return w;

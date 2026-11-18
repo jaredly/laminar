@@ -243,12 +243,16 @@ export function inferRepresentations(
             };
         if (callee.kind === 'callable-choice') {
             const calls = callee.options.map((option) => invoke(option, args, chain, resultType));
-            const result = calls[0]!.result;
-            if (calls.some((call) => !equal(call.result, result)))
+            const results = calls.map((call) => call.result);
+            if (
+                results.some((r) => r.kind === 'lens') &&
+                results.some((r) => !equal(r, results[0]!))
+            )
                 throw new BackendDiagnostic(
                     'unsupported-representation-join',
-                    'Dynamic callable results require a common representation',
+                    'Dynamic lens results require a common representation',
                 );
+            const result = join(results);
             const targets = calls.map((call) => call.target);
             return { target: JSON.stringify(['dispatch', targets]), targets, result };
         }

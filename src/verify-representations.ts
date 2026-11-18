@@ -499,9 +499,11 @@ export function verifyRepresentations(
                                 );
                             else if (call.targets !== undefined)
                                 fail('Static call has dynamic targets');
+                            const results: ValueRepresentation[] = [];
                             options.forEach((option, index) => {
                                 if (option.kind === 'native') {
                                     nativeCall(option, targets[index]!, args, v);
+                                    results.push(v);
                                     return;
                                 }
                                 const target =
@@ -522,13 +524,30 @@ export function verifyRepresentations(
                                     args,
                                     'Call variant argument contract mismatch',
                                 );
-                                requireEqual(
-                                    target.result,
-                                    v,
-                                    'Call variant result contract mismatch',
-                                );
+                                results.push(target.result);
                                 edges.get(owner)!.add(target.id);
                             });
+                            if (callee.kind === 'callable-choice' && v.kind === 'callable-choice') {
+                                const members = results.flatMap((r) =>
+                                    r.kind === 'callable-choice'
+                                        ? r.options
+                                        : r.kind === 'callable' || r.kind === 'native'
+                                          ? [r]
+                                          : fail('Non-callable dynamic result'),
+                                );
+                                requireEqual(
+                                    v.options.map(repKey),
+                                    [...new Set(members.map(repKey))].sort(),
+                                    'Dynamic result alternatives changed',
+                                );
+                            } else
+                                results.forEach((result) =>
+                                    requireEqual(
+                                        result,
+                                        v,
+                                        'Call variant result contract mismatch',
+                                    ),
+                                );
                         } else if (callee.kind === 'native') {
                             if (call.targets !== undefined) fail('Native call has dynamic targets');
                             nativeCall(callee, call.target, args, v);

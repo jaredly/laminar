@@ -219,6 +219,27 @@ export function lowerC(program: ConcreteProgram): TranslationUnit {
         body.push(`return ${result};`);
         helpers.push({ signature, body });
     }
+    const resultAdapters = new Map(
+        program.wrappers
+            .filter((w) => w.kind === 'adapt-result')
+            .map((w, n) => [w.id, `result_adapter${n}`]),
+    );
+    for (const w of program.wrappers) {
+        if (w.kind !== 'adapt-result') continue;
+        const abi = program.abis.find((a) => a.id === w.abi)!;
+        const source = program.wrappers.find((source) => source.id === w.source)!;
+        if (source.kind !== 'invoke') return unsupported('Result adapter requires a concrete body');
+        const raw = program.abis.find((a) => a.id === source.abi)!;
+        const signature = `${type(abi.result)} ${resultAdapters.get(w.id)}(void *environment${abi.arguments.map((id, n) => `, ${type(id)} arg${n}`).join('')})`;
+        declarations.push(signature + ';');
+        helpers.push({
+            signature,
+            body: [
+                `${type(raw.result)} result = ${codes.get(source.code)}(environment${abi.arguments.map((_, n) => `, arg${n}`).join('')});`,
+                `return (${type(abi.result)}){.environment=result.environment, .dispose=result.dispose${w.entries.map((e) => `, .${identifier(e.target)}=result.${identifier(e.source)}`).join('')}};`,
+            ],
+        });
+    }
     const functions = program.code.map((c) => {
         const values = new Map<string, string>(),
             lenses = new Map<string, Lens>(),
@@ -455,9 +476,11 @@ export function lowerC(program: ConcreteProgram): TranslationUnit {
                                 // Runtime joins reify native entries; ordinary intrinsics keep their storage lowering.
                                 return w.kind === 'invoke'
                                     ? `, .${e.field}=${codes.get(w.code)}`
-                                    : w.kind === 'native' && nativeCodes.has(w.id)
-                                      ? `, .${e.field}=${nativeCodes.get(w.id)}`
-                                      : '';
+                                    : w.kind === 'adapt-result'
+                                      ? `, .${e.field}=${resultAdapters.get(w.id)}`
+                                      : w.kind === 'native' && nativeCodes.has(w.id)
+                                        ? `, .${e.field}=${nativeCodes.get(w.id)}`
+                                        : '';
                             })
                             .join('');
                         if (!i.captures.length && !entries) {
@@ -858,7 +881,11 @@ export function lowerC(program: ConcreteProgram): TranslationUnit {
                                 adapters.push(a);
                                 return a.expression;
                             });
-                            if (w.kind === 'invoke' || w.kind === 'dispatch')
+                            if (
+                                w.kind === 'invoke' ||
+                                w.kind === 'dispatch' ||
+                                w.kind === 'adapt-result'
+                            )
                                 expr = `(${value(i.callee)}).${identifier(i.field)}((${value(i.callee)}).environment${args.map((a) => `, ${a}`).join('')})`;
                             else if (w.kind === 'native') {
                                 const op = w.definition.slice(7);

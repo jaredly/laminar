@@ -174,16 +174,25 @@ export function lconcrete(program: ConcreteProgram, options: ConcretePrintOption
                             ? words('invoke', name(v.code))
                             : v.kind === 'native'
                               ? words('native', quote(v.definition))
-                              : v.kind === 'dispatch'
+                              : v.kind === 'adapt-result'
                                 ? words(
-                                      'dispatch',
-                                      tuple(
-                                          v.targets.map((t) =>
-                                              words(name(t.callable), name(t.wrapper)),
-                                          ),
-                                      ),
+                                      'adapt-result',
+                                      name(v.source),
+                                      name(v.from),
+                                      '->',
+                                      name(v.to),
+                                      tuple(v.entries.map((e) => words(e.source, '->', e.target))),
                                   )
-                                : words('dispose', tuple(v.captures.map(name))),
+                                : v.kind === 'dispatch'
+                                  ? words(
+                                        'dispatch',
+                                        tuple(
+                                            v.targets.map((t) =>
+                                                words(name(t.callable), name(t.wrapper)),
+                                            ),
+                                        ),
+                                    )
+                                  : words('dispose', tuple(v.captures.map(name))),
                         v.ownership,
                     ),
                 ),

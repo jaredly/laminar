@@ -308,3 +308,37 @@ Differing dynamic result representations, callable focus storage/replacement,
 unsupported native implementations, and dynamic callable entry roots without a
 host adapter remain explicit restrictions. This slice completes supported native
 intrinsic alternatives, not the entire phase-6 exit gate.
+
+## Phase 6 slice: differing callable results of dynamic calls
+
+Dynamic calls now join distinct returned user/native callable descriptors while
+retaining each reachable body's original result representation. Analysis records
+the canonical union, including nested subset choices. Lens results with different
+shapes remain explicit diagnostics rather than selecting an arbitrary ABI.
+
+Concrete lowering retains raw and adapted invocation contracts. An `adapt-result`
+wrapper calls the original body with its exact argument/result ABI and transfers
+the returned environment, disposer and typed invocation fields into the common
+callable layout. There is no additional environment allocation, capture copy, or
+result disposal. Callers retain the existing invoke-once/drop-unused ownership
+convention. Nested result adapters and multi-slot thin/scattered callable results
+compose through the existing erased-environment adapters.
+
+Independent analysis verification checks the complete set of returned alternatives
+and each original target contract. Concrete verification checks the raw wrapper,
+original result ABI, source/destination layouts, every invocation entry mapping,
+and `transfer-result` ownership. Diagnostic printing exposes result adapters.
+Nineteen differential/execution samples cover both branch selections, nested and
+unused owned results, native results, subset results, capture/refill of aliases,
+lens callees and two concrete lens ABIs in a single graph. Six malformed-adapter
+tests reject corrupt source wrappers, layouts, ownership, fields and signatures.
+
+Validation: 940 passing non-execution tests and 422 passing native/Wasm execution
+cases, with 39 existing skips and zero failures across 35 files (1,362 passes).
+Execution includes strict C11, optimized native builds, native sanitizers, and
+Emscripten/Node at both optimization levels. Commands:
+`bun test --path-ignore-patterns '**/c/execute.test.ts'`,
+`bun test test/c/execute.test.ts`, `bunx tsc --noEmit`, and `git diff --check`.
+Remote CI was not run. Differing dynamic lens-result shapes and callable focus
+storage/replacement remain separate phase-6 adapter work; unsupported native
+implementations and host-entry contracts retain their existing diagnostics.

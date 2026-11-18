@@ -33,7 +33,8 @@ Every invocation ABI receives an opaque environment pointer before its concrete 
 This finite slot representation allows one reified generic function value to supply thin and scattered invocation ABIs without erasing them. It is a concrete baseline with extra pointer fields, not the future optimized single-entry closure ABI. The invocation slots are known at compile time. Phase 6 adds `callable-choice`
 analysis descriptors: sorted, deduplicated sets of user-defined or native callable
 alternatives. Each dynamic call records one target variant per alternative and
-requires identical argument/result representation contracts. Nested branch joins
+requires common incoming argument representations. Returned callable descriptors
+may normalize through result adapters. Nested branch joins
 flatten their alternative sets; the finite slot requirements propagate into
 narrower joined wrappers as well as concrete member wrappers.
 
@@ -46,8 +47,15 @@ an incompatible function-pointer cast. Branch conversion moves the selected owne
 environment without allocation. An unused choice has no invocation entries and
 still carries the selected disposer. Native alternatives retain their registered import contracts and null environments.
 The C backend reifies supported intrinsics into exact typed wrappers when a join
-needs them. Differing result representations and unsupported import implementations
-remain explicit backend restrictions.
+needs them. When alternative bodies return different callable descriptors,
+`adapt-result` wrappers retain each source invocation ABI and move its result into
+a common callable layout using verified entry mappings. The source body still
+returns its original layout; the adapter has the common result ABI. Its
+`transfer-result` ownership neither allocates nor drops that result. Raw invocation
+contracts stay present alongside adapted contracts in the finite slot table.
+Independent verification checks both ABIs, source code, canonical result members,
+source/destination layouts, and every invocation field mapping. Differing lens
+result shapes and unsupported import implementations remain explicit restrictions.
 
 Invocation wrappers recover their exact environment type, transfer affine captures into the body, and free the environment before entering the body. Disposer wrappers drop remaining captures and free an unused environment. Native wrappers use a null environment and retain a concrete argument/result ABI. `make-callable` remains an operation even for top-level functions; these values are not all rewritten to direct calls.
 
@@ -63,7 +71,7 @@ The phase 3 exit gate is satisfied for accepted inputs: every emitted value and 
 
 ## Phase boundary
 
-Tests validate the concrete transformation and its independent verifier, including the phase 4–6 acceptance inputs and a registered recursive list schema. They do not execute concrete IR or generated C/Wasm. Phase 4 now consumes this artifact through the [C backend](c-backend.md), with separate storage lowering, syntax printing, and native/Emscripten execution. Phase 5 adds typed backing versions, aggregate reconstruction and generated restoration contexts for returned lenses. Dynamic closure joins, general heap data/runtime coverage, and optimization remain in their planned later phases. The explicit unsupported recursive-result and host-callable contracts must remain diagnostics until additional constraints or host adapters are available.
+Tests validate the concrete transformation and its independent verifier, including the phase 4–6 acceptance inputs and a registered recursive list schema. They do not execute concrete IR or generated C/Wasm. Phase 4 now consumes this artifact through the [C backend](c-backend.md), with separate storage lowering, syntax printing, and native/Emscripten execution. Phase 5 adds typed backing versions, aggregate reconstruction and generated restoration contexts for returned lenses. Differing dynamic lens-result shapes, callable focus storage, general heap data/runtime coverage, and optimization remain open. The explicit unsupported recursive-result and host-callable contracts must remain diagnostics until additional constraints or host adapters are available.
 
 ## Readable output
 

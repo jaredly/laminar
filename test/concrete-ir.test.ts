@@ -402,7 +402,7 @@ it('keeps semantic and dynamic result diagnostics in the concrete API', () => {
         compile(
             '{let f = match true {true -> fn () {fn (x) x}; false -> fn () {fn (x) x}}\n let g = f()\n g(1)}',
         ),
-    ).toThrow('Dynamic callable results require a common representation');
+    ).not.toThrow();
 });
 
 it('compiles two explicit shape variants of the same generic function entry', () => {
