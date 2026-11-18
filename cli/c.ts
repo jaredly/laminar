@@ -43,7 +43,7 @@ try {
     console.error(err);
     console.log('bad types');
     const pos = locLines(source.split('\n'));
-    console.log(pos(err.loc));
+    console.log(pos((err as { loc: number }).loc));
     process.exit(1);
 }
 console.time('Compile');
