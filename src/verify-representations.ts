@@ -67,6 +67,12 @@ export function verifyRepresentations(
                     kind: v.kind,
                     items: v.items.map((c) => JSON.parse(repKey(c))),
                 });
+            case 'local-focus':
+                return JSON.stringify({
+                    kind: v.kind,
+                    read: JSON.parse(repKey(v.read)),
+                    replacement: JSON.parse(repKey(v.replacement)),
+                });
             case 'lens':
                 return JSON.stringify({ kind: 'lens', shape: v.shape });
             case 'native':
@@ -225,6 +231,13 @@ export function verifyRepresentations(
     function fit(v: ValueRepresentation, t: SemanticFlow): void {
         if (!v || typeof v !== 'object') return fail('Missing value representation');
         if (t.tag === 'flow') {
+            if (v.kind === 'local-focus') {
+                if (!containsCallable(t.read) && !containsCallable(t.write))
+                    return fail('Noncanonical local callable focus');
+                fit(v.read, irPlain(t.read));
+                fit(v.replacement, irPlain(t.write));
+                return;
+            }
             if (v.kind !== 'lens') return fail('Lens contract has a non-lens representation');
             const s = shape(v.shape);
             typeEqual(layout(s.read).type, t.read);
@@ -406,6 +419,8 @@ export function verifyRepresentations(
         edges.set(owner, new Set());
         function block(b: IRBlock, s: State): ValueRepresentation {
             const deferred: IRBlock[] = [];
+            const localFocusPlaces = new Map<string, string>();
+
             for (const i of b.instructions) {
                 if (i.op === 'bind') {
                     bind(i.pattern, get(s, i.value), s);
@@ -425,9 +440,25 @@ export function verifyRepresentations(
                 switch (i.op) {
                     case 'constant':
                     case 'string':
-                    case 'swap':
                         if (v.kind !== 'data') fail('Data operation has a callable representation');
                         break;
+                    case 'swap': {
+                        const focus = get(s, i.lens);
+                        if (focus.kind === 'local-focus') {
+                            requireEqual(v, focus.read, 'Callable swap old provenance changed');
+                            requireEqual(
+                                get(s, i.value),
+                                focus.replacement,
+                                'Callable swap replacement provenance changed',
+                            );
+                            s.places.set(
+                                localFocusPlaces.get(i.lens) ??
+                                    fail('Nonlocal callable focus swap'),
+                                focus.replacement,
+                            );
+                        } else if (v.kind !== 'data') fail('Swap lacks callable focus provenance');
+                        break;
+                    }
                     case 'tuple':
                         if (i.out.type.tag !== 'plain') return fail('Tuple produced a lens');
                         requireEqual(
@@ -454,6 +485,30 @@ export function verifyRepresentations(
                         break;
                     }
                     case 'acquire': {
+                        if (v.kind === 'local-focus') {
+                            if (
+                                i.out.type.tag !== 'flow' ||
+                                i.slot.path.length ||
+                                s.lenses.has(i.slot.place) ||
+                                unit.loans.some((l) => l.place === i.slot.place) ||
+                                b.instructions.filter(
+                                    (use) => use.op === 'swap' && use.lens === i.out.id,
+                                ).length !== 1
+                            )
+                                return fail(
+                                    'Callable focuses require a direct whole-owned-local swap',
+                                );
+                            const stored = s.places.get(i.slot.place);
+                            requireEqual(
+                                v.read,
+                                containsCallable(i.out.type.read)
+                                    ? (stored ?? fail('Callable focus lacks owned provenance'))
+                                    : { kind: 'data', layout: layoutId(i.out.type.read) },
+                                'Callable focus read provenance changed',
+                            );
+                            localFocusPlaces.set(i.out.id, i.slot.place);
+                            break;
+                        }
                         const incoming = s.lenses.get(i.slot.place),
                             actual = lens(v);
                         if (incoming) topology(projectedShape(incoming, i.slot.path), actual);
@@ -509,20 +564,33 @@ export function verifyRepresentations(
                             'Closure capture provenance changed',
                         );
                         break;
-                    case 'scope':
+                    case 'scope': {
+                        const nested = clone(s);
                         requireEqual(
                             v,
-                            block(i.body, clone(s)),
+                            block(i.body, nested),
                             'Scope result representation mismatch',
                         );
+                        s.places.forEach((_, place) =>
+                            s.places.set(place, nested.places.get(place)!),
+                        );
                         break;
+                    }
                     case 'case': {
                         if (i.out.type.tag === 'flow' && lens(v).kind !== 'thin')
                             fail('Selected-branch adapter must expose a thin focus');
                         const results = i.cases.map((arm) => {
                             const branch = clone(s);
                             bind(arm.pattern, get(s, i.value), branch);
-                            return block(arm.body, branch);
+                            const result = block(arm.body, branch);
+                            s.places.forEach((before, place) =>
+                                requireEqual(
+                                    before,
+                                    branch.places.get(place),
+                                    'Branch callable storage versions require an adapter',
+                                ),
+                            );
+                            return result;
                         });
                         if (i.out.type.tag === 'flow') results.forEach(lens);
                         else if (v.kind === 'callable-choice') {

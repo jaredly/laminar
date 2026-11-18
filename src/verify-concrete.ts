@@ -162,6 +162,23 @@ export function verifyConcreteProgram(p: ConcreteProgram): void {
             );
             return id;
         }
+        if (v.kind === 'local-focus') {
+            const read = storage(v.read),
+                replacement = storage(v.replacement);
+            const restore = aid([replacement], unitLayout);
+            abi(restore);
+            const fields: ConcreteField[] = [
+                { name: 'read', kind: 'pointer', layout: read },
+                ...(read === replacement
+                    ? []
+                    : [{ name: 'replacement', kind: 'pointer' as const, layout: replacement }]),
+                { name: 'restore', kind: 'code', abi: restore },
+                { name: 'context', kind: 'pointer' },
+            ];
+            const id = lid(['local-focus', read, replacement]);
+            concreteFields(id, 'record', fields);
+            return id;
+        }
         if (v.kind === 'data') return data(semanticLayouts.get(v.layout)!.type);
         if (v.kind === 'native' || v.kind === 'callable' || v.kind === 'callable-choice')
             return (

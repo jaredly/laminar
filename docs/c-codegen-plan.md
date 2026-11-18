@@ -5,14 +5,14 @@ execute the documented scalar/tuple native C and Emscripten/Node subset. Typed
 indirect closure invocation and environment disposal implement part of phase 6.
 Compatible user-defined/native intrinsic joins and differing callable results
 execute, including differing lens-result shapes. Owned callable tuples execute through concrete recursive storage; callable
-focus storage/replacement remains open. Phase 7 runtime and host integration and phase 8 optimization remain broader
+general focus storage/restoration remains open; direct whole-owned-local callable swaps execute. Phase 7 runtime and host integration and phase 8 optimization remain broader
 work. This is subset
 coverage, not completion of every phase exit gate.
 
 The scoped lens extensions are complete as of `707521c`; see the
 [completion record and follow-up mapping](checker-completeness-handoff.md).
-Latest local verification: **1465 pass / 39 existing skips / 0 failures across
-36 files**, with TypeScript and diff checks passing. The latest full execution run passed without retries. Remote CI was not run for
+Latest local verification: **1499 pass / 39 existing skips / 0 failures across
+37 files**, with TypeScript and diff checks passing. The latest full execution run passed without retries. Remote CI was not run for
 these slices. See also [the implementation record](backend-progress.md),
 [backend contract](backend-contract.md), [typed IR API](typed-ir.md), and
 [C backend](c-backend.md). Each further slice should be independently reviewable
@@ -345,7 +345,8 @@ separate language-design work outside this backend plan.
 Owned callable tuple analysis and physical records are implemented and independently
 verified; see the latest backend progress record. Recursive fields retain each
 member's concrete ABI and use existing logical storage and affine disposal.
-Representation-bearing lens read/replacement contracts remain the next adapter
-work, along with differing aggregate joins. Keep phase 6 open until callable focus
+Direct whole-owned-local swaps now retain independent read/replacement descriptors.
+General representation-bearing lens restoration contracts remain the next adapter
+work, along with differing aggregate joins and branch-dependent storage versions. Keep phase 6 open until callable focus
 replacement executes with verified ownership and restoration on checked/unchecked
 paths and native/Wasm targets.

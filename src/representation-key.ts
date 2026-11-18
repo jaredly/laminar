@@ -9,6 +9,12 @@ export function representationKey(v: ValueRepresentation): string {
                 kind: v.kind,
                 items: v.items.map((c) => JSON.parse(representationKey(c))),
             });
+        case 'local-focus':
+            return JSON.stringify({
+                kind: v.kind,
+                read: JSON.parse(representationKey(v.read)),
+                replacement: JSON.parse(representationKey(v.replacement)),
+            });
         case 'lens':
             return JSON.stringify({ kind: 'lens', shape: v.shape });
         case 'native':

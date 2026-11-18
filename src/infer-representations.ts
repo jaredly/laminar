@@ -19,6 +19,7 @@ export type ValueRepresentation =
     | { kind: 'data'; layout: LayoutId }
     | { kind: 'aggregate'; items: ValueRepresentation[] }
     | { kind: 'lens'; shape: LensRepId }
+    | { kind: 'local-focus'; read: ValueRepresentation; replacement: ValueRepresentation }
     | { kind: 'callable'; unit: string; function: string; captures: ValueRepresentation[] }
     | { kind: 'native'; definition: string }
     | {
@@ -332,6 +333,8 @@ export function inferRepresentations(
         // restoration-time types verified by typed IR, rather than setup types.
         // Callable dependencies retain their protected lexical provenance.
         const deferred: IRBlock[] = [];
+        const localFocusPlaces = new Map<string, string>();
+
         for (const i of body.instructions) {
             if (i.op === 'bind') {
                 bind(i.pattern, get(s, i.value), s);
@@ -371,6 +374,26 @@ export function inferRepresentations(
                 }
                 case 'acquire': {
                     if (i.out.type.tag !== 'flow') return fail('Acquire produced data');
+                    if (containsCallable(i.out.type.read) || containsCallable(i.out.type.write)) {
+                        if (
+                            i.slot.path.length ||
+                            s.lenses.has(i.slot.place) ||
+                            unit.loans.some((l) => l.place === i.slot.place) ||
+                            body.instructions.filter(
+                                (use) => use.op === 'swap' && use.lens === i.out.id,
+                            ).length !== 1
+                        )
+                            return fail('Callable focuses require a direct whole-owned-local swap');
+                        const stored = s.places.get(i.slot.place);
+                        const read = containsCallable(i.out.type.read)
+                            ? (stored ?? fail('Callable focus lacks owned provenance'))
+                            : data(i.out.type.read);
+                        // The only consumer is the direct swap below. Resolve replacement
+                        // provenance after its ordered RHS has been analyzed.
+                        out = { kind: 'local-focus', read, replacement: read };
+                        localFocusPlaces.set(i.out.id, i.slot.place);
+                        break;
+                    }
                     let base = s.lenses.get(i.slot.place);
                     if (base) for (const index of i.slot.path) base = reps.project(base, index);
                     out = {
@@ -395,10 +418,19 @@ export function inferRepresentations(
                         shape: reps.tuple(i.items.map((id) => shape(get(s, id)))),
                     };
                     break;
-                case 'swap':
+                case 'swap': {
                     if (i.out.type.tag !== 'plain') return fail('Swap produced a lens');
-                    out = data(i.out.type.value);
+                    const focus = get(s, i.lens);
+                    if (focus.kind === 'local-focus') {
+                        focus.replacement = get(s, i.value);
+                        out = focus.read;
+                        s.places.set(
+                            localFocusPlaces.get(i.lens) ?? fail('Nonlocal callable focus swap'),
+                            focus.replacement,
+                        );
+                    } else out = data(i.out.type.value);
                     break;
+                }
                 case 'global': {
                     const target = definitions.get(i.instance.definition);
                     if (!target) {
@@ -444,14 +476,22 @@ export function inferRepresentations(
                     });
                     break;
                 }
-                case 'scope':
-                    out = block(unit, i.body, clone(s), record, chain);
+                case 'scope': {
+                    const nested = clone(s);
+                    out = block(unit, i.body, nested, record, chain);
+                    s.places.forEach((_, place) => s.places.set(place, nested.places.get(place)!));
                     break;
+                }
                 case 'case': {
                     const branches = i.cases.map((arm) => {
                         const state = clone(s);
                         bind(arm.pattern, get(s, i.value), state);
-                        return block(unit, arm.body, state, record, chain);
+                        const result = block(unit, arm.body, state, record, chain);
+                        s.places.forEach((before, place) => {
+                            if (!equal(before, state.places.get(place)!))
+                                fail('Branch callable storage versions require an adapter');
+                        });
+                        return result;
                     });
                     out =
                         i.out.type.tag === 'flow'

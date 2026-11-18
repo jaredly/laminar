@@ -215,7 +215,7 @@ it('keeps callable focus replacement explicit at the representation boundary', (
         { unit: p.units.at(-1)!.id, arguments: [] },
     ]);
     expect(() => inferRepresentations(source)).toThrow(
-        'Callable storage requires an explicit closure representation',
+        'Callable focuses require a direct whole-owned-local swap',
     );
 });
 

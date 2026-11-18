@@ -44,15 +44,6 @@ it('independently rejects changed callable tuple members', () => {
         'Tuple member provenance changed',
     );
 });
-it('keeps callable focus storage explicit', () => {
-    const p = typedProgram('{let x = 3\n let f = fn () x\n let g = f := fn () 5\n g()}');
-    const source = specializeProgram(p, wasm32Emscripten('test'), [
-        { unit: p.units.at(-1)!.id, arguments: [] },
-    ]);
-    expect(() => inferRepresentations(source)).toThrow(
-        'Callable storage requires an explicit closure representation',
-    );
-});
 
 for (const mutation of ['field-layout', 'field-kind', 'field-order'] as const)
     it(`rejects corrupted physical callable aggregate ${mutation}`, () => {

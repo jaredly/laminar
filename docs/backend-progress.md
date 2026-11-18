@@ -453,3 +453,48 @@ Emscripten/Node at both optimization levels without retries.
 Commands: `bun test --path-ignore-patterns '**/c/execute.test.ts'`,
 `bun test test/c/execute.test.ts`, `bunx tsc --noEmit`, and
 `git diff --check`. Remote CI was not run.
+
+## Phase 6 slice: direct owned-local callable exchanges
+
+Direct whole-owned-local swaps now carry a `local-focus` representation with
+independent read and replacement value descriptors. This covers callable/data
+transitions as well as different capture structs, callable choices, empty-slot
+refill and whole callable tuples. Acquisition retains owned read provenance;
+analysis resolves replacement provenance after the ordered RHS and transfers the
+old descriptor to the swap result and the replacement descriptor to the logical
+place. Scope completion propagates current descriptors back to enclosing places.
+Branches that change enclosing callable storage representations still diagnose
+that a storage-version adapter is required.
+
+Concrete lowering derives typed read/replacement pointers and a restoration
+signature from these independent physical layouts. Independent analysis
+verification checks semantic endpoints, owned-place provenance, the direct
+same-block swap boundary, old-result provenance, replacement provenance and
+subsequent versions. Concrete verification independently checks record identity,
+both pointers and the exact restoration ABI. The focus descriptor contains no
+source-local place identity, so storage addresses do not select cache keys.
+
+The existing C logical swap adapter saves the old value, installs the RHS in a
+new typed logical version, and transfers affine ownership without copying an
+environment or disposing the extracted result. Scope disposal releases whichever
+version remains; old values have their own invocation/disposal fields. Local
+acquisitions retain logical views, so no physical pointer to an obsolete aggregate
+or stack temporary is introduced.
+
+Ten shared samples cover different captures, callable/data changes, empty refill,
+unused old/replacement values, repeated replacement, tuple replacement, nested
+scope propagation and both runtime selections of a joined RHS. Serialized
+corruption tests reject forged endpoint provenance and physical pointer layouts.
+Existing borrowed/manual callable focus tests still reject with the new explicit
+boundary diagnostic. This slice does not implement projected focuses, persistent
+aliases, callable focus parameters/results, manual restoration, scattered callable
+focus tuples, or divergent branch storage versions. Those require descriptor-aware
+restoration and representation adapters; phase 6 remains open.
+
+Validation: **1,499 passes, 39 existing skips, zero failures across 37 files**:
+997 non-execution tests and 502 native/Wasm execution cases. The full harness
+passed strict C11, optimized native builds, supported native sanitizers and
+Emscripten/Node at both optimization levels without retries.
+Commands: `bun test --path-ignore-patterns '**/c/execute.test.ts'`,
+`bun test test/c/execute.test.ts`, `bunx tsc --noEmit`, and
+`git diff --check`. Remote CI was not run.

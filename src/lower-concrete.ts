@@ -78,6 +78,10 @@ export function lowerConcreteProgram(
         return g;
     };
     function discover(v: ValueRepresentation): void {
+        if (v.kind === 'local-focus') {
+            discover(v.read);
+            discover(v.replacement);
+        }
         if (v.kind === 'aggregate') v.items.forEach(discover);
         if (v.kind === 'callable' || v.kind === 'native' || v.kind === 'callable-choice') group(v);
     }
@@ -197,6 +201,20 @@ export function lowerConcreteProgram(
                 'record',
                 items.map((id, i) => ({ name: `item${i}`, kind: 'value', layout: id })),
             );
+        }
+        if (v.kind === 'local-focus') {
+            const read = layout(v.read),
+                replacement = layout(v.replacement);
+            const restore = table.abi([replacement], unitLayout);
+            const fields: ConcreteField[] = [
+                { name: 'read', kind: 'pointer', layout: read },
+                ...(read === replacement
+                    ? []
+                    : [{ name: 'replacement', kind: 'pointer' as const, layout: replacement }]),
+                { name: 'restore', kind: 'code', abi: restore },
+                { name: 'context', kind: 'pointer' },
+            ];
+            return table.record(['local-focus', read, replacement], 'record', fields);
         }
         if (v.kind === 'data') return table.data(dataLayouts.get(v.layout)!.type);
         if (v.kind === 'callable' || v.kind === 'native' || v.kind === 'callable-choice')

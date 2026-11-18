@@ -283,3 +283,22 @@ Callable focus storage remains separate work. Its adapters need distinct
 read/replacement descriptors and restoration through the current logical version,
 with escaping backing retained until completion. Differing aggregate joins and
 nominal storage keep their existing diagnostics. Phase 6 remains open.
+
+## Direct callable swaps
+
+Direct swaps of whole owned locals now preserve independent callable or aggregate
+read/replacement descriptors. The existing logical C swap saves the old value
+using its original layout, installs the ordered RHS with its own layout, and
+updates the current cell version. Later moves and drops use that version.
+Nested lexical scopes propagate descriptor changes outward. Unused extracted
+values and unused replacements follow their own typed disposal paths.
+
+Ten cases in `test/backend/callable-focus-samples.ts` cover replacement across
+different closure environments, callable/data changes, empty-slot refill,
+unused values, repeated swaps, whole tuple replacement, nested scope changes and
+joined replacements. No C environment copy, incompatible invocation-pointer cast
+or retained pointer into expired stack storage is introduced.
+
+Persistent aliases, projected callable focuses, callable focus call/return ABIs,
+manual restoration, scattered callable focuses and divergent branch storage
+versions remain explicit adapter work. Phase 6 stays open.

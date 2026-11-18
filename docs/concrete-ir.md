@@ -195,3 +195,28 @@ shape endpoints contain semantic data layouts only and intentionally continue to
 reject callable storage. Differing aggregate joins and recursive aggregate
 results requiring unsolved constraints remain diagnostics. Physical nominal
 containers and callable host roots also retain their separate restrictions.
+
+## Direct owned-local callable focus contracts
+
+A `local-focus` analysis descriptor retains independent `read` and
+`replacement` value representations for a direct whole-owned-local swap. It is
+distinct from the semantic-layout lens shape table. Read provenance comes from
+the current owned place; replacement provenance comes from the ordered RHS.
+Both descriptors participate in canonical representation keys. Neither contains
+a caller address or logical place ID. Scope exit propagates current owned
+representations to enclosing places; divergent branch versions diagnose an
+unsupported adapter.
+
+Its physical record is keyed by the two concrete endpoint layout IDs. It has
+typed read and optional distinct replacement pointers, an exact replacement-to-unit
+restoration code pointer, and an opaque context pointer. Independent verification
+derives all fields and the restoration ABI from verified descriptors, and verifies
+that the acquisition has one direct same-block swap consumer on a whole owned
+place. The old swap result retains the read descriptor; the place receives the
+RHS descriptor. The C local swap path uses logical views without materializing
+these pointers.
+
+This descriptor is intentionally not a general lens shape: callable focus
+parameters/results, persistent aliases, projections, lens tuples and manual
+cleanup still require representation-aware restoration adapters. They remain
+explicit diagnostics. General callable focus replacement is not complete.
