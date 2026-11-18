@@ -252,3 +252,62 @@ for (const name of [
         expect(() => verifyConcreteProgram(c)).toThrow('Moved callable provenance changed');
         expect(() => emitC(c)).toThrow('Moved callable provenance changed');
     });
+for (const condition of ['true', 'false'])
+    it(`rejects divergent post-cleanup descriptors ${condition}`, () => {
+        const source = `fn replacement() 9
+{let x = 1
+ let v = 3
+ let f = fn () v
+ {let focus = ~{match ${condition} {
+ true -> @(x, {let old = f := replacement
+ old()
+ fn () ()}); false -> x}}
+ focus := true}
+ (f(), x)}`;
+        const p = typedProgram(source);
+        expect(legacyReference(source)).toEqual([condition === 'true' ? 9 : 3, true]);
+        expect(executeTypedProgram(p)).toEqual([condition === 'true' ? 9 : 3, true]);
+        expect(() =>
+            compileConcreteProgram(p, wasm32Emscripten('test'), [
+                { unit: p.units.at(-1)!.id, arguments: [] },
+            ]),
+        ).toThrow('Selected cleanup storage transitions require a restoration adapter');
+    });
+for (const name of [
+    'deferred selected convergent continuation true',
+    'deferred selected aggregate continuation true',
+    'deferred selected nested continuation true',
+])
+    it(`independently rejects stale provenance after ${name}`, () => {
+        const c = concrete(deferredStorageSamples.find((s) => s.name === name)!.source);
+        const values = c.analysis.entries[0].values;
+        const transition = values.find((v: any) => v.cleanupStorage).cleanupStorage[0];
+        const moved = values.findLast(
+            (v: any) => JSON.stringify(v.representation) === JSON.stringify(transition.after),
+        );
+        moved.representation = transition.before;
+        expect(() => verifyConcreteProgram(c)).toThrow('Moved callable provenance changed');
+        expect(() => emitC(c)).toThrow('Moved callable provenance changed');
+    });
+it('rejects distinct cleanup callable provenance even with matching result types', () => {
+    const source = `{let x = 1
+ let v = 3
+ let f = fn () v
+ {let focus = ~{match true {
+ true -> @(x, {let old = f := fn () 9
+ old()
+ fn () ()});
+ false -> @(x, {let old = f := fn () 8
+ old()
+ fn () ()})}}
+ focus := true}
+ (f(), x)}`;
+    const p = typedProgram(source);
+    expect(legacyReference(source)).toEqual([9, true]);
+    expect(executeTypedProgram(p)).toEqual([9, true]);
+    expect(() =>
+        compileConcreteProgram(p, wasm32Emscripten('test'), [
+            { unit: p.units.at(-1)!.id, arguments: [] },
+        ]),
+    ).toThrow('Selected cleanup storage transitions require a restoration adapter');
+});

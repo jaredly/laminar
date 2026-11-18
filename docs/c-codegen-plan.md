@@ -11,7 +11,7 @@ coverage, not completion of every phase exit gate.
 
 The scoped lens extensions are complete as of `707521c`; see the
 [completion record and follow-up mapping](checker-completeness-handoff.md).
-Latest local verification: **2005 pass / 39 existing skips / 0 failures across
+Latest local verification: **2047 pass / 39 existing skips / 0 failures across
 42 files**, with default TypeScript and diff checks passing. The latest full execution run passed without retries. Remote CI was not run for
 these slices. See also [the implementation record](backend-progress.md),
 [backend contract](backend-contract.md), [typed IR API](typed-ir.md), and
@@ -451,19 +451,19 @@ Include immediate swaps/discards and returned lenses. Then add exact post-cleanu
 normalization adapters for divergent selected replacement. The current replacement
 guard stays in place. Phase 6 remains incomplete.
 
-## Latest phase 6 slice: call argument completion effects
+## Latest phase 6 slice: convergent selected cleanup effects
 
-Direct and scattered manual cleanup descriptor changes reach continuation reads at
-lexical release, immediate swaps and plain-result call completion. Lens-result
-calls retain argument completion handlers until their result completes, including
-forwarded results and native `fst`; native `dup` completes immediately. Independent
-verification derives the same boundaries and rejects stale post-call provenance.
-Existing concrete transitions, typed ABIs and retained C argument backing remain
-the ownership/lifetime contracts.
+Selected lens results now carry arm completion handlers. At completion, each arm
+uses current enclosing owner descriptors plus its private setup state; all arms
+must finish with the same exact enclosing descriptor. That descriptor reaches
+continuation reads. Nested selections, direct/scattered handlers, calls and outer
+manual completion retain their existing ordering. Independent verification derives
+the final-arm agreement and checks post-release provenance.
 
-Next, model effects across selected branches and add exact selected post-cleanup
-normalization adapters. Effects for escaping callee-local owners and general
-callable focus endpoint ABIs (including scattered callable focuses) remain separate
-work. This slice propagates caller-side cleanup of scalar/tuple lens arguments;
-it does not introduce general function effect summaries. Do not relax the divergent
-deferred replacement guard using only these handlers. Phase 6 remains incomplete.
+Differing post-cleanup descriptors still require explicit adapters and diagnose
+`Selected cleanup storage transitions require a restoration adapter`. Deferred
+writes to owners with divergent setup descriptors retain the original replacement
+guard. Next, retain per-arm post-cleanup descriptors and exact normalization adapters
+through selected staging/completion and returned backing before relaxing either
+guard. Escaping callee-local effects and general callable focus endpoint ABIs remain
+separate work. Phase 6 remains incomplete.

@@ -879,3 +879,35 @@ Validation: **2,005 pass / 39 existing skips / 0 failures across 42 files**:
 native, supported sanitizer, and Emscripten/Node execution at both optimization
 levels passed without retries (312.01 seconds). `bunx tsc --noEmit` and
 `git diff --check` pass. Remote CI was not run.
+
+## Convergent selected cleanup effects
+
+Lens-valued cases now retain their arm-result completion handlers. On completion,
+analysis clones each arm's private setup state, overlays the current enclosing
+owner descriptors, and applies the corresponding handler. All enclosing places
+must have identical exact final descriptors across arms before continuation state
+is updated. Independent serialized verification derives that agreement separately.
+This preserves intervening owner versions and each original cleanup ABI; existing
+C selected storage merging handles the convergent final layouts without new value
+conversions or ownership operations.
+
+Twelve shared samples cover both selections, callable/aggregate replacement,
+unused aliases, nested selections, returned call backing, and outer manual cleanup.
+The initial convergent regression failed before the fix. Three corruption tests
+reject stale post-selected callable/aggregate provenance. Three negative tests
+preserve an explicit adapter boundary for changed/unchanged arms and distinct
+callable provenance, even with matching semantic result types.
+
+Differing final descriptors diagnose `Selected cleanup storage transitions require
+a restoration adapter`. Deferred writes to divergent setup owners keep the existing
+`Deferred callable storage replacement requires a restoration adapter` guard.
+Explicit post-cleanup arm descriptors/adapters through staging and returned contexts
+remain next. Arm-local returned-alias experiments additionally encounter the
+existing typed-IR `Computed loan owner protection mismatch` boundary; no checker or
+typed-IR rules were changed for this slice. Phase 6 remains incomplete.
+
+Validation: **2,047 pass / 39 existing skips / 0 failures across 42 files**:
+1,229 non-execution tests and 818 native/Wasm cases. Full strict C11, optimized
+native, supported sanitizer, and Emscripten/Node execution at both optimization
+levels passed without retries (321.49 seconds). `bunx tsc --noEmit` and
+`git diff --check` pass. Remote CI was not run.

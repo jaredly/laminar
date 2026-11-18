@@ -480,4 +480,113 @@ fn second(~x) ~x
  (f() + n, x)}`,
         expected: [15, condition === 'true'],
     },
+    {
+        name: `deferred selected convergent continuation ${condition}`,
+        source: `fn replacement() 9
+{let x = 1
+ let v = 3
+ let f = fn () v
+ {let focus = ~{match ${condition} {
+ true -> @(x, {let old = f := replacement
+ old()
+ fn () ()});
+ false -> @(x, {let old = f := replacement
+ old()
+ fn () ()})}}
+ focus := true}
+ (f(), x)}`,
+        expected: [9, true],
+    },
+    {
+        name: `deferred selected aggregate continuation ${condition}`,
+        source: `fn replacement() 9
+{let x = 1
+ let v = 3
+ let packed = (fn () v, 4)
+ {let focus = ~{match ${condition} {
+ true -> @(x, {let (old, n) = packed := (replacement, 6)
+ old() + n
+ fn () ()});
+ false -> @(x, {let (old, n) = packed := (replacement, 6)
+ old() + n
+ fn () ()})}}
+ focus := true}
+ let (f, n) = packed
+ (f() + n, x)}`,
+        expected: [15, true],
+    },
+    {
+        name: `deferred selected unused continuation ${condition}`,
+        source: `fn replacement() 9
+{let x = 1
+ let v = 3
+ let f = fn () v
+ {let focus = ~{match ${condition} {
+ true -> @(x, {let old = f := replacement
+ old()
+ fn () ()});
+ false -> @(x, {let old = f := replacement
+ old()
+ fn () ()})}}
+ ()}
+ (f(), x)}`,
+        expected: [9, 1],
+    },
+    {
+        name: `deferred selected nested continuation ${condition}`,
+        source: `fn replacement() 9
+{let x = 1
+ let v = 3
+ let f = fn () v
+ {let focus = ~{match ${condition} {
+ true -> {match false {
+ true -> @(x, {let old = f := replacement
+ old()
+ fn () ()});
+ false -> @(x, {let old = f := replacement
+ old()
+ fn () ()})}};
+ false -> @(x, {let old = f := replacement
+ old()
+ fn () ()})}}
+ focus := true}
+ (f(), x)}`,
+        expected: [9, true],
+    },
+    {
+        name: `deferred selected returned continuation ${condition}`,
+        source: `fn replacement() 9
+fn pass(~x) ~x
+{let x = 1
+ let v = 3
+ let f = fn () v
+ {let focus = ~{match ${condition} {
+ true -> pass(~{@(x, {let old = f := replacement
+ old()
+ fn () ()})});
+ false -> pass(~{@(x, {let old = f := replacement
+ old()
+ fn () ()})})}}
+ focus := true}
+ (f(), x)}`,
+        expected: [9, true],
+    },
+    {
+        name: `deferred selected staged continuation ${condition}`,
+        source: `fn replacement() 9
+{let x = 1
+ let count = 0
+ let v = 3
+ let f = fn () v
+ {let focus = ~{@({match ${condition} {
+ true -> @(x, {let old = f := replacement
+ old()
+ fn () ()});
+ false -> @(x, {let old = f := replacement
+ old()
+ fn () ()})}}, fn () {count := 10})}
+ focus := true}
+ (f(), count, x)}`,
+        expected: [9, 10, true],
+    },
 ]);

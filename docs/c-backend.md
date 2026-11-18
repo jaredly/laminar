@@ -473,3 +473,11 @@ adapters and retained argument backing. Direct, dynamic and native calls, scatte
 arguments, forwarded results and outer manual wrappers share that contract.
 Selected divergent replacement, callee-local effect summaries and general callable
 focus endpoint ABIs remain separate phase-6 work.
+
+Selected arm-result cleanup can now replace callable/aggregate owners when final
+representation descriptors converge exactly across all arms. Analysis propagates
+that descriptor after selected completion; C uses its existing typed storage merge.
+Nested selections, unused aliases, returned argument backing and outer manual
+wrappers retain their existing restoration/ownership behavior. Differing final
+representations and deferred writes to divergent setup owners still require exact
+post-cleanup normalization adapters. Phase 6 remains incomplete.

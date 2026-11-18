@@ -409,3 +409,10 @@ remain open. Calls now apply caller-side argument completion effects after plain
 results and carry handlers on lens results until restoration. Forwarded results,
 native `dup`/`fst`, and dynamic dispatch use the same boundaries. This does not add
 callee-local effect summaries or callable focus endpoint ABIs.
+
+Selected lens completion can now propagate enclosing owner descriptor changes
+when all arm-result handlers finish with the same exact descriptor. Independent
+verification derives arm agreement using current enclosing descriptors and retained
+private setup state. Existing physical merge contracts suffice for equal layouts;
+differing final descriptors require a post-cleanup adapter and diagnose explicitly.
+The separate guard on deferred writes to divergent setup storage is unchanged.

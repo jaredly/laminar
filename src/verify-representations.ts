@@ -770,6 +770,33 @@ export function verifyRepresentations(
                         });
                         if (i.out.type.tag === 'flow') results.forEach(lens);
                         else verifyJoin(v, results);
+                        if (i.out.type.tag === 'flow') {
+                            const finishes = i.cases.map((arm, n) =>
+                                states[n]!.finishes.get(arm.body.result),
+                            );
+                            const places = [...s.places.keys()];
+                            if (finishes.some(Boolean))
+                                s.finishes.set(i.out.id, (current, apply) => {
+                                    if (!apply) return;
+                                    const completed = states.map((setup, n) => {
+                                        const restored = clone(setup);
+                                        for (const place of places)
+                                            restored.places.set(place, current.places.get(place)!);
+                                        finishes[n]?.(restored, true);
+                                        return restored;
+                                    });
+                                    for (const place of places) {
+                                        const result = completed[0]!.places.get(place)!;
+                                        for (const state of completed)
+                                            requireEqual(
+                                                state.places.get(place),
+                                                result,
+                                                'Selected cleanup storage transitions require a restoration adapter',
+                                            );
+                                        current.places.set(place, result);
+                                    }
+                                });
+                        }
                         break;
                     }
                     case 'call': {

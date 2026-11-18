@@ -664,6 +664,42 @@ export function inferRepresentations(
                         i.out.type.tag === 'flow'
                             ? { kind: 'lens', shape: reps.thin(i.out.type.read, i.out.type.write) }
                             : join(branches, true);
+                    if (i.out.type.tag === 'flow') {
+                        const finishes = i.cases.map((arm, n) =>
+                            states[n]!.finishes.get(arm.body.result),
+                        );
+                        // Complete against current owner versions, keeping each arm's
+                        // private state. Only exact final descriptors can use the
+                        // existing C merge without a post-cleanup value adapter.
+                        const places = [...s.places.keys()];
+                        if (finishes.some(Boolean))
+                            s.finishes.set(i.out.id, (current, apply) => {
+                                if (!apply) return;
+                                const completed = states.map((setup, n) => {
+                                    const restored = clone(setup);
+                                    places.forEach((place) =>
+                                        restored.places.set(place, current.places.get(place)!),
+                                    );
+                                    finishes[n]?.(restored, true);
+                                    return restored;
+                                });
+                                const merged = places.map((place) => {
+                                    const result = completed[0]!.places.get(place)!;
+                                    if (
+                                        completed.some(
+                                            (state) => !equal(result, state.places.get(place)!),
+                                        )
+                                    )
+                                        fail(
+                                            'Selected cleanup storage transitions require a restoration adapter',
+                                        );
+                                    return [place, result] as const;
+                                });
+                                merged.forEach(([place, result]) =>
+                                    current.places.set(place, result),
+                                );
+                            });
+                    }
                     break;
                 }
             }
