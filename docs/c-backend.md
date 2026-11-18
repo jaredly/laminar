@@ -78,7 +78,7 @@ returned and captured joined callees, and thin/scattered lens arguments and
 returned focuses use the same ownership and restoration paths. There is no extra
 join allocation or function-pointer cast.
 
-Callable storage in source aggregates or focuses, nominal/heap data, and unsupported native imports retain
+Callable focus storage/replacement, nominal/heap data, and unsupported native imports retain
 explicit diagnostics. Dynamic callable entry roots require a host
 adapter. This remains partial phase-6 support.
 
@@ -262,14 +262,24 @@ unused alias release. Independent verification checks the original call ABI, bot
 shapes and endpoint layouts, a thin normalized destination, restoration ownership
 and source-before-release ordering. Corrupt contracts fail before C emission.
 
-## Callable aggregate handoff
+## Owned callable tuples
 
-Representation analysis now retains callable member descriptors in owned source
-tuples, including nested tuples, captures, parameters and results. Physical
-lowering still rejects these with an explicit aggregate-adapter diagnostic.
-The C storage `Cell`/`View` version model is unchanged. Follow-up must add
-recursive aggregate layouts and ownership transfer/disposal before allowing
-callable focus storage. Focus adapters need distinct read/replacement descriptors
-and restoration through the current logical version, with escaping backing
-retained until completion. No new C function-pointer casts or execution paths
-are introduced by this representation-only slice.
+Owned source tuples now carry recursive concrete `itemN` fields selected from
+member descriptors, including exact callable code/environment/disposer layouts.
+The existing C storage `Cell`/`View` version model transfers these records through
+parameters, captures and results, projects moved members, and recursively disposes
+unused members or unused closures capturing an aggregate. Partial moves empty
+their logical projection before scope disposal. Tuple storage does not require a
+new allocation; each captured callable retains its existing environment ownership.
+
+Twelve shared cases in `test/backend/callable-storage-samples.ts` cover nested
+captures, parameters/results, partial moves, unused aggregates and capturing
+closures, joined/native members and thin/scattered lens callees stored in tuples.
+The execution harness checks strict/optimized/sanitized native C and both Wasm
+optimization levels; serialized corruption tests reject altered field layouts,
+kinds and order before emission.
+
+Callable focus storage remains separate work. Its adapters need distinct
+read/replacement descriptors and restoration through the current logical version,
+with escaping backing retained until completion. Differing aggregate joins and
+nominal storage keep their existing diagnostics. Phase 6 remains open.

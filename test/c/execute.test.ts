@@ -1,3 +1,4 @@
+import { callableStorageSamples } from '../backend/callable-storage-samples.ts';
 import { lensResultSamples } from '../backend/lens-result-samples.ts';
 import { callableResultSamples } from '../backend/callable-result-samples.ts';
 import { nativeJoinSamples } from '../backend/native-join-samples.ts';
@@ -62,6 +63,7 @@ const native =
           })
         : undefined;
 const samples = [
+    ...callableStorageSamples,
     ...backendCorpus.filter((s) => s.phase <= 6),
     ...capturedCleanupSamples,
     ...indirectCallSamples,

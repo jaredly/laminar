@@ -1,3 +1,5 @@
+import { verifyConcreteProgram } from '../src/verify-concrete.ts';
+import { emitC } from '../src/c/emit.ts';
 import { expect, it } from 'bun:test';
 import { typedProgram } from './backend/typed-program.ts';
 import { legacyReference } from './backend/legacy-reference.ts';
@@ -8,39 +10,8 @@ import { verifyRepresentations } from '../src/verify-representations.ts';
 import { lowerConcreteProgram } from '../src/lower-concrete.ts';
 import { wasm32Emscripten } from '../src/backend/target.ts';
 
-const samples = [
-    {
-        name: 'projection',
-        source: '{let x = 3\n let pair = (fn () x, 4)\n let (f, y) = pair\n f() + y}',
-        expected: 7,
-    },
-    {
-        name: 'nested capture',
-        source: '{let x = 3\n let pair = ((fn () x, 4), 5)\n let g = fn () {let ((f, y), z) = pair\n f() + y + z}\n g()}',
-        expected: 12,
-    },
-    {
-        name: 'parameter',
-        source: 'fn run(pair) {let (f, x) = pair\n f() + x}\n{let y = 3\n run((fn () y, 4))}',
-        expected: 7,
-    },
-    {
-        name: 'result',
-        source: 'fn make(x) (fn () x, 4)\n{let (f, y) = make(3)\n f() + y}',
-        expected: 7,
-    },
-    {
-        name: 'unused affine member',
-        source: '{let x = 3\n let pair = (fn () x, 4)\n let (_, y) = pair\n y}',
-        expected: 4,
-    },
-    {
-        name: 'joined member',
-        source: '{let x = 3\n let y = 5\n let f = match false {true -> fn () x; false -> fn () y}\n let (g, z) = (f, 4)\n g() + z}',
-        expected: 9,
-    },
-];
-for (const sample of samples) {
+import { callableStorageSamples } from './backend/callable-storage-samples.ts';
+for (const sample of callableStorageSamples) {
     it(`retains callable aggregate provenance: ${sample.name}`, () => {
         const p = typedProgram(sample.source);
         expect(legacyReference(sample.source)).toEqual(sample.expected);
@@ -52,9 +23,9 @@ for (const sample of samples) {
         const analysis = JSON.parse(JSON.stringify(inferRepresentations(source)));
         verifyRepresentations(source, analysis);
         expect(JSON.stringify(analysis)).toContain('"kind":"aggregate"');
-        expect(() => lowerConcreteProgram(source, analysis)).toThrow(
-            'Callable aggregate storage requires an explicit physical adapter',
-        );
+        const concrete = JSON.parse(JSON.stringify(lowerConcreteProgram(source, analysis)));
+        verifyConcreteProgram(concrete);
+        expect(() => emitC(concrete)).not.toThrow();
     });
 }
 it('independently rejects changed callable tuple members', () => {
@@ -82,3 +53,20 @@ it('keeps callable focus storage explicit', () => {
         'Callable storage requires an explicit closure representation',
     );
 });
+
+for (const mutation of ['field-layout', 'field-kind', 'field-order'] as const)
+    it(`rejects corrupted physical callable aggregate ${mutation}`, () => {
+        const p = typedProgram(callableStorageSamples[0]!.source);
+        const source = specializeProgram(p, wasm32Emscripten('test'), [
+            { unit: p.units.at(-1)!.id, arguments: [] },
+        ]);
+        const concrete = JSON.parse(JSON.stringify(lowerConcreteProgram(source)));
+        const aggregate = concrete.layouts.find(
+            (l: { key: string }) => JSON.parse(l.key)[2] === 'aggregate',
+        );
+        if (mutation === 'field-layout') aggregate.fields[0].layout = aggregate.fields[1].layout;
+        if (mutation === 'field-kind') aggregate.fields[0].kind = 'pointer';
+        if (mutation === 'field-order') aggregate.fields.reverse();
+        expect(() => verifyConcreteProgram(concrete)).toThrow('Incorrect concrete storage fields');
+        expect(() => emitC(concrete)).toThrow('Incorrect concrete storage fields');
+    });

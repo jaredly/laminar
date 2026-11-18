@@ -4,14 +4,14 @@ Status: phases 0–3 are implemented through the concrete-IR exit gate; phases 4
 execute the documented scalar/tuple native C and Emscripten/Node subset. Typed
 indirect closure invocation and environment disposal implement part of phase 6.
 Compatible user-defined/native intrinsic joins and differing callable results
-execute, including differing lens-result shapes. Owned callable aggregate provenance is retained through representation analysis;
-physical aggregate/focus storage remains open. Phase 7 runtime and host integration and phase 8 optimization remain broader
+execute, including differing lens-result shapes. Owned callable tuples execute through concrete recursive storage; callable
+focus storage/replacement remains open. Phase 7 runtime and host integration and phase 8 optimization remain broader
 work. This is subset
 coverage, not completion of every phase exit gate.
 
 The scoped lens extensions are complete as of `707521c`; see the
 [completion record and follow-up mapping](checker-completeness-handoff.md).
-Latest local verification: **1432 pass / 39 existing skips / 0 failures across
+Latest local verification: **1465 pass / 39 existing skips / 0 failures across
 36 files**, with TypeScript and diff checks passing. The latest full execution run passed without retries. Remote CI was not run for
 these slices. See also [the implementation record](backend-progress.md),
 [backend contract](backend-contract.md), [typed IR API](typed-ir.md), and
@@ -330,7 +330,7 @@ Phases 0–5 are complete for the documented subset. Phase 6 is partially
 implemented: typed code-pointer invocation and compatible branch-selected closures
 work, including different capture environments, nested joins, and supported native
 intrinsic alternatives, different returned callable environments, and normalized
-lens results. Callable aggregate storage and focus storage/replacement remain. Continue with that
+lens results. Owned callable tuple storage executes; callable focus storage/replacement remains. Continue with that
 phase-6 adapter or
 phase-7 runtime/host integration,
 using the [scoped completion record](checker-completeness-handoff.md#separate-broader-work-and-c-codegen-plan-mapping)
@@ -342,9 +342,10 @@ separate language-design work outside this backend plan.
 
 ### Phase 6 next boundary: callable storage adapters
 
-Owned callable tuple representation analysis is implemented and independently
-verified; see the latest backend progress record. Physical aggregate records,
-recursive disposal/transfer, and representation-bearing lens read/replacement
-contracts remain the next adapter work. Keep phase 6 open until source aggregate
-storage and callable focus replacement execute with verified ownership and
-restoration on checked/unchecked paths and native/Wasm targets.
+Owned callable tuple analysis and physical records are implemented and independently
+verified; see the latest backend progress record. Recursive fields retain each
+member's concrete ABI and use existing logical storage and affine disposal.
+Representation-bearing lens read/replacement contracts remain the next adapter
+work, along with differing aggregate joins. Keep phase 6 open until callable focus
+replacement executes with verified ownership and restoration on checked/unchecked
+paths and native/Wasm targets.

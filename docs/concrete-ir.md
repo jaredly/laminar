@@ -166,20 +166,32 @@ legacy and detached typed paths; physical list lowering retains the explicit
 `unsupported-layout: No storage definition for List` restriction. Captured invocation
 and callable storage restrictions are unchanged.
 
-## Owned callable aggregate analysis boundary
+## Owned callable aggregate storage
 
 Representation analysis retains `aggregate` descriptors for source tuples with
 callable members, recursively preserving member provenance through construction,
 projection, owned patterns, parameters, captures and results. These descriptors
 participate in canonical specialization keys and independent serialized
-verification. Data-only tuples retain semantic data layout IDs. No physical
-aggregate layout is inferred from a function's semantic type: concrete lowering
-reports `Callable aggregate storage requires an explicit physical adapter`.
+verification. Data-only tuples retain semantic data layout IDs.
 
-The next physical adapter must recursively map member descriptors to concrete
-fields and preserve affine transfer/disposal. Callable focus read and replacement
-representations must then be retained independently across logical storage
-versions and restoration. Existing lens shape endpoints contain semantic data
-layouts only and intentionally continue to reject callable storage. Differing
-aggregate joins and recursive aggregate results requiring unsolved constraints
-remain diagnostics. This analysis slice does not expand C/Wasm execution coverage.
+Concrete lowering recursively discovers member callables and interns a record
+whose `itemN` fields have the corresponding concrete member layouts. Physical
+identity includes the complete ordered list of member layout IDs, so different
+invocation-slot requirements cannot accidentally share an aggregate ABI.
+Independent concrete verification derives this identity and every field from the
+verified representation descriptor; altered member layouts, pointer/value kinds
+and ordering fail before emission. Typed function arguments/results and capture
+environments use those exact aggregate records.
+
+C lowering uses its existing logical cell/projection model for tuple transfer,
+partial moves, reconstruction and recursive disposal. Destructuring consumes
+members once; unused members and unused capturing closures dispose owned
+environments through the existing typed disposer fields. No callable environment
+is duplicated and no new function-pointer casts are introduced.
+
+Callable focus read and replacement representations must still be retained
+independently across logical storage versions and restoration. Existing lens
+shape endpoints contain semantic data layouts only and intentionally continue to
+reject callable storage. Differing aggregate joins and recursive aggregate
+results requiring unsolved constraints remain diagnostics. Physical nominal
+containers and callable host roots also retain their separate restrictions.

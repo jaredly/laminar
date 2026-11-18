@@ -418,3 +418,38 @@ supported native sanitizers and Emscripten/Node at both optimization levels.
 Commands: `bun test --path-ignore-patterns '**/c/execute.test.ts'`,
 `bun test test/c/execute.test.ts`, `bunx tsc --noEmit`, and
 `git diff --check`. Remote CI was not run. Phase 6 remains open.
+
+## Phase 6 slice: physical owned callable tuples
+
+Concrete lowering now recursively discovers callable members of aggregate
+descriptors and emits by-value `itemN` records keyed by their ordered physical
+member layouts. This connects the prior representation-analysis slice to exact
+argument/result and capture-environment ABIs. Independent concrete verification
+derives the same record identity and fields from verified analysis, without
+calling lowering. Corruption tests reject altered layouts, field kinds and order
+before C emission.
+
+The existing phase-5 logical cell/projection storage model transfers aggregates,
+empties moved projections and reconstructs values. Existing recursive drop paths
+release unused members, complete unused aggregates and unused closures capturing
+aggregates. This preserves each callable's environment, disposer and invocation
+fields without allocation for the tuple itself or incompatible function-pointer
+casts. No source checker or interpreter semantics changed.
+
+Twelve shared samples compare checked legacy, detached typed and specialized
+typed execution, independent serialized analysis/concrete verification and C/Wasm.
+Coverage includes nested tuples and captures, parameters/results, unused and
+partially consumed aggregates, joined/native callable members, and thin/scattered
+lens callees whose type-changing focus remains ordinary scalar/tuple data.
+Callable focus contents and replacement still require independent representation
+contracts across acquisition, swaps, storage versions and restoration. Differing
+aggregate joins and unsolved recursive results remain explicit diagnostics.
+This completes owned tuple storage for the tested subset, not phase 6.
+
+Validation: **1,465 passes, 39 existing skips, zero failures across 36 files**:
+983 non-execution tests and 482 native/Wasm execution cases. The full harness
+passed strict C11, optimized native builds, supported native sanitizers and
+Emscripten/Node at both optimization levels without retries.
+Commands: `bun test --path-ignore-patterns '**/c/execute.test.ts'`,
+`bun test test/c/execute.test.ts`, `bunx tsc --noEmit`, and
+`git diff --check`. Remote CI was not run.
