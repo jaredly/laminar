@@ -174,7 +174,16 @@ export function lconcrete(program: ConcreteProgram, options: ConcretePrintOption
                             ? words('invoke', name(v.code))
                             : v.kind === 'native'
                               ? words('native', quote(v.definition))
-                              : words('dispose', tuple(v.captures.map(name))),
+                              : v.kind === 'dispatch'
+                                ? words(
+                                      'dispatch',
+                                      tuple(
+                                          v.targets.map((t) =>
+                                              words(name(t.callable), name(t.wrapper)),
+                                          ),
+                                      ),
+                                  )
+                                : words('dispose', tuple(v.captures.map(name))),
                         v.ownership,
                     ),
                 ),
@@ -356,6 +365,26 @@ export function lconcrete(program: ConcreteProgram, options: ConcretePrintOption
                     expression = words(
                         'match',
                         value(i.value),
+                        ...(i.callableJoin
+                            ? [
+                                  words(
+                                      'selected-callable',
+                                      name(i.callableJoin.result),
+                                      tuple(
+                                          i.callableJoin.arms.map((arm) =>
+                                              words(
+                                                  name(arm.callable),
+                                                  tuple(
+                                                      arm.entries.map((e) =>
+                                                          words(e.source, '->', e.target),
+                                                      ),
+                                                  ),
+                                              ),
+                                          ),
+                                      ),
+                                  ),
+                              ]
+                            : []),
                         ...(i.lensJoin
                             ? [
                                   call('selected-focus', i.lensJoin.arms.map(topology)),

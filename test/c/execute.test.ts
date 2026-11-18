@@ -11,6 +11,7 @@ import { manualRestorationSamples } from '../backend/manual-restoration-samples.
 import { lensBranchSamples } from '../backend/lens-branch-samples.ts';
 import { computedAliases } from '../backend/computed-alias-samples.ts';
 import { capturedCleanupSamples } from '../backend/captured-cleanup-samples.ts';
+import { callableJoinSamples } from '../backend/callable-join-samples.ts';
 import { indirectCallSamples } from '../backend/indirect-call-samples.ts';
 import { phase5Samples } from './phase5-samples.ts';
 import { backendCorpus } from '../backend/corpus.ts';
@@ -61,6 +62,7 @@ const samples = [
     ...backendCorpus.filter((s) => s.phase <= 6),
     ...capturedCleanupSamples,
     ...indirectCallSamples,
+    ...callableJoinSamples,
     ...phase5Samples,
     ...computedAliases,
     ...lensBranchSamples,

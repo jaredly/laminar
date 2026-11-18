@@ -218,3 +218,50 @@ Validation: 848 passing non-execution tests, 39 existing skips, zero failures;
 zero failures. Execution uses strict C11, optimization and native sanitizers,
 plus Emscripten/Node at both optimization levels. `bunx tsc --noEmit` and
 `git diff --check` pass. Remote CI was not run.
+
+## Phase 6 slice: compatible runtime callable joins
+
+Representation inference now retains a canonical `callable-choice` alternative
+set for branch-selected user-defined closures. A dynamic call specializes every
+reachable alternative with the same incoming argument representations and requires
+one common result representation. The call annotation records all target variants;
+its identity includes their ordered IDs. Nested joins flatten and deduplicate their
+members. No runtime branch is selected by monomorphization.
+
+Concrete lowering emits an erased environment pointer, the selected concrete
+disposer, and typed invocation entries. Dispatch records describe each member's
+verified code entry; case adapters move the selected environment and map invocation
+fields without allocation or code-pointer casts. Bodies recover their original
+capture structs. Nested subset wrappers receive the slots needed by their outer
+joins; a joined callable can supply both thin and scattered ABIs in one artifact.
+Existing transfer-on-invoke and drop-unused ownership remains unchanged.
+
+The independent analysis verifier validates canonical alternatives, semantic
+compatibility, target coverage, capture and argument/result contracts, and
+reachability. Concrete verification independently checks the erased pointer,
+dispatch ownership and entries, exact ABI compatibility, and every case adapter.
+Diagnostic printing exposes dispatch and selected-callable adapters.
+
+Twenty-three shared samples cover both selections, different capture structs,
+capture-free alternatives, returned/captured joined closures, deferred cleanup,
+unused nested closures, nested joins, capture/refill of a borrowed alias, higher-order lens
+arguments and returned focuses with both backing forms, and dual ABI slots in
+one artifact. Corruption tests reject changed alternatives, targets, environments,
+ownership, and entry mappings. Native-import joins, differing dynamic result
+representations, dynamic callable host entries, and callable focus storage remain
+explicit restrictions. This is another phase-6 slice, not the full exit gate.
+
+Validation: 888 passing non-execution tests with 39 existing skips; the full
+execution run passed 340 native/Wasm cases, followed by 2 dual-ABI and 4 deferred
+cleanup execution cases added during validation. All 346 distinct execution cases
+pass (strict C11, optimized native builds, native sanitizers, and Emscripten/Node
+at both optimization levels). Combined: 1,234 passes, 39 skips, zero failures
+across 35 files. `bunx tsc --noEmit` and `git diff --check` pass. Commands:
+`bun test --path-ignore-patterns '**/c/execute.test.ts'`,
+`bun test test/c/execute.test.ts`, and the execution filters
+`-t 'both lens ABIs'` and `-t 'joined deferred'`. Remote CI was not run.
+
+Remaining phase-6 restrictions: native-import alternatives, dynamic calls whose
+alternatives return different representations, callable focus storage/replacement,
+and dynamic callable entry roots without a host adapter. This completes compatible
+user-defined runtime joins, not the entire phase-6 exit gate.

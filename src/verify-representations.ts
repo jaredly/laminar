@@ -65,6 +65,12 @@ export function verifyRepresentations(
                 return JSON.stringify({ kind: 'lens', shape: v.shape });
             case 'native':
                 return JSON.stringify({ kind: 'native', definition: v.definition });
+            case 'callable-choice':
+                if (!Array.isArray(v.options)) return fail('Missing callable alternatives');
+                return JSON.stringify({
+                    kind: v.kind,
+                    options: v.options.map((c) => JSON.parse(repKey(c))),
+                });
             case 'callable':
                 if (!Array.isArray(v.captures)) return fail('Missing callable captures');
                 return JSON.stringify({
@@ -219,6 +225,18 @@ export function verifyRepresentations(
         }
         if (v.kind === 'data') {
             typeEqual(layout(v.layout).type, t.value);
+            return;
+        }
+        if (v.kind === 'callable-choice') {
+            if (
+                !Array.isArray(v.options) ||
+                v.options.length < 2 ||
+                v.options.some((o) => o.kind !== 'callable')
+            )
+                return fail('Invalid callable alternatives');
+            const keys = v.options.map(repKey);
+            requireEqual(keys, [...new Set(keys)].sort(), 'Noncanonical callable alternatives');
+            v.options.forEach((o) => fit(o, t));
             return;
         }
         if (v.kind === 'callable') {
@@ -418,17 +436,34 @@ export function verifyRepresentations(
                             'Scope result representation mismatch',
                         );
                         break;
-                    case 'case':
+                    case 'case': {
                         if (i.out.type.tag === 'flow' && lens(v).kind !== 'thin')
                             fail('Selected-branch adapter must expose a thin focus');
-                        i.cases.forEach((arm) => {
+                        const results = i.cases.map((arm) => {
                             const branch = clone(s);
                             bind(arm.pattern, get(s, i.value), branch);
-                            const result = block(arm.body, branch);
-                            if (i.out.type.tag === 'flow') lens(result);
-                            else requireEqual(v, result, 'Branch needs a representation adapter');
+                            return block(arm.body, branch);
                         });
+                        if (i.out.type.tag === 'flow') results.forEach(lens);
+                        else if (v.kind === 'callable-choice') {
+                            const options = results.flatMap((r) =>
+                                r.kind === 'callable-choice'
+                                    ? r.options
+                                    : r.kind === 'callable'
+                                      ? [r]
+                                      : fail('Non-callable join member'),
+                            );
+                            requireEqual(
+                                v.options.map(repKey),
+                                [...new Set(options.map(repKey))].sort(),
+                                'Callable join alternatives changed',
+                            );
+                        } else
+                            results.forEach((result) =>
+                                requireEqual(v, result, 'Branch needs a representation adapter'),
+                            );
                         break;
+                    }
                     case 'call': {
                         const call = calls.get(i.out.id) ?? fail('Missing call annotation');
                         usedCalls.add(i.out.id);
@@ -436,25 +471,49 @@ export function verifyRepresentations(
                             args = i.args.map((id) => get(s, id));
                         requireEqual(call.arguments, args, 'Call argument representations changed');
                         requireEqual(call.result, v, 'Call result annotation mismatch');
-                        if (callee.kind === 'callable') {
-                            const target =
-                                variants.get(call.target) ??
-                                fail('Call references an absent variant');
-                            if (target.unit !== callee.unit || target.function !== callee.function)
-                                fail('Call selects the wrong callable body');
-                            requireEqual(
-                                target.captures,
-                                callee.captures,
-                                'Call capture contract mismatch',
-                            );
-                            requireEqual(
-                                target.arguments,
-                                args,
-                                'Call variant argument contract mismatch',
-                            );
-                            requireEqual(target.result, v, 'Call variant result contract mismatch');
-                            edges.get(owner)!.add(target.id);
+                        if (callee.kind === 'callable' || callee.kind === 'callable-choice') {
+                            const options =
+                                callee.kind === 'callable-choice' ? callee.options : [callee];
+                            const targets =
+                                callee.kind === 'callable-choice' ? call.targets : [call.target];
+                            if (!Array.isArray(targets) || targets.length !== options.length)
+                                return fail('Dynamic call target coverage mismatch');
+                            if (callee.kind === 'callable-choice')
+                                requireEqual(
+                                    call.target,
+                                    JSON.stringify(['dispatch', targets]),
+                                    'Dynamic call identity mismatch',
+                                );
+                            else if (call.targets !== undefined)
+                                fail('Static call has dynamic targets');
+                            options.forEach((option, index) => {
+                                const target =
+                                    variants.get(targets[index]!) ??
+                                    fail('Call references an absent variant');
+                                if (
+                                    target.unit !== option.unit ||
+                                    target.function !== option.function
+                                )
+                                    fail('Call selects the wrong callable body');
+                                requireEqual(
+                                    target.captures,
+                                    option.captures,
+                                    'Call capture contract mismatch',
+                                );
+                                requireEqual(
+                                    target.arguments,
+                                    args,
+                                    'Call variant argument contract mismatch',
+                                );
+                                requireEqual(
+                                    target.result,
+                                    v,
+                                    'Call variant result contract mismatch',
+                                );
+                                edges.get(owner)!.add(target.id);
+                            });
                         } else if (callee.kind === 'native') {
+                            if (call.targets !== undefined) fail('Native call has dynamic targets');
                             if (call.target !== callee.definition) fail('Wrong native call target');
                             if (v.kind === 'lens') {
                                 if (callee.definition !== 'native/fst' || !args[0])
@@ -525,6 +584,8 @@ export function verifyRepresentations(
             unit = units.get(root.unit) ?? fail('Unknown analysis root');
         if (entry.unit !== root.unit) fail('Entry root mismatch');
         const exported = analysis.exports.filter((e) => e.entry === i);
+        if (root.result.kind === 'callable-choice')
+            fail('Dynamic callable entry roots require a host adapter');
         if (root.result.kind === 'native') fail('Native entry roots require a host contract');
         if (root.result.kind === 'callable') {
             if (exported.length !== 1)

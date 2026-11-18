@@ -30,7 +30,12 @@ import type {
 } from './concrete-ir.ts';
 import { verifyConcreteProgram } from './verify-concrete.ts';
 
-type Contract = { target: string; arguments: ValueRepresentation[]; result: ValueRepresentation };
+type Contract = {
+    target: string;
+    targets?: string[];
+    arguments: ValueRepresentation[];
+    result: ValueRepresentation;
+};
 type Group = {
     descriptor: ValueRepresentation;
     key: string;
@@ -60,7 +65,7 @@ export function lowerConcreteProgram(
         throw new BackendDiagnostic('unsolved-concrete-abi', message);
     };
     const group = (v: ValueRepresentation): Group => {
-        if (v.kind !== 'callable' && v.kind !== 'native')
+        if (v.kind !== 'callable' && v.kind !== 'native' && v.kind !== 'callable-choice')
             return fail('A callable layout requires a callable descriptor');
         const key = representationKey(v);
         let g = groups.get(key);
@@ -68,14 +73,26 @@ export function lowerConcreteProgram(
             g = { descriptor: v, key, contracts: new Map() };
             groups.set(key, g);
             if (v.kind === 'callable') v.captures.forEach(discover);
+            if (v.kind === 'callable-choice') v.options.forEach(discover);
         }
         return g;
     };
     function discover(v: ValueRepresentation): void {
-        if (v.kind === 'callable' || v.kind === 'native') group(v);
+        if (v.kind === 'callable' || v.kind === 'native' || v.kind === 'callable-choice') group(v);
     }
     const contractKey = (c: Contract): string =>
         JSON.stringify([c.target, c.arguments.map(representationKey), representationKey(c.result)]);
+    function addContract(g: Group, call: Contract): void {
+        g.contracts.set(contractKey(call), call);
+        if (g.descriptor.kind === 'callable-choice')
+            g.descriptor.options.forEach((option, n) =>
+                addContract(group(option), {
+                    target: call.targets![n]!,
+                    arguments: call.arguments,
+                    result: call.result,
+                }),
+            );
+    }
     function index(body: IRBlock, record: Pick<RepresentationVariant, 'values' | 'calls'>): void {
         const values = new Map(record.values.map((v) => [v.value, v.representation]));
         const calls = new Map(record.calls.map((c) => [c.value, c]));
@@ -86,7 +103,7 @@ export function lowerConcreteProgram(
                     const callee = values.get(i.callee) ?? fail('Missing callable annotation'),
                         call = calls.get(i.out.id)!;
                     const g = group(callee);
-                    g.contracts.set(contractKey(call), call);
+                    addContract(g, call);
                 } else if (i.op === 'scope') walk(i.body);
                 else if (i.op === 'manual') walk(i.cleanup);
                 else if (i.op === 'case') i.cases.forEach((c) => walk(c.body));
@@ -107,6 +124,36 @@ export function lowerConcreteProgram(
             contract = { target: e.variant, arguments: e.arguments, result: e.result };
         g.contracts.set(contractKey(contract), contract);
     });
+    // A nested branch may already expose a narrower erased wrapper. Give that
+    // wrapper the entries needed when it is moved into a larger runtime join.
+    let changed = true;
+    while (changed) {
+        changed = false;
+        for (const g of groups.values()) {
+            if (g.descriptor.kind !== 'callable-choice') continue;
+            const members = g.descriptor.options.map(representationKey);
+            for (const source of groups.values()) {
+                if (source === g || source.descriptor.kind !== 'callable-choice') continue;
+                const indices = source.descriptor.options.map((o) =>
+                    members.indexOf(representationKey(o)),
+                );
+                if (indices.some((n) => n < 0)) continue;
+                for (const contract of g.contracts.values()) {
+                    const targets = indices.map((n) => contract.targets![n]!);
+                    const c = {
+                        target: JSON.stringify(['dispatch', targets]),
+                        targets,
+                        arguments: contract.arguments,
+                        result: contract.result,
+                    };
+                    if (!source.contracts.has(contractKey(c))) {
+                        addContract(source, c);
+                        changed = true;
+                    }
+                }
+            }
+        }
+    }
     const graphKey = JSON.stringify([
         layoutDefinitionsKey(analysis.layoutDefinitions),
         analysis.variants.map((v) => v.key).sort(),
@@ -120,7 +167,8 @@ export function lowerConcreteProgram(
     const shapeLayouts = new Map<string, string>();
     const layout = (v: ValueRepresentation): string => {
         if (v.kind === 'data') return table.data(dataLayouts.get(v.layout)!.type);
-        if (v.kind === 'callable' || v.kind === 'native') return callable(group(v)).layout;
+        if (v.kind === 'callable' || v.kind === 'native' || v.kind === 'callable-choice')
+            return callable(group(v)).layout;
         const prior = shapeLayouts.get(v.shape);
         if (prior) return prior;
         const s = shapes.get(v.shape)!;
@@ -171,6 +219,31 @@ export function lowerConcreteProgram(
         const id = concreteName('wrapper', key);
         const prior = wrappers.get(id);
         if (prior) return prior;
+        if (g.descriptor.kind === 'callable-choice') {
+            const targets = g.descriptor.options.map((option, n) => {
+                const member = group(option),
+                    physical = callable(member);
+                const memberContract = {
+                    target: c.targets![n]!,
+                    arguments: c.arguments,
+                    result: c.result,
+                };
+                const entry = wrapper(member, memberContract, physical.environment);
+                if (entry.abi !== abi) return fail('Dynamic callable ABI mismatch');
+                return { callable: physical.id, wrapper: entry.id };
+            });
+            const w: ConcreteWrapper = {
+                id,
+                key,
+                kind: 'dispatch',
+                abi,
+                environment,
+                targets,
+                ownership: 'selected-environment',
+            };
+            wrappers.set(id, w);
+            return w;
+        }
         const w: ConcreteWrapper = variants.has(c.target)
             ? {
                   id,
@@ -229,7 +302,11 @@ export function lowerConcreteProgram(
             return { wrapper: w.id, abi: w.abi, field: `invoke${index}` };
         });
         const fields: ConcreteField[] = [
-            { name: 'environment', kind: 'pointer', layout: environment },
+            {
+                name: 'environment',
+                kind: 'pointer',
+                ...(g.descriptor.kind === 'callable-choice' ? {} : { layout: environment }),
+            },
             { name: 'dispose', kind: 'code', abi: disposeABI },
             ...entries.map((e) => ({ name: e.field, kind: 'code' as const, abi: e.abi })),
         ];
@@ -251,6 +328,31 @@ export function lowerConcreteProgram(
     }
     const sorted = <T extends { id: string }>(xs: T[]): T[] =>
         xs.sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
+    const joinArm = (source: CallableLayout, target: CallableLayout) => ({
+        callable: source.id,
+        entries: target.entries.map((entry) => {
+            const dispatch = wrappers.get(entry.wrapper)!;
+            if (dispatch.kind !== 'dispatch') return fail('Join target lacks dispatch contract');
+            const from =
+                source.entries.find((candidate) => {
+                    const w = wrappers.get(candidate.wrapper)!;
+                    return (
+                        candidate.abi === entry.abi &&
+                        (w.kind === 'dispatch'
+                            ? w.targets.every((t) =>
+                                  dispatch.targets.some(
+                                      (d) => d.callable === t.callable && d.wrapper === t.wrapper,
+                                  ),
+                              )
+                            : dispatch.targets.some(
+                                  (t) =>
+                                      t.callable === source.id && t.wrapper === candidate.wrapper,
+                              ))
+                    );
+                }) ?? fail('Join source lacks compatible invocation entry');
+            return { source: from.field, target: entry.field };
+        }),
+    });
     const lowerBody = (
         body: IRBlock,
         record: Pick<RepresentationVariant, 'values' | 'calls'>,
@@ -289,6 +391,20 @@ export function lowerConcreteProgram(
                         ...i,
                         out,
                         cases: i.cases.map((c) => ({ ...c, body: lower(c.body) })),
+                        ...(values.get(i.out.id)!.kind === 'callable-choice'
+                            ? {
+                                  callableJoin: {
+                                      kind: 'erased-environment' as const,
+                                      result: callable(group(values.get(i.out.id)!)).id,
+                                      arms: i.cases.map((arm) =>
+                                          joinArm(
+                                              callable(group(values.get(arm.body.result)!)),
+                                              callable(group(values.get(i.out.id)!)),
+                                          ),
+                                      ),
+                                  },
+                              }
+                            : {}),
                         ...(i.out.type.tag === 'flow'
                             ? {
                                   lensJoin: {

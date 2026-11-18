@@ -30,7 +30,22 @@ Registered nominal schemas have a name, generic parameters, record/union kind, a
 
 Every invocation ABI receives an opaque environment pointer before its concrete arguments, and returns its concrete result by value under the target's C11 ABI. Environments have explicit capture field layouts. A callable value owns one environment pointer, a typed disposer pointer, and a finite set of typed invocation pointer fields. Each field corresponds to a discovered concrete call contract. A call selects a fixed field, emitted wrapper, and ABI; it never casts between incompatible code pointer types.
 
-This finite slot representation allows one reified generic function value to supply thin and scattered invocation ABIs without erasing them. It is a concrete baseline with extra pointer fields, not the future optimized single-entry closure ABI. The invocation slots are known at compile time. Dynamic joins between different callable environments/shapes remain explicit unsupported cases until phase 6 supplies adapters.
+This finite slot representation allows one reified generic function value to supply thin and scattered invocation ABIs without erasing them. It is a concrete baseline with extra pointer fields, not the future optimized single-entry closure ABI. The invocation slots are known at compile time. Phase 6 adds `callable-choice`
+analysis descriptors: sorted, deduplicated sets of user-defined callable
+alternatives. Each dynamic call records one target variant per alternative and
+requires identical argument/result representation contracts. Nested branch joins
+flatten their alternative sets; the finite slot requirements propagate into
+narrower joined wrappers as well as concrete member wrappers.
+
+A joined callable uses an opaque data-environment pointer and the selected
+concrete disposer and invocation code pointers. `dispatch` wrapper records retain
+the ordered member/wrapper coverage and `selected-environment` ownership;
+`callableJoin` on each concrete case records the exact field-to-field adapter.
+These records describe copying typed code pointers, not a runtime tagged union or
+an incompatible function-pointer cast. Branch conversion moves the selected owned
+environment without allocation. An unused choice has no invocation entries and
+still carries the selected disposer. Native-import alternatives and differing
+result representations remain explicit backend restrictions.
 
 Invocation wrappers recover their exact environment type, transfer affine captures into the body, and free the environment before entering the body. Disposer wrappers drop remaining captures and free an unused environment. Native wrappers use a null environment and retain a concrete argument/result ABI. `make-callable` remains an operation even for top-level functions; these values are not all rewritten to direct calls.
 

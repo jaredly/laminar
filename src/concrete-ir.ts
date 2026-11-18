@@ -31,6 +31,11 @@ export type ConcreteWrapper = {
     | { kind: 'invoke'; code: string; ownership: 'transfer-captures-and-free' }
     | { kind: 'native'; definition: string; ownership: 'no-environment' }
     | { kind: 'dispose'; captures: string[]; ownership: 'drop-captures-and-free' }
+    | {
+          kind: 'dispatch';
+          targets: { callable: string; wrapper: string }[];
+          ownership: 'selected-environment';
+      }
 );
 export type CallableLayout = {
     id: string;
@@ -81,6 +86,11 @@ export type ConcreteInstruction =
               restored?: Cleanup[];
           }[];
           lensJoin?: { kind: 'selected'; arms: string[]; result: string };
+          callableJoin?: {
+              kind: 'erased-environment';
+              result: string;
+              arms: { callable: string; entries: { source: string; target: string }[] }[];
+          };
       } & ConcreteOutput)
     | ({
           op: 'invoke';

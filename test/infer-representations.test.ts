@@ -83,10 +83,11 @@ it('propagates known higher-order callable arguments', () => {
         ),
     ).toBe(true);
 });
-it('rejects callable branch joins requiring adapters', () => {
-    expect(() =>
-        analyze('{let f = match true {true -> fn (x) x; false -> fn (x) x}\n f(1)}'),
-    ).toThrow('require an adapter');
+it('records every target of a runtime callable join', () => {
+    const analysis = analyze('{let f = match true {true -> fn (x) x; false -> fn (x) x}\n f(1)}');
+    const call = analysis.entries.at(-1)!.calls.find((c) => c.targets)!;
+    expect(call.targets).toHaveLength(2);
+    expect(call.targets!.every((id) => analysis.variants.some((v) => v.id === id))).toBe(true);
 });
 it('records nested mixed topology and projection without flattening', () => {
     const r = analyze(

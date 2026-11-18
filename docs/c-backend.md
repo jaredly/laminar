@@ -70,10 +70,18 @@ captures into owned locals and releases the environment before executing the bod
 returned restoration contexts retain any locals needed later. Generated disposers
 recursively dispose captured callable values and release unused environments.
 Wildcard bindings, scope cleanup, branch normalization, and manual cleanup results
-all run the corresponding disposal paths. Dynamic callable joins, callable focus
-storage, nominal/heap data, and unsupported native imports retain explicit
-diagnostics. Representation inference still requires known callable provenance;
-this is partial phase-6 support.
+all run the corresponding disposal paths. Compatible branch-selected user-defined
+closures normalize to an erased environment pointer, the selected disposer, and
+exactly typed invocation fields. Each alternative keeps its own capture layout;
+only the selected branch allocates or invokes an environment. Nested joins,
+returned and captured joined callees, and thin/scattered lens arguments and
+returned focuses use the same ownership and restoration paths. There is no extra
+join allocation or function-pointer cast.
+
+Dynamic native-import joins, calls whose alternatives return different
+representations, callable focus storage, nominal/heap data, and unsupported native
+imports retain explicit diagnostics. Dynamic callable entry roots require a host
+adapter. This remains partial phase-6 support.
 
 Implemented imports are numeric `+`, `-`, `*`, `/`, `==`, `>=`, `<=`, data `dup`,
 and logical `fst`. `dup` of a computed focus restores that focus after copying it.
@@ -185,3 +193,17 @@ optimized, sanitizer and Emscripten/Node harness. The full existing execution
 corpus now invokes user-defined functions through typed entry fields, including
 recursive calls and restoration-bearing calls. Closure environments retain the
 existing transfer-on-invoke and drop-unused ownership convention.
+
+## Runtime callable joins
+
+`test/backend/callable-join-samples.ts` supplies 23 shared samples covering both
+branch selections, distinct capture structs, captured/capture-free alternatives,
+returned joined closures, deferred cleanup callbacks, unused nested closures,
+nested subset joins, alias
+capture followed by refill, and higher-order thin/scattered calls carrying or
+returning lenses. A single-artifact case also exercises both thin and scattered
+invocation entries on the same joined callable. Both alternatives of a call must
+currently have the same result representation. The compiler emits all reachable alternatives and uses the
+selected runtime code pointer; specialization does not pick a branch. Independent
+analysis/concrete verification checks canonical alternative sets, target coverage,
+exact argument/result ABIs, environment ownership, and every branch entry mapping.

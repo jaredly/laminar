@@ -686,7 +686,7 @@ export function lowerC(program: ConcreteProgram): TranslationUnit {
                         declare(id, zero(id), body, name);
                         const before = storage.snapshot(),
                             outerVariables = variables.length;
-                        const arms = i.cases.map((arm) => {
+                        const arms = i.cases.map((arm, armIndex) => {
                             storage.reset(before);
                             const nested: Statement[] = [];
                             bind(
@@ -698,7 +698,18 @@ export function lowerC(program: ConcreteProgram): TranslationUnit {
                                 nested,
                             );
                             const result = block(arm.body, nested);
-                            nested.push(`${name} = ${result};`);
+                            if (i.callableJoin) {
+                                const adapter = i.callableJoin.arms[armIndex]!;
+                                const entries = adapter.entries
+                                    .map(
+                                        (e) =>
+                                            `, .${identifier(e.target)}=(${result}).${identifier(e.source)}`,
+                                    )
+                                    .join('');
+                                nested.push(
+                                    `${name} = (${type(id)}){.environment=(${result}).environment, .dispose=(${result}).dispose${entries}};`,
+                                );
+                            } else nested.push(`${name} = ${result};`);
                             const state = storage.snapshot();
                             variables.length = outerVariables;
                             return { nested, state };
@@ -786,7 +797,7 @@ export function lowerC(program: ConcreteProgram): TranslationUnit {
                                 adapters.push(a);
                                 return a.expression;
                             });
-                            if (w.kind === 'invoke')
+                            if (w.kind === 'invoke' || w.kind === 'dispatch')
                                 expr = `(${value(i.callee)}).${identifier(i.field)}((${value(i.callee)}).environment${args.map((a) => `, ${a}`).join('')})`;
                             else if (w.kind === 'native') {
                                 const op = w.definition.slice(7);

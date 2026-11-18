@@ -153,7 +153,7 @@ export function verifyConcreteProgram(p: ConcreteProgram): void {
     const seenShapes = new Set<string>();
     function storage(v: ValueRepresentation): string {
         if (v.kind === 'data') return data(semanticLayouts.get(v.layout)!.type);
-        if (v.kind === 'native' || v.kind === 'callable')
+        if (v.kind === 'native' || v.kind === 'callable' || v.kind === 'callable-choice')
             return (
                 callableByDescriptor.get(representationKey(v))?.layout ??
                 fail('Missing concrete callable descriptor')
@@ -205,14 +205,41 @@ export function verifyConcreteProgram(p: ConcreteProgram): void {
         string,
         Map<
             string,
-            { target: string; arguments: ValueRepresentation[]; result: ValueRepresentation }
+            {
+                target: string;
+                targets?: string[];
+                arguments: ValueRepresentation[];
+                result: ValueRepresentation;
+            }
         >
     >();
     const descriptors = new Map<string, ValueRepresentation>();
     function discover(v: ValueRepresentation): void {
-        if (v.kind === 'callable' || v.kind === 'native') {
+        if (v.kind === 'callable' || v.kind === 'native' || v.kind === 'callable-choice') {
             descriptors.set(representationKey(v), v);
             if (v.kind === 'callable') v.captures.forEach(discover);
+            if (v.kind === 'callable-choice') v.options.forEach(discover);
+        }
+    }
+    function addContract(
+        descriptor: ValueRepresentation,
+        c:
+            | RepresentationVariant['calls'][number]
+            | { target: string; arguments: ValueRepresentation[]; result: ValueRepresentation },
+    ): void {
+        const k = representationKey(descriptor);
+        if (!contracts.has(k)) contracts.set(k, new Map());
+        contracts.get(k)!.set(contractKey(c), c);
+        if (descriptor.kind === 'callable-choice') {
+            if (!('targets' in c) || !Array.isArray(c.targets))
+                return fail('Missing dispatch targets');
+            descriptor.options.forEach((option, n) =>
+                addContract(option, {
+                    target: c.targets![n]!,
+                    arguments: c.arguments,
+                    result: c.result,
+                }),
+            );
         }
     }
     const units = new Map(p.semantic.program.units.map((u) => [u.id, u]));
@@ -223,10 +250,7 @@ export function verifyConcreteProgram(p: ConcreteProgram): void {
         const walk = (body: IRBlock): void => {
             for (const i of body.instructions) {
                 if (i.op === 'call') {
-                    const k = representationKey(values.get(i.callee)!),
-                        c = calls.get(i.out.id)!;
-                    if (!contracts.has(k)) contracts.set(k, new Map());
-                    contracts.get(k)!.set(contractKey(c), c);
+                    addContract(values.get(i.callee)!, calls.get(i.out.id)!);
                 } else if (i.op === 'scope') walk(i.body);
                 else if (i.op === 'manual') walk(i.cleanup);
                 else if (i.op === 'case') i.cases.forEach((c) => walk(c.body));
@@ -247,6 +271,33 @@ export function verifyConcreteProgram(p: ConcreteProgram): void {
         if (!contracts.has(k)) contracts.set(k, new Map());
         contracts.get(k)!.set(contractKey(contract), contract);
     });
+    let changed = true;
+    while (changed) {
+        changed = false;
+        for (const descriptor of descriptors.values()) {
+            if (descriptor.kind !== 'callable-choice') continue;
+            const members = descriptor.options.map(representationKey);
+            for (const source of descriptors.values()) {
+                if (source === descriptor || source.kind !== 'callable-choice') continue;
+                const indices = source.options.map((o) => members.indexOf(representationKey(o)));
+                if (indices.some((n) => n < 0)) continue;
+                for (const contract of contracts.get(representationKey(descriptor))?.values() ??
+                    []) {
+                    const targets = indices.map((n) => contract.targets![n]!);
+                    const c = {
+                        target: JSON.stringify(['dispatch', targets]),
+                        targets,
+                        arguments: contract.arguments,
+                        result: contract.result,
+                    };
+                    if (!contracts.get(representationKey(source))?.has(contractKey(c))) {
+                        addContract(source, c);
+                        changed = true;
+                    }
+                }
+            }
+        }
+    }
     eq(
         [...callableByDescriptor.keys()].sort(),
         [...descriptors.keys()].sort(),
@@ -315,7 +366,34 @@ export function verifyConcreteProgram(p: ConcreteProgram): void {
                 e.field !== `invoke${i}`
             )
                 fail('Invalid concrete wrapper contract');
-            if (w.kind === 'invoke') {
+            if (c.descriptor.kind === 'callable-choice') {
+                if (w.kind !== 'dispatch' || w.ownership !== 'selected-environment')
+                    return fail('Invalid dynamic invocation ownership');
+                const expected = c.descriptor.options.map((option, n) => {
+                    const member =
+                        callableByDescriptor.get(representationKey(option)) ??
+                        fail('Missing dynamic callable member');
+                    const memberContract = {
+                        target: contract.targets![n]!,
+                        arguments: contract.arguments,
+                        result: contract.result,
+                    };
+                    const memberKey = JSON.stringify([
+                        'wrapper',
+                        target,
+                        graphKey,
+                        representationKey(option),
+                        contractKey(memberContract),
+                        expectedABI,
+                        member.environment,
+                    ]);
+                    const memberWrapper = wrapper(concreteName('wrapper', memberKey));
+                    if (memberWrapper.kind !== 'invoke' || memberWrapper.abi !== w.abi)
+                        return fail('Dynamic callable ABI mismatch');
+                    return { callable: member.id, wrapper: memberWrapper.id };
+                });
+                eq(w.targets, expected, 'Dynamic callable dispatch coverage mismatch');
+            } else if (w.kind === 'invoke') {
                 const callee = code.get(w.code) ?? fail('Wrapper references absent code');
                 if (
                     w.code !== codeName(contract.target) ||
@@ -342,7 +420,11 @@ export function verifyConcreteProgram(p: ConcreteProgram): void {
         ]);
         if (c.layout !== expectedLayout) fail('Callable layout identity mismatch');
         concreteFields(c.layout, 'record', [
-            { name: 'environment', kind: 'pointer', layout: c.environment },
+            {
+                name: 'environment',
+                kind: 'pointer',
+                ...(c.descriptor.kind === 'callable-choice' ? {} : { layout: c.environment }),
+            },
             { name: 'dispose', kind: 'code', abi: dispose.abi },
             ...c.entries.map((e) => ({ name: e.field, kind: 'code' as const, abi: e.abi })),
         ]);
@@ -446,6 +528,52 @@ export function verifyConcreteProgram(p: ConcreteProgram): void {
                               }
                             : undefined;
                     eq(o.lensJoin, join, 'Selected-branch restoration adapter changed');
+                    let callableJoin;
+                    if (reps.get(i.out.id)!.kind === 'callable-choice') {
+                        const targetCallable = callableByDescriptor.get(
+                            representationKey(reps.get(i.out.id)!),
+                        )!;
+                        callableJoin = {
+                            kind: 'erased-environment',
+                            result: targetCallable.id,
+                            arms: i.cases.map((arm) => {
+                                const source = callableByDescriptor.get(
+                                    representationKey(reps.get(arm.body.result)!),
+                                )!;
+                                return {
+                                    callable: source.id,
+                                    entries: targetCallable.entries.map((entry) => {
+                                        const dispatch = wrapper(entry.wrapper);
+                                        if (dispatch.kind !== 'dispatch')
+                                            return fail('Join target lacks dispatch contract');
+                                        const from =
+                                            source.entries.find((candidate) => {
+                                                const w = wrapper(candidate.wrapper);
+                                                return (
+                                                    candidate.abi === entry.abi &&
+                                                    (w.kind === 'dispatch'
+                                                        ? w.targets.every((t) =>
+                                                              dispatch.targets.some(
+                                                                  (d) =>
+                                                                      d.callable === t.callable &&
+                                                                      d.wrapper === t.wrapper,
+                                                              ),
+                                                          )
+                                                        : dispatch.targets.some(
+                                                              (t) =>
+                                                                  t.callable === source.id &&
+                                                                  t.wrapper === candidate.wrapper,
+                                                          ))
+                                                );
+                                            }) ??
+                                            fail('Join source lacks compatible invocation entry');
+                                        return { source: from.field, target: entry.field };
+                                    }),
+                                };
+                            }),
+                        };
+                    }
+                    eq(o.callableJoin, callableJoin, 'Callable join adapter changed');
                     i.cases.forEach((c, j) => {
                         eq(o.cases[j]!.setup, c.setup, 'Case setup normalization changed');
                         eq(
@@ -476,15 +604,28 @@ export function verifyConcreteProgram(p: ConcreteProgram): void {
                     const entry =
                         c.entries.find((e) => {
                             const w = wrapper(e.wrapper);
-                            return w.kind === 'invoke'
-                                ? w.code === codeName(contract.target)
-                                : w.kind === 'native' &&
-                                      w.definition === contract.target &&
+                            return w.kind === 'dispatch'
+                                ? w.targets.every((t, n) => {
+                                      const member = wrapper(t.wrapper);
+                                      return (
+                                          member.kind === 'invoke' &&
+                                          member.code === codeName(contract.targets![n]!)
+                                      );
+                                  }) &&
                                       e.abi ===
                                           aid(
                                               contract.arguments.map(storage),
                                               storage(contract.result),
-                                          );
+                                          )
+                                : w.kind === 'invoke'
+                                  ? w.code === codeName(contract.target)
+                                  : w.kind === 'native' &&
+                                    w.definition === contract.target &&
+                                    e.abi ===
+                                        aid(
+                                            contract.arguments.map(storage),
+                                            storage(contract.result),
+                                        );
                         }) ?? fail('Missing invocation slot');
                     eq(
                         o,

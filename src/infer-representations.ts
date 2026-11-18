@@ -12,13 +12,15 @@ import {
 import type { SpecializedProgram } from './specialize.ts';
 import type { IRUnit, IRBlock, IRPattern } from './typed-ir.ts';
 import { verifyTypedProgram } from './verify-ir.ts';
+import { representationKey } from './representation-key.ts';
 import { verifyRepresentations } from './verify-representations.ts';
 
 export type ValueRepresentation =
     | { kind: 'data'; layout: LayoutId }
     | { kind: 'lens'; shape: LensRepId }
     | { kind: 'callable'; unit: string; function: string; captures: ValueRepresentation[] }
-    | { kind: 'native'; definition: string };
+    | { kind: 'native'; definition: string }
+    | { kind: 'callable-choice'; options: Extract<ValueRepresentation, { kind: 'callable' }>[] };
 export type RepresentationVariant = {
     id: string;
     key: string;
@@ -31,6 +33,7 @@ export type RepresentationVariant = {
     calls: {
         value: string;
         target: string;
+        targets?: string[];
         arguments: ValueRepresentation[];
         result: ValueRepresentation;
     }[];
@@ -136,14 +139,30 @@ export function inferRepresentations(
         s.values.get(id) ?? fail(`Missing representation for ${id}`);
     const shape = (v: ValueRepresentation): LensRepId =>
         v.kind === 'lens' ? v.shape : fail('Expected lens representation');
-    const key = (v: ValueRepresentation): string => JSON.stringify(v);
+    const key = representationKey;
     const equal = (a: ValueRepresentation, b: ValueRepresentation) => key(a) === key(b);
     const join = (items: ValueRepresentation[]): ValueRepresentation => {
         const first = items[0] ?? fail('Empty representation join');
         if (items.every((v) => equal(first, v))) return first;
+        if (items.every((v) => v.kind === 'callable' || v.kind === 'callable-choice')) {
+            const options = new Map<string, Extract<ValueRepresentation, { kind: 'callable' }>>();
+            for (const v of items) {
+                const members = v.kind === 'callable-choice' ? v.options : [v];
+                for (const member of members) {
+                    if (member.kind !== 'callable') return fail('Invalid callable join member');
+                    options.set(key(member), member);
+                }
+            }
+            return {
+                kind: 'callable-choice',
+                options: [...options.entries()]
+                    .sort(([a], [b]) => (a < b ? -1 : 1))
+                    .map(([, v]) => v),
+            };
+        }
         throw new BackendDiagnostic(
             'unsupported-representation-join',
-            'Different value or callable representations require an adapter',
+            'Different value or native callable representations require an adapter',
         );
     };
     // Preserve topology while revising typed backing endpoints after a move or update.
@@ -200,7 +219,18 @@ export function inferRepresentations(
         callee: ValueRepresentation,
         args: ValueRepresentation[],
         chain: string[],
-    ): { target: string; result: ValueRepresentation } => {
+    ): { target: string; targets?: string[]; result: ValueRepresentation } => {
+        if (callee.kind === 'callable-choice') {
+            const calls = callee.options.map((option) => invoke(option, args, chain));
+            const result = calls[0]!.result;
+            if (calls.some((call) => !equal(call.result, result)))
+                throw new BackendDiagnostic(
+                    'unsupported-representation-join',
+                    'Dynamic callable results require a common representation',
+                );
+            const targets = calls.map((call) => call.target);
+            return { target: JSON.stringify(['dispatch', targets]), targets, result };
+        }
         if (callee.kind !== 'callable')
             return fail('Indirect call requires a known callable representation');
         const unit = units.get(callee.unit) ?? fail('Unknown callable unit');
@@ -371,6 +401,7 @@ export function inferRepresentations(
                     record.calls.push({
                         value: i.out.id,
                         target: called.target,
+                        ...('targets' in called ? { targets: called.targets } : {}),
                         arguments: args,
                         result: out,
                     });
@@ -412,6 +443,8 @@ export function inferRepresentations(
         const incoming = options.entryArguments?.find(
             (e) => e.unit === id && (e.entry === undefined || e.entry === rootIndex),
         );
+        if (result.kind === 'callable-choice')
+            fail('Dynamic callable entry roots require a host adapter');
         if (result.kind === 'native') fail('Native entry roots require a host contract');
         if (result.kind === 'callable') {
             const contract =

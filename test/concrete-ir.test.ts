@@ -399,7 +399,9 @@ it('propagates returned lens representation contracts into concrete call results
 it('keeps semantic and representation expansion diagnostics in the concrete API', () => {
     expect(() => compile('fn id(x) x\nid')).toThrow('Wrong type argument count');
     expect(() =>
-        compile('{let f = match true {true -> fn (x) x; false -> fn (x) x}\n f(1)}'),
+        compile(
+            'fn copy(~x) dup(~x)\n{let x = 1\n let f = match true {true -> copy; false -> dup}\n f(~x)}',
+        ),
     ).toThrow('require an adapter');
 });
 

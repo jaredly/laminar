@@ -8,6 +8,11 @@ export function representationKey(v: ValueRepresentation): string {
             return JSON.stringify({ kind: 'lens', shape: v.shape });
         case 'native':
             return JSON.stringify({ kind: 'native', definition: v.definition });
+        case 'callable-choice':
+            return JSON.stringify({
+                kind: v.kind,
+                options: v.options.map((c) => JSON.parse(representationKey(c))),
+            });
         case 'callable':
             return JSON.stringify({
                 kind: 'callable',
