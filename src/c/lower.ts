@@ -221,21 +221,67 @@ export function lowerC(program: ConcreteProgram): TranslationUnit {
     }
     const resultAdapters = new Map(
         program.wrappers
-            .filter((w) => w.kind === 'adapt-result')
+            .filter((w) => w.kind === 'adapt-result' || w.kind === 'adapt-lens-result')
             .map((w, n) => [w.id, `result_adapter${n}`]),
     );
     for (const w of program.wrappers) {
-        if (w.kind !== 'adapt-result') continue;
+        if (w.kind !== 'adapt-result' && w.kind !== 'adapt-lens-result') continue;
         const abi = program.abis.find((a) => a.id === w.abi)!;
         const source = program.wrappers.find((source) => source.id === w.source)!;
-        if (source.kind !== 'invoke') return unsupported('Result adapter requires a concrete body');
+        if (source.kind !== 'invoke' && source.kind !== 'native')
+            return unsupported('Result adapter requires a concrete body or native import');
         const raw = program.abis.find((a) => a.id === source.abi)!;
         const signature = `${type(abi.result)} ${resultAdapters.get(w.id)}(void *environment${abi.arguments.map((id, n) => `, ${type(id)} arg${n}`).join('')})`;
         declarations.push(signature + ';');
+        const sourceCode =
+            source.kind === 'invoke' ? codes.get(source.code)! : nativeCodes.get(source.id)!;
+        if (w.kind === 'adapt-lens-result') {
+            const context = `LensResult${resultAdapters.get(w.id)}`,
+                restore = `restore_${resultAdapters.get(w.id)}`;
+            const input = endpoint(abi.result, 'read'),
+                replacement = endpoint(abi.result, 'replacement');
+            const separate = layout(abi.result).fields.some((f) => f.name === 'replacement');
+            declarations.push(
+                `typedef struct { ${type(raw.result)} source; ${type(input)} read; ${separate ? `${type(replacement)} write;` : ''} } ${context};`,
+            );
+            const restoreSignature = `${type(unit.id)} ${restore}(void *environment, ${type(replacement)} replacement)`;
+            declarations.push(restoreSignature + ';');
+            const fallback: Statement[] = [];
+            flush(
+                'ctx->source',
+                raw.result,
+                { expression: 'replacement', layout: replacement },
+                fallback,
+            );
+            helpers.push({
+                signature: restoreSignature,
+                body: [
+                    `${context} *ctx = environment;`,
+                    {
+                        head: 'if (ctx->source.restore)',
+                        body: ['ctx->source.restore(ctx->source.context, replacement);'],
+                    },
+                    { head: 'else', body: fallback },
+                    'release_context(ctx);',
+                    `return ${zero(unit.id)};`,
+                ],
+            });
+            helpers.push({
+                signature,
+                body: [
+                    `${type(raw.result)} result = ${sourceCode}(environment${abi.arguments.map((_, n) => `, arg${n}`).join('')});`,
+                    `${context} *ctx = allocate_context(sizeof *ctx);`,
+                    'ctx->source = result;',
+                    `ctx->read = ${read(storage.get(incoming('ctx->source', raw.result)), input)};`,
+                    `return (${type(abi.result)}){.read=&ctx->read${separate ? ', .replacement=&ctx->write' : ''}, .restore=${restore}, .context=ctx};`,
+                ],
+            });
+            continue;
+        }
         helpers.push({
             signature,
             body: [
-                `${type(raw.result)} result = ${codes.get(source.code)}(environment${abi.arguments.map((_, n) => `, arg${n}`).join('')});`,
+                `${type(raw.result)} result = ${sourceCode}(environment${abi.arguments.map((_, n) => `, arg${n}`).join('')});`,
                 `return (${type(abi.result)}){.environment=result.environment, .dispose=result.dispose${w.entries.map((e) => `, .${identifier(e.target)}=result.${identifier(e.source)}`).join('')}};`,
             ],
         });
@@ -476,7 +522,7 @@ export function lowerC(program: ConcreteProgram): TranslationUnit {
                                 // Runtime joins reify native entries; ordinary intrinsics keep their storage lowering.
                                 return w.kind === 'invoke'
                                     ? `, .${e.field}=${codes.get(w.code)}`
-                                    : w.kind === 'adapt-result'
+                                    : w.kind === 'adapt-result' || w.kind === 'adapt-lens-result'
                                       ? `, .${e.field}=${resultAdapters.get(w.id)}`
                                       : w.kind === 'native' && nativeCodes.has(w.id)
                                         ? `, .${e.field}=${nativeCodes.get(w.id)}`
@@ -884,7 +930,8 @@ export function lowerC(program: ConcreteProgram): TranslationUnit {
                             if (
                                 w.kind === 'invoke' ||
                                 w.kind === 'dispatch' ||
-                                w.kind === 'adapt-result'
+                                w.kind === 'adapt-result' ||
+                                w.kind === 'adapt-lens-result'
                             )
                                 expr = `(${value(i.callee)}).${identifier(i.field)}((${value(i.callee)}).environment${args.map((a) => `, ${a}`).join('')})`;
                             else if (w.kind === 'native') {

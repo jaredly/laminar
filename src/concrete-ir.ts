@@ -38,6 +38,14 @@ export type ConcreteWrapper = {
           entries: { source: string; target: string }[];
           ownership: 'transfer-result';
       }
+    | {
+          kind: 'adapt-lens-result';
+          source: string;
+          from: string;
+          to: string;
+          ownership: 'restore-source-and-release';
+          order: ['restore-source', 'release'];
+      }
     | { kind: 'dispose'; captures: string[]; ownership: 'drop-captures-and-free' }
     | {
           kind: 'dispatch';

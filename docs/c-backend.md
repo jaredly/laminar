@@ -78,8 +78,8 @@ returned and captured joined callees, and thin/scattered lens arguments and
 returned focuses use the same ownership and restoration paths. There is no extra
 join allocation or function-pointer cast.
 
-Differing dynamic lens-result shapes, callable focus storage, nominal/heap data,
-and unsupported native imports retain explicit diagnostics. Dynamic callable entry roots require a host
+Callable storage in source aggregates or focuses, nominal/heap data, and unsupported native imports retain
+explicit diagnostics. Dynamic callable entry roots require a host
 adapter. This remains partial phase-6 support.
 
 Implemented imports are numeric `+`, `-`, `*`, `/`, `==`, `>=`, `<=`, data `dup`,
@@ -201,8 +201,7 @@ returned joined closures, deferred cleanup callbacks, unused nested closures,
 nested subset joins, alias
 capture followed by refill, and higher-order thin/scattered calls carrying or
 returning lenses. A single-artifact case also exercises both thin and scattered
-invocation entries on the same joined callable. Callable results can normalize through typed result adapters; differing lens-result
-shapes remain explicit restrictions. The compiler emits all reachable alternatives and uses the
+invocation entries on the same joined callable. Callable and lens results normalize through typed result adapters. The compiler emits all reachable alternatives and uses the
 selected runtime code pointer; specialization does not pick a branch. Independent
 analysis/concrete verification checks canonical alternative sets, target coverage,
 exact argument/result ABIs, environment ownership, and every branch entry mapping.
@@ -235,8 +234,8 @@ returned environment, disposer, and mapped invocation entries into the common
 callable layout. The adapter neither allocates nor disposes the returned
 environment. Both its source ABI and common destination ABI remain exact C
 function-pointer types. Nested callable results and narrower result choices
-compose through the same adapters. Differing lens-result shapes retain their
-separate explicit diagnostic.
+compose through the same adapters. Differing lens-result shapes use the separate
+restoration adapter below.
 
 Nineteen shared samples in `test/backend/callable-result-samples.ts` cover both
 selections, differing capture environments, unused results, nested results, native
@@ -244,3 +243,21 @@ results, subset joins, returned lens callees with both pointer forms, both lens
 ABIs in one artifact, and alias capture/refill. Corruption tests independently
 reject altered source wrappers, source/destination layouts, ownership, field
 mappings, and ABIs before emission.
+
+## Dynamic calls returning different lens shapes
+
+Different thin/scattered result shapes normalize to a thin result ABI. A generated
+`adapt-lens-result` wrapper invokes its source using the original result ABI and
+allocates a context containing that result plus a materialized typed focus. Its
+restoration helper sends the final replacement through the retained original
+callback, or writes recursive native backing when no callback is present, then
+releases the normalization context. Caller-owned escaping argument backing stays
+alive until this restoration completes. Neither code-pointer casts nor pointers
+to local parameter objects are used.
+
+`test/backend/lens-result-samples.ts` supplies 18 shared samples covering both
+selections, thin/scattered and native views, homogeneous and type-changing
+replacements, empty focuses, captured callees, cleanup, nested forwarding, and
+unused alias release. Independent verification checks the original call ABI, both
+shapes and endpoint layouts, a thin normalized destination, restoration ownership
+and source-before-release ordering. Corrupt contracts fail before C emission.

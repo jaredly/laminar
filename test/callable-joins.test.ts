@@ -1,3 +1,4 @@
+import { lensResultSamples } from './backend/lens-result-samples.ts';
 import { callableResultSamples } from './backend/callable-result-samples.ts';
 import { nativeJoinSamples } from './backend/native-join-samples.ts';
 import { expect, it } from 'bun:test';
@@ -14,7 +15,12 @@ import { verifyRepresentations } from '../src/verify-representations.ts';
 import { printConcreteProgram } from '../src/print-concrete.ts';
 import { emitC } from '../src/c/emit.ts';
 
-for (const sample of [...callableJoinSamples, ...nativeJoinSamples, ...callableResultSamples])
+for (const sample of [
+    ...callableJoinSamples,
+    ...nativeJoinSamples,
+    ...callableResultSamples,
+    ...lensResultSamples,
+])
     it(`normalizes callable joins: ${sample.name}`, () => {
         const p = typedProgram(sample.source);
         expect<unknown>(executeTypedProgram(p)).toEqual(sample.expected);
@@ -226,7 +232,7 @@ for (const mutation of ['source', 'from', 'to', 'ownership', 'entries', 'abi'] a
         expect(() => emitC(c)).toThrow();
     });
 
-it('keeps differing dynamic lens results explicit', () => {
+it('normalizes differing dynamic lens result shapes', () => {
     const p = typedProgram(
         '{let f = match true {true -> fn (~p) ~p; false -> fn (~(x, y)) ~(x, y)}\n let p = (1, 2)\n f(~p) := (true, 3)\n p}',
     );
@@ -234,7 +240,7 @@ it('keeps differing dynamic lens results explicit', () => {
         compileConcreteProgram(p, wasm32Emscripten('test'), [
             { unit: p.units.at(-1)!.id, arguments: [] },
         ]),
-    ).toThrow('Dynamic lens results require a common representation');
+    ).not.toThrow();
 });
 it('retains both result-adapted lens ABIs in one graph', () => {
     const p = typedProgram(
@@ -256,5 +262,56 @@ it('prints callable result transfer adapters', () => {
     expect(printConcreteProgram(c)).toContain('transfer-result');
     expect(emitC(c)).toMatch(
         /return \(L\d+\)\{\.environment=result\.environment, \.dispose=result\.dispose/,
+    );
+});
+
+for (const mutation of ['source', 'from', 'to', 'ownership', 'order', 'abi'] as const)
+    it(`rejects corrupt lens result adapter ${mutation}`, () => {
+        const p = typedProgram(lensResultSamples[0]!.source);
+        const c = structuredClone(
+            compileConcreteProgram(p, wasm32Emscripten('test'), [
+                { unit: p.units.at(-1)!.id, arguments: [] },
+            ]),
+        );
+        const w = c.wrappers.find((w) => w.kind === 'adapt-lens-result')!;
+        if (w.kind !== 'adapt-lens-result') throw Error('Expected lens result adapter');
+        if (mutation === 'source') w.source = c.wrappers.find((w) => w.kind === 'dispose')!.id;
+        if (mutation === 'from') w.from = w.to;
+        if (mutation === 'to') w.to = w.from;
+        if (mutation === 'ownership') (w as any).ownership = 'transfer-result';
+        if (mutation === 'order') (w as any).order = ['release', 'restore-source'];
+        if (mutation === 'abi') w.abi = 'forged';
+        expect(() => emitC(c)).toThrow();
+    });
+it('prints lens result restoration and release adapters', () => {
+    const p = typedProgram(lensResultSamples[0]!.source);
+    const c = compileConcreteProgram(p, wasm32Emscripten('test'), [
+        { unit: p.units.at(-1)!.id, arguments: [] },
+    ]);
+    expect(printConcreteProgram(c)).toContain('adapt-lens-result');
+    expect(printConcreteProgram(c)).toContain('restore-source-and-release');
+});
+it('rejects an analysis which keeps one dynamic result topology', () => {
+    const p = typedProgram(lensResultSamples[0]!.source);
+    const c = structuredClone(
+        compileConcreteProgram(p, wasm32Emscripten('test'), [
+            { unit: p.units.at(-1)!.id, arguments: [] },
+        ]),
+    );
+    const call = c.analysis.entries
+        .flatMap((e) => e.calls)
+        .find((call) => call.targets && call.result.kind === 'lens')!;
+    const raw = call
+        .targets!.map((id) => c.analysis.variants.find((v) => v.id === id)!.result)
+        .find(
+            (r) =>
+                r.kind === 'lens' &&
+                c.analysis.shapes.find((s) => s.id === r.shape)!.kind === 'tuple',
+        )!;
+    call.result = raw;
+    const value = c.analysis.entries.flatMap((e) => e.values).find((v) => v.value === call.value)!;
+    value.representation = raw;
+    expect(() => verifyRepresentations(c.semantic, c.analysis)).toThrow(
+        'Dynamic lens adapter must expose a thin focus',
     );
 });

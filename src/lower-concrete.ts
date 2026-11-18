@@ -15,7 +15,7 @@ import {
     type SpecializationRoot,
 } from './specialize.ts';
 import type { TargetConfig } from './backend/target.ts';
-import type { TypedProgram } from './typed-ir.ts';
+import { typeKey, type TypedProgram } from './typed-ir.ts';
 import { layoutDefinitionsKey, type NominalLayoutDefinition } from './layout-definitions.ts';
 import type { EntryRepresentationArgument } from './infer-representations.ts';
 import type { IRBlock, IRUnit } from './typed-ir.ts';
@@ -82,11 +82,27 @@ export function lowerConcreteProgram(
     }
     const contractKey = (c: Contract): string =>
         JSON.stringify([c.target, c.arguments.map(representationKey), representationKey(c.result)]);
+    function rawResult(g: Group, c: Contract): ValueRepresentation | undefined {
+        const variant = variants.get(c.target);
+        if (variant) return variant.result;
+        if (g.descriptor.kind !== 'native' || c.target !== 'native/fst' || c.result.kind !== 'lens')
+            return undefined;
+        const argument = c.arguments[0]!;
+        if (argument.kind !== 'lens') return fail('Missing native lens argument');
+        const shape = shapes.get(argument.shape)!;
+        if (shape.kind === 'tuple') return { kind: 'lens', shape: shape.items[0]! };
+        const read = dataLayouts.get(shape.read)!.type,
+            write = dataLayouts.get(shape.replacement)!.type;
+        if (read.tag !== 'tuple' || write.tag !== 'tuple') return fail('Invalid native projection');
+        const r = analysis.layouts.find((l) => typeKey(l.type) === typeKey(read.items[0]!))!.id;
+        const w = analysis.layouts.find((l) => typeKey(l.type) === typeKey(write.items[0]!))!.id;
+        return { kind: 'lens', shape: JSON.stringify(['thin', JSON.stringify(['backing', r, w])]) };
+    }
     function addContract(g: Group, call: Contract): void {
         g.contracts.set(contractKey(call), call);
-        const raw = variants.get(call.target)?.result;
+        const raw = rawResult(g, call);
         if (
-            g.descriptor.kind === 'callable' &&
+            g.descriptor.kind !== 'callable-choice' &&
             raw &&
             representationKey(raw) !== representationKey(call.result)
         )
@@ -251,8 +267,25 @@ export function lowerConcreteProgram(
             wrappers.set(id, w);
             return w;
         }
-        const raw = variants.get(c.target)?.result;
+        const raw = rawResult(g, c);
         if (raw && representationKey(raw) !== representationKey(c.result)) {
+            if (raw.kind === 'lens' && c.result.kind === 'lens') {
+                const source = wrapper(g, { ...c, result: raw }, environment);
+                const w: ConcreteWrapper = {
+                    id,
+                    key,
+                    kind: 'adapt-lens-result',
+                    abi,
+                    environment,
+                    source: source.id,
+                    from: raw.shape,
+                    to: c.result.shape,
+                    ownership: 'restore-source-and-release',
+                    order: ['restore-source', 'release'],
+                };
+                wrappers.set(id, w);
+                return w;
+            }
             if (c.result.kind !== 'callable-choice') return fail('Unsupported result adapter');
             const source = wrapper(g, { ...c, result: raw }, environment);
             const from = callable(group(raw)),

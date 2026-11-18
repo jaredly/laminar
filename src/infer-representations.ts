@@ -244,15 +244,14 @@ export function inferRepresentations(
         if (callee.kind === 'callable-choice') {
             const calls = callee.options.map((option) => invoke(option, args, chain, resultType));
             const results = calls.map((call) => call.result);
+            let result: ValueRepresentation;
             if (
-                results.some((r) => r.kind === 'lens') &&
+                results.every((r) => r.kind === 'lens') &&
                 results.some((r) => !equal(r, results[0]!))
-            )
-                throw new BackendDiagnostic(
-                    'unsupported-representation-join',
-                    'Dynamic lens results require a common representation',
-                );
-            const result = join(results);
+            ) {
+                if (resultType?.tag !== 'flow') return fail('Missing dynamic lens result contract');
+                result = { kind: 'lens', shape: reps.thin(resultType.read, resultType.write) };
+            } else result = join(results);
             const targets = calls.map((call) => call.target);
             return { target: JSON.stringify(['dispatch', targets]), targets, result };
         }

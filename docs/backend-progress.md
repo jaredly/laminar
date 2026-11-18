@@ -342,3 +342,38 @@ Emscripten/Node at both optimization levels. Commands:
 Remote CI was not run. Differing dynamic lens-result shapes and callable focus
 storage/replacement remain separate phase-6 adapter work; unsupported native
 implementations and host-entry contracts retain their existing diagnostics.
+
+## Phase 6 slice: differing dynamic lens-result shapes
+
+Dynamic lens calls now normalize differing source result shapes to an interned
+thin view with the semantic read/replacement endpoints. Original body and native
+projection result contracts remain available for raw invocation. Analysis verifies
+the endpoint-preserving common shape independently, including native scattered
+projections, rather than selecting one branch's ABI.
+
+Concrete `adapt-lens-result` wrappers record their source, raw/common shapes,
+restoration ownership and order. The C wrapper calls the original ABI and stores
+its raw lens plus a materialized focus in a heap context. Its typed restoration
+callback invokes the retained original restoration (or writes recursive native
+replacement backing) before freeing the normalization context. Existing caller
+adapters own argument backing until restoration finishes. Homogeneous and distinct
+replacement storage follow the same versioned contract; no local stack addresses
+escape and no incompatible code-pointer casts are emitted.
+
+Eighteen differential/execution samples cover both runtime selections, both pointer
+forms, native `fst`, homogeneous/type-changing storage, empty results, captured
+callees, deferred cleanup, nested forwarding and unused alias release. Independent
+concrete verification checks exact raw/common ABIs, shape endpoints, normalization,
+source wrappers, ownership and restoration order. Malformed source, shape, ownership,
+order and ABI records, and analyses retaining an arbitrary branch topology, fail
+before emission. Callable focus storage/replacement remains separate work.
+
+Validation: 966 passing non-execution tests and 458 passing native/Wasm execution
+cases, with 39 existing skips and zero failures across 35 files (1,424 passes).
+Execution includes strict C11, optimized native builds, supported native sanitizers,
+and Emscripten/Node at both optimization levels. Commands:
+`bun test --path-ignore-patterns '**/c/execute.test.ts'`,
+`bun test test/c/execute.test.ts`, `bunx tsc --noEmit`, and `git diff --check`.
+Remote CI was not run. Callable storage in source aggregates and focus
+storage/replacement remain explicit restrictions; this is not the full phase-6
+exit gate.

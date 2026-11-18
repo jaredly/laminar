@@ -322,6 +322,25 @@ export function verifyRepresentations(
             );
         }
     }
+    function nativeResult(
+        callee: Extract<ValueRepresentation, { kind: 'native' }>,
+        args: ValueRepresentation[],
+        result: ValueRepresentation,
+    ): ValueRepresentation {
+        if (callee.definition !== 'native/fst' || result.kind !== 'lens') return result;
+        const parent = lens(args[0]!);
+        if (parent.kind === 'tuple') return { kind: 'lens', shape: parent.items[0]! };
+        const read = layout(parent.read).type,
+            write = layout(parent.replacement).type;
+        if (read.tag !== 'tuple' || write.tag !== 'tuple')
+            return fail('Invalid native fst endpoints');
+        const backing = JSON.stringify([
+            'backing',
+            layoutId(read.items[0]!),
+            layoutId(write.items[0]!),
+        ]);
+        return { kind: 'lens', shape: JSON.stringify(['thin', backing]) };
+    }
     function nativeCall(
         callee: Extract<ValueRepresentation, { kind: 'native' }>,
         target: string,
@@ -502,8 +521,9 @@ export function verifyRepresentations(
                             const results: ValueRepresentation[] = [];
                             options.forEach((option, index) => {
                                 if (option.kind === 'native') {
-                                    nativeCall(option, targets[index]!, args, v);
-                                    results.push(v);
+                                    const raw = nativeResult(option, args, v);
+                                    nativeCall(option, targets[index]!, args, raw);
+                                    results.push(raw);
                                     return;
                                 }
                                 const target =
@@ -540,6 +560,23 @@ export function verifyRepresentations(
                                     [...new Set(members.map(repKey))].sort(),
                                     'Dynamic result alternatives changed',
                                 );
+                            } else if (callee.kind === 'callable-choice' && v.kind === 'lens') {
+                                const first = results[0]!;
+                                if (results.every((r) => same(r, first)))
+                                    requireEqual(v, first, 'Uniform lens result changed');
+                                else {
+                                    if (lens(v).kind !== 'thin')
+                                        fail('Dynamic lens adapter must expose a thin focus');
+                                    results.forEach((r) => {
+                                        const source = lens(r),
+                                            target = lens(v);
+                                        if (
+                                            source.read !== target.read ||
+                                            source.replacement !== target.replacement
+                                        )
+                                            fail('Dynamic lens endpoints changed');
+                                    });
+                                }
                             } else
                                 results.forEach((result) =>
                                     requireEqual(

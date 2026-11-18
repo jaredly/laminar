@@ -221,6 +221,30 @@ export function verifyConcreteProgram(p: ConcreteProgram): void {
             if (v.kind === 'callable-choice') v.options.forEach(discover);
         }
     }
+    function rawResult(
+        descriptor: ValueRepresentation,
+        contract: { target: string; arguments: ValueRepresentation[]; result: ValueRepresentation },
+    ): ValueRepresentation | undefined {
+        const variant = p.analysis.variants.find((v) => v.id === contract.target);
+        if (variant) return variant.result;
+        if (
+            descriptor.kind !== 'native' ||
+            descriptor.definition !== 'native/fst' ||
+            contract.result.kind !== 'lens'
+        )
+            return undefined;
+        const arg = contract.arguments[0]!;
+        if (arg.kind !== 'lens') return fail('Native fst requires a lens');
+        const parent = shapes.get(arg.shape)!;
+        if (parent.kind === 'tuple') return { kind: 'lens', shape: parent.items[0]! };
+        const read = semanticLayouts.get(parent.read)!.type,
+            write = semanticLayouts.get(parent.replacement)!.type;
+        if (read.tag !== 'tuple' || write.tag !== 'tuple')
+            return fail('Invalid native fst endpoints');
+        const r = p.analysis.layouts.find((l) => typeKey(l.type) === typeKey(read.items[0]!))!.id;
+        const w = p.analysis.layouts.find((l) => typeKey(l.type) === typeKey(write.items[0]!))!.id;
+        return { kind: 'lens', shape: JSON.stringify(['thin', JSON.stringify(['backing', r, w])]) };
+    }
     function addContract(
         descriptor: ValueRepresentation,
         c:
@@ -230,9 +254,9 @@ export function verifyConcreteProgram(p: ConcreteProgram): void {
         const k = representationKey(descriptor);
         if (!contracts.has(k)) contracts.set(k, new Map());
         contracts.get(k)!.set(contractKey(c), c);
-        const raw = p.analysis.variants.find((v) => v.id === c.target)?.result;
+        const raw = rawResult(descriptor, c);
         if (
-            descriptor.kind === 'callable' &&
+            descriptor.kind !== 'callable-choice' &&
             raw &&
             representationKey(raw) !== representationKey(c.result)
         )
@@ -396,13 +420,49 @@ export function verifyConcreteProgram(p: ConcreteProgram): void {
                     ]);
                     const memberWrapper = wrapper(concreteName('wrapper', memberKey));
                     if (
-                        !['invoke', 'native', 'adapt-result'].includes(memberWrapper.kind) ||
+                        !['invoke', 'native', 'adapt-result', 'adapt-lens-result'].includes(
+                            memberWrapper.kind,
+                        ) ||
                         memberWrapper.abi !== w.abi
                     )
                         return fail('Dynamic callable ABI mismatch');
                     return { callable: member.id, wrapper: memberWrapper.id };
                 });
                 eq(w.targets, expected, 'Dynamic callable dispatch coverage mismatch');
+            } else if (w.kind === 'adapt-lens-result') {
+                const raw = rawResult(c.descriptor, contract);
+                if (raw?.kind !== 'lens' || contract.result.kind !== 'lens')
+                    return fail('Missing lens result contract');
+                const from = shapes.get(raw.shape)!,
+                    to = shapes.get(contract.result.shape)!;
+                if (
+                    to.kind !== 'thin' ||
+                    from.read !== to.read ||
+                    from.replacement !== to.replacement ||
+                    from.id === to.id
+                )
+                    fail('Invalid lens result normalization');
+                const rawABI = aid(contract.arguments.map(storage), storage(raw));
+                const rawContract = { ...contract, result: raw };
+                const rawKey = JSON.stringify([
+                    'wrapper',
+                    target,
+                    graphKey,
+                    k,
+                    contractKey(rawContract),
+                    rawABI,
+                    c.environment,
+                ]);
+                const source = wrapper(concreteName('wrapper', rawKey));
+                if (
+                    !['invoke', 'native'].includes(source.kind) ||
+                    w.source !== source.id ||
+                    w.from !== from.id ||
+                    w.to !== to.id ||
+                    w.ownership !== 'restore-source-and-release'
+                )
+                    fail('Invalid lens result restoration adapter');
+                eq(w.order, ['restore-source', 'release'], 'Lens result restoration order changed');
             } else if (w.kind === 'adapt-result') {
                 const variant =
                     p.analysis.variants.find((v) => v.id === contract.target) ??
@@ -677,7 +737,10 @@ export function verifyConcreteProgram(p: ConcreteProgram): void {
                                 return false;
                             const matchesTarget = (id: string, target: string): boolean => {
                                 let candidate = wrapper(id);
-                                if (candidate.kind === 'adapt-result')
+                                if (
+                                    candidate.kind === 'adapt-result' ||
+                                    candidate.kind === 'adapt-lens-result'
+                                )
                                     candidate = wrapper(candidate.source);
                                 return candidate.kind === 'invoke'
                                     ? candidate.code === codeName(target)

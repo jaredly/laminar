@@ -1,3 +1,4 @@
+import { lensResultSamples } from '../backend/lens-result-samples.ts';
 import { callableResultSamples } from '../backend/callable-result-samples.ts';
 import { nativeJoinSamples } from '../backend/native-join-samples.ts';
 import { cp, mkdtemp, rm } from 'node:fs/promises';
@@ -67,6 +68,7 @@ const samples = [
     ...callableJoinSamples,
     ...nativeJoinSamples,
     ...callableResultSamples,
+    ...lensResultSamples,
     ...phase5Samples,
     ...computedAliases,
     ...lensBranchSamples,

@@ -54,8 +54,17 @@ returns its original layout; the adapter has the common result ABI. Its
 `transfer-result` ownership neither allocates nor drops that result. Raw invocation
 contracts stay present alongside adapted contracts in the finite slot table.
 Independent verification checks both ABIs, source code, canonical result members,
-source/destination layouts, and every invocation field mapping. Differing lens
-result shapes and unsupported import implementations remain explicit restrictions.
+source/destination layouts, and every invocation field mapping.
+
+Differing lens results normalize to a thin focus with the semantic read/replacement
+endpoints. `adapt-lens-result` wrappers retain the raw source wrapper and original
+lens shape, and specify `restore-source-and-release` ownership and ordering. The
+C emitter stores the raw lens and normalized focus in a heap context; restoration
+passes the replacement through the original callback (or writes its recursive
+backing for native views), then releases the context. Source and common call ABIs
+remain distinct and exact. Verification checks both shapes, identical endpoints,
+the thin destination and the source wrapper/ABI. Unsupported import implementations
+retain their diagnostics.
 
 Invocation wrappers recover their exact environment type, transfer affine captures into the body, and free the environment before entering the body. Disposer wrappers drop remaining captures and free an unused environment. Native wrappers use a null environment and retain a concrete argument/result ABI. `make-callable` remains an operation even for top-level functions; these values are not all rewritten to direct calls.
 
@@ -71,7 +80,7 @@ The phase 3 exit gate is satisfied for accepted inputs: every emitted value and 
 
 ## Phase boundary
 
-Tests validate the concrete transformation and its independent verifier, including the phase 4–6 acceptance inputs and a registered recursive list schema. They do not execute concrete IR or generated C/Wasm. Phase 4 now consumes this artifact through the [C backend](c-backend.md), with separate storage lowering, syntax printing, and native/Emscripten execution. Phase 5 adds typed backing versions, aggregate reconstruction and generated restoration contexts for returned lenses. Differing dynamic lens-result shapes, callable focus storage, general heap data/runtime coverage, and optimization remain open. The explicit unsupported recursive-result and host-callable contracts must remain diagnostics until additional constraints or host adapters are available.
+Tests validate the concrete transformation and its independent verifier, including the phase 4–6 acceptance inputs and a registered recursive list schema. They do not execute concrete IR or generated C/Wasm. Phase 4 now consumes this artifact through the [C backend](c-backend.md), with separate storage lowering, syntax printing, and native/Emscripten execution. Phase 5 adds typed backing versions, aggregate reconstruction and generated restoration contexts for returned lenses. Callable focus storage, general heap data/runtime coverage, and optimization remain open. The explicit unsupported recursive-result and host-callable contracts must remain diagnostics until additional constraints or host adapters are available.
 
 ## Readable output
 
