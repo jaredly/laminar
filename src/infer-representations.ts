@@ -51,7 +51,7 @@ export type RepresentationVariant = {
             place: string;
             arms: ValueRepresentation[];
             result: ValueRepresentation;
-            restoration?: 'consume';
+            restoration?: 'consume' | 'replace';
         }[];
     }[];
     calls: {
@@ -649,11 +649,11 @@ export function inferRepresentations(
                                         writes,
                                     ),
                                 );
-                            if (uses(true))
-                                return fail(
-                                    'Deferred callable storage replacement requires a restoration adapter',
-                                );
-                            const restoration = uses() ? ('consume' as const) : undefined;
+                            const restoration = uses(true)
+                                ? ('replace' as const)
+                                : uses()
+                                  ? ('consume' as const)
+                                  : undefined;
                             const arms = states.map((state) => state.places.get(place)!);
                             const result = join(arms, true);
                             storageJoins.push({
@@ -673,6 +673,31 @@ export function inferRepresentations(
                         const finishes = i.cases.map((arm, n) =>
                             states[n]!.finishes.get(arm.body.result),
                         );
+                        if (storageJoins.some((j) => j.restoration === 'replace'))
+                            i.cases.forEach((arm, n) => {
+                                if (
+                                    !finishes[n] &&
+                                    storageJoins.some(
+                                        (j) =>
+                                            j.restoration === 'replace' &&
+                                            deferredStorageUse(
+                                                {
+                                                    ...arm.body,
+                                                    cleanup: [
+                                                        ...arm.body.cleanup,
+                                                        ...(arm.restored ?? []),
+                                                    ],
+                                                },
+                                                j.place,
+                                                false,
+                                                true,
+                                            ),
+                                    )
+                                )
+                                    fail(
+                                        'Deferred callable storage replacement requires a restoration adapter',
+                                    );
+                            });
                         // Complete against current owner versions, keeping each arm's
                         // private state. Post-cleanup unions are separate from setup
                         // joins so original cleanup keeps its exact representation.
@@ -685,6 +710,14 @@ export function inferRepresentations(
                                     places.forEach((place) =>
                                         restored.places.set(place, current.places.get(place)!),
                                     );
+                                    storageJoins
+                                        .filter((j) => j.restoration === 'replace')
+                                        .forEach((j) =>
+                                            restored.places.set(
+                                                j.place,
+                                                setup.places.get(j.place)!,
+                                            ),
+                                        );
                                     finishes[n]?.(restored, true);
                                     return restored;
                                 });
@@ -694,7 +727,12 @@ export function inferRepresentations(
                                 const merged = places.map((place) => {
                                     const arms = completed.map((state) => state.places.get(place)!);
                                     const result = join(arms, true);
-                                    if (arms.some((arm) => !equal(arm, arms[0]!)))
+                                    if (
+                                        arms.some((arm) => !equal(arm, arms[0]!)) ||
+                                        storageJoins.some(
+                                            (j) => j.place === place && j.restoration === 'replace',
+                                        )
+                                    )
                                         joins.push({ place, arms, result });
                                     return [place, result] as const;
                                 });
@@ -800,6 +838,18 @@ export function inferRepresentations(
         shapes: reps.snapshot(),
         backings: reps.backingSnapshot(),
     };
+    for (const record of [...analysis.entries, ...analysis.variants])
+        for (const value of record.values)
+            if (
+                value.storageJoins?.some(
+                    (j) =>
+                        j.restoration === 'replace' &&
+                        !value.cleanupJoins?.some((after) => after.place === j.place),
+                )
+            )
+                fail(
+                    'Deferred callable storage replacement requires a completed restoration contract',
+                );
     verifyRepresentations(source, analysis);
     return freezeTree(analysis);
 }

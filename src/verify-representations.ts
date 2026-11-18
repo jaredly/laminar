@@ -752,13 +752,9 @@ export function verifyRepresentations(
                                             writes,
                                         ),
                                     );
-                                if (uses(true))
-                                    fail(
-                                        'Deferred callable storage replacement requires a restoration adapter',
-                                    );
                                 requireEqual(
                                     joined.restoration,
-                                    uses() ? 'consume' : undefined,
+                                    uses(true) ? 'replace' : uses() ? 'consume' : undefined,
                                     'Selected storage restoration contract changed',
                                 );
                                 const arms = states.map((state) => state.places.get(place)!);
@@ -777,6 +773,31 @@ export function verifyRepresentations(
                             const finishes = i.cases.map((arm, n) =>
                                 states[n]!.finishes.get(arm.body.result),
                             );
+                            if (joins?.some((j) => j.restoration === 'replace'))
+                                i.cases.forEach((arm, n) => {
+                                    if (
+                                        !finishes[n] &&
+                                        joins.some(
+                                            (j) =>
+                                                j.restoration === 'replace' &&
+                                                deferredStorageUse(
+                                                    {
+                                                        ...arm.body,
+                                                        cleanup: [
+                                                            ...arm.body.cleanup,
+                                                            ...(arm.restored ?? []),
+                                                        ],
+                                                    },
+                                                    j.place,
+                                                    false,
+                                                    true,
+                                                ),
+                                        )
+                                    )
+                                        fail(
+                                            'Deferred callable storage replacement requires a restoration adapter',
+                                        );
+                                });
                             const places = [...s.places.keys()];
                             if (finishes.some(Boolean))
                                 s.finishes.set(i.out.id, (current, apply) => {
@@ -785,22 +806,35 @@ export function verifyRepresentations(
                                         const restored = clone(setup);
                                         for (const place of places)
                                             restored.places.set(place, current.places.get(place)!);
+                                        joins
+                                            ?.filter((j) => j.restoration === 'replace')
+                                            .forEach((j) =>
+                                                restored.places.set(
+                                                    j.place,
+                                                    setup.places.get(j.place)!,
+                                                ),
+                                            );
                                         finishes[n]?.(restored, true);
                                         return restored;
                                     });
                                     checkedCleanupJoins.add(i.out.id);
-                                    const joins = annotations.get(i.out.id)!.cleanupJoins;
+                                    const cleanupJoins = annotations.get(i.out.id)!.cleanupJoins;
                                     const divergent = places.filter((place) =>
                                         completed.some(
                                             (state) =>
                                                 !same(
                                                     state.places.get(place),
                                                     completed[0]!.places.get(place),
+                                                ) ||
+                                                joins?.some(
+                                                    (j) =>
+                                                        j.place === place &&
+                                                        j.restoration === 'replace',
                                                 ),
                                         ),
                                     );
                                     requireEqual(
-                                        joins?.map((j) => j.place),
+                                        cleanupJoins?.map((j) => j.place),
                                         divergent.length ? divergent : undefined,
                                         'Cleanup storage join coverage changed',
                                     );
@@ -808,7 +842,7 @@ export function verifyRepresentations(
                                         const arms = completed.map((state) =>
                                             state.places.get(place)!,
                                         );
-                                        const joined = joins?.find((j) => j.place === place);
+                                        const joined = cleanupJoins?.find((j) => j.place === place);
                                         if (joined) {
                                             requireEqual(
                                                 joined.arms,
@@ -944,9 +978,20 @@ export function verifyRepresentations(
             return result;
         }
         const result = block(body, state);
-        for (const annotation of annotations.values())
+        for (const annotation of annotations.values()) {
             if (annotation.cleanupJoins !== undefined && !checkedCleanupJoins.has(annotation.value))
                 fail('Unexpected cleanup join annotation');
+            if (
+                annotation.storageJoins?.some(
+                    (j) =>
+                        j.restoration === 'replace' &&
+                        !annotation.cleanupJoins?.some((after) => after.place === j.place),
+                )
+            )
+                fail(
+                    'Deferred callable storage replacement requires a completed restoration contract',
+                );
+        }
         if (usedValues.size !== annotations.size || usedCalls.size !== calls.size)
             fail('Extra value or call annotations');
         return result;

@@ -810,6 +810,9 @@ export function verifyConcreteProgram(p: ConcreteProgram): void {
                                               ownership: 'retain-selected-storage',
                                               order: ['restore-retained', 'cleanup', 'normalize'],
                                               retained: j.arms.map(storage),
+                                              ...(j.restoration === 'replace'
+                                                  ? { normalization: 'post-cleanup' }
+                                                  : {}),
                                           },
                                       }
                                     : {}),

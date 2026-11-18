@@ -131,6 +131,7 @@ export type ConcreteInstruction =
               arms: ConcreteValueAdapter[];
               restoration?: {
                   ownership: 'retain-selected-storage';
+                  normalization?: 'post-cleanup';
                   order: ['restore-retained', 'cleanup', 'normalize'];
                   retained: string[];
               };

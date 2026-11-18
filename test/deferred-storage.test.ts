@@ -83,7 +83,7 @@ for (const mutation of ['missing', 'mode'] as const)
             'Selected storage restoration contract changed',
         );
     });
-it('keeps deferred replacement of divergent storage explicit', () => {
+it('normalizes deferred replacement of divergent storage', () => {
     const source = `{let x = 1
  let v = 3
  let f = fn () v
@@ -101,7 +101,7 @@ it('keeps deferred replacement of divergent storage explicit', () => {
         compileConcreteProgram(p, wasm32Emscripten('test'), [
             { unit: p.units.at(-1)!.id, arguments: [] },
         ]),
-    ).toThrow('Deferred callable storage replacement requires a restoration adapter');
+    ).not.toThrow();
 });
 
 for (const mutation of ['missing', 'place', 'before', 'after', 'extra', 'operation'] as const)
@@ -381,4 +381,66 @@ it('independently rejects stale provenance after divergent selected cleanup', ()
     );
     moved.representation = join.arms[0];
     expect(() => verifyConcreteProgram(c)).toThrow('Moved callable provenance changed');
+});
+const retainedReplacementSource = (suffix = 'true') =>
+    deferredStorageSamples.find((s) => s.name === `deferred retained replacement ${suffix}`)!
+        .source;
+for (const mutation of ['missing', 'mode'] as const)
+    it(`rejects forged retained replacement normalization ${mutation}`, () => {
+        const c = concrete(retainedReplacementSource());
+        const selected = selectedCase(c);
+        const restoration = selected.storageJoins[0].restoration;
+        expect(restoration.normalization).toBe('post-cleanup');
+        if (mutation === 'missing') delete restoration.normalization;
+        else restoration.normalization = 'setup';
+        expect(() => verifyConcreteProgram(c)).toThrow('Branch storage adapter changed');
+        expect(() => emitC(c)).toThrow('Branch storage adapter changed');
+    });
+it('rejects consume mode on retained replacement', () => {
+    const c = concrete(retainedReplacementSource());
+    const annotation = c.analysis.entries[0].values.find((v: any) =>
+        v.storageJoins?.some((j: any) => j.restoration === 'replace'),
+    );
+    annotation.storageJoins[0].restoration = 'consume';
+    expect(() => verifyConcreteProgram(c)).toThrow('Selected storage restoration contract changed');
+});
+it('requires a post-cleanup adapter even when replacement results converge', () => {
+    const c = concrete(retainedReplacementSource('convergent true'));
+    const annotation = c.analysis.entries[0].values.find((v: any) =>
+        v.storageJoins?.some((j: any) => j.restoration === 'replace'),
+    );
+    expect(annotation.cleanupJoins).toHaveLength(1);
+    expect(annotation.cleanupJoins[0].arms[0]).toEqual(annotation.cleanupJoins[0].arms[1]);
+    delete annotation.cleanupJoins;
+    expect(() => verifyConcreteProgram(c)).toThrow('Cleanup storage join coverage changed');
+});
+it('retains original cleanup invocation slots through a slot-free replacement join', () => {
+    const c = concrete(retainedReplacementSource('unused true'));
+    const selected = selectedCase(c);
+    const join = selected.storageJoins[0];
+    expect(c.callables.find((v: any) => v.layout === join.arms[0].to).entries).toHaveLength(0);
+    expect(
+        c.callables.find((v: any) => v.layout === join.restoration.retained[0]).entries,
+    ).toHaveLength(1);
+    verifyConcreteProgram(c);
+});
+it('keeps uncompleted callee-local replacement restoration explicit', () => {
+    const source = `fn select(flag, first, second, ~x) ~{let f = first
+ match flag {true -> {let old = f := second
+ @(x, {let old = f := fn () 9
+ old()
+ fn () ()})}; false -> x}}
+{let a = 3
+ let b = 5
+ let x = 1
+ let old = select(true, fn () a, fn () b, ~x) := true
+ (old, x)}`;
+    const p = typedProgram(source);
+    expect(legacyReference(source)).toEqual([1, true]);
+    expect(executeTypedProgram(p)).toEqual([1, true]);
+    expect(() =>
+        compileConcreteProgram(p, wasm32Emscripten('test'), [
+            { unit: p.units.at(-1)!.id, arguments: [] },
+        ]),
+    ).toThrow('Deferred callable storage replacement requires a completed restoration contract');
 });

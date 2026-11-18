@@ -429,3 +429,16 @@ from analysis independently. These adapters run after original-ABI cleanup and
 before the final storage merge, including staged completion. The printer marks
 `selected-cleanup-storage`. Setup `storageJoins` remain a separate contract;
 deferred writes to divergent setup owners are still guarded.
+
+## Retained replacement restoration
+
+Setup storage join `restoration` can be `replace` as well as `consume`. Independent
+analysis derives this mode from deferred accesses. Replacement completion uses each
+retained original arm descriptor and requires a matching `cleanupJoins` entry even
+when final arm descriptors are identical. An uncompleted replacement contract is
+rejected. Concrete retained restoration marks replacement with
+`normalization: 'post-cleanup'`: setup adapters normalize live staging contents;
+final adapters normalize post-cleanup contents before merging. The setup adapter
+must not be reapplied to newly acquired replacement storage. Independent concrete
+verification derives the marker, retention layouts, final adapters, ownership and
+ordering. Consumption restoration keeps its previous normalization convention.

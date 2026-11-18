@@ -952,3 +952,42 @@ native, supported sanitizer, and Emscripten/Node execution at both optimization
 levels passed without retries (333.41 seconds). The initial focused native/Wasm
 run also passed (8 cases). `bunx tsc --noEmit` and `git diff --check` pass.
 Remote CI was not run.
+
+## Retained deferred replacement
+
+Setup storage joins now distinguish `restoration: 'replace'` from consumption.
+Analysis derives the mode from deferred acquisitions/writes and reinstates original
+arm descriptors before running retained completion handlers. Replacement places
+always appear in `cleanupJoins`, including exact final convergence. Independent
+verification derives modes, original/final provenance and required post-cleanup
+coverage. Uncompleted replacement contracts and unsupported completion routes still
+diagnose explicitly rather than erasing the effects.
+
+Concrete retained restoration adds `normalization: 'post-cleanup'` for replacement;
+independent verification derives that marker and rejects its removal or alteration.
+C retains raw original contents across staging, restores them for original-ABI
+cleanup, skips the setup conversion afterward, and applies the required final value
+adapter. Consumption retains its existing forward normalization. Environment
+ownership transfers once; extracted old values are neither disposed by the swap
+nor copied into a second owning environment. Existing returned argument backing
+and nested selected state remain alive through completion.
+
+Eighteen shared samples cover both selections, original cleanup invocation,
+convergent and divergent results, aggregate replacement, unused final owners,
+returned argument backing, staged outer cleanup, nested selections, consume/refill,
+and owned cleanup results. Six new tests reject normalization/mode corruption,
+require convergent adapters, assert original invocation slots through a slot-free
+common callable, and preserve the uncompleted callee-local boundary. The previous
+blanket replacement rejection test now checks successful compilation.
+
+Escaping callee-local replacement and routes without modeled arm-result completion
+still need effect summaries/contracts. Arm-local returned aliases retain their
+existing typed-IR protection boundary; general callable focus endpoint ABIs remain
+open. Phase 6 is incomplete.
+
+Validation: **2,169 pass / 39 existing skips / 0 failures across 42 files**:
+1,283 non-execution tests and 886 native/Wasm cases. Full strict C11, optimized
+native, supported sanitizer, and Emscripten/Node execution at both optimization
+levels passed without retries (348.58 seconds). The focused native/Wasm run also
+passed (36 cases). `bunx tsc --noEmit` and `git diff --check` pass.
+Remote CI was not run.

@@ -11,7 +11,7 @@ coverage, not completion of every phase exit gate.
 
 The scoped lens extensions are complete as of `707521c`; see the
 [completion record and follow-up mapping](checker-completeness-handoff.md).
-Latest local verification: **2109 pass / 39 existing skips / 0 failures across
+Latest local verification: **2169 pass / 39 existing skips / 0 failures across
 42 files**, with default TypeScript and diff checks passing. The latest full execution run passed without retries. Remote CI was not run for
 these slices. See also [the implementation record](backend-progress.md),
 [backend contract](backend-contract.md), [typed IR API](typed-ir.md), and
@@ -451,19 +451,20 @@ Include immediate swaps/discards and returned lenses. Then add exact post-cleanu
 normalization adapters for divergent selected replacement. The current replacement
 guard stays in place. Phase 6 remains incomplete.
 
-## Latest phase 6 slice: divergent post-cleanup storage joins
+## Latest phase 6 slice: retained deferred replacement
 
-Selected cleanup may now leave different callable/recursive aggregate descriptors
-when the affected owner has a common setup descriptor. Analysis retains ordered
-post-cleanup `cleanupJoins`; independent verification derives arm coverage, exact
-provenance and canonical result unions. Concrete adapters transfer selected storage
-after cleanup and before final merge, preserving original cleanup invocation ABIs.
-Nested selections, returned backing, staged cleanup and unused final contents share
-the explicit post-cleanup contract.
+Selected deferred cleanup can now replace/acquire owners with divergent setup
+representations through explicit `replace` restoration. Analysis reinstates each
+original arm descriptor before deriving cleanup effects. Every replacement place
+requires a completed post-cleanup join/adapter, even when final descriptors agree.
+C stages with original storage retained, reinstates it for original-ABI cleanup,
+and normalizes final contents with the post-cleanup adapter instead of reapplying
+the setup conversion. Independent analysis/concrete verification checks the mode,
+original layouts, final coverage, normalization route, ownership and ordering.
 
-Deferred replacement of an owner whose setup descriptors already diverge still
-diagnoses `Deferred callable storage replacement requires a restoration adapter`.
-Next, combine retained original setup storage with explicit post-cleanup descriptors
-and adapters through staging/completion before relaxing that guard. Escaping
-callee-local effects, arm-local returned-alias protection, and general callable
-focus endpoint ABIs remain separate work. Phase 6 remains incomplete.
+Next, model escaping callee-local effects and completion contracts for returned
+contexts; uncompleted callee-local replacement still diagnoses explicitly. Routes
+without a modeled arm-result completion handler retain the restoration-adapter
+boundary. Arm-local returned-alias protection and general callable focus endpoint
+ABIs (aliases/projections, parameters/results, manual and scattered callable focuses)
+remain open. Phase 6 remains incomplete.

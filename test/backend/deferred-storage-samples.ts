@@ -706,4 +706,143 @@ fn pass(~x) ~x
  x}`,
         expected: 1,
     },
+    {
+        name: `deferred retained replacement ${condition}`,
+        source: `{let x = 1
+ let seen = 0
+ let v = 3
+ let f = fn () v
+ let y = 5
+ {let focus = ~{match ${condition} {true -> {let old = f := fn () y
+ @(x, {let old = f := fn () 9
+ seen := old()
+ fn () ()})}; false -> x}}
+ focus := true}
+ (f(), seen, x)}`,
+        expected: [condition === 'true' ? 9 : 3, condition === 'true' ? 5 : 0, true],
+    },
+    {
+        name: `deferred retained replacement convergent ${condition}`,
+        source: `fn replacement() 9
+{let x = 1
+ let v = 3
+ let f = fn () v
+ let y = 5
+ {let focus = ~{match ${condition} {true -> {let old = f := fn () y
+ @(x, {let old = f := replacement
+ old()
+ fn () ()})}; false -> @(x, {let old = f := replacement
+ old()
+ fn () ()})}}
+ focus := true}
+ (f(), x)}`,
+        expected: [9, true],
+    },
+    {
+        name: `deferred retained replacement aggregate ${condition}`,
+        source: `{let x = 1
+ let v = 3
+ let packed = (fn () v, 4)
+ let y = 5
+ {let focus = ~{match ${condition} {true -> {let old = packed := (fn () y, 6)
+ @(x, {let (old, n) = packed := (fn () 9, 7)
+ old() + n
+ fn () ()})}; false -> x}}
+ focus := true}
+ let (f, n) = packed
+ (f() + n, x)}`,
+        expected: [condition === 'true' ? 16 : 7, true],
+    },
+    {
+        name: `deferred retained replacement unused ${condition}`,
+        source: `{let x = 1
+ let v = 3
+ let f = fn () v
+ let y = 5
+ let z = 9
+ {let focus = ~{match ${condition} {true -> {let old = f := fn () y
+ @(x, {let old = f := fn () z
+ old()
+ fn () ()})}; false -> x}}
+ ()}
+ x}`,
+        expected: 1,
+    },
+    {
+        name: `deferred retained replacement returned ${condition}`,
+        source: `fn pass(~x) ~x
+{let x = 1
+ let v = 3
+ let f = fn () v
+ let y = 5
+ {let focus = ~{match ${condition} {true -> {let old = f := fn () y
+ pass(~{@(x, {let old = f := fn () 9
+ old()
+ fn () ()})})}; false -> pass(~x)}}
+ focus := true}
+ (f(), x)}`,
+        expected: [condition === 'true' ? 9 : 3, true],
+    },
+    {
+        name: `deferred retained replacement staged ${condition}`,
+        source: `{let x = 1
+ let count = 0
+ let v = 3
+ let f = fn () v
+ let y = 5
+ {let focus = ~{@({match ${condition} {true -> {let old = f := fn () y
+ @(x, {let old = f := fn () 9
+ old()
+ fn () ()})}; false -> x}}, fn () {count := 10})}
+ focus := true}
+ (f(), count, x)}`,
+        expected: [condition === 'true' ? 9 : 3, 10, true],
+    },    {
+        name: `deferred retained replacement nested ${condition}`,
+        source: `{let x = 1
+ let v = 3
+ let f = fn () v
+ let y = 5
+ let z = 7
+ {let focus = ~{match ${condition} {true -> {match false {
+ true -> {let old = f := fn () y
+ @(x, {let old = f := fn () 9
+ old()
+ fn () ()})}; false -> {let old = f := fn () z
+ @(x, {let old = f := fn () 8
+ old()
+ fn () ()})}}}; false -> x}}
+ focus := true}
+ (f(), x)}`,
+        expected: [condition === 'true' ? 8 : 3, true],
+    },
+    {
+        name: `deferred retained replacement refill ${condition}`,
+        source: `{let x = 1
+ let v = 3
+ let f = fn () v
+ let y = 5
+ {let focus = ~{match ${condition} {true -> {let old = f := fn () y
+ @(x, {f()
+ f := fn () 9
+ fn () ()})}; false -> x}}
+ focus := true}
+ (f(), x)}`,
+        expected: [condition === 'true' ? 9 : 3, true],
+    },
+    {
+        name: `deferred retained replacement owned result ${condition}`,
+        source: `{let x = 1
+ let v = 3
+ let f = fn () v
+ let y = 5
+ let z = 9
+ {let focus = ~{match ${condition} {true -> {let old = f := fn () y
+ @(x, {let old = f := fn () z
+ fn () old})}; false -> x}}
+ focus := true}
+ (f(), x)}`,
+        expected: [condition === 'true' ? 9 : 3, true],
+    },
+
 ]);

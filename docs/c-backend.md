@@ -489,3 +489,12 @@ and staged completion share this path; original cleanup ABIs, empty projections,
 returned backing and affine disposal remain intact. Deferred replacement of owners
 with divergent setup descriptors still requires restoration adapters and diagnoses.
 Phase 6 remains incomplete.
+
+Deferred replacement of divergent setup owners now executes when retained original
+storage and a completed post-cleanup adapter are present. Staging preserves raw
+contents; completion reinstates original typed storage for cleanup and uses the
+final adapter, skipping the setup adapter after replacement. Convergent final
+results still require that explicit route. Nested selections, consume/refill,
+unused owners and owned cleanup results preserve affine disposal. Uncompleted
+callee-local restoration and unsupported arm completion routes remain explicit
+restrictions. General callable focus endpoint ABIs and phase 6 remain open.

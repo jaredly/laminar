@@ -578,6 +578,12 @@ export function lowerConcreteProgram(
                                                             'normalize',
                                                         ],
                                                         retained: j.arms.map(layout),
+                                                        ...(j.restoration === 'replace'
+                                                            ? {
+                                                                  normalization:
+                                                                      'post-cleanup' as const,
+                                                              }
+                                                            : {}),
                                                     },
                                                 }
                                               : {}),

@@ -728,9 +728,18 @@ export function lowerC(program: ConcreteProgram): TranslationUnit {
                                         adaptStorage(j.arms[arm]!, storage.get(view), output),
                                     );
                                 });
-                            const normalizeStorage = (arm: number, output: Statement[]) =>
+                            const normalizeStorage = (
+                                arm: number,
+                                output: Statement[],
+                                afterCleanup = false,
+                            ) =>
                                 i.storageJoins?.forEach((j) => {
-                                    if (!j.restoration) return;
+                                    if (
+                                        !j.restoration ||
+                                        (afterCleanup &&
+                                            j.restoration.normalization === 'post-cleanup')
+                                    )
+                                        return;
                                     const view = places.get(j.place)!;
                                     storage.put(
                                         view,
@@ -859,7 +868,7 @@ export function lowerC(program: ConcreteProgram): TranslationUnit {
                                             restoreStorage(entry.retained);
                                             entry.complete(nested);
                                             normalize(entry.arm.arm.restored, nested);
-                                            normalizeStorage(entry.arm.index, nested);
+                                            normalizeStorage(entry.arm.index, nested, true);
                                             normalizeCleanup(entry.arm.index, nested);
                                             return { nested, state: storage.snapshot() };
                                         });
@@ -887,7 +896,7 @@ export function lowerC(program: ConcreteProgram): TranslationUnit {
                                         restoreStorage(arm.retained);
                                         arm.lens.finish(nested);
                                         normalize(arm.arm.restored, nested);
-                                        normalizeStorage(arm.index, nested);
+                                        normalizeStorage(arm.index, nested, true);
                                         normalizeCleanup(arm.index, nested);
                                         return { nested, state: storage.snapshot() };
                                     });
