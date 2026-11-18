@@ -1,4 +1,14 @@
 
+So, what if I ... want to be able to make a little cli.
+
+---
+
+Ok, had codex do a ton of stuff
+- a type checker
+- monomorphizing to c
+
+---
+
 Pointers, passing all the things I throw at them.
 Loving how heap allocation is working.
 

@@ -27,9 +27,13 @@ export function builtinTypes(): Map<string, Scheme> {
 export function constructorTypes(): Map<string, Scheme> {
     const s = new Solver(),
         a = s.fresh(),
-        list = con('List', a);
+        list = con('List', a),
+        b = s.fresh(),
+        option = con('Option', b);
     return new Map([
         ['nil', s.generalize(fn([], plain(list)), [])],
         ['cons', s.generalize(fn([plain(a), plain(list)], plain(list)), [])],
+        ['Some', s.generalize(fn([plain(b)], plain(option)), [])],
+        ['None', s.generalize(fn([], plain(option)), [])],
     ]);
 }

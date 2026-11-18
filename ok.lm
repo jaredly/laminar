@@ -1,0 +1,66 @@
+
+fn nextGuess(direction, ~(min, max, lastGuess)) {
+    round(
+        match direction {
+            1 -> {(!max + !lastGuess) / 2}
+            0 -> {(!lastGuess + !min) / 2}
+        }
+    )
+}
+
+fn print(something) 0
+fn getInput(input) 0
+fn setInput(items) 0
+fn logs() 0
+
+fn handleResponse(response, ~state) {
+    match response {
+        1 -> {
+            let next = nextGuess(1, ~state)
+            let (min, _, last) = ~state
+            min := last
+            last := next
+            false
+        }
+        0 -> {
+            let next = nextGuess(0, ~state)
+            let (_, max, last) = ~state
+            max := last
+            last := next
+            false
+        }
+        2 -> true
+        _ -> {
+            print(0)
+            false
+        }
+    }
+}
+
+fn step(steps, ~(min, max, lastGuess)) {
+    let input = getInput(dup(~lastGuess))
+    let next = handleResponse(input, ~(min, max, lastGuess))
+    match (next) {
+        true -> steps
+        false -> step(steps + 1, ~(min, max, lastGuess))
+    }
+}
+
+fn game() {
+    let state = (0, 100, 50)
+    let steps = step(0, ~state)
+    (state, steps)
+}
+//
+// {
+//     // setInput([1, 1, -1, -1, 0])
+//     (game(), logs())
+// }
+{
+    let v = (0, 100, 50)
+    // step(0, ~v)
+    let input = getInput(10)
+    // input
+    let next = handleResponse(input, ~v)
+    next
+}
