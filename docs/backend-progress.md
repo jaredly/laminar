@@ -991,3 +991,34 @@ native, supported sanitizer, and Emscripten/Node execution at both optimization
 levels passed without retries (348.58 seconds). The focused native/Wasm run also
 passed (36 cases). `bunx tsc --noEmit` and `git diff --check` pass.
 Remote CI was not run.
+
+## Returned callee-local replacement restoration completed
+
+Scope-forwarded lens completion now retains private descriptor state. At release,
+it overlays current enclosing descriptors, completes the retained handler, and
+propagates effects only for enclosing owners. Private locals remain available to
+restoration without escaping into caller representation state. Function variant
+analysis completes returned handlers on cloned state, deriving required cleanup
+joins/adapters while leaving setup descriptors and result ABIs unchanged.
+Independent serialized verification performs the same private completion and checks
+all retained-original/final contracts; it does not call inference or lowering.
+
+Existing C context capture and liveness retention already keep the required backing
+and private owned values alive through restoration. Sixteen shared samples now
+exercise direct/unused/forwarded returned lenses, aggregate and convergent
+replacement, owned cleanup results, staged returned cleanup, and late capture from
+a private local, for both selections. Four added tests reject forged returned
+variant post-cleanup coverage/mode and physical retention, and assert original
+invocation slots survive the slot-free common callable. The previous callee-local
+rejection test now requires successful compilation.
+
+This finishes the modeled callee-local returned-restoration boundary. Unsupported
+completion routes still diagnose rather than dropping effects; arm-local returned
+alias protection and general callable focus endpoint ABIs remain open. Phase 6
+remains incomplete.
+
+Validation: **2,221 pass / 39 existing skips / 0 failures across 42 files**:
+1,303 non-execution tests and 918 native/Wasm cases. Full strict C11, optimized
+native, supported sanitizer, and Emscripten/Node execution at both optimization
+levels passed without retries (339.63 seconds). `bunx tsc --noEmit` and
+`git diff --check` pass. Remote CI was not run.

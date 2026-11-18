@@ -797,7 +797,8 @@ fn pass(~x) ~x
  focus := true}
  (f(), count, x)}`,
         expected: [condition === 'true' ? 9 : 3, 10, true],
-    },    {
+    },
+    {
         name: `deferred retained replacement nested ${condition}`,
         source: `{let x = 1
  let v = 3
@@ -844,5 +845,121 @@ fn pass(~x) ~x
  (f(), x)}`,
         expected: [condition === 'true' ? 9 : 3, true],
     },
-
+    {
+        name: `returned local replacement ${condition}`,
+        source: `fn select(flag, first, second, ~x) ~{let f = first
+ match flag {true -> {let old = f := second
+ @(x, {let old = f := fn () 9
+ old()
+ fn () ()})}; false -> x}}
+{let a = 3
+ let b = 5
+ let x = 1
+ let old = select(${condition}, fn () a, fn () b, ~x) := true
+ (old, x)}`,
+        expected: [1, true],
+    },
+    {
+        name: `returned local replacement unused ${condition}`,
+        source: `fn select(flag, first, second, ~x) ~{let f = first
+ match flag {true -> {let old = f := second
+ @(x, {let old = f := fn () 9
+ old()
+ fn () ()})}; false -> x}}
+{let a = 3
+ let b = 5
+ let x = 1
+ {let focus = ~{select(${condition}, fn () a, fn () b, ~x)}
+ ()}
+ x}`,
+        expected: 1,
+    },
+    {
+        name: `returned local replacement forwarded ${condition}`,
+        source: `fn select(flag, first, second, ~x) ~{let f = first
+ match flag {true -> {let old = f := second
+ @(x, {let old = f := fn () 9
+ old()
+ fn () ()})}; false -> x}}
+fn forward(flag, first, second, ~x) ~{select(flag, first, second, ~x)}
+{let a = 3
+ let b = 5
+ let x = 1
+ let old = forward(${condition}, fn () a, fn () b, ~x) := true
+ (old, x)}`,
+        expected: [1, true],
+    },
+    {
+        name: `returned local replacement aggregate ${condition}`,
+        source: `fn select(flag, first, second, ~x) ~{let packed = (first, 4)
+ match flag {true -> {let old = packed := (second, 6)
+ @(x, {let (old, n) = packed := (fn () 9, 7)
+ old() + n
+ fn () ()})}; false -> x}}
+{let a = 3
+ let b = 5
+ let x = 1
+ let old = select(${condition}, fn () a, fn () b, ~x) := true
+ (old, x)}`,
+        expected: [1, true],
+    },
+    {
+        name: `returned local replacement convergent ${condition}`,
+        source: `fn replacement() 9
+fn select(flag, first, second, ~x) ~{let f = first
+ match flag {true -> {let old = f := second
+ @(x, {let old = f := replacement
+ old()
+ fn () ()})}; false -> @(x, {let old = f := replacement
+ old()
+ fn () ()})}}
+{let a = 3
+ let b = 5
+ let x = 1
+ let old = select(${condition}, fn () a, fn () b, ~x) := true
+ (old, x)}`,
+        expected: [1, true],
+    },
+    {
+        name: `returned local replacement owned result ${condition}`,
+        source: `fn select(flag, first, second, ~x) ~{let f = first
+ match flag {true -> {let old = f := second
+ @(x, {let old = f := fn () 9
+ fn () old})}; false -> x}}
+{let a = 3
+ let b = 5
+ let x = 1
+ let old = select(${condition}, fn () a, fn () b, ~x) := true
+ (old, x)}`,
+        expected: [1, true],
+    },
+    {
+        name: `returned local replacement staged ${condition}`,
+        source: `fn select(flag, first, second, ~x) ~{let f = first
+ @({match flag {true -> {let old = f := second
+ @(x, {let old = f := fn () 9
+ old()
+ fn () ()})}; false -> x}}, fn () ())}
+{let a = 3
+ let b = 5
+ let x = 1
+ let old = select(${condition}, fn () a, fn () b, ~x) := true
+ (old, x)}`,
+        expected: [1, true],
+    },
+    {
+        name: `returned local replacement late capture ${condition}`,
+        source: `fn select(flag, first, second, ~x) ~{let f = first
+ {let z = 9
+ match flag {true -> {let old = f := second
+ @(x, {let old = f := fn () z
+ old()
+ fn () ()})}; false -> x}}}
+{let a = 3
+ let b = 5
+ let x = 1
+ let old = select(${condition}, fn () a, fn () b, ~x) := true
+ (old, x)}`,
+        expected: [1, true],
+    },
 ]);

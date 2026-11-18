@@ -365,6 +365,9 @@ export function inferRepresentations(
             else bind(p.pattern, arg, state);
         });
         const result = block(unit, fn.body, state, variant, [...chain, identity]);
+        // Derive escaping private cleanup contracts without changing the setup
+        // descriptor state used by the returned lens ABI.
+        if (result.kind === 'lens') state.finishes.get(fn.body.result)?.(clone(state), true);
         if (variant.result && !equal(variant.result, result))
             return fail('Function result representation disagrees with its semantic layout');
         variant.result = result;
@@ -619,7 +622,23 @@ export function inferRepresentations(
                     out = block(unit, i.body, nested, record, chain);
                     s.places.forEach((_, place) => s.places.set(place, nested.places.get(place)!));
                     const finish = nested.finishes.get(i.body.result);
-                    if (finish) s.finishes.set(i.out.id, finish);
+                    if (finish) {
+                        // Escaping completion may still need descriptors for locals
+                        // that are no longer present in the enclosing scope.
+                        const retained = clone(nested);
+                        const enclosing = [...s.places.keys()];
+                        s.finishes.set(i.out.id, (current, apply) => {
+                            const restored = clone(retained);
+                            enclosing.forEach((place) =>
+                                restored.places.set(place, current.places.get(place)!),
+                            );
+                            finish(restored, apply);
+                            if (apply)
+                                enclosing.forEach((place) =>
+                                    current.places.set(place, restored.places.get(place)!),
+                                );
+                        });
+                    }
                     break;
                 }
                 case 'case': {

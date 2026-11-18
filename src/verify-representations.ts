@@ -704,7 +704,19 @@ export function verifyRepresentations(
                             s.places.set(place, nested.places.get(place)!),
                         );
                         const finish = nested.finishes.get(i.body.result);
-                        if (finish) s.finishes.set(i.out.id, finish);
+                        if (finish) {
+                            const retained = clone(nested);
+                            const enclosing = [...s.places.keys()];
+                            s.finishes.set(i.out.id, (current, apply) => {
+                                const restored = clone(retained);
+                                for (const place of enclosing)
+                                    restored.places.set(place, current.places.get(place)!);
+                                finish(restored, apply);
+                                if (apply)
+                                    for (const place of enclosing)
+                                        current.places.set(place, restored.places.get(place)!);
+                            });
+                        }
                         break;
                     }
                     case 'case': {
@@ -978,6 +990,7 @@ export function verifyRepresentations(
             return result;
         }
         const result = block(body, state);
+        if (result.kind === 'lens') state.finishes.get(body.result)?.(clone(state), true);
         for (const annotation of annotations.values()) {
             if (annotation.cleanupJoins !== undefined && !checkedCleanupJoins.has(annotation.value))
                 fail('Unexpected cleanup join annotation');

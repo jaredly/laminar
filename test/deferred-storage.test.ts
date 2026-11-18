@@ -424,7 +424,7 @@ it('retains original cleanup invocation slots through a slot-free replacement jo
     ).toHaveLength(1);
     verifyConcreteProgram(c);
 });
-it('keeps uncompleted callee-local replacement restoration explicit', () => {
+it('completes callee-local replacement restoration before escape', () => {
     const source = `fn select(flag, first, second, ~x) ~{let f = first
  match flag {true -> {let old = f := second
  @(x, {let old = f := fn () 9
@@ -442,5 +442,36 @@ it('keeps uncompleted callee-local replacement restoration explicit', () => {
         compileConcreteProgram(p, wasm32Emscripten('test'), [
             { unit: p.units.at(-1)!.id, arguments: [] },
         ]),
-    ).toThrow('Deferred callable storage replacement requires a completed restoration contract');
+    ).not.toThrow();
+});
+const returnedLocalSource = () =>
+    deferredStorageSamples.find((s) => s.name === 'returned local replacement true')!.source;
+for (const mutation of ['post-cleanup', 'mode', 'retention'] as const)
+    it(`independently rejects forged returned-local restoration ${mutation}`, () => {
+        const c = concrete(returnedLocalSource());
+        const variant = c.analysis.variants.find((v: any) =>
+            v.values.some((a: any) =>
+                a.storageJoins?.some((j: any) => j.restoration === 'replace'),
+            ),
+        );
+        expect(variant).toBeDefined();
+        const annotation = variant.values.find((v: any) =>
+            v.storageJoins?.some((j: any) => j.restoration === 'replace'),
+        );
+        if (mutation === 'post-cleanup') delete annotation.cleanupJoins;
+        if (mutation === 'mode') annotation.storageJoins[0].restoration = 'consume';
+        if (mutation === 'retention') selectedCase(c).storageJoins[0].restoration.retained = [];
+        expect(() => verifyConcreteProgram(c)).toThrow();
+        expect(() => emitC(c)).toThrow();
+    });
+it('retains original invocation slots in returned local restoration', () => {
+    const c = concrete(returnedLocalSource());
+    const join = selectedCase(c).storageJoins[0];
+    expect(c.callables.find((v: any) => v.layout === join.arms[0].to).entries).toHaveLength(0);
+    expect(
+        c.callables.find((v: any) => v.layout === join.restoration.retained[0]).entries,
+    ).toHaveLength(1);
+    expect(selectedCase(c).cleanupJoins).toHaveLength(1);
+    verifyConcreteProgram(c);
+    expect(() => emitC(c)).not.toThrow();
 });

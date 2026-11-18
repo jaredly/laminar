@@ -11,7 +11,7 @@ coverage, not completion of every phase exit gate.
 
 The scoped lens extensions are complete as of `707521c`; see the
 [completion record and follow-up mapping](checker-completeness-handoff.md).
-Latest local verification: **2169 pass / 39 existing skips / 0 failures across
+Latest local verification: **2221 pass / 39 existing skips / 0 failures across
 42 files**, with default TypeScript and diff checks passing. The latest full execution run passed without retries. Remote CI was not run for
 these slices. See also [the implementation record](backend-progress.md),
 [backend contract](backend-contract.md), [typed IR API](typed-ir.md), and
@@ -451,20 +451,20 @@ Include immediate swaps/discards and returned lenses. Then add exact post-cleanu
 normalization adapters for divergent selected replacement. The current replacement
 guard stays in place. Phase 6 remains incomplete.
 
-## Latest phase 6 slice: retained deferred replacement
+## Latest phase 6 slice: returned callee-local restoration completed
 
-Selected deferred cleanup can now replace/acquire owners with divergent setup
-representations through explicit `replace` restoration. Analysis reinstates each
-original arm descriptor before deriving cleanup effects. Every replacement place
-requires a completed post-cleanup join/adapter, even when final descriptors agree.
-C stages with original storage retained, reinstates it for original-ABI cleanup,
-and normalizes final contents with the post-cleanup adapter instead of reapplying
-the setup conversion. Independent analysis/concrete verification checks the mode,
-original layouts, final coverage, normalization route, ownership and ordering.
+Selected deferred replacement now supports private callee-local owners retained by
+a returned lens. Scope completion captures private descriptor state and overlays
+current enclosing versions at release. Function return derives completion contracts
+on a clone, preserving setup descriptors for the returned ABI. Independent
+verification derives the same private completion and validates required original
+retention and post-cleanup adapters before emission. Existing C returned-context
+backing handles physical retention/disposal through restoration.
 
-Next, model escaping callee-local effects and completion contracts for returned
-contexts; uncompleted callee-local replacement still diagnoses explicitly. Routes
-without a modeled arm-result completion handler retain the restoration-adapter
-boundary. Arm-local returned-alias protection and general callable focus endpoint
-ABIs (aliases/projections, parameters/results, manual and scattered callable focuses)
-remain open. Phase 6 remains incomplete.
+This closes the uncompleted callee-local replacement boundary for modeled handlers,
+including forwarded results, aggregates, convergent joins, unused aliases, staged
+cleanup, owned cleanup results and late private captures. Routes without a modeled
+completion handler still diagnose. Arm-local returned-alias protection and general
+callable focus endpoint ABIs (aliases/projections, parameters/results, manual and
+scattered callable focuses) remain open. Phase 6 remains incomplete; the returned
+restoration work is not the phase-6 exit gate.

@@ -498,3 +498,11 @@ results still require that explicit route. Nested selections, consume/refill,
 unused owners and owned cleanup results preserve affine disposal. Uncompleted
 callee-local restoration and unsupported arm completion routes remain explicit
 restrictions. General callable focus endpoint ABIs and phase 6 remain open.
+
+Returned lenses now support retained callee-local replacement contracts. Analysis
+and verification derive private completion before escape while preserving setup
+state; existing C returned contexts retain backing and owned values through cleanup
+and final disposal. Forwarding, unused aliases, aggregates, staged cleanup, owned
+cleanup results and late private captures share that lifetime path. This completes
+the modeled returned-local restoration boundary, not general callable focus ABIs
+or phase 6.

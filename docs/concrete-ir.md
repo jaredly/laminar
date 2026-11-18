@@ -442,3 +442,11 @@ final adapters normalize post-cleanup contents before merging. The setup adapter
 must not be reapplied to newly acquired replacement storage. Independent concrete
 verification derives the marker, retention layouts, final adapters, ownership and
 ordering. Consumption restoration keeps its previous normalization convention.
+
+Returned function variants derive private completion contracts on cloned state.
+Scope-forwarded completion retains private local descriptors and overlays current
+enclosing versions, propagating only enclosing effects outward. Independent
+verification completes the returned handler before validating mandatory post-cleanup
+coverage. This supports callee-local replacement inside returned contexts without
+applying restoration effects to setup descriptors or changing the result ABI.
+Unmodeled completion routes still fail required-contract checks.
