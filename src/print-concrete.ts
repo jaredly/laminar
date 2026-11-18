@@ -413,6 +413,7 @@ export function lconcrete(program: ConcreteProgram, options: ConcretePrintOption
                         'match',
                         value(i.value),
                         ...(i.aggregateJoin ? ['selected-aggregate'] : []),
+                        ...(i.cleanupJoins ? ['selected-cleanup-storage'] : []),
                         ...(i.storageJoins?.some((j) => j.restoration) ? ['retained-storage'] : []),
                         ...(i.storageJoins
                             ? [

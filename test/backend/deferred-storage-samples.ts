@@ -589,4 +589,121 @@ fn pass(~x) ~x
  (f(), count, x)}`,
         expected: [9, 10, true],
     },
+    {
+        name: `deferred selected divergent continuation ${condition}`,
+        source: `fn replacement() 9
+{let x = 1
+ let v = 3
+ let f = fn () v
+ {let focus = ~{match ${condition} {
+ true -> @(x, {let old = f := replacement
+ old()
+ fn () ()}); false -> x}}
+ focus := true}
+ (f(), x)}`,
+        expected: [condition === 'true' ? 9 : 3, true],
+    },
+    {
+        name: `deferred selected different cleanup continuation ${condition}`,
+        source: `{let x = 1
+ let v = 3
+ let f = fn () v
+ {let focus = ~{match ${condition} {
+ true -> @(x, {let old = f := fn () 9
+ old()
+ fn () ()}); false -> @(x, {let old = f := fn () 8
+ old()
+ fn () ()})}}
+ focus := true}
+ (f(), x)}`,
+        expected: [condition === 'true' ? 9 : 8, true],
+    },
+    {
+        name: `deferred selected divergent aggregate ${condition}`,
+        source: `{let x = 1
+ let v = 3
+ let packed = ((fn () v, 4), true)
+ {let focus = ~{match ${condition} {
+ true -> @(x, {let ((old, n), _) = packed := ((fn () 9, 6), false)
+ old() + n
+ fn () ()}); false -> x}}
+ focus := true}
+ let ((f, n), flag) = packed
+ (f() + n, flag, x)}`,
+        expected: [condition === 'true' ? 15 : 7, condition === 'false', true],
+    },
+    {
+        name: `deferred selected divergent captured ${condition}`,
+        source: `{let x = 1
+ let v = 3
+ let f = fn () v
+ let y = 9
+ let z = 8
+ {let focus = ~{match ${condition} {
+ true -> @(x, {let old = f := fn () y
+ old()
+ fn () ()}); false -> @(x, {let old = f := fn () z
+ old()
+ fn () ()})}}
+ focus := true}
+ (f(), x)}`,
+        expected: [condition === 'true' ? 9 : 8, true],
+    },
+    {
+        name: `deferred selected divergent nested ${condition}`,
+        source: `{let x = 1
+ let v = 3
+ let f = fn () v
+ {let focus = ~{match ${condition} {
+ true -> {match false {true -> @(x, {let old = f := fn () 9
+ old()
+ fn () ()}); false -> @(x, {let old = f := fn () 8
+ old()
+ fn () ()})}}; false -> x}}
+ focus := true}
+ (f(), x)}`,
+        expected: [condition === 'true' ? 8 : 3, true],
+    },
+    {
+        name: `deferred selected divergent returned ${condition}`,
+        source: `fn pass(~x) ~x
+{let x = 1
+ let v = 3
+ let f = fn () v
+ {let focus = ~{match ${condition} {
+ true -> pass(~{@(x, {let old = f := fn () 9
+ old()
+ fn () ()})}); false -> pass(~x)}}
+ focus := true}
+ (f(), x)}`,
+        expected: [condition === 'true' ? 9 : 3, true],
+    },
+    {
+        name: `deferred selected divergent staged ${condition}`,
+        source: `{let x = 1
+ let count = 0
+ let v = 3
+ let f = fn () v
+ {let focus = ~{@({match ${condition} {
+ true -> @(x, {let old = f := fn () 9
+ old()
+ fn () ()}); false -> x}}, fn () {count := 10})}
+ focus := true}
+ (f(), count, x)}`,
+        expected: [condition === 'true' ? 9 : 3, 10, true],
+    },
+    {
+        name: `deferred selected divergent unused ${condition}`,
+        source: `{let x = 1
+ let v = 3
+ let f = fn () v
+ let y = 9
+ {let focus = ~{match ${condition} {
+ true -> @(x, {let old = f := fn () y
+ old()
+ fn () ()}); false -> x}}
+ ()}
+ x}`,
+        expected: 1,
+    },
 ]);

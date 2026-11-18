@@ -312,6 +312,10 @@ export function verifyConcreteProgram(p: ConcreteProgram): void {
             calls = new Map(r.calls.map((c) => [c.value, c]));
         r.values.forEach((v) => {
             discover(v.representation);
+            v.cleanupJoins?.forEach((j) => {
+                j.arms.forEach(discover);
+                discover(j.result);
+            });
             v.storageJoins?.forEach((j) => {
                 j.arms.forEach(discover);
                 discover(j.result);
@@ -780,6 +784,18 @@ export function verifyConcreteProgram(p: ConcreteProgram): void {
                                       .shape,
                               }
                             : undefined;
+                    eq(
+                        o.cleanupJoins,
+                        r.values
+                            .find((v) => v.value === i.out.id)!
+                            .cleanupJoins?.map((j) => ({
+                                place: j.place,
+                                ownership: 'transfer-selected-cleanup-storage',
+                                order: ['cleanup', 'normalize', 'merge'],
+                                arms: j.arms.map((from) => adapter(from, j.result)),
+                            })),
+                        'Cleanup storage adapter changed',
+                    );
                     eq(
                         o.storageJoins,
                         r.values

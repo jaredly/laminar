@@ -720,6 +720,14 @@ export function lowerC(program: ConcreteProgram): TranslationUnit {
                                 retained.forEach((data, place) =>
                                     storage.put(places.get(place)!, data),
                                 );
+                            const normalizeCleanup = (arm: number, output: Statement[]) =>
+                                i.cleanupJoins?.forEach((j) => {
+                                    const view = places.get(j.place)!;
+                                    storage.put(
+                                        view,
+                                        adaptStorage(j.arms[arm]!, storage.get(view), output),
+                                    );
+                                });
                             const normalizeStorage = (arm: number, output: Statement[]) =>
                                 i.storageJoins?.forEach((j) => {
                                     if (!j.restoration) return;
@@ -852,6 +860,7 @@ export function lowerC(program: ConcreteProgram): TranslationUnit {
                                             entry.complete(nested);
                                             normalize(entry.arm.arm.restored, nested);
                                             normalizeStorage(entry.arm.index, nested);
+                                            normalizeCleanup(entry.arm.index, nested);
                                             return { nested, state: storage.snapshot() };
                                         });
                                         storage.reset(cleaned);
@@ -879,6 +888,7 @@ export function lowerC(program: ConcreteProgram): TranslationUnit {
                                         arm.lens.finish(nested);
                                         normalize(arm.arm.restored, nested);
                                         normalizeStorage(arm.index, nested);
+                                        normalizeCleanup(arm.index, nested);
                                         return { nested, state: storage.snapshot() };
                                     });
                                     storage.reset(current);

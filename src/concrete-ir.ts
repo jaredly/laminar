@@ -119,6 +119,12 @@ export type ConcreteInstruction =
               setup?: Cleanup[];
               restored?: Cleanup[];
           }[];
+          cleanupJoins?: {
+              place: string;
+              ownership: 'transfer-selected-cleanup-storage';
+              order: ['cleanup', 'normalize', 'merge'];
+              arms: ConcreteValueAdapter[];
+          }[];
           storageJoins?: {
               place: string;
               ownership: 'transfer-selected-storage';

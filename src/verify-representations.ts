@@ -456,6 +456,7 @@ export function verifyRepresentations(
     ): ValueRepresentation {
         const annotations = unique(record.values, (v) => v.value, 'value annotation');
         const calls = unique(record.calls, (c) => c.value, 'call annotation');
+        const checkedCleanupJoins = new Set<string>();
         const usedValues = new Set<string>(),
             usedCalls = new Set<string>();
         edges.set(owner, new Set());
@@ -523,6 +524,8 @@ export function verifyRepresentations(
                 fit(v, i.out.type);
                 if (i.op !== 'manual' && annotations.get(i.out.id)!.cleanupStorage !== undefined)
                     fail('Unexpected cleanup storage annotation');
+                if (i.op !== 'case' && annotations.get(i.out.id)!.cleanupJoins !== undefined)
+                    fail('Unexpected cleanup join annotation');
                 if (i.op !== 'case' && annotations.get(i.out.id)!.storageJoins !== undefined)
                     fail('Unexpected storage join annotation');
                 switch (i.op) {
@@ -785,15 +788,36 @@ export function verifyRepresentations(
                                         finishes[n]?.(restored, true);
                                         return restored;
                                     });
+                                    checkedCleanupJoins.add(i.out.id);
+                                    const joins = annotations.get(i.out.id)!.cleanupJoins;
+                                    const divergent = places.filter((place) =>
+                                        completed.some(
+                                            (state) =>
+                                                !same(
+                                                    state.places.get(place),
+                                                    completed[0]!.places.get(place),
+                                                ),
+                                        ),
+                                    );
+                                    requireEqual(
+                                        joins?.map((j) => j.place),
+                                        divergent.length ? divergent : undefined,
+                                        'Cleanup storage join coverage changed',
+                                    );
                                     for (const place of places) {
-                                        const result = completed[0]!.places.get(place)!;
-                                        for (const state of completed)
+                                        const arms = completed.map((state) =>
+                                            state.places.get(place)!,
+                                        );
+                                        const joined = joins?.find((j) => j.place === place);
+                                        if (joined) {
                                             requireEqual(
-                                                state.places.get(place),
-                                                result,
-                                                'Selected cleanup storage transitions require a restoration adapter',
+                                                joined.arms,
+                                                arms,
+                                                'Cleanup storage arm provenance changed',
                                             );
-                                        current.places.set(place, result);
+                                            verifyJoin(joined.result, arms);
+                                        }
+                                        current.places.set(place, joined?.result ?? arms[0]!);
                                     }
                                 });
                         }
@@ -920,6 +944,9 @@ export function verifyRepresentations(
             return result;
         }
         const result = block(body, state);
+        for (const annotation of annotations.values())
+            if (annotation.cleanupJoins !== undefined && !checkedCleanupJoins.has(annotation.value))
+                fail('Unexpected cleanup join annotation');
         if (usedValues.size !== annotations.size || usedCalls.size !== calls.size)
             fail('Extra value or call annotations');
         return result;

@@ -42,6 +42,11 @@ export type RepresentationVariant = {
             before: ValueRepresentation;
             after: ValueRepresentation;
         }[];
+        cleanupJoins?: {
+            place: string;
+            arms: ValueRepresentation[];
+            result: ValueRepresentation;
+        }[];
         storageJoins?: {
             place: string;
             arms: ValueRepresentation[];
@@ -669,8 +674,8 @@ export function inferRepresentations(
                             states[n]!.finishes.get(arm.body.result),
                         );
                         // Complete against current owner versions, keeping each arm's
-                        // private state. Only exact final descriptors can use the
-                        // existing C merge without a post-cleanup value adapter.
+                        // private state. Post-cleanup unions are separate from setup
+                        // joins so original cleanup keeps its exact representation.
                         const places = [...s.places.keys()];
                         if (finishes.some(Boolean))
                             s.finishes.set(i.out.id, (current, apply) => {
@@ -683,18 +688,18 @@ export function inferRepresentations(
                                     finishes[n]?.(restored, true);
                                     return restored;
                                 });
+                                const joins: NonNullable<
+                                    RepresentationVariant['values'][number]['cleanupJoins']
+                                > = [];
                                 const merged = places.map((place) => {
-                                    const result = completed[0]!.places.get(place)!;
-                                    if (
-                                        completed.some(
-                                            (state) => !equal(result, state.places.get(place)!),
-                                        )
-                                    )
-                                        fail(
-                                            'Selected cleanup storage transitions require a restoration adapter',
-                                        );
+                                    const arms = completed.map((state) => state.places.get(place)!);
+                                    const result = join(arms, true);
+                                    if (arms.some((arm) => !equal(arm, arms[0]!)))
+                                        joins.push({ place, arms, result });
                                     return [place, result] as const;
                                 });
+                                const annotation = record.values.find((v) => v.value === i.out.id)!;
+                                if (joins.length) annotation.cleanupJoins = joins;
                                 merged.forEach(([place, result]) =>
                                     current.places.set(place, result),
                                 );

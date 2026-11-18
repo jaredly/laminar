@@ -11,7 +11,7 @@ coverage, not completion of every phase exit gate.
 
 The scoped lens extensions are complete as of `707521c`; see the
 [completion record and follow-up mapping](checker-completeness-handoff.md).
-Latest local verification: **2047 pass / 39 existing skips / 0 failures across
+Latest local verification: **2109 pass / 39 existing skips / 0 failures across
 42 files**, with default TypeScript and diff checks passing. The latest full execution run passed without retries. Remote CI was not run for
 these slices. See also [the implementation record](backend-progress.md),
 [backend contract](backend-contract.md), [typed IR API](typed-ir.md), and
@@ -451,19 +451,19 @@ Include immediate swaps/discards and returned lenses. Then add exact post-cleanu
 normalization adapters for divergent selected replacement. The current replacement
 guard stays in place. Phase 6 remains incomplete.
 
-## Latest phase 6 slice: convergent selected cleanup effects
+## Latest phase 6 slice: divergent post-cleanup storage joins
 
-Selected lens results now carry arm completion handlers. At completion, each arm
-uses current enclosing owner descriptors plus its private setup state; all arms
-must finish with the same exact enclosing descriptor. That descriptor reaches
-continuation reads. Nested selections, direct/scattered handlers, calls and outer
-manual completion retain their existing ordering. Independent verification derives
-the final-arm agreement and checks post-release provenance.
+Selected cleanup may now leave different callable/recursive aggregate descriptors
+when the affected owner has a common setup descriptor. Analysis retains ordered
+post-cleanup `cleanupJoins`; independent verification derives arm coverage, exact
+provenance and canonical result unions. Concrete adapters transfer selected storage
+after cleanup and before final merge, preserving original cleanup invocation ABIs.
+Nested selections, returned backing, staged cleanup and unused final contents share
+the explicit post-cleanup contract.
 
-Differing post-cleanup descriptors still require explicit adapters and diagnose
-`Selected cleanup storage transitions require a restoration adapter`. Deferred
-writes to owners with divergent setup descriptors retain the original replacement
-guard. Next, retain per-arm post-cleanup descriptors and exact normalization adapters
-through selected staging/completion and returned backing before relaxing either
-guard. Escaping callee-local effects and general callable focus endpoint ABIs remain
-separate work. Phase 6 remains incomplete.
+Deferred replacement of an owner whose setup descriptors already diverge still
+diagnoses `Deferred callable storage replacement requires a restoration adapter`.
+Next, combine retained original setup storage with explicit post-cleanup descriptors
+and adapters through staging/completion before relaxing that guard. Escaping
+callee-local effects, arm-local returned-alias protection, and general callable
+focus endpoint ABIs remain separate work. Phase 6 remains incomplete.

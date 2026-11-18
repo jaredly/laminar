@@ -253,7 +253,7 @@ for (const name of [
         expect(() => emitC(c)).toThrow('Moved callable provenance changed');
     });
 for (const condition of ['true', 'false'])
-    it(`rejects divergent post-cleanup descriptors ${condition}`, () => {
+    it(`normalizes divergent post-cleanup descriptors ${condition}`, () => {
         const source = `fn replacement() 9
 {let x = 1
  let v = 3
@@ -271,7 +271,7 @@ for (const condition of ['true', 'false'])
             compileConcreteProgram(p, wasm32Emscripten('test'), [
                 { unit: p.units.at(-1)!.id, arguments: [] },
             ]),
-        ).toThrow('Selected cleanup storage transitions require a restoration adapter');
+        ).not.toThrow();
     });
 for (const name of [
     'deferred selected convergent continuation true',
@@ -289,7 +289,7 @@ for (const name of [
         expect(() => verifyConcreteProgram(c)).toThrow('Moved callable provenance changed');
         expect(() => emitC(c)).toThrow('Moved callable provenance changed');
     });
-it('rejects distinct cleanup callable provenance even with matching result types', () => {
+it('normalizes distinct cleanup callable provenance with matching result types', () => {
     const source = `{let x = 1
  let v = 3
  let f = fn () v
@@ -309,5 +309,76 @@ it('rejects distinct cleanup callable provenance even with matching result types
         compileConcreteProgram(p, wasm32Emscripten('test'), [
             { unit: p.units.at(-1)!.id, arguments: [] },
         ]),
-    ).toThrow('Selected cleanup storage transitions require a restoration adapter');
+    ).not.toThrow();
+});
+const postCleanupSource = () =>
+    deferredStorageSamples.find((s) => s.name === 'deferred selected divergent continuation true')!
+        .source;
+function cleanupCase(c: any): any {
+    function find(block: any): any {
+        for (const i of block.instructions) {
+            if (i.cleanupJoins) return i;
+            if (i.op === 'scope') {
+                const nested = find(i.body);
+                if (nested) return nested;
+            }
+            if (i.op === 'case') {
+                const nested = i.cases.map((arm: any) => find(arm.body)).find(Boolean);
+                if (nested) return nested;
+            }
+        }
+    }
+    return c.code.map((code: any) => find(code.body)).find(Boolean);
+}
+for (const mutation of ['missing', 'place', 'arms', 'result', 'extra'] as const)
+    it(`independently rejects forged post-cleanup join ${mutation}`, () => {
+        const c = concrete(postCleanupSource());
+        const annotation = c.analysis.entries[0].values.find((v: any) => v.cleanupJoins);
+        const join = annotation.cleanupJoins[0];
+        if (mutation === 'missing') delete annotation.cleanupJoins;
+        if (mutation === 'place') join.place = 'unknown-place';
+        if (mutation === 'arms') join.arms.reverse();
+        if (mutation === 'result') join.result = join.arms[0];
+        if (mutation === 'extra') annotation.cleanupJoins.push(join);
+        expect(() => verifyConcreteProgram(c)).toThrow();
+        expect(() => emitC(c)).toThrow();
+    });
+for (const mutation of [
+    'missing',
+    'place',
+    'ownership',
+    'order',
+    'layout',
+    'arms',
+    'entries',
+] as const)
+    it(`rejects forged physical post-cleanup adapter ${mutation}`, () => {
+        const c = concrete(postCleanupSource());
+        const selected = cleanupCase(c);
+        const join = selected.cleanupJoins[0];
+        if (mutation === 'missing') delete selected.cleanupJoins;
+        if (mutation === 'place') join.place = 'unknown-place';
+        if (mutation === 'ownership') join.ownership = 'copy';
+        if (mutation === 'order') join.order.reverse();
+        if (mutation === 'layout') join.arms[0].to = join.arms[0].from;
+        if (mutation === 'arms') join.arms.reverse();
+        if (mutation === 'entries') join.arms[0].entries = [];
+        expect(() => verifyConcreteProgram(c)).toThrow('Cleanup storage adapter changed');
+        expect(() => emitC(c)).toThrow('Cleanup storage adapter changed');
+    });
+it('prints post-cleanup joins and verifies adapters without emission', () => {
+    const c = concrete(postCleanupSource());
+    expect(cleanupCase(c).cleanupJoins[0].order).toEqual(['cleanup', 'normalize', 'merge']);
+    expect(printConcreteProgram(c)).toContain('selected-cleanup-storage');
+    verifyConcreteProgram(c);
+});
+it('independently rejects stale provenance after divergent selected cleanup', () => {
+    const c = concrete(postCleanupSource());
+    const values = c.analysis.entries[0].values;
+    const join = values.find((v: any) => v.cleanupJoins).cleanupJoins[0];
+    const moved = values.findLast(
+        (v: any) => JSON.stringify(v.representation) === JSON.stringify(join.result),
+    );
+    moved.representation = join.arms[0];
+    expect(() => verifyConcreteProgram(c)).toThrow('Moved callable provenance changed');
 });

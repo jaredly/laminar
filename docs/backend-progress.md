@@ -911,3 +911,44 @@ Validation: **2,047 pass / 39 existing skips / 0 failures across 42 files**:
 native, supported sanitizer, and Emscripten/Node execution at both optimization
 levels passed without retries (321.49 seconds). `bunx tsc --noEmit` and
 `git diff --check` pass. Remote CI was not run.
+
+## Divergent post-cleanup storage joins
+
+Selected completion now retains `cleanupJoins` on representation value annotations:
+each divergent enclosing place has ordered final arm descriptors and a canonical
+common result. Independent analysis verification derives final states and checks
+coverage/provenance/union plus continuation reads; unused or misplaced join records
+are rejected. Concrete cases retain recursive per-arm value adapters with
+`transfer-selected-cleanup-storage` ownership and `cleanup`, `normalize`, `merge`
+ordering. Independent concrete verification derives layouts, ownership, ordering
+and exact invocation entry mappings without invoking lowering. The printer marks
+these contracts `selected-cleanup-storage`.
+
+C lowering normalizes live selected contents after arm cleanup/restored actions
+and before the final typed merge, for direct completion and staged completion.
+Staging itself retains the current raw contents; existing returned context retention
+keeps required backing alive. Recursive adapters transfer each environment once,
+preserve original cleanup ABIs, and leave empty slots/projections empty. No new
+environment allocation/copy, extracted-value disposal, incompatible function-pointer
+cast or aggregate-address convention is introduced.
+
+Sixteen shared cases cover changed/unchanged arms, distinct cleanup provenance,
+recursive aggregates, captured replacements, nested selections, returned backing,
+staged outer cleanup and unused final contents, with both branch selections.
+Fourteen added verification/printing tests reject forged analysis coverage, arm
+provenance/results, physical layouts, ownership, ordering, invocation mappings and
+stale continuation provenance. The three previous post-cleanup rejection cases now
+check successful compilation; the original divergent-setup replacement test remains.
+
+This supports divergent final descriptors only when setup for that owner agrees.
+Deferred writes to divergent setup storage still require retained-original plus
+post-cleanup restoration adapters and keep their explicit diagnostic. Escaping
+callee-local effects, arm-local alias protection and general callable focus ABIs
+remain open. Phase 6 is incomplete.
+
+Validation: **2,109 pass / 39 existing skips / 0 failures across 42 files**:
+1,259 non-execution tests and 850 native/Wasm cases. Full strict C11, optimized
+native, supported sanitizer, and Emscripten/Node execution at both optimization
+levels passed without retries (333.41 seconds). The initial focused native/Wasm
+run also passed (8 cases). `bunx tsc --noEmit` and `git diff --check` pass.
+Remote CI was not run.

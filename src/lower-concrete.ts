@@ -127,6 +127,10 @@ export function lowerConcreteProgram(
         const calls = new Map(record.calls.map((c) => [c.value, c]));
         record.values.forEach((v) => {
             discover(v.representation);
+            v.cleanupJoins?.forEach((j) => {
+                j.arms.forEach(discover);
+                discover(j.result);
+            });
             v.storageJoins?.forEach((j) => {
                 j.arms.forEach(discover);
                 discover(j.result);
@@ -535,6 +539,22 @@ export function lowerConcreteProgram(
                         ...i,
                         out,
                         cases: i.cases.map((c) => ({ ...c, body: lower(c.body) })),
+                        ...(record.values.find((v) => v.value === i.out.id)!.cleanupJoins
+                            ? {
+                                  cleanupJoins: record.values
+                                      .find((v) => v.value === i.out.id)!
+                                      .cleanupJoins!.map((j) => ({
+                                          place: j.place,
+                                          ownership: 'transfer-selected-cleanup-storage' as const,
+                                          order: ['cleanup', 'normalize', 'merge'] as [
+                                              'cleanup',
+                                              'normalize',
+                                              'merge',
+                                          ],
+                                          arms: j.arms.map((from) => valueAdapter(from, j.result)),
+                                      })),
+                              }
+                            : {}),
                         ...(record.values.find((v) => v.value === i.out.id)!.storageJoins
                             ? {
                                   storageJoins: record.values

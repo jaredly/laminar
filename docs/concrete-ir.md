@@ -416,3 +416,16 @@ verification derives arm agreement using current enclosing descriptors and retai
 private setup state. Existing physical merge contracts suffice for equal layouts;
 differing final descriptors require a post-cleanup adapter and diagnose explicitly.
 The separate guard on deferred writes to divergent setup storage is unchanged.
+
+## Post-cleanup selected storage joins
+
+Representation case annotations carry optional `cleanupJoins` with ordered final
+arm descriptors and a common result for each divergent enclosing place. Independent
+verification derives coverage/provenance and the exact recursive union at completion;
+records on uncompleted or unrelated instructions are rejected. Concrete case
+`cleanupJoins` carry recursive per-arm adapters, `transfer-selected-cleanup-storage`
+ownership, and `cleanup`, `normalize`, `merge` ordering. Verification derives these
+from analysis independently. These adapters run after original-ABI cleanup and
+before the final storage merge, including staged completion. The printer marks
+`selected-cleanup-storage`. Setup `storageJoins` remain a separate contract;
+deferred writes to divergent setup owners are still guarded.

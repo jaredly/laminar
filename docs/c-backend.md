@@ -481,3 +481,11 @@ Nested selections, unused aliases, returned argument backing and outer manual
 wrappers retain their existing restoration/ownership behavior. Differing final
 representations and deferred writes to divergent setup owners still require exact
 post-cleanup normalization adapters. Phase 6 remains incomplete.
+
+Selected cleanup can now leave different callable/recursive aggregate descriptors
+for owners with common setup storage. Verified post-cleanup adapters normalize the
+selected live contents after cleanup/restored actions and before merging. Direct
+and staged completion share this path; original cleanup ABIs, empty projections,
+returned backing and affine disposal remain intact. Deferred replacement of owners
+with divergent setup descriptors still requires restoration adapters and diagnoses.
+Phase 6 remains incomplete.
