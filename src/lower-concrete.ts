@@ -514,6 +514,18 @@ export function lowerConcreteProgram(
                             result: result.shape,
                             order: ['stage', 'cleanup', 'dispose-result', 'restore', 'release'],
                             retention: 'through-enclosing-cleanup',
+                            ...(record.values.find((v) => v.value === i.out.id)!.cleanupStorage
+                                ? {
+                                      storageTransitions: record.values
+                                          .find((v) => v.value === i.out.id)!
+                                          .cleanupStorage!.map((t) => ({
+                                              place: t.place,
+                                              before: layout(t.before),
+                                              after: layout(t.after),
+                                              ownership: 'transfer-cleanup-storage' as const,
+                                          })),
+                                  }
+                                : {}),
                         },
                     };
                 }

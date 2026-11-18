@@ -453,3 +453,9 @@ to relax deferred replacement restrictions. Four additional shared execution
 samples cover callable and aggregate cleanup replacement, old-value invocation,
 and unused replacement disposal. General post-cleanup propagation and selected
 replacement remain open phase-6 work.
+
+Concrete manual restoration now carries verified `storageTransitions` with exact
+physical endpoint layouts and `transfer-cleanup-storage` ownership. Printing makes
+these visible; emission rejects forged contracts through independent verification.
+Runtime restoration behavior is unchanged. Release-aware descriptor propagation
+and selected replacement normalization remain prerequisites for expanding support.

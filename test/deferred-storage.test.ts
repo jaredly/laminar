@@ -1,3 +1,4 @@
+import { printConcreteProgram } from '../src/print-concrete.ts';
 import { specializeProgram } from '../src/specialize.ts';
 import { expect, it } from 'bun:test';
 import { deferredStorageSamples } from './backend/deferred-storage-samples.ts';
@@ -144,4 +145,61 @@ it('retains recursive cleanup descriptor endpoints without changing setup proven
 it('does not mistake deferred consumption for a descriptor transition', () => {
     const c = concrete();
     expect(c.analysis.entries[0].values.some((v: any) => v.cleanupStorage)).toBe(false);
+});
+function transitionManual(c: any): any {
+    function find(block: any): any {
+        for (const i of block.instructions) {
+            if (i.op === 'manual' && i.restoration.storageTransitions) return i;
+            if (i.op === 'scope') {
+                const nested = find(i.body);
+                if (nested) return nested;
+            }
+        }
+    }
+    return c.code.map((code: any) => find(code.body)).find(Boolean);
+}
+for (const mutation of ['missing', 'place', 'before', 'after', 'ownership', 'extra'] as const)
+    it(`rejects forged physical cleanup storage transition ${mutation}`, () => {
+        const c = concrete(deferredStorageSamples[0]!.source);
+        const manual = transitionManual(c);
+        const transition = manual.restoration.storageTransitions[0];
+        expect(transition.before).not.toBe(transition.after);
+        if (mutation === 'missing') delete manual.restoration.storageTransitions;
+        if (mutation === 'place') transition.place = 'unknown-place';
+        if (mutation === 'before') transition.before = transition.after;
+        if (mutation === 'after') transition.after = transition.before;
+        if (mutation === 'ownership') transition.ownership = 'copy';
+        if (mutation === 'extra') manual.restoration.storageTransitions.push(transition);
+        expect(() => verifyConcreteProgram(c)).toThrow('Manual restoration contract changed');
+        expect(() => emitC(c)).toThrow('Manual restoration contract changed');
+    });
+it('reifies exact aggregate cleanup endpoint layouts and prints ownership', () => {
+    const c = concrete(deferredStorageSamples[1]!.source);
+    const manual = transitionManual(c);
+    const transition = manual.restoration.storageTransitions[0];
+    const before = c.layouts.find((l: any) => l.id === transition.before);
+    const after = c.layouts.find((l: any) => l.id === transition.after);
+    expect(before.kind).toBe('record');
+    expect(after.kind).toBe('record');
+    expect(before.fields[0].layout).not.toBe(after.fields[0].layout);
+    expect(before.fields[1].layout).toBe(after.fields[1].layout);
+    expect(transition.ownership).toBe('transfer-cleanup-storage');
+    expect(printConcreteProgram(c)).toContain('storage-transitions');
+    expect(printConcreteProgram(c)).toContain('transfer-cleanup-storage');
+});
+it('rejects invented physical transitions on consumption-only cleanup', () => {
+    const c = concrete();
+    function mutate(block: any): boolean {
+        for (const i of block.instructions) {
+            if (i.op === 'manual') {
+                i.restoration.storageTransitions = [];
+                return true;
+            }
+            if (i.op === 'scope' && mutate(i.body)) return true;
+            if (i.op === 'case' && i.cases.some((arm: any) => mutate(arm.body))) return true;
+        }
+        return false;
+    }
+    expect(c.code.some((code: any) => mutate(code.body))).toBe(true);
+    expect(() => verifyConcreteProgram(c)).toThrow('Manual restoration contract changed');
 });

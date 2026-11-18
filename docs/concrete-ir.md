@@ -382,3 +382,18 @@ replacement keep their explicit diagnostic. The next slice must compose effects
 in restoration order, propagate post-cleanup descriptors at release boundaries,
 and retain exact post-cleanup adapters through staging/completion and escaping
 contexts before relaxing that guard. Phase 6 remains incomplete.
+
+## Concrete cleanup storage transition contracts
+
+Manual restoration contracts now reify analysis `cleanupStorage` as optional
+`storageTransitions`: ordered whole-place identities, exact physical `before` and
+`after` layouts, and `transfer-cleanup-storage` ownership. Independent concrete
+verification derives this list from verified analysis, rejecting changed coverage,
+places, endpoints or ownership before C emission. The diagnostic printer displays
+both endpoint layouts and ownership. These describe replacement effects, not a
+by-value conversion of the extracted old owner into its replacement.
+
+The list is absent for descriptor-preserving cleanup, including consumption alone.
+It does not encode availability, compose nested effects, or authorize a callable
+ABI change in continuation code. See [the plan](c-codegen-plan.md) for the remaining
+release-aware propagation and selected normalization requirements.

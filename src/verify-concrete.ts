@@ -733,6 +733,18 @@ export function verifyConcreteProgram(p: ConcreteProgram): void {
                                 result: result.shape,
                                 order: ['stage', 'cleanup', 'dispose-result', 'restore', 'release'],
                                 retention: 'through-enclosing-cleanup',
+                                ...(r.values.find((v) => v.value === i.out.id)!.cleanupStorage
+                                    ? {
+                                          storageTransitions: r.values
+                                              .find((v) => v.value === i.out.id)!
+                                              .cleanupStorage!.map((t) => ({
+                                                  place: t.place,
+                                                  before: storage(t.before),
+                                                  after: storage(t.after),
+                                                  ownership: 'transfer-cleanup-storage',
+                                              })),
+                                      }
+                                    : {}),
                             },
                         },
                         'Manual restoration contract changed',

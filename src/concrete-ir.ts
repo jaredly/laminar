@@ -100,6 +100,12 @@ export type ConcreteInstruction =
               result: string;
               order: ['stage', 'cleanup', 'dispose-result', 'restore', 'release'];
               retention: 'through-enclosing-cleanup';
+              storageTransitions?: {
+                  place: string;
+                  before: string;
+                  after: string;
+                  ownership: 'transfer-cleanup-storage';
+              }[];
           };
       } & ConcreteOutput)
     | ({ op: 'scope'; origin: string; body: ConcreteBlock } & ConcreteOutput)

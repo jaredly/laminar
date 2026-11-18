@@ -376,6 +376,25 @@ export function lconcrete(program: ConcreteProgram, options: ConcretePrintOption
                         tuple(i.restoration.order.map((phase) => l.i(phase))),
                         'retain',
                         i.restoration.retention,
+                        ...(i.restoration.storageTransitions
+                            ? [
+                                  words(
+                                      'storage-transitions',
+                                      tuple(
+                                          i.restoration.storageTransitions.map((t) =>
+                                              words(
+                                                  ref(t.place, 'place'),
+                                                  ':',
+                                                  name(t.before),
+                                                  '->',
+                                                  name(t.after),
+                                                  t.ownership,
+                                              ),
+                                          ),
+                                      ),
+                                  ),
+                              ]
+                            : []),
                         'deferred',
                         block(i.cleanup),
                     );

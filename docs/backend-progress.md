@@ -758,3 +758,32 @@ Validation for cleanup descriptor transitions: **1,845 pass / 39 existing skips 
 `bunx tsc --noEmit` and `git diff --check` pass. The full execution harness passed
 strict C11, optimized native, supported sanitizers and Emscripten/Node at both
 optimization levels without retries (258.91 seconds). Remote CI was not run.
+
+## Concrete cleanup storage transition contracts
+
+Manual restoration contracts now reify analysis `cleanupStorage` as optional
+`storageTransitions`: ordered whole-place identities, exact physical `before` and
+`after` layouts, and `transfer-cleanup-storage` ownership. Independent concrete
+verification derives this list from verified analysis, rejecting changed coverage,
+places, endpoints or ownership before C emission. The diagnostic printer displays
+both endpoint layouts and ownership. These describe replacement effects, not a
+by-value conversion of the extracted old owner into its replacement.
+
+Investigation of continuation propagation found that source binding lowering can
+place a manual instruction outside the scope that releases its alias. Applying
+transitions only at the manual's enclosing block exit is too late: subsequent
+reads still use the original callable ABI. That attempted propagation was not
+retained. The next behavioral slice needs a release-aware effect model associating
+loans with their manual restoration, composing nested completion in runtime order,
+and applying post-cleanup provenance at the actual release boundary. It must also
+handle immediate swaps/discards and returned lenses before generalizing the model.
+Selected divergent replacement still requires exact post-cleanup normalization
+adapters. No replacement guard is relaxed; phase 6 remains incomplete.
+
+Validation: **1,853 pass / 39 existing skips / 0 failures across 42 files**:
+1,155 non-execution tests and 698 native/Wasm cases. The full execution harness
+passed strict C11, optimized native builds, supported sanitizers, and
+Emscripten/Node at both optimization levels without retries (256.19 seconds).
+TypeScript and diff checks pass; remote CI was not run. Eight new tests cover
+physical transition endpoint layouts, ownership, missing/extra/forged records,
+consumption-only omission, and diagnostic printing.

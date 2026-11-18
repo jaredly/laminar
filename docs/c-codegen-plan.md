@@ -11,7 +11,7 @@ coverage, not completion of every phase exit gate.
 
 The scoped lens extensions are complete as of `707521c`; see the
 [completion record and follow-up mapping](checker-completeness-handoff.md).
-Latest local verification: **1845 pass / 39 existing skips / 0 failures across
+Latest local verification: **1853 pass / 39 existing skips / 0 failures across
 42 files**, with default TypeScript and diff checks passing. The latest full execution run passed without retries. Remote CI was not run for
 these slices. See also [the implementation record](backend-progress.md),
 [backend contract](backend-contract.md), [typed IR API](typed-ir.md), and
@@ -437,3 +437,16 @@ replacement keep their explicit diagnostic. The next slice must compose effects
 in restoration order, propagate post-cleanup descriptors at release boundaries,
 and retain exact post-cleanup adapters through staging/completion and escaping
 contexts before relaxing that guard. Phase 6 remains incomplete.
+
+## Next phase 6 boundary: release-aware cleanup effects
+
+Concrete manual restoration now retains independently verified `storageTransitions`
+with exact endpoint layouts and affine ownership; the printer exposes them.
+Investigation showed that a manual instruction can live outside the scope releasing
+its alias, so applying effects only at the manual's enclosing block exit is too late.
+
+Next, associate loans with manual restoration effects, compose nested completion
+in runtime order, and propagate descriptor changes at actual release boundaries.
+Include immediate swaps/discards and returned lenses. Then add exact post-cleanup
+normalization adapters for divergent selected replacement. The current replacement
+guard stays in place. Phase 6 remains incomplete.
