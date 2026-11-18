@@ -477,11 +477,13 @@ export function verifyTypedProgram(program: TypedProgram): void {
                 return c.items.flatMap((v) => externalTargets(outer, branch, v));
             if (c.kind === 'call')
                 return c.effects.flatMap((e) => externalTargets(outer, branch, e.cap));
+            // Preserve an outer computed focus and its permit; tracing its
+            // frontend would expose owners already locked by that focus.
             const computed = [...branch.loans.entries()].find(
                 ([id]) => loans.get(id)!.owners && loans.get(id)!.place === c.slot.place,
             );
-            if (computed) return externalTargets(outer, branch, computed[1].cap);
-            if (!outer.slots.has(c.slot.place)) return [];
+            if (!outer.slots.has(c.slot.place))
+                return computed ? externalTargets(outer, branch, computed[1].cap) : [];
             let permit = c.slot.permit;
             while (permit && !outer.loans.has(permit)) permit = loans.get(permit)?.parent;
             return [{ ...c.slot, permit }];

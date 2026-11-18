@@ -1231,8 +1231,9 @@ export class Inferencer {
         record.output = this.states(env);
         this.builder.branches.push(record);
         const external = (b: Binding): Binding[] => {
-            if (b.root.owners) return b.root.owners.flatMap(external);
-            if (!roots.includes(b.root)) return [];
+            // Existing computed focuses are outer storage with their own permits.
+            // Only branch-local backing needs tracing to its retained owners.
+            if (!roots.includes(b.root)) return b.root.owners?.flatMap(external) ?? [];
             let permit = b.permit;
             const active = initial[roots.indexOf(b.root)].borrows;
             while (permit && !active.has(permit)) permit = permit.parent;

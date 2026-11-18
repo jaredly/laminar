@@ -199,4 +199,16 @@ export const computedAliases = [
  pair}`,
         expected: [[4, 2], condition === 'true' ? 4 : 5],
     })),
+    ...(['true', 'false'] as const).map((condition) => ({
+        name: `branch-existing-computed-focus-${condition}`,
+        source:
+            first +
+            `{let pair = ((1, 2), 3)
+ {let (a, b) = ~first(~pair)
+ {let selected = ~{match ${condition} {true -> a; false -> a}}
+ selected := true
+ b := false}}
+ pair}`,
+        expected: [[true, false], 3],
+    })),
 ];

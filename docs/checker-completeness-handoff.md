@@ -426,6 +426,41 @@ ordinary argument, or branch remain `alias-conflict`. Setup still precedes
 callee/ordinary arguments and assignment RHS evaluation. Independent typed guards
 and C logical cell/path storage enforce their corresponding retained contracts.
 
+## Checker audit: branches over existing computed focuses
+
+A bounded interaction audit found and fixed a false rejection when a lens-valued
+branch selects an already-live computed focus, including a reconstructed constructor
+field. For example:
+
+```lm
+{let xs = [1, 2]
+ {let [h, ...rest] = ~xs
+  {let selected = ~{match true {true -> h; false -> h}}
+   selected := 4}}
+ xs}
+```
+
+This returns `[4, 2]`. Inference and independent typed verification previously
+traced the existing focus to its already-protected frontend owners, losing the
+focus's access permission. Both now preserve outer focus storage and its permit;
+only branch-local computed backing is traced through its retained owners. Escape
+provenance remains separate and raw local sublens returns remain rejected.
+
+Both branch selections are covered in `test/borrowed-patterns.test.ts`, alongside
+manual cleanup of a reconstructed sibling, temporary cleanup refill, and ordinary
+closure capture followed by refill. Parent access and missing refill remain
+negative tests. A detached typed-artifact corruption test removes the selected
+field's permit and requires rejection before execution. Two new shared computed
+alias samples select a projected outer computed focus, change its type, and update
+a disjoint sibling; these exercise the scalar/tuple backend adapters.
+
+This audit covers specific interactions, not checker completeness. Constructor
+examples execute through checked legacy and detached generic/specialized typed
+paths; their nominal physical-layout restriction remains unchanged. The shared
+scalar/tuple examples additionally exercise serialized representation/concrete
+verification and native C/Wasm execution. No new language forms, IR instructions,
+or physical adapters were introduced.
+
 ## Separate broader work
 
 - `A & B` remains a front-end/language-design gap: the README marks it unimplemented
@@ -459,6 +494,13 @@ and C logical cell/path storage enforce their corresponding retained contracts.
   and discarding an invocation-erased closure environment.
 
 ## Verification and reporting
+
+After the bounded computed-focus branch audit, the full run reports **1077 pass /
+39 existing skips / 0 failures across 32 files**. The borrowed-pattern suite has
+**60 passing tests**. The shared computed-alias corpus now has **26 samples**;
+the two added samples pass strict native C11 at `-O0`, `-O2`, and ASan/UBSan,
+and Emscripten/Node at `-O0` and `-O2`. `bunx tsc --noEmit` and
+`git diff --check` pass. No new skips or remote CI run.
 
 The final borrowed-pattern implementation full run reports **1058 pass / 39 existing
 skips / 0 failures across 32 files**. The focused borrowed-pattern suite has **47

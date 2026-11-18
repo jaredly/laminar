@@ -46,6 +46,33 @@ const samples = [
         'fn first(~xs) ~{match ~xs {[h, ...rest] -> h}}\n {let xs = [1, 2]\n first(~xs) := 3\n xs}',
         [3, 2],
     ],
+    ...(['true', 'false'] as const).map(
+        (condition) =>
+            [
+                `branch over reconstructed field ${condition}`,
+                `{let xs = [1, 2]
+ {let [h, ...rest] = ~xs
+ {let selected = ~{match ${condition} {true -> h; false -> h}}
+ selected := 4}}
+ xs}`,
+                [4, 2],
+            ] as const,
+    ),
+    [
+        'reconstructed field captured and refilled',
+        '{let xs = [1, 2]\n {let [h, ...rest] = ~xs\n let f = fn () h\n h := 4\n f()}\n xs}',
+        [4, 2],
+    ],
+    [
+        'manual cleanup updates reconstructed sibling',
+        '{let xs = [1, 2]\n {let [h, ...rest] = ~xs\n {let f = ~{@(h, fn () {rest := []})}\n f := 4}}\n xs}',
+        [4],
+    ],
+    [
+        'temporary cleanup refills reconstructed field',
+        '{let xs = [1, 2]\n {let [h, ...rest] = ~xs\n {let f = ~{lens v <- h\n h := v}\n f := 4}}\n xs}',
+        [4, 2],
+    ],
 ] as const;
 for (const [name, source, expected] of samples)
     it(name, () => {
@@ -60,6 +87,14 @@ import { specializeProgram } from '../src/specialize.ts';
 import { wasm32Emscripten } from '../src/backend/target.ts';
 
 for (const [source, code] of [
+    [
+        '{let xs = [1, 2]\n {let [h, ...rest] = ~xs\n {let f = ~{match true {true -> h; false -> h}}\n h := 3}}\n xs}',
+        'use-while-borrowed',
+    ],
+    [
+        '{let xs = [1, 2]\n {let [h, ...rest] = ~xs\n {let f = ~{match true {true -> h; false -> h}}\n f}}\n xs}',
+        'unrestored-lens',
+    ],
     ['{let xs = [1, 2]\n {let [h, ...rest] = ~xs\n xs := []}\n xs}', 'use-while-borrowed'],
     ['{let xs = [1, 2]\n {let [h, ...rest] = ~xs\n h}\n xs}', 'unrestored-lens'],
     ['{let xs = [1, 2]\n match ~xs {[h, ...rest] -> h; [] -> 0}\n xs}', 'unrestored-lens'],
@@ -307,4 +342,34 @@ it('independently preserves raw-local escape checks through reconstruction', () 
     for (const u of p.units) for (const f of u.functions) visit(f.body);
     expect(removed).toBe(true);
     expect(() => verifyTypedProgram(p)).toThrow('Lens return escapes owned local storage');
+});
+
+it('independently rejects a lost permit on a selected reconstructed field', () => {
+    const source = samples.find(([name]) => name === 'branch over reconstructed field true')![1];
+    const p = JSON.parse(JSON.stringify(typedProgram(source)));
+    let changed = false;
+    const visit = (b: import('../src/typed-ir.ts').IRBlock): void => {
+        for (const i of b.instructions) {
+            if (i.op === 'scope') visit(i.body);
+            if (i.op === 'case') {
+                if (i.out.type.tag === 'flow') {
+                    for (const arm of i.cases) {
+                        const acquire = arm.body.instructions.find((v) => v.op === 'acquire');
+                        if (acquire?.op === 'acquire' && acquire.slot.permit) {
+                            delete acquire.slot.permit;
+                            changed = true;
+                        }
+                    }
+                }
+                i.cases.forEach((arm) => visit(arm.body));
+            }
+        }
+    };
+    p.units.forEach((u: import('../src/typed-ir.ts').IRUnit) => visit(u.entry));
+    expect(changed).toBe(true);
+    let steps = 0;
+    expect(() => executeTypedProgram(p, { onStep: () => steps++ })).toThrow(
+        'Use while exclusively borrowed',
+    );
+    expect(steps).toBe(0);
 });
