@@ -9,10 +9,9 @@ those milestones or treat their old rejection paths as current restrictions.
 
 Manual restoration now has staging and retained-context adapters for the tested
 scalar/tuple subset, including returned and selected-branch focuses. Remaining
-checker work is borrowed matching, constructor alias patterns, `aslens`, and
-conservative computed-owner setup/argument invalidation. Typed verification now
-permits disjoint sibling cleanup updates; the remaining checker case below does
-not require the unresolved constructor reconstruction decision.
+checker work is borrowed matching, constructor alias patterns, and `aslens`.
+Computed-owner guards are now path-sensitive in both inference and typed
+verification, covering disjoint sibling cleanup, RHS, and argument updates.
 Captured cleanup invocation and callable focus storage retain separate backend
 restrictions.
 
@@ -301,10 +300,12 @@ cleanup while allowing intended scoped operations and type changes. Reuse manual
 staging and owned retention without weakening ordinary closure or raw-local
 escape checks. Carry supported forms through physical adapters afterward.
 
-## 4. Conservative computed-owner invalidation
+## 4. Implemented path-sensitive computed-owner invalidation
 
-The checker still compares whole-owner type identities during computed-lens
-setup/arguments. Typed verification now uses per-write-path revision counters.
+Both inference and typed verification now use per-write-path revision counters.
+Inference snapshots these guards after lens setup and before the callee, ordinary
+arguments, or assignment RHS are checked. Ordinary and lens-valued branch states
+clone and merge the revision histories alongside type/availability states.
 Guards observe writes to overlapping ancestors/descendants and ignore disjoint
 siblings. Branch joins merge counters per path and transfer subsequent writes
 into each retained arm. An adversarial overlapping move/refill is still rejected
@@ -331,7 +332,7 @@ The cleanup touches sibling projection `b`, while the computed frontend borrows
 sibling type change, cleanup around a computed branch, and cleanup selected by a
 computed branch. C uses its existing logical cell/path storage for these cases.
 
-A remaining checker restriction is reproducible with an assignment RHS:
+The assignment-RHS example that formerly produced `alias-conflict` is now accepted:
 
 ```lm
 fn first(~(x, y)) ~x
@@ -344,12 +345,25 @@ fn first(~(x, y)) ~x
 }
 ```
 
-It reports `alias-conflict`: “Assignment RHS changes the owner of an active
-computed lens”. The update is to disjoint sibling `b`; inference's whole-root
-identity comparison in `Inferencer.linear`/`call` still needs a path-sensitive
-model. Preserve actual overlap/parent replacement rejection and setup before
-callee/ordinary arguments and assignment RHS evaluation. Do not weaken typed
-verification to hide any remaining disagreement.
+It returns `((4, 2), 4)`. The analogous ordinary-argument example is accepted:
+
+```lm
+fn first(~(x, y)) ~x
+fn replace(v, ~x) {x := v}
+{
+    let pair = ((1, 2), 3)
+    {let (a, b) = ~pair
+     replace({b := b + 1
+              4}, ~first(~a))}
+    pair
+}
+```
+
+Shared regressions additionally cover sibling type changes, callee-side updates,
+and both selections of a branching RHS. Same-type overlapping writes in an RHS,
+ordinary argument, or branch remain `alias-conflict`. Setup still precedes
+callee/ordinary arguments and assignment RHS evaluation. Independent typed guards
+and C logical cell/path storage enforce their corresponding retained contracts.
 
 ## Separate broader work
 
@@ -365,7 +379,7 @@ verification to hide any remaining disagreement.
 - Computed loans distinguish an independent focus place from ordered protected
   owner references and permits. Direct aliases keep their original representation.
   See `test/computed-alias.test.ts` and
-  `test/backend/computed-alias-samples.ts` (17 shared execution samples).
+  `test/backend/computed-alias-samples.ts` (24 shared execution samples).
 - Branches retain setup/restored states and normalization edges. Concrete
   `lensJoin: { kind: 'selected', arms, result }` normalizes the focus to thin storage
   while preserving each arm's original topology. Independent verifiers derive and
@@ -394,8 +408,17 @@ Path-sensitive typed guard follow-up: `bun test` reports **894 pass, 39 existing
 skips, 0 failures across 30 files**. Four new shared computed-alias cases execute
 through detached typed/legacy paths and all five native/Wasm modes. A forged
 overlapping move/refill remains rejected even at unchanged final type.
-`bunx tsc --noEmit` and `git diff --check` pass. This fixes the cleanup verifier
-gap; the separate inference setup/RHS/argument restriction above remains.
+`bunx tsc --noEmit` and `git diff --check` pass. This milestone fixed the cleanup
+verifier gap; the subsequent inference follow-up also permits disjoint updates
+during setup/RHS/argument evaluation as described above.
+
+Inference guard follow-up: `bun test` reports **918 pass, 39 existing skips,
+0 failures across 30 files**. Seven new shared computed-alias cases cover the RHS
+and ordinary-argument examples, sibling type changes, callee-side updates, and
+both selections of a branching RHS; all pass detached typed/legacy execution and
+native strict/optimized/sanitized plus Wasm `-O0`/`-O2`. Three checker negatives
+preserve same-type overlapping-write rejection. `bunx tsc --noEmit` and
+`git diff --check` pass. No new skips or remote CI execution.
 
 For each slice:
 

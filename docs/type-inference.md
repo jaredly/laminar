@@ -40,7 +40,7 @@ const compiled = checkFile(file);
 
 ## Current restrictions
 
-Complex lens restoration remains explicit future work. `aslens`, matching borrowed scrutinees, and constructor alias patterns produce unsupported-form diagnostics. Manual restoration is checked and executed by typed/legacy reference paths, with a precise representation-layer restriction until its deferred-cleanup adapter is implemented. Branches producing lenses are checked with separate setup and restoration state joins; only the selected branch executes, and its pattern storage and cleanup remain live until restoration. The typed reference and legacy evaluators execute these branches. Representation and concrete lowering retain a selected-branch restoration adapter, and scalar/tuple branch cases execute on C/Wasm, including thin/scattered joins. Persistent aliases accept computed and tuple lenses, retaining an independent focus and deferred restoration while protecting their owners. Raw returned lenses must be based on a lens parameter. An explicit manual restoration contract can retain owned focus storage until cleanup and disposal; an unmarked pointer into owned local storage still cannot escape. Overlapping tuple lenses and changes to the owner of an active computed lens are rejected conservatively. Affine use and lens restoration are checked statically. Unused owned bindings are permitted; exhaustiveness and a stricter exactly-once resource discipline remain future work. Runtime checks remain in place.
+Complex lens restoration remains explicit future work. `aslens`, matching borrowed scrutinees, and constructor alias patterns produce unsupported-form diagnostics. Manual restoration is checked and executed by typed/legacy reference paths; its tested scalar/tuple subset also executes on C/Wasm through staged restoration and retained contexts. Branches producing lenses are checked with separate setup and restoration state joins; only the selected branch executes, and its pattern storage and cleanup remain live until restoration. The typed reference and legacy evaluators execute these branches. Representation and concrete lowering retain a selected-branch restoration adapter, and scalar/tuple branch cases execute on C/Wasm, including thin/scattered joins. Persistent aliases accept computed and tuple lenses, retaining an independent focus and deferred restoration while protecting their owners. Raw returned lenses must be based on a lens parameter. An explicit manual restoration contract can retain owned focus storage until cleanup and disposal; an unmarked pointer into owned local storage still cannot escape. Overlapping tuple lenses and overlapping changes to an active computed owner are rejected; disjoint sibling changes are permitted. Affine use and lens restoration are checked statically. Unused owned bindings are permitted; exhaustiveness and a stricter exactly-once resource discipline remain future work. Runtime checks remain in place.
 
 Assignment returns the value currently in its target when the swap happens. If the RHS has already consumed that value, the empty slot has unit type: `fn inc(~x) { x := x + 1 }` therefore returns unit. Swapping a full slot, as in `fn take(~x) { x := () }`, returns its old type. This distinction is tracked separately from whether a slot contains an actual unit value. Existing unchecked snapshots remain available for evaluator coverage.
 
@@ -89,9 +89,12 @@ effects are independently rejected before execution.
 
 Manual cleanup cannot access an owner whose computed frontend still has pending
 restoration. Typed verification permits disjoint sibling updates during manual
-cleanup using path-sensitive revision guards. The checker's setup/argument
-invalidation checks still compare whole-owner types and remain conservative for
-disjoint projections changed by an assignment RHS or ordinary call argument. C/Wasm lowering supports the
+cleanup using path-sensitive revision guards. Inference also tracks writes by
+logical path during computed-lens setup, callee/argument evaluation, and assignment
+RHS evaluation. Disjoint sibling updates, including type changes, are accepted;
+overlapping ancestor/descendant writes still invalidate the computed owner even
+if the final type is unchanged. Branch joins merge revision counters per path.
+C/Wasm lowering supports the
 tested scalar/tuple manual subset, including returned focuses and selected-branch
 staging, without an evaluator fallback. Captured cleanup invocation and callable
 focus storage retain their separate backend restrictions.

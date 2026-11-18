@@ -40,6 +40,7 @@ type Root = {
     type: Ty;
     empty: number[][];
     borrows: Set<Borrow>;
+    revisions: Map<string, number>;
 };
 type Binding = { id?: string; root: Root; path: number[]; scheme?: Scheme; permit?: Borrow };
 type Env = Map<string, Binding>;
@@ -219,6 +220,22 @@ export class Inferencer {
     private overlaps(a: number[], b: number[]): boolean {
         return a.slice(0, Math.min(a.length, b.length)).every((v, i) => v === b[i]);
     }
+    // A computed focus depends on its logical path, including ancestor and
+    // descendant writes, rather than the identity of its containing tuple type.
+    private revision(b: Binding): number {
+        return [...b.root.revisions].reduce(
+            (n, [path, count]) => n + (this.overlaps(JSON.parse(path), b.path) ? count : 0),
+            0,
+        );
+    }
+    private joinRevisions(states: Map<string, number>[]): Map<string, number> {
+        return new Map(
+            [...new Set(states.flatMap((s) => [...s.keys()]))].map((path) => [
+                path,
+                Math.max(...states.map((s) => s.get(path) ?? 0)),
+            ]),
+        );
+    }
     private accessible(b: Binding, loc: number): void {
         const permits = new Set<Borrow>();
         for (let p = b.permit; p; p = p.parent) permits.add(p);
@@ -262,6 +279,8 @@ export class Inferencer {
             return tuple(...p.items.map((v, i) => (i === path[0] ? update(v, path.slice(1)) : v)));
         };
         b.root.type = update(b.root.type, b.path);
+        const revisionPath = JSON.stringify(b.path);
+        b.root.revisions.set(revisionPath, (b.root.revisions.get(revisionPath) ?? 0) + 1);
         b.root.empty = b.root.empty.filter((path) => !this.overlaps(path, b.path));
         if (record) this.transition('write', b, before);
     }
@@ -286,7 +305,13 @@ export class Inferencer {
     }
     private freshBinding(type: Ty): Binding {
         return {
-            root: { place: this.builder.place(), type, empty: [], borrows: new Set() },
+            root: {
+                place: this.builder.place(),
+                type,
+                empty: [],
+                borrows: new Set(),
+                revisions: new Map(),
+            },
             path: [],
         };
     }
@@ -517,12 +542,12 @@ export class Inferencer {
                 return this.call(n, env, false).read;
             case 'assign': {
                 const view = this.lens(n.lens, env);
-                const states = view.targets.map((b) => b.root.type);
+                const states = view.targets.map((b) => this.revision(b));
                 const value = this.linear(n.value, env);
                 if (
                     n.lens.type !== 'id' &&
                     n.lens.type !== 'tuple' &&
-                    view.targets.some((b, i) => b.root.type !== states[i])
+                    view.targets.some((b, i) => this.revision(b) !== states[i])
                 )
                     this.error(
                         'alias-conflict',
@@ -927,7 +952,7 @@ export class Inferencer {
             this.error('lens-position', n.loc, 'Lens argument must be last');
         // Match decomposition: final lens setup is hoisted before callee/ordinary arguments.
         const view = last?.type === 'lens' ? this.lens(last.lens, env) : undefined;
-        const states = view?.targets.map((b) => b.root.type);
+        const states = view?.targets.map((b) => this.revision(b));
         const callee = this.linear(n.fn, env);
         const replacement = this.solver.fresh();
         const args = n.args.map((a) =>
@@ -938,7 +963,7 @@ export class Inferencer {
             last?.type === 'lens' &&
             last.lens.type !== 'id' &&
             last.lens.type !== 'tuple' &&
-            view.targets.some((b, i) => b.root.type !== states![i])
+            view.targets.some((b, i) => this.revision(b) !== states![i])
         )
             this.error(
                 'alias-conflict',
@@ -1055,12 +1080,18 @@ export class Inferencer {
         const scrutinee = this.linear(n.value, env);
         if (!n.cases.length) this.error('empty-case', n.loc, 'Case requires at least one branch');
         const roots = [...new Set([...env.values()].map((b) => b.root))];
-        type Snapshot = { type: Ty; empty: number[][]; borrows: Set<Borrow> }[];
+        type Snapshot = {
+            type: Ty;
+            empty: number[][];
+            borrows: Set<Borrow>;
+            revisions: Map<string, number>;
+        }[];
         const snapshot = (): Snapshot =>
             roots.map((r) => ({
                 type: r.type,
                 empty: r.empty.map((p) => [...p]),
                 borrows: new Set(r.borrows),
+                revisions: new Map(r.revisions),
             }));
         const restore = (states: Snapshot) =>
             roots.forEach((r, i) =>
@@ -1068,6 +1099,7 @@ export class Inferencer {
                     ...states[i],
                     empty: [...states[i].empty],
                     borrows: new Set(states[i].borrows),
+                    revisions: new Map(states[i].revisions),
                 }),
             );
         const initial = snapshot();
@@ -1075,7 +1107,12 @@ export class Inferencer {
             roots.map((_, i) => {
                 const empty = states.flatMap((s) => s[i].empty);
                 const erase = (type: Ty) => {
-                    const root: Root = { type, empty: [], borrows: new Set() };
+                    const root: Root = {
+                        type,
+                        empty: [],
+                        borrows: new Set(),
+                        revisions: new Map(),
+                    };
                     for (const path of empty.filter(
                         (p) => !empty.some((q) => q.length < p.length && this.overlaps(p, q)),
                     ))
@@ -1096,7 +1133,12 @@ export class Inferencer {
                         throw e;
                     }
                 }
-                return { type, empty, borrows: new Set(initial[i].borrows) };
+                return {
+                    type,
+                    empty,
+                    borrows: new Set(initial[i].borrows),
+                    revisions: this.joinRevisions(states.map((s) => s[i].revisions)),
+                };
             });
         const read = this.solver.fresh();
         const record: (typeof this.builder.branches)[number] = {
@@ -1233,12 +1275,17 @@ export class Inferencer {
             arms: [],
             output: [],
         };
-        const initial = roots.map((r) => ({ type: r.type, empty: [...r.empty] }));
-        let joined: { type: Ty; empty: number[][] }[] | undefined;
+        const initial = roots.map((r) => ({
+            type: r.type,
+            empty: [...r.empty],
+            revisions: new Map(r.revisions),
+        }));
+        let joined: { type: Ty; empty: number[][]; revisions: Map<string, number> }[] | undefined;
         for (const branch of n.cases) {
             roots.forEach((r, i) => {
                 r.type = initial[i].type;
                 r.empty = [...initial[i].empty];
+                r.revisions = new Map(initial[i].revisions);
             });
             const sub = new Map(env);
             this.pattern(branch.pat, scrutinee, sub);
@@ -1249,13 +1296,23 @@ export class Inferencer {
                 output: this.states(env),
                 transitions: [firstTransition, this.builder.transitions.length],
             });
-            if (!joined) joined = roots.map((r) => ({ type: r.type, empty: [...r.empty] }));
+            if (!joined)
+                joined = roots.map((r) => ({
+                    type: r.type,
+                    empty: [...r.empty],
+                    revisions: new Map(r.revisions),
+                }));
             else
                 roots.forEach((r, i) => {
                     try {
                         const empty = [...joined![i].empty, ...r.empty];
                         const erase = (type: Ty): Ty => {
-                            const root: Root = { type, empty: [], borrows: new Set() };
+                            const root: Root = {
+                                type,
+                                empty: [],
+                                borrows: new Set(),
+                                revisions: new Map(),
+                            };
                             for (const path of empty.sort((a, b) => b.length - a.length)) {
                                 // An empty ancestor subsumes all of its descendants.
                                 if (
@@ -1269,7 +1326,11 @@ export class Inferencer {
                         };
                         const type = erase(joined![i].type);
                         this.solver.unify(type, erase(r.type), n.loc);
-                        joined![i] = { type, empty };
+                        joined![i] = {
+                            type,
+                            empty,
+                            revisions: this.joinRevisions([joined![i].revisions, r.revisions]),
+                        };
                     } catch (e) {
                         if (e instanceof TypeDiagnostic)
                             this.error(
@@ -1284,6 +1345,7 @@ export class Inferencer {
         roots.forEach((r, i) => {
             r.type = joined![i].type;
             r.empty = joined![i].empty;
+            r.revisions = new Map(joined![i].revisions);
         });
         branchRecord.output = this.states(env);
         this.builder.branches.push(branchRecord);

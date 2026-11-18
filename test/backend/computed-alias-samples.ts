@@ -128,4 +128,75 @@ export const computedAliases = [
  pair}`,
         expected: [[4, 2], 5],
     },
+    {
+        name: 'disjoint-assignment-rhs',
+        source:
+            first +
+            `{let pair = ((1, 2), 3)
+ {let (a, b) = ~pair
+ first(~a) := {b := b + 1
+ 4}}
+ pair}`,
+        expected: [[4, 2], 4],
+    },
+    {
+        name: 'disjoint-ordinary-argument',
+        source:
+            first +
+            `fn replace(v, ~x) {x := v}
+{let pair = ((1, 2), 3)
+ {let (a, b) = ~pair
+ replace({b := b + 1
+ 4}, ~first(~a))}
+ pair}`,
+        expected: [[4, 2], 4],
+    },
+    {
+        name: 'disjoint-rhs-type-change',
+        source:
+            first +
+            `{let pair = ((1, 2), 3)
+ {let (a, b) = ~pair
+ first(~a) := {b := true
+ 4}}
+ pair}`,
+        expected: [[4, 2], true],
+    },
+    {
+        name: 'disjoint-argument-type-change',
+        source:
+            first +
+            `fn replace(v, ~x) {x := v}
+{let pair = ((1, 2), 3)
+ {let (a, b) = ~pair
+ replace({b := true
+ 4}, ~first(~a))}
+ pair}`,
+        expected: [[4, 2], true],
+    },
+    {
+        name: 'disjoint-callee-evaluation',
+        source:
+            first +
+            `fn replace(v, ~x) {x := v}
+{let pair = ((1, 2), 3)
+ {let (a, b) = ~pair
+ ({b := b + 1
+ replace})(4, ~first(~a))}
+ pair}`,
+        expected: [[4, 2], 4],
+    },
+    ...(['true', 'false'] as const).map((condition) => ({
+        name: `disjoint-rhs-branch-${condition}`,
+        source:
+            first +
+            `{let pair = ((1, 2), 3)
+ {let (a, b) = ~pair
+ first(~a) := {match ${condition} {true -> {b := b + 1
+ ()}; false -> {b := b + 2
+ ()}}
+ 4}}
+ pair}`,
+        expected: [[4, 2], condition === 'true' ? 4 : 5],
+    })),
 ];

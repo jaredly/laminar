@@ -172,3 +172,33 @@ it('rejects an overlapping move and refill even when the final owner type is unc
     expect(visit(p.units.at(-1)!.entry)).toBe(true);
     expect(() => verifyTypedProgram(p)).toThrow('Computed lens owner changed before restoration');
 });
+
+for (const [name, source, message] of [
+    [
+        'RHS overlap',
+        first + '{let pair = (1, 2)\n first(~pair) := {pair := (3, 4)\n 5}\n pair}',
+        'Assignment RHS changes the owner of an active computed lens',
+    ],
+    [
+        'argument overlap',
+        first +
+            'fn replace(v, ~x) {x := v}\n{let pair = (1, 2)\n replace({pair := (3, 4)\n 5}, ~first(~pair))\n pair}',
+        'Arguments change the owner of an active computed lens',
+    ],
+    [
+        'branch overlap',
+        first +
+            '{let pair = (1, 2)\n first(~pair) := {match true {true -> {pair := (3, 4)\n ()}; false -> ()}\n 5}\n pair}',
+        'Assignment RHS changes the owner of an active computed lens',
+    ],
+])
+    it(`rejects computed-owner ${name} even at unchanged final type`, () => {
+        try {
+            typedProgram(source);
+            throw Error('Expected overlapping owner rejection');
+        } catch (e) {
+            expect(e).toBeInstanceOf(TypeDiagnostic);
+            expect((e as TypeDiagnostic).code).toBe('alias-conflict');
+            expect((e as Error).message).toBe(message);
+        }
+    });
