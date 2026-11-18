@@ -139,12 +139,14 @@ L4 fn1(void *environment) {
     (void)environment;
     L4 v0 = 1;
     (void)v0;
+    L0 v3 = (L0){.environment=NULL, .invoke0=fn0};
+    (void)v3;
     Backing0 back0 = {0};
     (void)back0;
     back0.read0 = v0;
     L6 v5 = (L6){.read=&back0.read0};
     (void)v5;
-    L2 v4 = fn0(NULL, v5);
+    L2 v4 = (v3).invoke0((v3).environment, v5);
     (void)v4;
     L4 v6 = *(v5).read;
     (void)v6;
@@ -258,13 +260,15 @@ L6 fn1(void *environment) {
     (void)v0;
     L5 v2 = 2;
     (void)v2;
+    L2 v7 = (L2){.environment=NULL, .invoke0=fn0};
+    (void)v7;
     Backing0 back0 = {0};
     (void)back0;
     back0.read0 = v0;
     back0.read1 = v2;
     L1 v9 = (L1){.item0=(L0){.read=&back0.read0}, .item1=(L0){.read=&back0.read1}};
     (void)v9;
-    L4 v8 = fn0(NULL, v9);
+    L4 v8 = (v7).invoke0((v7).environment, v9);
     (void)v8;
     L6 v10 = (L6){*((v9).item0).read, *((v9).item1).read};
     (void)v10;
@@ -392,6 +396,8 @@ L8 fn1(void *environment) {
     (void)v0;
     L5 v2 = 2;
     (void)v2;
+    L9 v7 = (L9){.environment=NULL, .invoke0=fn0};
+    (void)v7;
     Backing1 *back1 = allocate_context(sizeof *back1);
     (void)back1;
     if (!back1) {
@@ -403,7 +409,7 @@ L8 fn1(void *environment) {
     back1->write2 = (L6){0};
     L2 v9 = (L2){.item0=(L0){.read=&back1->read0, .replacement=&back1->write0}, .item1=(L1){.read=&back1->read2, .replacement=&back1->write2}};
     (void)v9;
-    L2 v8 = fn0(NULL, v9);
+    L2 v8 = (v7).invoke0((v7).environment, v9);
     (void)v8;
     L7 v10 = 1;
     (void)v10;
@@ -560,6 +566,8 @@ L2 fn1(void *environment) {
     (void)v1;
     L5 v2 = (L5){v0, v1};
     (void)v2;
+    L6 v5 = (L6){.environment=NULL, .invoke0=fn0};
+    (void)v5;
     Backing1 *back1 = allocate_context(sizeof *back1);
     (void)back1;
     if (!back1) {
@@ -569,7 +577,7 @@ L2 fn1(void *environment) {
     back1->write0 = (L2){0};
     L8 v7 = (L8){.read=&back1->read0, .replacement=&back1->write0};
     (void)v7;
-    L7 v6 = fn0(NULL, v7);
+    L7 v6 = (v5).invoke0((v5).environment, v7);
     (void)v6;
     L0 v8 = 1;
     (void)v8;

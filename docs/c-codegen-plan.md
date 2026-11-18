@@ -1,8 +1,8 @@
 # Plan: typed lowering, representation specialization, and C/Wasm code generation
 
 Status: phases 0–3 are implemented through the concrete-IR exit gate; phases 4–5
-execute the documented scalar/tuple native C and Emscripten/Node subset. Known
-captured closure invocation and environment disposal implement part of phase 6.
+execute the documented scalar/tuple native C and Emscripten/Node subset. Typed
+indirect closure invocation and environment disposal implement part of phase 6.
 Dynamic callable joins and callable focus storage remain open; phase 7 runtime
 and host integration and phase 8 optimization remain broader work. This is subset
 coverage, not completion of every phase exit gate.
@@ -325,8 +325,8 @@ The defaults above make progress possible without additional up-front language d
 - Which currently unsupported semantic lens forms to implement after the checked subset has a working C backend.
 
 Phases 0–5 are complete for the documented subset. Phase 6 is partially
-implemented: known captured closures work; dynamic callable joins and callable
-focus storage/replacement remain. Continue with those phase-6 adapters or
+implemented: typed code-pointer invocation and known captured closures work;
+dynamic callable joins and callable focus storage/replacement remain. Continue with those phase-6 adapters or
 phase-7 runtime/host integration,
 using the [scoped completion record](checker-completeness-handoff.md#separate-broader-work-and-c-codegen-plan-mapping)
 to distinguish completed restoration support from remaining backend work.

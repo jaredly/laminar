@@ -1,3 +1,4 @@
+import { indirectCallSamples } from './backend/indirect-call-samples.ts';
 import { expect, it } from 'bun:test';
 import { capturedCleanupSamples } from './backend/captured-cleanup-samples.ts';
 import { typedProgram } from './backend/typed-program.ts';
@@ -107,7 +108,7 @@ it('prints the complete captured callable environment lifecycle', () => {
           (void)v3;
           L0 v6 = v3;
           (void)v6;
-          L1 v7 = fn0((v6).environment);
+          L1 v7 = (v6).invoke0((v6).environment);
           (void)v7;
           L1 v5 = v7;
           (void)v5;
@@ -162,3 +163,17 @@ it('prints the complete captured callable environment lifecycle', () => {
       "
     `);
 });
+
+for (const sample of indirectCallSamples)
+    it(`emits typed indirect calls: ${sample.name}`, () => {
+        const p = typedProgram(sample.source);
+        expect<unknown>(executeTypedProgram(p)).toEqual(sample.expected);
+        expect(legacyReference(sample.source)).toEqual(sample.expected);
+        const c = compileConcreteProgram(p, wasm32Emscripten('test'), [
+            { unit: p.units.at(-1)!.id, arguments: [] },
+        ]);
+        const source = emitC(c);
+        expect(source).toMatch(/\.invoke\d+\(\(v\d+\)\.environment/);
+        // Only the test entry adapter may invoke a code symbol directly.
+        expect(source.split('int main(void)')[0]).not.toMatch(/= fn\d+\(/);
+    });

@@ -163,8 +163,7 @@ export function lowerC(program: ConcreteProgram): TranslationUnit {
     const functions = program.code.map((c) => {
         const values = new Map<string, string>(),
             lenses = new Map<string, Lens>(),
-            places = new Map<string, View>(),
-            direct = new Map<string, string>();
+            places = new Map<string, View>();
         let counter = 0;
         const fresh = () => `v${counter++}`;
         const variables: Variable[] = c.parameters.map((p, i) => ({
@@ -391,10 +390,22 @@ export function lowerC(program: ConcreteProgram): TranslationUnit {
                     }
                     case 'make-callable': {
                         const callable = program.callables.find((c) => c.id === i.callable)!;
-                        direct.set(i.out.id, i.callable);
-                        if (!i.captures.length) {
+                        const entries = callable.entries
+                            .map((e) => {
+                                const w = program.wrappers.find((w) => w.id === e.wrapper)!;
+                                // Native intrinsics still lower through their explicit storage contract.
+                                return w.kind === 'invoke'
+                                    ? `, .${e.field}=${codes.get(w.code)}`
+                                    : '';
+                            })
+                            .join('');
+                        if (!i.captures.length && !entries) {
                             values.set(i.out.id, zero(id));
                             continue;
+                        }
+                        if (!i.captures.length) {
+                            expr = `(${type(id)}){.environment=NULL${entries}}`;
+                            break;
                         }
                         const environment = fresh();
                         variables.push({
@@ -407,14 +418,7 @@ export function lowerC(program: ConcreteProgram): TranslationUnit {
                         i.captures.forEach((capture, n) =>
                             body.push(`${environment}->capture${n} = ${value(capture.value)};`),
                         );
-                        expr = `(${type(id)}){.environment=${environment}, .dispose=${disposers.get(callable.dispose)}${callable.entries
-                            .map((e) => {
-                                const w = program.wrappers.find((w) => w.id === e.wrapper)!;
-                                if (w.kind !== 'invoke')
-                                    return unsupported('Captured native callable');
-                                return `, .${e.field}=${codes.get(w.code)}`;
-                            })
-                            .join('')}}`;
+                        expr = `(${type(id)}){.environment=${environment}, .dispose=${disposers.get(callable.dispose)}${entries}}`;
                         break;
                     }
                     case 'constant':
@@ -751,15 +755,13 @@ export function lowerC(program: ConcreteProgram): TranslationUnit {
                     }
                     case 'invoke': {
                         const callable =
-                            program.callables.find((x) => x.id === direct.get(i.callee)) ??
                             program.callables.find(
                                 (x) =>
                                     x.layout === outputLayouts.get(i.callee) &&
                                     x.entries.some((e) => e.wrapper === i.wrapper),
-                            ) ??
-                            unsupported('Indirect call requires phase 6');
+                            ) ?? unsupported('Missing callable storage contract');
                         if (!callable.entries.some((e) => e.wrapper === i.wrapper))
-                            unsupported('Invalid direct call');
+                            unsupported('Invalid callable entry');
                         const w = program.wrappers.find((w) => w.id === i.wrapper)!;
                         const abi = program.abis.find((a) => a.id === i.abi)!;
                         const isLens = layout(id).fields.some((f) => f.name === 'restore');
@@ -785,7 +787,7 @@ export function lowerC(program: ConcreteProgram): TranslationUnit {
                                 return a.expression;
                             });
                             if (w.kind === 'invoke')
-                                expr = `${codes.get(w.code)}(${program.code.find((c) => c.id === w.code)!.captures.length ? `(${value(i.callee)}).environment` : 'NULL'}${args.map((a) => `, ${a}`).join('')})`;
+                                expr = `(${value(i.callee)}).${identifier(i.field)}((${value(i.callee)}).environment${args.map((a) => `, ${a}`).join('')})`;
                             else if (w.kind === 'native') {
                                 const op = w.definition.slice(7);
                                 if (['+', '-', '*', '/', '==', '>=', '<='].includes(op))

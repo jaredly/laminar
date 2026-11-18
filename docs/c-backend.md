@@ -60,19 +60,20 @@ zero. Allocation failure traps. Native sanitizers additionally detect invalid
 access and double disposal, with stack-use-after-return detection enabled and
 undefined behavior configured to stop execution.
 
-Statically known, capture-free function values retain compile-time provenance,
-including specialized higher-order parameters used by `map`. Their finite call
-contracts select verified direct wrappers; no runtime code pointer is invoked.
+User-defined function values carry concrete typed code pointers, including
+capture-free values (with a null environment and disposer). Calls use the verified
+callable entry field and environment; there are no incompatible code-pointer casts
+or static code-symbol rewrites at invocation. Native intrinsics retain their
+explicit storage lowering contracts.
 Captured callable values use concrete typed heap environments. Invocation copies
 captures into owned locals and releases the environment before executing the body;
 returned restoration contexts retain any locals needed later. Generated disposers
 recursively dispose captured callable values and release unused environments.
 Wildcard bindings, scope cleanup, branch normalization, and manual cleanup results
-all run the corresponding disposal paths. Capture-free callable values retain the
-existing allocation-free representation and verified direct invocation.
-Dynamic callable joins, callable focus storage, nominal/heap data, and unsupported
-native imports retain explicit diagnostics. This is a statically known callable
-subset, not general phase-6 completeness.
+all run the corresponding disposal paths. Dynamic callable joins, callable focus
+storage, nominal/heap data, and unsupported native imports retain explicit
+diagnostics. Representation inference still requires known callable provenance;
+this is partial phase-6 support.
 
 Implemented imports are numeric `+`, `-`, `*`, `/`, `==`, `>=`, `<=`, data `dup`,
 and logical `fst`. `dup` of a computed focus restores that focus after copying it.
@@ -174,3 +175,13 @@ examples also execute in that harness. Allocation accounting checks all environm
 and restoration allocations are released; native sanitizers check invalid accesses.
 `test/captured-cleanup.test.ts` retains complete generated C inline and rejects
 corrupted capture layouts, environments, invocation ownership, and disposal layouts.
+
+## Typed indirect invocation
+
+`test/backend/indirect-call-samples.ts` covers returned captured closures passed
+through higher-order parameters, captured callbacks taking thin and scattered
+lenses, and an indirect lens-returning call. These share the strict native,
+optimized, sanitizer and Emscripten/Node harness. The full existing execution
+corpus now invokes user-defined functions through typed entry fields, including
+recursive calls and restoration-bearing calls. Closure environments retain the
+existing transfer-on-invoke and drop-unused ownership convention.

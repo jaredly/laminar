@@ -196,3 +196,25 @@ checks, and under Emscripten/Node at `-O0` and `-O2`. Both targets also execute 
 unmatched-case trap test. Six printer expectations contain complete output inline.
 `bunx tsc --noEmit` and `git diff --check` pass. Remote CI was not required or run.
 Phase 6 is next.
+
+## Phase 6 slice: typed indirect invocation
+
+User-defined function values now initialize their concrete ABI entry fields even
+when capture-free. Calls invoke those fields with the stored environment, instead
+of rewriting to a statically selected code symbol. The independent concrete
+verifier still validates the entry ABI; native intrinsics keep their explicit
+storage contracts. No function-pointer casts or environment ownership changes
+were introduced.
+
+Four new shared samples cover returned captured closures passed through a
+higher-order parameter, captured lens callbacks with thin and scattered backing,
+and an indirect returned lens. Differential reference tests and generated-C
+assertions accompany native/Wasm execution and updated complete C snapshots.
+Dynamic callable joins and callable focus storage/replacement remain open; this
+slice does not complete the phase-6 exit gate.
+
+Validation: 848 passing non-execution tests, 39 existing skips, zero failures;
+292 passing existing native/Wasm execution tests plus 8 new execution cases,
+zero failures. Execution uses strict C11, optimization and native sanitizers,
+plus Emscripten/Node at both optimization levels. `bunx tsc --noEmit` and
+`git diff --check` pass. Remote CI was not run.
