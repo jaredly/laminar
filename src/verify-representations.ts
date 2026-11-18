@@ -579,18 +579,26 @@ export function verifyRepresentations(
                     case 'case': {
                         if (i.out.type.tag === 'flow' && lens(v).kind !== 'thin')
                             fail('Selected-branch adapter must expose a thin focus');
+                        const states: State[] = [];
                         const results = i.cases.map((arm) => {
                             const branch = clone(s);
                             bind(arm.pattern, get(s, i.value), branch);
                             const result = block(arm.body, branch);
-                            s.places.forEach((before, place) =>
+                            states.push(branch);
+                            return result;
+                        });
+                        s.places.forEach((_, place) => {
+                            const current = (
+                                states[0] ?? fail('Branch has no storage continuation')
+                            ).places.get(place)!;
+                            states.forEach((branch) =>
                                 requireEqual(
-                                    before,
+                                    current,
                                     branch.places.get(place),
                                     'Branch callable storage versions require an adapter',
                                 ),
                             );
-                            return result;
+                            s.places.set(place, current);
                         });
                         if (i.out.type.tag === 'flow') results.forEach(lens);
                         else if (v.kind === 'callable-choice') {

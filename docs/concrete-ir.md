@@ -220,3 +220,18 @@ This descriptor is intentionally not a general lens shape: callable focus
 parameters/results, persistent aliases, projections, lens tuples and manual
 cleanup still require representation-aware restoration adapters. They remain
 explicit diagnostics. General callable focus replacement is not complete.
+
+## Convergent branch storage versions
+
+Branches may now change an enclosing owned local's representation when every
+arm finishes with the same exact descriptor. Analysis compares final arm states
+and propagates their common descriptor into the continuation; independent
+serialized verification derives and checks that agreement separately. The C
+backend uses its existing typed branch storage merge, retaining the selected
+value's environment ownership and original invocation ABI.
+
+Four shared callable-focus samples cover both selections of callable-to-data and
+data-to-captured-callable replacements. Divergent final descriptors still require
+an explicit adapter and diagnose. Projected/borrowed callable focuses, persistent
+aliases, callable focus parameters/results, manual restoration, scattered callable
+focuses and differing aggregate joins remain open. Phase 6 is incomplete.

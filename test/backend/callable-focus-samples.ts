@@ -50,4 +50,26 @@ export const callableFocusSamples = [
  (old(), f())}`,
         expected: [3, condition === 'true' ? 5 : 7],
     })),
+    ...(['true', 'false'] as const).flatMap((condition) => [
+        {
+            name: `callable focus convergent branch data ${condition}`,
+            source: `{let x = 3
+ let f = fn () x
+ match ${condition} {true -> {let old = f := 5
+ old()}; false -> {let old = f := 7
+ old()}}
+ f}`,
+            expected: condition === 'true' ? 5 : 7,
+        },
+        {
+            name: `callable focus convergent branch callable ${condition}`,
+            source: `fn make(x) {fn () x}
+{let f = 2
+ match ${condition} {true -> {f := make(5)
+ ()}; false -> {f := make(7)
+ ()}}
+ f()}`,
+            expected: condition === 'true' ? 5 : 7,
+        },
+    ]),
 ];

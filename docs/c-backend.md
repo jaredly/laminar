@@ -302,3 +302,18 @@ or retained pointer into expired stack storage is introduced.
 Persistent aliases, projected callable focuses, callable focus call/return ABIs,
 manual restoration, scattered callable focuses and divergent branch storage
 versions remain explicit adapter work. Phase 6 stays open.
+
+## Convergent branch storage versions
+
+Branches may now change an enclosing owned local's representation when every
+arm finishes with the same exact descriptor. Analysis compares final arm states
+and propagates their common descriptor into the continuation; independent
+serialized verification derives and checks that agreement separately. The C
+backend uses its existing typed branch storage merge, retaining the selected
+value's environment ownership and original invocation ABI.
+
+Four shared callable-focus samples cover both selections of callable-to-data and
+data-to-captured-callable replacements. Divergent final descriptors still require
+an explicit adapter and diagnose. Projected/borrowed callable focuses, persistent
+aliases, callable focus parameters/results, manual restoration, scattered callable
+focuses and differing aggregate joins remain open. Phase 6 is incomplete.

@@ -11,7 +11,7 @@ coverage, not completion of every phase exit gate.
 
 The scoped lens extensions are complete as of `707521c`; see the
 [completion record and follow-up mapping](checker-completeness-handoff.md).
-Latest local verification: **1499 pass / 39 existing skips / 0 failures across
+Latest local verification: **1512 pass / 39 existing skips / 0 failures across
 37 files**, with TypeScript and diff checks passing. The latest full execution run passed without retries. Remote CI was not run for
 these slices. See also [the implementation record](backend-progress.md),
 [backend contract](backend-contract.md), [typed IR API](typed-ir.md), and
@@ -347,6 +347,22 @@ verified; see the latest backend progress record. Recursive fields retain each
 member's concrete ABI and use existing logical storage and affine disposal.
 Direct whole-owned-local swaps now retain independent read/replacement descriptors.
 General representation-bearing lens restoration contracts remain the next adapter
-work, along with differing aggregate joins and branch-dependent storage versions. Keep phase 6 open until callable focus
+work, along with differing aggregate joins and divergent branch storage versions.
+Branches with identical final descriptors now propagate that common version. Keep phase 6 open until callable focus
 replacement executes with verified ownership and restoration on checked/unchecked
 paths and native/Wasm targets.
+
+## Convergent branch storage versions
+
+Branches may now change an enclosing owned local's representation when every
+arm finishes with the same exact descriptor. Analysis compares final arm states
+and propagates their common descriptor into the continuation; independent
+serialized verification derives and checks that agreement separately. The C
+backend uses its existing typed branch storage merge, retaining the selected
+value's environment ownership and original invocation ABI.
+
+Four shared callable-focus samples cover both selections of callable-to-data and
+data-to-captured-callable replacements. Divergent final descriptors still require
+an explicit adapter and diagnose. Projected/borrowed callable focuses, persistent
+aliases, callable focus parameters/results, manual restoration, scattered callable
+focuses and differing aggregate joins remain open. Phase 6 is incomplete.

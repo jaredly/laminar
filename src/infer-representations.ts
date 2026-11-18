@@ -483,15 +483,21 @@ export function inferRepresentations(
                     break;
                 }
                 case 'case': {
+                    const states: State[] = [];
                     const branches = i.cases.map((arm) => {
                         const state = clone(s);
                         bind(arm.pattern, get(s, i.value), state);
                         const result = block(unit, arm.body, state, record, chain);
-                        s.places.forEach((before, place) => {
-                            if (!equal(before, state.places.get(place)!))
-                                fail('Branch callable storage versions require an adapter');
-                        });
+                        states.push(state);
                         return result;
+                    });
+                    s.places.forEach((_, place) => {
+                        const current = (
+                            states[0] ?? fail('Branch has no storage continuation')
+                        ).places.get(place)!;
+                        if (states.some((state) => !equal(current, state.places.get(place)!)))
+                            fail('Branch callable storage versions require an adapter');
+                        s.places.set(place, current);
                     });
                     out =
                         i.out.type.tag === 'flow'

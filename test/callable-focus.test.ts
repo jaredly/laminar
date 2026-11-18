@@ -65,3 +65,18 @@ it('keeps branch callable storage versions explicit', () => {
         ),
     ).toThrow('Branch callable storage versions require an adapter');
 });
+it('independently rejects a forged convergent branch continuation', () => {
+    const c = concrete(
+        callableFocusSamples.find(
+            (s) => s.name === 'callable focus convergent branch callable true',
+        )!.source,
+    );
+    const values = c.analysis.entries[0].values;
+    const moved = values.filter((v: any) => v.representation.kind === 'callable');
+    // The final move must retain the descriptor installed by both arms, not
+    // a same-type callable descriptor forged from a different provenance.
+    const last = moved.at(-1);
+    last.representation = { ...last.representation, captures: [] };
+    expect(() => verifyConcreteProgram(c)).toThrow();
+    expect(() => emitC(c)).toThrow();
+});

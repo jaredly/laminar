@@ -498,3 +498,29 @@ Emscripten/Node at both optimization levels without retries.
 Commands: `bun test --path-ignore-patterns '**/c/execute.test.ts'`,
 `bun test test/c/execute.test.ts`, `bunx tsc --noEmit`, and
 `git diff --check`. Remote CI was not run.
+
+## Phase 6 slice: convergent branch storage versions
+
+Investigation found that projected source focuses require the still unsupported
+borrowed restoration contract. The selected smaller boundary is branch storage:
+previous analysis rejected any arm changing an enclosing descriptor, even when
+all arms agreed on the final representation. Analysis now compares final arm
+states and propagates their common descriptor. Independent verification performs
+its own comparison and continuation propagation without invoking inference.
+
+The existing C typed branch merge already handles the selected physical version;
+no new pointer casts, environment copies, allocations or restoration lifetimes
+are introduced. Four shared samples exercise both runtime selections for
+callable-to-data and data-to-captured-callable transitions. Serialized corruption
+coverage rejects forged continuation provenance before C emission. Divergent
+branch versions keep their explicit diagnostic. General callable restoration and
+differing aggregate joins remain separate work; phase 6 remains open.
+
+Validation: **1,512 passes, 39 existing skips, zero failures across 37 files**:
+1,002 non-execution tests and 510 native/Wasm execution cases. The full execution
+harness passed strict C11, optimized native builds, supported native sanitizers,
+and Emscripten/Node at both optimization levels without retries (666.64 seconds).
+`bunx tsc --noEmit` and `git diff --check` pass. Commands:
+`bun test --path-ignore-patterns '**/c/execute.test.ts'`,
+`bun test test/c/execute.test.ts`, `bunx tsc --noEmit`, and `git diff --check`.
+Remote CI was not run.
