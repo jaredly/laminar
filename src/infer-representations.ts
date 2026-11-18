@@ -20,7 +20,10 @@ export type ValueRepresentation =
     | { kind: 'lens'; shape: LensRepId }
     | { kind: 'callable'; unit: string; function: string; captures: ValueRepresentation[] }
     | { kind: 'native'; definition: string }
-    | { kind: 'callable-choice'; options: Extract<ValueRepresentation, { kind: 'callable' }>[] };
+    | {
+          kind: 'callable-choice';
+          options: Extract<ValueRepresentation, { kind: 'callable' | 'native' }>[];
+      };
 export type RepresentationVariant = {
     id: string;
     key: string;
@@ -144,12 +147,20 @@ export function inferRepresentations(
     const join = (items: ValueRepresentation[]): ValueRepresentation => {
         const first = items[0] ?? fail('Empty representation join');
         if (items.every((v) => equal(first, v))) return first;
-        if (items.every((v) => v.kind === 'callable' || v.kind === 'callable-choice')) {
-            const options = new Map<string, Extract<ValueRepresentation, { kind: 'callable' }>>();
+        if (
+            items.every(
+                (v) => v.kind === 'callable' || v.kind === 'native' || v.kind === 'callable-choice',
+            )
+        ) {
+            const options = new Map<
+                string,
+                Extract<ValueRepresentation, { kind: 'callable' | 'native' }>
+            >();
             for (const v of items) {
                 const members = v.kind === 'callable-choice' ? v.options : [v];
                 for (const member of members) {
-                    if (member.kind !== 'callable') return fail('Invalid callable join member');
+                    if (member.kind !== 'callable' && member.kind !== 'native')
+                        return fail('Invalid callable join member');
                     options.set(key(member), member);
                 }
             }
@@ -162,7 +173,7 @@ export function inferRepresentations(
         }
         throw new BackendDiagnostic(
             'unsupported-representation-join',
-            'Different value or native callable representations require an adapter',
+            'Different value representations require an adapter',
         );
     };
     // Preserve topology while revising typed backing endpoints after a move or update.
@@ -219,9 +230,19 @@ export function inferRepresentations(
         callee: ValueRepresentation,
         args: ValueRepresentation[],
         chain: string[],
+        resultType?: SemanticFlow,
     ): { target: string; targets?: string[]; result: ValueRepresentation } => {
+        if (callee.kind === 'native')
+            return {
+                target: callee.definition,
+                result: nativeCall(
+                    callee.definition,
+                    args,
+                    resultType ?? fail('Missing native result contract'),
+                ),
+            };
         if (callee.kind === 'callable-choice') {
-            const calls = callee.options.map((option) => invoke(option, args, chain));
+            const calls = callee.options.map((option) => invoke(option, args, chain, resultType));
             const result = calls[0]!.result;
             if (calls.some((call) => !equal(call.result, result)))
                 throw new BackendDiagnostic(
@@ -396,7 +417,7 @@ export function inferRepresentations(
                                   target: callee.definition,
                                   result: nativeCall(callee.definition, args, i.out.type),
                               }
-                            : invoke(callee, args, chain);
+                            : invoke(callee, args, chain, i.out.type);
                     out = called.result;
                     record.calls.push({
                         value: i.out.id,

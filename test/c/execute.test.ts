@@ -1,3 +1,4 @@
+import { nativeJoinSamples } from '../backend/native-join-samples.ts';
 import { cp, mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -63,6 +64,7 @@ const samples = [
     ...capturedCleanupSamples,
     ...indirectCallSamples,
     ...callableJoinSamples,
+    ...nativeJoinSamples,
     ...phase5Samples,
     ...computedAliases,
     ...lensBranchSamples,

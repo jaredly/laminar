@@ -78,9 +78,8 @@ returned and captured joined callees, and thin/scattered lens arguments and
 returned focuses use the same ownership and restoration paths. There is no extra
 join allocation or function-pointer cast.
 
-Dynamic native-import joins, calls whose alternatives return different
-representations, callable focus storage, nominal/heap data, and unsupported native
-imports retain explicit diagnostics. Dynamic callable entry roots require a host
+Calls whose alternatives return different representations, callable focus storage,
+nominal/heap data, and unsupported native imports retain explicit diagnostics. Dynamic callable entry roots require a host
 adapter. This remains partial phase-6 support.
 
 Implemented imports are numeric `+`, `-`, `*`, `/`, `==`, `>=`, `<=`, data `dup`,
@@ -207,3 +206,22 @@ currently have the same result representation. The compiler emits all reachable 
 selected runtime code pointer; specialization does not pick a branch. Independent
 analysis/concrete verification checks canonical alternative sets, target coverage,
 exact argument/result ABIs, environment ownership, and every branch entry mapping.
+
+## Native intrinsic alternatives
+
+Runtime callable joins also accept native intrinsics with C implementations. Native
+members receive exact typed wrappers and null environments/disposers. Ordinary
+intrinsic calls retain their existing storage lowering. `dup` wrappers read thin
+or recursively scattered backing; `fst` wrappers return a projected view and
+preserve all untouched fields in separately typed replacement backing. The
+caller owns completion and the lifetime of escaping backing, using the same
+restoration path as a selected user closure.
+
+`test/backend/native-join-samples.ts` adds 19 shared differential/execution samples
+for native/user selection, returned closures, capture and unused disposal,
+nested subset joins, thin/scattered `dup` and `fst`, size-changing replacement,
+nested returned focuses, unit focuses, and two lens ABIs in one artifact. The
+nested direct `fst` regression also checks that the typed reference interpreter
+lets the call boundary own argument completion, preventing duplicate restoration.
+Native wrappers have the same target-aware ABI and verification as user members;
+unsupported imports such as `round` still diagnose explicitly during C lowering.

@@ -160,6 +160,65 @@ export function lowerC(program: ConcreteProgram): TranslationUnit {
         body.push('release_context(captured);', `return ${zero(unit.id)};`);
         helpers.push({ signature, body });
     }
+    // Only reify native code when a runtime join needs it. Ordinary intrinsic
+    // calls keep their explicit storage lowering and allocation-free fast path.
+    const nativeMembers = new Set(
+        program.wrappers.flatMap((w) =>
+            w.kind === 'dispatch' ? w.targets.map((t) => t.callable) : [],
+        ),
+    );
+    const nativeEntries = new Set(
+        program.callables
+            .filter((c) => nativeMembers.has(c.id) && c.descriptor.kind === 'native')
+            .flatMap((c) => c.entries.map((e) => e.wrapper)),
+    );
+    const nativeCodes = new Map<string, string>();
+    for (const w of program.wrappers) {
+        if (w.kind !== 'native' || !nativeEntries.has(w.id)) continue;
+        const abi = program.abis.find((a) => a.id === w.abi)!;
+        const name = `native${nativeCodes.size}`;
+        nativeCodes.set(w.id, name);
+        const signature = `${type(abi.result)} ${name}(void *environment${abi.arguments.map((id, i) => `, ${type(id)} arg${i}`).join('')})`;
+        declarations.push(signature + ';');
+        const body: Statement[] = [
+            '(void)environment;',
+            ...abi.arguments.map((_, i) => `(void)arg${i};`),
+        ];
+        let result: string;
+        const op = w.definition.slice(7);
+        if (['+', '-', '*', '/', '==', '>=', '<='].includes(op)) result = `(arg0 ${op} arg1)`;
+        else if (op === 'dup')
+            result = read(storage.get(incoming('arg0', abi.arguments[0]!)), abi.result);
+        else if (op === 'fst') {
+            const input = layout(abi.arguments[0]!),
+                output = layout(abi.result);
+            const pointer = input.fields.find((f) => f.name === 'read');
+            if (pointer?.kind === 'pointer' && pointer.layout) {
+                const replacement = input.fields.find((f) => f.name === 'replacement');
+                if (replacement?.kind === 'pointer' && replacement.layout) {
+                    // Distinct replacement backing must preserve every untouched field.
+                    const reads = layout(pointer.layout).fields,
+                        writes = layout(replacement.layout).fields;
+                    for (let n = 1; n < writes.length; n++) {
+                        const from = reads[n]!,
+                            to = writes[n]!;
+                        if (
+                            from.kind !== 'value' ||
+                            to.kind !== 'value' ||
+                            from.layout !== to.layout
+                        )
+                            return unsupported('Native fst changed an untouched field');
+                        body.push(
+                            `arg0.replacement->${identifier(to.name)} = arg0.read->${identifier(from.name)};`,
+                        );
+                    }
+                }
+                result = `(${type(abi.result)}){.read=&arg0.read->item0${output.fields.some((f) => f.name === 'replacement') ? `, .replacement=&arg0.${replacement ? 'replacement' : 'read'}->item0` : ''}}`;
+            } else result = 'arg0.item0';
+        } else return unsupported(`Native import ${w.definition}`);
+        body.push(`return ${result};`);
+        helpers.push({ signature, body });
+    }
     const functions = program.code.map((c) => {
         const values = new Map<string, string>(),
             lenses = new Map<string, Lens>(),
@@ -393,10 +452,12 @@ export function lowerC(program: ConcreteProgram): TranslationUnit {
                         const entries = callable.entries
                             .map((e) => {
                                 const w = program.wrappers.find((w) => w.id === e.wrapper)!;
-                                // Native intrinsics still lower through their explicit storage contract.
+                                // Runtime joins reify native entries; ordinary intrinsics keep their storage lowering.
                                 return w.kind === 'invoke'
                                     ? `, .${e.field}=${codes.get(w.code)}`
-                                    : '';
+                                    : w.kind === 'native' && nativeCodes.has(w.id)
+                                      ? `, .${e.field}=${nativeCodes.get(w.id)}`
+                                      : '';
                             })
                             .join('');
                         if (!i.captures.length && !entries) {

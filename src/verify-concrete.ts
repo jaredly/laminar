@@ -388,7 +388,10 @@ export function verifyConcreteProgram(p: ConcreteProgram): void {
                         member.environment,
                     ]);
                     const memberWrapper = wrapper(concreteName('wrapper', memberKey));
-                    if (memberWrapper.kind !== 'invoke' || memberWrapper.abi !== w.abi)
+                    if (
+                        !['invoke', 'native'].includes(memberWrapper.kind) ||
+                        memberWrapper.abi !== w.abi
+                    )
                         return fail('Dynamic callable ABI mismatch');
                     return { callable: member.id, wrapper: memberWrapper.id };
                 });
@@ -607,10 +610,10 @@ export function verifyConcreteProgram(p: ConcreteProgram): void {
                             return w.kind === 'dispatch'
                                 ? w.targets.every((t, n) => {
                                       const member = wrapper(t.wrapper);
-                                      return (
-                                          member.kind === 'invoke' &&
-                                          member.code === codeName(contract.targets![n]!)
-                                      );
+                                      return member.kind === 'invoke'
+                                          ? member.code === codeName(contract.targets![n]!)
+                                          : member.kind === 'native' &&
+                                                member.definition === contract.targets![n]!;
                                   }) &&
                                       e.abi ===
                                           aid(

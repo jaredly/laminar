@@ -1,3 +1,4 @@
+import { nativeJoinSamples } from './backend/native-join-samples.ts';
 import { expect, it } from 'bun:test';
 import { callableJoinSamples } from './backend/callable-join-samples.ts';
 import { typedProgram } from './backend/typed-program.ts';
@@ -12,7 +13,7 @@ import { verifyRepresentations } from '../src/verify-representations.ts';
 import { printConcreteProgram } from '../src/print-concrete.ts';
 import { emitC } from '../src/c/emit.ts';
 
-for (const sample of callableJoinSamples)
+for (const sample of [...callableJoinSamples, ...nativeJoinSamples])
     it(`normalizes callable joins: ${sample.name}`, () => {
         const p = typedProgram(sample.source);
         expect<unknown>(executeTypedProgram(p)).toEqual(sample.expected);
@@ -77,7 +78,11 @@ for (const mutation of ['order', 'duplicate', 'missing', 'target', 'coverage', '
         if (mutation === 'missing') choice.options.pop();
         if (mutation === 'target') call.targets!.reverse();
         if (mutation === 'coverage') call.targets!.pop();
-        if (mutation === 'captures') choice.options[0]!.captures = [];
+        if (mutation === 'captures') {
+            const option = choice.options[0]!;
+            if (option.kind !== 'callable') throw Error('Expected user-defined callable');
+            option.captures = [];
+        }
         rejects(
             () => verifyRepresentations(c.semantic, c.analysis),
             'invalid-representation-analysis',
@@ -159,4 +164,44 @@ it('retains both concrete lens ABIs on one joined callable', () => {
     expect(choices).toHaveLength(1);
     expect(choices[0]!.entries).toHaveLength(2);
     expect(new Set(choices[0]!.entries.map((e) => e.abi)).size).toBe(2);
+});
+
+for (const mutation of ['target', 'import', 'ownership', 'abi'] as const)
+    it(`rejects corrupt native join ${mutation}`, () => {
+        const p = typedProgram(nativeJoinSamples[0]!.source);
+        const c = structuredClone(
+            compileConcreteProgram(p, wasm32Emscripten('test'), [
+                { unit: p.units.at(-1)!.id, arguments: [] },
+            ]),
+        );
+        if (mutation === 'target') {
+            const call = [...c.analysis.entries, ...c.analysis.variants]
+                .flatMap((r) => r.calls)
+                .find((call) => call.targets?.includes('native/dup'))!;
+            call.targets![call.targets!.indexOf('native/dup')] = 'native/round';
+        }
+        if (mutation === 'import') {
+            const option = c.callables
+                .flatMap((c) =>
+                    c.descriptor.kind === 'callable-choice' ? c.descriptor.options : [],
+                )
+                .find((o) => o.kind === 'native')!;
+            if (option.kind !== 'native') throw Error('Expected native option');
+            option.definition = 'native/forged';
+        }
+        if (mutation === 'ownership')
+            (
+                c.wrappers.find((w) => w.kind === 'native' && w.definition === 'native/dup') as any
+            ).ownership = 'transfer-captures-and-free';
+        if (mutation === 'abi')
+            c.wrappers.find((w) => w.kind === 'native' && w.definition === 'native/dup')!.abi =
+                'forged';
+        expect(() => emitC(c)).toThrow();
+    });
+it('keeps unsupported native imports explicit through runtime joins', () => {
+    const p = typedProgram('{let f = match false {true -> fn (x) (x + 1); false -> round}\n f(2)}');
+    const c = compileConcreteProgram(p, wasm32Emscripten('test'), [
+        { unit: p.units.at(-1)!.id, arguments: [] },
+    ]);
+    expect(() => emitC(c)).toThrow('Native import native/round');
 });

@@ -231,7 +231,7 @@ export function verifyRepresentations(
             if (
                 !Array.isArray(v.options) ||
                 v.options.length < 2 ||
-                v.options.some((o) => o.kind !== 'callable')
+                v.options.some((o) => o.kind !== 'callable' && o.kind !== 'native')
             )
                 return fail('Invalid callable alternatives');
             const keys = v.options.map(repKey);
@@ -321,6 +321,19 @@ export function verifyRepresentations(
                 bind(child, { kind: 'data', layout: layoutId(child.type) }, s),
             );
         }
+    }
+    function nativeCall(
+        callee: Extract<ValueRepresentation, { kind: 'native' }>,
+        target: string,
+        args: ValueRepresentation[],
+        v: ValueRepresentation,
+    ): void {
+        if (target !== callee.definition) fail('Wrong native call target');
+        if (v.kind === 'lens') {
+            if (callee.definition !== 'native/fst' || !args[0])
+                fail('Missing native returned-lens contract');
+            topology(projectedShape(lens(args[0]), [0]), lens(v));
+        } else if (v.kind !== 'data') fail('Unsupported native callable result');
     }
     const edges = new Map<string, Set<string>>();
     function verifyBody(
@@ -449,7 +462,7 @@ export function verifyRepresentations(
                             const options = results.flatMap((r) =>
                                 r.kind === 'callable-choice'
                                     ? r.options
-                                    : r.kind === 'callable'
+                                    : r.kind === 'callable' || r.kind === 'native'
                                       ? [r]
                                       : fail('Non-callable join member'),
                             );
@@ -487,6 +500,10 @@ export function verifyRepresentations(
                             else if (call.targets !== undefined)
                                 fail('Static call has dynamic targets');
                             options.forEach((option, index) => {
+                                if (option.kind === 'native') {
+                                    nativeCall(option, targets[index]!, args, v);
+                                    return;
+                                }
                                 const target =
                                     variants.get(targets[index]!) ??
                                     fail('Call references an absent variant');
@@ -514,13 +531,7 @@ export function verifyRepresentations(
                             });
                         } else if (callee.kind === 'native') {
                             if (call.targets !== undefined) fail('Native call has dynamic targets');
-                            if (call.target !== callee.definition) fail('Wrong native call target');
-                            if (v.kind === 'lens') {
-                                if (callee.definition !== 'native/fst' || !args[0])
-                                    fail('Missing native returned-lens contract');
-                                topology(projectedShape(lens(args[0]), [0]), lens(v));
-                            } else if (v.kind !== 'data')
-                                fail('Unsupported native callable result');
+                            nativeCall(callee, call.target, args, v);
                         } else fail('Call operand is not callable');
                         break;
                     }

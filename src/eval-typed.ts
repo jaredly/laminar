@@ -355,8 +355,15 @@ export function executeTypedProgram(
                     return Math.round(number(0));
                 case 'dup':
                     return copy(owned(lens(args[0]).peek()));
-                case 'fst':
-                    return lens(args[0]).project([0]);
+                case 'fst': {
+                    const parent = lens(args[0]);
+                    // The call boundary owns argument completion. A native
+                    // projection must not also retain that same continuation.
+                    return view(
+                        () => parent.peek(),
+                        (value) => parent.replace(value),
+                    ).project([0]);
+                }
                 case 'charList': {
                     const s = data(args[0]);
                     return typeof s === 'string' ? [...s] : error('charList requires a string');

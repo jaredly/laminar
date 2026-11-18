@@ -396,13 +396,13 @@ it('propagates returned lens representation contracts into concrete call results
         'context',
     ]);
 });
-it('keeps semantic and representation expansion diagnostics in the concrete API', () => {
+it('keeps semantic and dynamic result diagnostics in the concrete API', () => {
     expect(() => compile('fn id(x) x\nid')).toThrow('Wrong type argument count');
     expect(() =>
         compile(
-            'fn copy(~x) dup(~x)\n{let x = 1\n let f = match true {true -> copy; false -> dup}\n f(~x)}',
+            '{let f = match true {true -> fn () {fn (x) x}; false -> fn () {fn (x) x}}\n let g = f()\n g(1)}',
         ),
-    ).toThrow('require an adapter');
+    ).toThrow('Dynamic callable results require a common representation');
 });
 
 it('compiles two explicit shape variants of the same generic function entry', () => {

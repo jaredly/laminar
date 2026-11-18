@@ -265,3 +265,46 @@ Remaining phase-6 restrictions: native-import alternatives, dynamic calls whose
 alternatives return different representations, callable focus storage/replacement,
 and dynamic callable entry roots without a host adapter. This completes compatible
 user-defined runtime joins, not the entire phase-6 exit gate.
+
+## Phase 6 slice: native intrinsic callable alternatives
+
+Canonical callable choices may now contain registered native descriptors as well
+as user closures. Inference records the native definition in the corresponding
+ordered target slot; independent analysis verification checks that definition and
+its result/lens contract. Concrete dispatch verification accepts native wrappers
+only with their original ABI, import identity and no-environment ownership.
+
+The C backend reifies supported native members through exact typed C functions
+when a runtime join needs them. The joined value carries a null native environment
+and disposer. Ordinary native calls keep their existing storage lowering.
+`dup` wrappers read recursive thin/scattered backing; `fst` wrappers project heap
+backing owned by the caller and preserve untouched fields in distinct replacement
+storage. They never retain addresses of local C parameter objects. Returning and
+restoring the focus follows the existing caller adaptation/lifetime convention.
+
+Nineteen shared samples cover both branch selections, returned/captured native
+callees, unused closures, nested subset joins, both pointer forms, unit focuses,
+size-changing replacements, nested returned focuses, and two ABIs in one artifact.
+Additional negative tests reject forged native imports, targets, ownership and
+ABIs, and keep unsupported `round` emission explicit.
+
+The nested-focus regression also reproduced an existing typed-reference bug:
+native `fst` retained the argument restoration continuation and the call boundary
+ran it again. The native projection now borrows its view without owning that
+continuation. Direct nested `fst` and dynamic native/user nested projections agree
+with the legacy evaluator and execute through the C/Wasm harness.
+
+Validation: `bun test --path-ignore-patterns '**/c/execute.test.ts'` passed
+912 tests with 39 existing skips. The full `bun test test/c/execute.test.ts` run
+passed 383 cases; one native build timed out inside `spawnSync clang`, producing
+one test failure and the associated unhandled build error. Retrying that case
+with `-t 'native nested direct projection'` passed both native and Wasm execution
+(2 passes, zero failures), including strict/optimized/sanitizer builds. All
+384 distinct execution cases are therefore validated, for 1,296 passing cases
+across 35 files with no unresolved failures. The failure artifact was retained by
+the harness. `bunx tsc --noEmit` and `git diff --check` pass. Remote CI was not run.
+
+Differing dynamic result representations, callable focus storage/replacement,
+unsupported native implementations, and dynamic callable entry roots without a
+host adapter remain explicit restrictions. This slice completes supported native
+intrinsic alternatives, not the entire phase-6 exit gate.
