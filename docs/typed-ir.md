@@ -21,7 +21,7 @@ The existing `Checker.lower`, `checkFile`, snapshot runner, and pointer evaluato
 
 ## Representation
 
-`src/typed-ir.ts` defines ordered, single-assignment value temporaries and nested blocks. Every temporary has a semantic value/lens type, unique ID, and source origin. Logical places remain mutable resources; their type and availability change through explicit operations. The verifier tracks their revisions to reject invalidated computed lenses. Physical storage versions will be chosen during later lowering.
+`src/typed-ir.ts` defines ordered, single-assignment value temporaries and nested blocks. Every temporary has a semantic value/lens type, unique ID, and source origin. Logical places remain mutable resources; their type and availability change through explicit operations. The verifier tracks per-write-path revision counters to reject invalidated computed lenses: a guard observes overlapping ancestor/descendant writes, while disjoint sibling writes preserve it. Branch joins merge counters per path and transfer subsequent writes back into each retained arm. Physical storage versions will be chosen during later lowering.
 
 | Operation | Meaning |
 | --- | --- |

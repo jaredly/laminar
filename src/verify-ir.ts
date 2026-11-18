@@ -17,7 +17,8 @@ import {
     type IRScheme,
 } from './typed-ir.ts';
 
-type Slot = { type: SemanticType; empty: number[][]; version: number };
+type Revisions = Map<string, number>;
+type Slot = { type: SemanticType; empty: number[][]; version: Revisions };
 type Cap =
     | { kind: 'place'; slot: SlotRef }
     | { kind: 'tuple'; items: Cap[] }
@@ -26,7 +27,7 @@ type Cap =
           read: SemanticType;
           write: SemanticType;
           effects: { cap: Cap; type: SemanticType }[];
-          guards: { place: string; version: number }[];
+          guards: { place: string; path: number[]; version: number }[];
       }
     | { kind: 'scope'; inner: Cap; cleanup: Cleanup[]; retire: string[] }
     | { kind: 'manual'; inner: Cap; holds: SlotRef[]; cleanup: IRBlock }
@@ -35,9 +36,9 @@ type Cap =
           read: SemanticType;
           refs: SlotRef[];
           places: string[];
-          versions: Map<string, number>;
+          versions: Map<string, Revisions>;
           baseLoans: string[];
-          guards: { place: string; version: number }[];
+          guards: { place: string; path: number[]; version: number }[];
           arms: { state: State; cap: Cap; restored: Cleanup[] }[];
       };
 type Value = { type: SemanticFlow; cap?: Cap };
@@ -109,6 +110,30 @@ export function verifyTypedProgram(program: TypedProgram): void {
     const prefix = (a: number[], b: number[]) =>
         a.length <= b.length && a.every((v, i) => v === b[i]);
     const overlap = (a: number[], b: number[]) => prefix(a, b) || prefix(b, a);
+    // Each exact write path has a counter. A focus observes writes to itself,
+    // descendants, and ancestors, but not disjoint siblings of the same root.
+    const revision = (versions: Revisions | undefined, path: number[]): number =>
+        versions
+            ? [...versions].reduce(
+                  (n, [key, count]) => n + (overlap(JSON.parse(key), path) ? count : 0),
+                  0,
+              )
+            : -1;
+    const joinVersions = (versions: Revisions[]): Revisions =>
+        new Map(
+            [...new Set(versions.flatMap((v) => [...v.keys()]))].map((key) => [
+                key,
+                Math.max(...versions.map((v) => v.get(key) ?? 0)),
+            ]),
+        );
+    // Transfer writes since a branch join while retaining that arm's own history.
+    const advance = (original: Revisions, current: Revisions, base: Revisions): Revisions =>
+        new Map(
+            [...new Set([...original.keys(), ...current.keys(), ...base.keys()])].map((key) => [
+                key,
+                (original.get(key) ?? 0) + (current.get(key) ?? 0) - (base.get(key) ?? 0),
+            ]),
+        );
     if (program.schemaVersion !== 1) fail('Unknown IR version');
     const closedScheme = (
         scheme: { quantified: string[]; type: SemanticType },
@@ -162,7 +187,10 @@ export function verifyTypedProgram(program: TypedProgram): void {
         const clone = (s: State): State => ({
             locked: [...s.locked],
             slots: new Map(
-                [...s.slots].map(([id, v]) => [id, { ...v, empty: v.empty.map((p) => [...p]) }]),
+                [...s.slots].map(([id, v]) => [
+                    id,
+                    { ...v, empty: v.empty.map((p) => [...p]), version: new Map(v.version) },
+                ]),
             ),
             values: new Map(s.values),
             loans: new Map(s.loans),
@@ -227,7 +255,8 @@ export function verifyTypedProgram(program: TypedProgram): void {
             slot.type = update(slot.type, r.path);
             slot.empty = slot.empty.filter((p) => !overlap(p, r.path));
             if (empty) slot.empty.push(r.path);
-            slot.version++;
+            const key = JSON.stringify(r.path);
+            slot.version.set(key, (slot.version.get(key) ?? 0) + 1);
         };
         const normalized = (refs: SlotRef[]): SlotRef[] =>
             refs.filter(
@@ -295,7 +324,7 @@ export function verifyTypedProgram(program: TypedProgram): void {
                 into.slots.set(place, {
                     ...first,
                     empty: first.empty.map((p) => [...p]),
-                    version: Math.max(...branches.map((s) => s.slots.get(place)!.version)),
+                    version: joinVersions(branches.map((s) => s.slots.get(place)!.version)),
                 });
             }
         };
@@ -371,7 +400,7 @@ export function verifyTypedProgram(program: TypedProgram): void {
                     finish();
                 };
             }
-            if (c.guards.some((g) => s.slots.get(g.place)?.version !== g.version))
+            if (c.guards.some((g) => revision(s.slots.get(g.place)?.version, g.path) !== g.version))
                 fail('Branch lens owner changed before restoration');
             const arms = c.arms.map((arm) => {
                 const branch = clone(arm.state);
@@ -381,7 +410,7 @@ export function verifyTypedProgram(program: TypedProgram): void {
                     branch.slots.set(place, {
                         ...current,
                         empty: current.empty.map((p) => [...p]),
-                        version: original.version + current.version - c.versions.get(place)!,
+                        version: advance(original.version, current.version, c.versions.get(place)!),
                     });
                 }
                 for (const id of c.baseLoans) branch.loans.delete(id);
@@ -394,7 +423,7 @@ export function verifyTypedProgram(program: TypedProgram): void {
                 arms.map((a) => a.branch),
                 c.places,
             );
-            const versions = new Map([...s.slots].map(([p, slot]) => [p, slot.version]));
+            const versions = new Map([...s.slots].map(([p, slot]) => [p, new Map(slot.version)]));
             return () => {
                 for (const arm of arms) {
                     for (const place of c.places) {
@@ -403,7 +432,11 @@ export function verifyTypedProgram(program: TypedProgram): void {
                         arm.branch.slots.set(place, {
                             ...current,
                             empty: current.empty.map((p) => [...p]),
-                            version: original.version + current.version - versions.get(place)!,
+                            version: advance(
+                                original.version,
+                                current.version,
+                                versions.get(place)!,
+                            ),
                         });
                     }
                     for (const id of c.baseLoans) arm.branch.loans.delete(id);
@@ -435,7 +468,11 @@ export function verifyTypedProgram(program: TypedProgram): void {
                     stage(s, c, type)();
                     return;
                 case 'choice': {
-                    if (c.guards.some((g) => s.slots.get(g.place)?.version !== g.version))
+                    if (
+                        c.guards.some(
+                            (g) => revision(s.slots.get(g.place)?.version, g.path) !== g.version,
+                        )
+                    )
                         fail('Branch lens owner changed before restoration');
                     const branches = c.arms.map((arm) => {
                         const branch = clone(arm.state);
@@ -447,8 +484,11 @@ export function verifyTypedProgram(program: TypedProgram): void {
                             branch.slots.set(place, {
                                 ...current,
                                 empty: current.empty.map((p) => [...p]),
-                                version:
-                                    original.version + current.version - c.versions.get(place)!,
+                                version: advance(
+                                    original.version,
+                                    current.version,
+                                    c.versions.get(place)!,
+                                ),
                             });
                         }
                         for (const id of c.baseLoans) branch.loans.delete(id);
@@ -483,7 +523,11 @@ export function verifyTypedProgram(program: TypedProgram): void {
                     return;
                 case 'call':
                     eq(type, c.write);
-                    if (c.guards.some((g) => s.slots.get(g.place)?.version !== g.version))
+                    if (
+                        c.guards.some(
+                            (g) => revision(s.slots.get(g.place)?.version, g.path) !== g.version,
+                        )
+                    )
                         fail('Computed lens owner changed before restoration');
                     c.effects.forEach((e) => apply(s, e.cap, e.type));
                     return;
@@ -527,7 +571,7 @@ export function verifyTypedProgram(program: TypedProgram): void {
         };
         const allocate = (s: State, place: string, type: SemanticType): void => {
             if (s.slots.has(place)) fail('Place allocated twice');
-            s.slots.set(place, { type, empty: [], version: 0 });
+            s.slots.set(place, { type, empty: [], version: new Map() });
         };
         const instantiate = (i: Instance): SemanticType => {
             const scheme =
@@ -762,7 +806,8 @@ export function verifyTypedProgram(program: TypedProgram): void {
                                     .flatMap((e) => targets(e.cap))
                                     .map((r) => ({
                                         place: r.place,
-                                        version: access(s, r).version,
+                                        path: [...r.path],
+                                        version: revision(access(s, r).version, r.path),
                                     })),
                             };
                         break;
@@ -912,12 +957,13 @@ export function verifyTypedProgram(program: TypedProgram): void {
                                 refs,
                                 places,
                                 versions: new Map(
-                                    [...s.slots].map(([p, slot]) => [p, slot.version]),
+                                    [...s.slots].map(([p, slot]) => [p, new Map(slot.version)]),
                                 ),
                                 baseLoans: [...s.loans.keys()],
                                 guards: refs.map((r) => ({
                                     place: r.place,
-                                    version: access(s, r).version,
+                                    path: [...r.path],
+                                    version: revision(access(s, r).version, r.path),
                                 })),
                                 arms: branches.map((b) => ({
                                     state: b.state,
@@ -938,7 +984,7 @@ export function verifyTypedProgram(program: TypedProgram): void {
                                 const a = first.slots.get(id)!,
                                     b = other.state.slots.get(id)!;
                                 eq(a.type, b.type);
-                                a.version = Math.max(a.version, b.version);
+                                a.version = joinVersions([a.version, b.version]);
                                 const paths = (ps: number[][]) =>
                                     [...new Set(ps.map((p) => JSON.stringify(p)))].sort().join(';');
                                 if (paths(a.empty) !== paths(b.empty))

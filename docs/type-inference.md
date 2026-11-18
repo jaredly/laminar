@@ -88,8 +88,10 @@ deferred cleanup block. Missing dependency protection and removed restoration
 effects are independently rejected before execution.
 
 Manual cleanup cannot access an owner whose computed frontend still has pending
-restoration. The existing whole-owner invalidation guard also remains conservative
-for disjoint projections of a shared computed owner. C/Wasm lowering supports the
+restoration. Typed verification permits disjoint sibling updates during manual
+cleanup using path-sensitive revision guards. The checker's setup/argument
+invalidation checks still compare whole-owner types and remain conservative for
+disjoint projections changed by an assignment RHS or ordinary call argument. C/Wasm lowering supports the
 tested scalar/tuple manual subset, including returned focuses and selected-branch
 staging, without an evaluator fallback. Captured cleanup invocation and callable
 focus storage retain their separate backend restrictions.

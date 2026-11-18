@@ -113,3 +113,62 @@ it('retains one active loan identity for multiple projections of the same owner'
     ]);
     expect(legacyReference(source)).toEqual([true, false]);
 });
+
+it('rejects an overlapping move and refill even when the final owner type is unchanged', () => {
+    const p = JSON.parse(
+        JSON.stringify(typedProgram(first + '{let pair = (1, 2)\n first(~pair) := 4\n pair}')),
+    );
+    const visit = (b: import('../src/typed-ir.ts').IRBlock): boolean => {
+        const callIndex = b.instructions.findIndex(
+            (i) => i.op === 'call' && i.out.type.tag === 'flow',
+        );
+        if (callIndex >= 0) {
+            const call = b.instructions[callIndex];
+            if (call.op !== 'call') throw Error('Missing call');
+            const source = b.instructions.find(
+                (i) => i.op === 'acquire' && i.out.id === call.args[0],
+            );
+            if (!source || source.op !== 'acquire' || source.out.type.tag !== 'flow')
+                throw Error('Missing computed owner');
+            const unit: import('../src/elaborated.ts').SemanticType = { tag: 'tuple', items: [] };
+            const owned = source.out.type.read;
+            const origin = call.origin;
+            b.instructions.splice(
+                callIndex + 1,
+                0,
+                {
+                    op: 'move',
+                    origin,
+                    slot: source.slot,
+                    out: { id: 'overlapping-move', type: { tag: 'plain', value: owned } },
+                },
+                {
+                    op: 'acquire',
+                    origin,
+                    slot: source.slot,
+                    out: {
+                        id: 'overlapping-lens',
+                        type: { tag: 'flow', read: unit, write: owned },
+                    },
+                },
+                {
+                    op: 'swap',
+                    origin,
+                    lens: 'overlapping-lens',
+                    value: 'overlapping-move',
+                    out: { id: 'overlapping-refill', type: { tag: 'plain', value: unit } },
+                },
+                {
+                    op: 'bind',
+                    origin,
+                    value: 'overlapping-refill',
+                    pattern: { kind: 'drop', type: unit },
+                },
+            );
+            return true;
+        }
+        return b.instructions.some((i) => i.op === 'scope' && visit(i.body));
+    };
+    expect(visit(p.units.at(-1)!.entry)).toBe(true);
+    expect(() => verifyTypedProgram(p)).toThrow('Computed lens owner changed before restoration');
+});

@@ -10,8 +10,9 @@ those milestones or treat their old rejection paths as current restrictions.
 Manual restoration now has staging and retained-context adapters for the tested
 scalar/tuple subset, including returned and selected-branch focuses. Remaining
 checker work is borrowed matching, constructor alias patterns, `aslens`, and
-conservative computed-owner invalidation. The last item has a concrete regression
-below and does not require the unresolved constructor reconstruction decision.
+conservative computed-owner setup/argument invalidation. Typed verification now
+permits disjoint sibling cleanup updates; the remaining checker case below does
+not require the unresolved constructor reconstruction decision.
 Captured cleanup invocation and callable focus storage retain separate backend
 restrictions.
 
@@ -302,13 +303,17 @@ escape checks. Carry supported forms through physical adapters afterward.
 
 ## 4. Conservative computed-owner invalidation
 
-This remains an incompleteness issue, not a new language restriction. Inference
-checks whole-owner type changes during computed-lens setup/arguments; typed
-verification also uses whole-slot versions in computed-call guards.
+The checker still compares whole-owner type identities during computed-lens
+setup/arguments. Typed verification now uses per-write-path revision counters.
+Guards observe writes to overlapping ancestors/descendants and ignore disjoint
+siblings. Branch joins merge counters per path and transfer subsequent writes
+into each retained arm. An adversarial overlapping move/refill is still rejected
+even when it restores the original owner type.
 
-The following example was rechecked during this handoff. Checking accepts it, but
-`typedProgram`/typed lowering rejects it with `invalid-ir` and
-`Computed lens owner changed before restoration`:
+The following regression originally checked successfully but failed typed
+verification with `Computed lens owner changed before restoration`. It now passes
+detached typed/legacy execution and the shared C/Wasm corpus, returning
+`((4, 2), 4)`:
 
 ```lm
 fn first(~(x, y)) ~x
@@ -322,14 +327,29 @@ fn first(~(x, y)) ~x
 ```
 
 The cleanup touches sibling projection `b`, while the computed frontend borrows
-`a`; both share one logical root. This is a concrete checker/typed-verifier gap,
-not a manual C-adapter error. Reproduce it as a regression before changing the
-version model. Determine which disjoint updates preserve focus identity and
-reconstruction, and retain genuine overlap/parent-replacement restrictions. Do not
-silence verifier errors or classify all such programs as semantically invalid.
-Path-sensitive version/provenance tracking and branch-version joins need to agree
-across inference, typed verification, and C storage. Preserve lens setup before
-callee/ordinary arguments and assignment RHS evaluation.
+`a`; both share one logical root. Shared computed-alias regressions also cover a
+sibling type change, cleanup around a computed branch, and cleanup selected by a
+computed branch. C uses its existing logical cell/path storage for these cases.
+
+A remaining checker restriction is reproducible with an assignment RHS:
+
+```lm
+fn first(~(x, y)) ~x
+{
+    let pair = ((1, 2), 3)
+    {let (a, b) = ~pair
+     first(~a) := {b := b + 1
+                   4}}
+    pair
+}
+```
+
+It reports `alias-conflict`: “Assignment RHS changes the owner of an active
+computed lens”. The update is to disjoint sibling `b`; inference's whole-root
+identity comparison in `Inferencer.linear`/`call` still needs a path-sensitive
+model. Preserve actual overlap/parent replacement rejection and setup before
+callee/ordinary arguments and assignment RHS evaluation. Do not weaken typed
+verification to hide any remaining disagreement.
 
 ## Separate broader work
 
@@ -345,7 +365,7 @@ callee/ordinary arguments and assignment RHS evaluation.
 - Computed loans distinguish an independent focus place from ordered protected
   owner references and permits. Direct aliases keep their original representation.
   See `test/computed-alias.test.ts` and
-  `test/backend/computed-alias-samples.ts` (13 shared execution samples).
+  `test/backend/computed-alias-samples.ts` (17 shared execution samples).
 - Branches retain setup/restored states and normalization edges. Concrete
   `lensJoin: { kind: 'selected', arms, result }` normalizes the focus to thin storage
   while preserving each arm's original topology. Independent verifiers derive and
@@ -369,6 +389,13 @@ and artifact tests plus 46 shared manual backend execution tests).
 native strict C11 at `-O0`, `-O2`, and ASan/UBSan with stack-use-after-return
 checking, and Emscripten/Node at `-O0` and `-O2`. Existing branch/computed-alias
 samples remain passing. Remote CI was not run.
+
+Path-sensitive typed guard follow-up: `bun test` reports **894 pass, 39 existing
+skips, 0 failures across 30 files**. Four new shared computed-alias cases execute
+through detached typed/legacy paths and all five native/Wasm modes. A forged
+overlapping move/refill remains rejected even at unchanged final type.
+`bunx tsc --noEmit` and `git diff --check` pass. This fixes the cleanup verifier
+gap; the separate inference setup/RHS/argument restriction above remains.
 
 For each slice:
 
