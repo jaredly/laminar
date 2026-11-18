@@ -4,6 +4,11 @@ export function representationKey(v: ValueRepresentation): string {
     switch (v.kind) {
         case 'data':
             return JSON.stringify({ kind: 'data', layout: v.layout });
+        case 'aggregate':
+            return JSON.stringify({
+                kind: v.kind,
+                items: v.items.map((c) => JSON.parse(representationKey(c))),
+            });
         case 'lens':
             return JSON.stringify({ kind: 'lens', shape: v.shape });
         case 'native':

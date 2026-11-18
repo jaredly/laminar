@@ -189,6 +189,8 @@ export function lowerConcreteProgram(
     // Each discovered invocation belongs to the same concrete environment group wherever reified.
     const shapeLayouts = new Map<string, string>();
     const layout = (v: ValueRepresentation): string => {
+        if (v.kind === 'aggregate')
+            return fail('Callable aggregate storage requires an explicit physical adapter');
         if (v.kind === 'data') return table.data(dataLayouts.get(v.layout)!.type);
         if (v.kind === 'callable' || v.kind === 'native' || v.kind === 'callable-choice')
             return callable(group(v)).layout;

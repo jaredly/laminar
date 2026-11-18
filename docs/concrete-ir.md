@@ -165,3 +165,21 @@ execute through the existing C/Wasm manual adapter. List patterns execute in che
 legacy and detached typed paths; physical list lowering retains the explicit
 `unsupported-layout: No storage definition for List` restriction. Captured invocation
 and callable storage restrictions are unchanged.
+
+## Owned callable aggregate analysis boundary
+
+Representation analysis retains `aggregate` descriptors for source tuples with
+callable members, recursively preserving member provenance through construction,
+projection, owned patterns, parameters, captures and results. These descriptors
+participate in canonical specialization keys and independent serialized
+verification. Data-only tuples retain semantic data layout IDs. No physical
+aggregate layout is inferred from a function's semantic type: concrete lowering
+reports `Callable aggregate storage requires an explicit physical adapter`.
+
+The next physical adapter must recursively map member descriptors to concrete
+fields and preserve affine transfer/disposal. Callable focus read and replacement
+representations must then be retained independently across logical storage
+versions and restoration. Existing lens shape endpoints contain semantic data
+layouts only and intentionally continue to reject callable storage. Differing
+aggregate joins and recursive aggregate results requiring unsolved constraints
+remain diagnostics. This analysis slice does not expand C/Wasm execution coverage.

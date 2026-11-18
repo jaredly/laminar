@@ -17,6 +17,7 @@ import { verifyRepresentations } from './verify-representations.ts';
 
 export type ValueRepresentation =
     | { kind: 'data'; layout: LayoutId }
+    | { kind: 'aggregate'; items: ValueRepresentation[] }
     | { kind: 'lens'; shape: LensRepId }
     | { kind: 'callable'; unit: string; function: string; captures: ValueRepresentation[] }
     | { kind: 'native'; definition: string }
@@ -134,6 +135,8 @@ export function inferRepresentations(
     const fail = (message: string): never => {
         throw new BackendDiagnostic('unsupported-representation', message);
     };
+    const containsCallable = (t: SemanticType): boolean =>
+        t.tag === 'fn' || (t.tag === 'tuple' && t.items.some(containsCallable));
     const data = (type: SemanticType): ValueRepresentation => ({
         kind: 'data',
         layout: layouts.intern(type),
@@ -193,6 +196,11 @@ export function inferRepresentations(
     };
     const projectValue = (v: ValueRepresentation, path: number[]): ValueRepresentation => {
         if (!path.length) return v;
+        if (v.kind === 'aggregate')
+            return projectValue(
+                v.items[path[0]!] ?? fail('Invalid aggregate projection'),
+                path.slice(1),
+            );
         if (v.kind !== 'data')
             return fail('Projection of a callable aggregate requires a callable layout');
         let type = layouts.get(v.layout).type;
@@ -297,7 +305,7 @@ export function inferRepresentations(
             calls: [],
         };
         // Scalar/tuple results have known layouts even before a recursive body is visited.
-        if (fn.type.result.tag === 'plain' && fn.type.result.value.tag !== 'fn')
+        if (fn.type.result.tag === 'plain' && !containsCallable(fn.type.result.value))
             variant.result = data(fn.type.result.value);
         variants.set(variantKey, variant);
         const state = fresh();
@@ -339,9 +347,14 @@ export function inferRepresentations(
                 case 'constant':
                 case 'string':
                 case 'construct':
-                case 'tuple':
                     if (i.out.type.tag !== 'plain') return fail('Data instruction produced a lens');
                     out = data(i.out.type.value);
+                    break;
+                case 'tuple':
+                    if (i.out.type.tag !== 'plain') return fail('Tuple produced a lens');
+                    out = containsCallable(i.out.type.value)
+                        ? { kind: 'aggregate', items: i.items.map((id) => get(s, id)) }
+                        : data(i.out.type.value);
                     break;
                 case 'move': {
                     const value = s.places.get(i.slot.place);

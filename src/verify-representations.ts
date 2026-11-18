@@ -61,6 +61,12 @@ export function verifyRepresentations(
         switch (v.kind) {
             case 'data':
                 return JSON.stringify({ kind: 'data', layout: v.layout });
+            case 'aggregate':
+                if (!Array.isArray(v.items)) return fail('Missing aggregate members');
+                return JSON.stringify({
+                    kind: v.kind,
+                    items: v.items.map((c) => JSON.parse(repKey(c))),
+                });
             case 'lens':
                 return JSON.stringify({ kind: 'lens', shape: v.shape });
             case 'native':
@@ -214,6 +220,8 @@ export function verifyRepresentations(
     shapes.forEach((s) => checkShape(s.id));
     const fnFor = (unit: string, id: string) =>
         units.get(unit)?.functions.find((f) => f.id === id) ?? fail('Unknown callable function');
+    const containsCallable = (t: SemanticType): boolean =>
+        t.tag === 'fn' || (t.tag === 'tuple' && t.items.some(containsCallable));
     function fit(v: ValueRepresentation, t: SemanticFlow): void {
         if (!v || typeof v !== 'object') return fail('Missing value representation');
         if (t.tag === 'flow') {
@@ -221,6 +229,18 @@ export function verifyRepresentations(
             const s = shape(v.shape);
             typeEqual(layout(s.read).type, t.read);
             typeEqual(layout(s.replacement).type, t.write);
+            return;
+        }
+        if (v.kind === 'aggregate') {
+            if (
+                t.value.tag !== 'tuple' ||
+                !Array.isArray(v.items) ||
+                v.items.length !== t.value.items.length
+            )
+                return fail('Aggregate semantic shape mismatch');
+            if (!containsCallable(t.value)) return fail('Noncanonical data aggregate');
+            const types = t.value.items;
+            v.items.forEach((child, i) => fit(child, irPlain(types[i]!)));
             return;
         }
         if (v.kind === 'data') {
@@ -312,10 +332,27 @@ export function verifyRepresentations(
             );
         }
     }
+    function projectValue(v: ValueRepresentation, path: number[]): ValueRepresentation {
+        if (!path.length) return v;
+        if (v.kind === 'aggregate')
+            return projectValue(
+                v.items[path[0]!] ?? fail('Invalid aggregate projection'),
+                path.slice(1),
+            );
+        if (v.kind !== 'data') return fail('Invalid callable projection');
+        let t = layout(v.layout).type;
+        for (const index of path) {
+            if (t.tag !== 'tuple' || !t.items[index]) return fail('Invalid data projection');
+            t = t.items[index]!;
+        }
+        return { kind: 'data', layout: layoutId(t) };
+    }
     function bind(p: IRPattern, v: ValueRepresentation, s: State): void {
         if (p.kind === 'constructor') checkConstructor(p.name, p.instance);
         if (p.kind === 'bind') s.places.set(p.slot.place, v);
-        else if (p.kind === 'tuple' || p.kind === 'constructor') {
+        else if (p.kind === 'tuple')
+            p.items.forEach((child, i) => bind(child, projectValue(v, [i]), s));
+        else if (p.kind === 'constructor') {
             if (v.kind !== 'data') return fail('Tuple pattern needs data storage');
             p.items.forEach((child) =>
                 bind(child, { kind: 'data', layout: layoutId(child.type) }, s),
@@ -388,9 +425,18 @@ export function verifyRepresentations(
                 switch (i.op) {
                     case 'constant':
                     case 'string':
-                    case 'tuple':
                     case 'swap':
                         if (v.kind !== 'data') fail('Data operation has a callable representation');
+                        break;
+                    case 'tuple':
+                        if (i.out.type.tag !== 'plain') return fail('Tuple produced a lens');
+                        requireEqual(
+                            v,
+                            containsCallable(i.out.type.value)
+                                ? { kind: 'aggregate', items: i.items.map((id) => get(s, id)) }
+                                : { kind: 'data', layout: layoutId(i.out.type.value) },
+                            'Tuple member provenance changed',
+                        );
                         break;
                     case 'construct':
                         if (v.kind !== 'data') fail('Constructor has a callable representation');
@@ -399,9 +445,11 @@ export function verifyRepresentations(
                     case 'move': {
                         const stored = s.places.get(i.slot.place);
                         if (stored && stored.kind !== 'data') {
-                            if (i.slot.path.length)
-                                fail('Callable aggregate projection is unsupported');
-                            requireEqual(v, stored, 'Moved callable provenance changed');
+                            requireEqual(
+                                v,
+                                projectValue(stored, i.slot.path),
+                                'Moved callable provenance changed',
+                            );
                         } else if (v.kind !== 'data') fail('Moved callable lacks provenance');
                         break;
                     }

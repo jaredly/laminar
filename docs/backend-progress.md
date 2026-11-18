@@ -377,3 +377,44 @@ and Emscripten/Node at both optimization levels. Commands:
 Remote CI was not run. Callable storage in source aggregates and focus
 storage/replacement remain explicit restrictions; this is not the full phase-6
 exit gate.
+
+## Phase 6 slice: owned callable aggregate representation analysis
+
+Owned source tuples containing callables now retain recursive `aggregate`
+descriptors, rather than requesting a semantic-only data layout that cannot
+describe their closure ABI. Construction retains each member's provenance;
+destructuring and projected moves select that member. Parameters, captures and
+returned tuples carry the descriptor through representation specialization and
+canonical cache keys. Data-only tuples keep their existing layout representation.
+Recursive callable aggregate results still need a solvable result constraint;
+different aggregate branch representations still require an explicit adapter.
+
+Independent serialized analysis verification checks tuple arity and semantic
+types, canonical descriptor selection, exact construction operands, projection
+provenance, captures and invocation contracts. Six source cases compare checked
+legacy, detached typed and specialized typed execution; corruption coverage
+rejects altered member provenance. Callable focus storage retains its existing
+diagnostic. Concrete lowering explicitly rejects aggregate descriptors pending a
+physical adapter; this slice does not add executable C/Wasm aggregate storage.
+
+The implementation boundary follows the phase-5/phase-6 contract mismatch:
+semantic lens backing IDs cannot describe callable invocation slots, and a
+semantic tuple type cannot determine a member's environment/disposer or callable
+choice. Next, introduce explicit recursive physical aggregate records with
+representation-based identities, transfer and recursive disposal. Preserve logical
+cell/projection identities across typed storage versions. For focus replacement,
+retain independent read and replacement descriptors, including changed callable
+alternatives, and propagate them through acquisition, swaps, branch merging and
+restoration. A replacement must transfer its owned environment once; an extracted
+old value must retain its own ABI and ownership. Returned focus contexts must
+retain backing until restoration completes. Do not route callable focuses through
+semantic-only layout interning, cast invocation pointers, or reuse a stale
+aggregate's field addresses.
+
+Validation: 974 passing non-execution tests, 39 existing skips, and 458 passing
+native/Wasm execution cases: **1,432 passes, 39 skips, zero failures across 36
+files**. The full execution harness passed strict C11, optimized native builds,
+supported native sanitizers and Emscripten/Node at both optimization levels.
+Commands: `bun test --path-ignore-patterns '**/c/execute.test.ts'`,
+`bun test test/c/execute.test.ts`, `bunx tsc --noEmit`, and
+`git diff --check`. Remote CI was not run. Phase 6 remains open.

@@ -261,3 +261,15 @@ replacements, empty focuses, captured callees, cleanup, nested forwarding, and
 unused alias release. Independent verification checks the original call ABI, both
 shapes and endpoint layouts, a thin normalized destination, restoration ownership
 and source-before-release ordering. Corrupt contracts fail before C emission.
+
+## Callable aggregate handoff
+
+Representation analysis now retains callable member descriptors in owned source
+tuples, including nested tuples, captures, parameters and results. Physical
+lowering still rejects these with an explicit aggregate-adapter diagnostic.
+The C storage `Cell`/`View` version model is unchanged. Follow-up must add
+recursive aggregate layouts and ownership transfer/disposal before allowing
+callable focus storage. Focus adapters need distinct read/replacement descriptors
+and restoration through the current logical version, with escaping backing
+retained until completion. No new C function-pointer casts or execution paths
+are introduced by this representation-only slice.

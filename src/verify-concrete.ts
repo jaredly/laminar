@@ -152,6 +152,8 @@ export function verifyConcreteProgram(p: ConcreteProgram): void {
     );
     const seenShapes = new Set<string>();
     function storage(v: ValueRepresentation): string {
+        if (v.kind === 'aggregate')
+            return fail('Callable aggregate storage requires an explicit physical adapter');
         if (v.kind === 'data') return data(semanticLayouts.get(v.layout)!.type);
         if (v.kind === 'native' || v.kind === 'callable' || v.kind === 'callable-choice')
             return (
