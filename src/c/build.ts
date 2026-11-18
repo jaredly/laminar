@@ -1,8 +1,7 @@
 import { mkdtemp, writeFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { writeFileSync } from 'node:fs';
-import { spawnSync } from 'node:child_process';
+import { execFile } from 'node:child_process';
 import { BackendDiagnostic } from '../backend/target.ts';
 export type BuildOptions = {
     compiler: string;
@@ -12,6 +11,40 @@ export type BuildOptions = {
     sanitize?: boolean;
     expected?: unknown[];
 };
+// Keep subprocesses asynchronous so independent builds can overlap.
+function runProcess(command: string, args: string[], env = process.env) {
+    return new Promise<{
+        stdout: string;
+        stderr: string;
+        status: number | null;
+        signal: NodeJS.Signals | null;
+        error?: Error;
+    }>((resolve) => {
+        execFile(
+            command,
+            args,
+            { encoding: 'utf8', timeout: 60000, env },
+            (error, stdout, stderr) => {
+                resolve({
+                    stdout,
+                    stderr,
+                    status: error ? (typeof error.code === 'number' ? error.code : null) : 0,
+                    signal: error?.signal ?? null,
+                    error: error && typeof error.code !== 'number' ? error : undefined,
+                });
+            },
+        );
+    });
+}
+const versions = new Map<string, Promise<string>>();
+function version(command: string): Promise<string> {
+    let result = versions.get(command);
+    if (!result) {
+        result = runProcess(command, ['--version']).then((result) => result.stdout);
+        versions.set(command, result);
+    }
+    return result;
+}
 /** Compilation and execution are separate from emission. Failure directories are retained. */
 export async function buildAndRun(source: string, options: BuildOptions): Promise<unknown[]> {
     const directory = await mkdtemp(join(tmpdir(), 'laminar-c-'));
@@ -37,15 +70,15 @@ export async function buildAndRun(source: string, options: BuildOptions): Promis
         );
     if (options.wasm) args.push('-sENVIRONMENT=node', '-sEXIT_RUNTIME=1', '-sASSERTIONS=1');
     await writeFile(input, source);
-    const compilerVersion = spawnSync(options.compiler, ['--version'], { encoding: 'utf8' }).stdout;
-    const runtimeVersion = options.wasm
-        ? spawnSync(options.node ?? 'node', ['--version'], { encoding: 'utf8' }).stdout
-        : undefined;
+    const [compilerVersion, runtimeVersion] = await Promise.all([
+        version(options.compiler),
+        options.wasm ? version(options.node ?? 'node') : undefined,
+    ]);
     await writeFile(
         join(directory, 'build.json'),
         JSON.stringify({ options, args, compilerVersion, runtimeVersion }, null, 2),
     );
-    const run = (command: string, args: string[], stage: 'c-build' | 'c-runtime') => {
+    const run = async (command: string, args: string[], stage: 'c-build' | 'c-runtime') => {
         const env = { ...process.env };
         if (options.sanitize)
             env.ASAN_OPTIONS = [env.ASAN_OPTIONS, 'detect_stack_use_after_return=1']
@@ -56,9 +89,9 @@ export async function buildAndRun(source: string, options: BuildOptions): Promis
         delete env.C_INCLUDE_PATH;
         delete env.CPLUS_INCLUDE_PATH;
         if (options.wasm) delete env.SDKROOT;
-        const result = spawnSync(command, args, { encoding: 'utf8', timeout: 60000, env });
+        const result = await runProcess(command, args, env);
         if (result.error || result.status !== 0) {
-            writeFileSync(
+            await writeFile(
                 join(directory, stage + '.json'),
                 JSON.stringify(
                     {
@@ -80,10 +113,10 @@ export async function buildAndRun(source: string, options: BuildOptions): Promis
         }
         return result.stdout;
     };
-    run(options.compiler, args, 'c-build');
+    await run(options.compiler, args, 'c-build');
     const text = options.wasm
-        ? run(options.node ?? 'node', [output], 'c-runtime')
-        : run(output, [], 'c-runtime');
+        ? await run(options.node ?? 'node', [output], 'c-runtime')
+        : await run(output, [], 'c-runtime');
     try {
         const results = text
             .trim()

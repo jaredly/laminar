@@ -27,6 +27,27 @@ import { targetConfig, wasm32Emscripten } from '../../src/backend/target.ts';
 import { executeTypedProgram } from '../../src/eval-typed.ts';
 import { emitC } from '../../src/c/emit.ts';
 import { buildAndRun } from '../../src/c/build.ts';
+// Bun schedules concurrent tests in groups; cap expensive toolchain jobs at four.
+let active = 0;
+const waiting: (() => void)[] = [];
+async function withBuildSlot(work: () => Promise<void>) {
+    if (active >= 4) await new Promise<void>((resolve) => waiting.push(resolve));
+    else active++;
+    try {
+        await work();
+    } finally {
+        const next = waiting.shift();
+        if (next) next();
+        else active--;
+    }
+}
+// Each concurrent emcc invocation otherwise starts its own CPU-sized worker pool.
+const oldCores = process.env.EMCC_CORES;
+process.env.EMCC_CORES = '1';
+afterAll(() => {
+    if (oldCores === undefined) delete process.env.EMCC_CORES;
+    else process.env.EMCC_CORES = oldCores;
+});
 const version = (cmd: string) => spawnSync(cmd, ['--version'], { encoding: 'utf8' });
 const clang = version('clang'),
     emcc = version('emcc'),
@@ -111,60 +132,62 @@ for (const wasm of [false, true]) {
     if (!available)
         console.warn(`Skipping local backend execution: missing ${wasm ? 'emcc/Node' : 'clang'}`);
     for (const sample of samples)
-        (available ? it : it.skip)(
+        (available ? it.concurrent : it.skip)(
             `${wasm ? 'Wasm' : 'native'}: ${sample.name}`,
-            async () => {
-                const p = typedProgram(sample.source);
-                const c = compileConcreteProgram(
-                    p,
-                    wasm ? wasm32Emscripten(emcc.stdout.trim()) : native!,
-                    [{ unit: p.units.at(-1)!.id, arguments: [] }],
-                );
-                const source = emitC(c);
-                expect<unknown>(normalize(executeTypedProgram(p))).toEqual(sample.expected);
-                if (!wasm)
-                    expect(
-                        await buildAndRun(source, {
-                            compiler: 'clang',
-                            sanitize: true,
-                            expected: [sample.expected],
-                        }),
-                    ).toEqual([sample.expected]);
-                for (const optimize of [false, true])
-                    expect(
-                        await buildAndRun(source, {
-                            compiler: wasm ? 'emcc' : 'clang',
-                            wasm,
-                            optimize,
-                            expected: [sample.expected],
-                        }),
-                    ).toEqual([sample.expected]);
-            },
+            () =>
+                withBuildSlot(async () => {
+                    const p = typedProgram(sample.source);
+                    const c = compileConcreteProgram(
+                        p,
+                        wasm ? wasm32Emscripten(emcc.stdout.trim()) : native!,
+                        [{ unit: p.units.at(-1)!.id, arguments: [] }],
+                    );
+                    const source = emitC(c);
+                    expect<unknown>(normalize(executeTypedProgram(p))).toEqual(sample.expected);
+                    if (!wasm)
+                        expect(
+                            await buildAndRun(source, {
+                                compiler: 'clang',
+                                sanitize: true,
+                                expected: [sample.expected],
+                            }),
+                        ).toEqual([sample.expected]);
+                    for (const optimize of [false, true])
+                        expect(
+                            await buildAndRun(source, {
+                                compiler: wasm ? 'emcc' : 'clang',
+                                wasm,
+                                optimize,
+                                expected: [sample.expected],
+                            }),
+                        ).toEqual([sample.expected]);
+                }),
             60000,
         );
     for (const [name, source] of [
         ['unmatched case', 'match 1 {2 -> 3}'],
         ['unmatched temporary cleanup', '{let f = ~{lens 4 <- 1\n ()}\n f := 3}'],
     ])
-        (available ? it : it.skip)(
+        (available ? it.concurrent : it.skip)(
             `${wasm ? 'Wasm' : 'native'}: ${name} traps`,
-            async () => {
-                const p = typedProgram(source!);
-                const c = compileConcreteProgram(
-                    p,
-                    wasm ? wasm32Emscripten(emcc.stdout.trim()) : native!,
-                    [{ unit: p.units.at(-1)!.id, arguments: [] }],
-                );
-                try {
-                    await buildAndRun(emitC(c), { compiler: wasm ? 'emcc' : 'clang', wasm });
-                    throw Error('Expected runtime trap');
-                } catch (error) {
-                    expect((error as { code?: string }).code).toBe('c-runtime');
-                    const directory = String(error).match(/Artifacts: (.+)/)![1]!;
-                    // Expected trap artifacts have been checked; real regressions remain retained.
-                    await rm(directory, { recursive: true });
-                }
-            },
+            () =>
+                withBuildSlot(async () => {
+                    const p = typedProgram(source!);
+                    const c = compileConcreteProgram(
+                        p,
+                        wasm ? wasm32Emscripten(emcc.stdout.trim()) : native!,
+                        [{ unit: p.units.at(-1)!.id, arguments: [] }],
+                    );
+                    try {
+                        await buildAndRun(emitC(c), { compiler: wasm ? 'emcc' : 'clang', wasm });
+                        throw Error('Expected runtime trap');
+                    } catch (error) {
+                        expect((error as { code?: string }).code).toBe('c-runtime');
+                        const directory = String(error).match(/Artifacts: (.+)/)![1]!;
+                        // Expected trap artifacts have been checked; real regressions remain retained.
+                        await rm(directory, { recursive: true });
+                    }
+                }),
             60000,
         );
 }
