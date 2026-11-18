@@ -68,6 +68,12 @@ type ConcreteOutput = {
             : never
         : never;
 };
+/** Affine by-value conversion of one selected branch result. */
+export type ConcreteValueAdapter = { from: string; to: string } & (
+    | { kind: 'move' }
+    | { kind: 'aggregate'; items: ConcreteValueAdapter[] }
+    | { kind: 'callable'; callable: string; entries: { source: string; target: string }[] }
+);
 export type ConcreteInstruction =
     | Extract<Instruction, { op: 'bind' | 'borrow' }>
     | (Exclude<
@@ -101,6 +107,7 @@ export type ConcreteInstruction =
               setup?: Cleanup[];
               restored?: Cleanup[];
           }[];
+          aggregateJoin?: { ownership: 'transfer-selected-result'; arms: ConcreteValueAdapter[] };
           lensJoin?: { kind: 'selected'; arms: string[]; result: string };
           callableJoin?: {
               kind: 'erased-environment';

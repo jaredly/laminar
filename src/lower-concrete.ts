@@ -27,6 +27,7 @@ import type {
     ConcreteInstruction,
     ConcreteCode,
     ConcreteField,
+    ConcreteValueAdapter,
 } from './concrete-ir.ts';
 import { verifyConcreteProgram } from './verify-concrete.ts';
 
@@ -442,6 +443,27 @@ export function lowerConcreteProgram(
             return { source: from.field, target: entry.field };
         }),
     });
+    const valueAdapter = (
+        from: ValueRepresentation,
+        to: ValueRepresentation,
+    ): ConcreteValueAdapter => {
+        const endpoints = { from: layout(from), to: layout(to) };
+        if (representationKey(from) === representationKey(to))
+            return { ...endpoints, kind: 'move' };
+        if (from.kind === 'aggregate' && to.kind === 'aggregate')
+            return {
+                ...endpoints,
+                kind: 'aggregate',
+                items: to.items.map((v, n) => valueAdapter(from.items[n]!, v)),
+            };
+        if (to.kind === 'callable-choice')
+            return {
+                ...endpoints,
+                kind: 'callable',
+                ...joinArm(callable(group(from)), callable(group(to))),
+            };
+        return fail('Unsupported aggregate member adapter');
+    };
     const lowerBody = (
         body: IRBlock,
         record: Pick<RepresentationVariant, 'values' | 'calls'>,
@@ -480,6 +502,19 @@ export function lowerConcreteProgram(
                         ...i,
                         out,
                         cases: i.cases.map((c) => ({ ...c, body: lower(c.body) })),
+                        ...(values.get(i.out.id)!.kind === 'aggregate'
+                            ? {
+                                  aggregateJoin: {
+                                      ownership: 'transfer-selected-result' as const,
+                                      arms: i.cases.map((arm) =>
+                                          valueAdapter(
+                                              values.get(arm.body.result)!,
+                                              values.get(i.out.id)!,
+                                          ),
+                                      ),
+                                  },
+                              }
+                            : {}),
                         ...(values.get(i.out.id)!.kind === 'callable-choice'
                             ? {
                                   callableJoin: {

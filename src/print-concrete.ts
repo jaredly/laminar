@@ -385,6 +385,7 @@ export function lconcrete(program: ConcreteProgram, options: ConcretePrintOption
                     expression = words(
                         'match',
                         value(i.value),
+                        ...(i.aggregateJoin ? ['selected-aggregate'] : []),
                         ...(i.callableJoin
                             ? [
                                   words(

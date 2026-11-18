@@ -1,4 +1,4 @@
-import type { ConcreteProgram, ConcreteBlock } from '../concrete-ir.ts';
+import type { ConcreteProgram, ConcreteBlock, ConcreteValueAdapter } from '../concrete-ir.ts';
 import { Storage, type Data, type View } from './storage.ts';
 import type { IRPattern, SlotRef } from '../typed-ir.ts';
 import { verifyConcreteProgram } from '../verify-concrete.ts';
@@ -828,7 +828,23 @@ export function lowerC(program: ConcreteProgram): TranslationUnit {
                                 nested,
                             );
                             const result = block(arm.body, nested);
-                            if (i.callableJoin) {
+                            const adapt = (a: ConcreteValueAdapter, expression: string): string => {
+                                if (a.kind === 'move') return expression;
+                                if (a.kind === 'aggregate')
+                                    return `(${type(a.to)}){${a.items.map((child, n) => `.item${n}=${adapt(child, `(${expression}).item${n}`)}`).join(', ')}}`;
+                                const entries = a.entries
+                                    .map(
+                                        (e) =>
+                                            `, .${identifier(e.target)}=(${expression}).${identifier(e.source)}`,
+                                    )
+                                    .join('');
+                                return `(${type(a.to)}){.environment=(${expression}).environment, .dispose=(${expression}).dispose${entries}}`;
+                            };
+                            if (i.aggregateJoin)
+                                nested.push(
+                                    `${name} = ${adapt(i.aggregateJoin.arms[armIndex]!, result)};`,
+                                );
+                            else if (i.callableJoin) {
                                 const adapter = i.callableJoin.arms[armIndex]!;
                                 const entries = adapter.entries
                                     .map(

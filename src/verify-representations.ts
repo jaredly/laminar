@@ -404,6 +404,35 @@ export function verifyRepresentations(
             topology(projectedShape(lens(args[0]), [0]), lens(v));
         } else if (v.kind !== 'data') fail('Unsupported native callable result');
     }
+    function verifyJoin(v: ValueRepresentation, results: ValueRepresentation[]): void {
+        if (results.every((r) => repKey(r) === repKey(v))) return;
+        if (v.kind === 'aggregate') {
+            const members = results.map((r) =>
+                r.kind === 'aggregate' && r.items.length === v.items.length
+                    ? r.items
+                    : fail('Aggregate join member changed'),
+            );
+            v.items.forEach((child, n) =>
+                verifyJoin(
+                    child,
+                    members.map((items) => items[n]!),
+                ),
+            );
+        } else if (v.kind === 'callable-choice') {
+            const options = results.flatMap((r) =>
+                r.kind === 'callable-choice'
+                    ? r.options
+                    : r.kind === 'callable' || r.kind === 'native'
+                      ? [r]
+                      : fail('Non-callable join member'),
+            );
+            requireEqual(
+                v.options.map(repKey),
+                [...new Set(options.map(repKey))].sort(),
+                'Callable join alternatives changed',
+            );
+        } else results.forEach((r) => requireEqual(v, r, 'Branch needs a representation adapter'));
+    }
     const edges = new Map<string, Set<string>>();
     function verifyBody(
         unit: IRUnit,
@@ -601,23 +630,7 @@ export function verifyRepresentations(
                             s.places.set(place, current);
                         });
                         if (i.out.type.tag === 'flow') results.forEach(lens);
-                        else if (v.kind === 'callable-choice') {
-                            const options = results.flatMap((r) =>
-                                r.kind === 'callable-choice'
-                                    ? r.options
-                                    : r.kind === 'callable' || r.kind === 'native'
-                                      ? [r]
-                                      : fail('Non-callable join member'),
-                            );
-                            requireEqual(
-                                v.options.map(repKey),
-                                [...new Set(options.map(repKey))].sort(),
-                                'Callable join alternatives changed',
-                            );
-                        } else
-                            results.forEach((result) =>
-                                requireEqual(v, result, 'Branch needs a representation adapter'),
-                            );
+                        else verifyJoin(v, results);
                         break;
                     }
                     case 'call': {

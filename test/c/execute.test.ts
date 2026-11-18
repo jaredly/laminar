@@ -1,3 +1,4 @@
+import { aggregateJoinSamples } from '../backend/aggregate-join-samples.ts';
 import { callableFocusSamples } from '../backend/callable-focus-samples.ts';
 import { callableStorageSamples } from '../backend/callable-storage-samples.ts';
 import { lensResultSamples } from '../backend/lens-result-samples.ts';
@@ -64,6 +65,7 @@ const native =
           })
         : undefined;
 const samples = [
+    ...aggregateJoinSamples,
     ...callableFocusSamples,
     ...callableStorageSamples,
     ...backendCorpus.filter((s) => s.phase <= 6),

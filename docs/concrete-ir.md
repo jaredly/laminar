@@ -235,3 +235,26 @@ data-to-captured-callable replacements. Divergent final descriptors still requir
 an explicit adapter and diagnose. Projected/borrowed callable focuses, persistent
 aliases, callable focus parameters/results, manual restoration, scattered callable
 focuses and differing aggregate joins remain open. Phase 6 is incomplete.
+
+## Branch joins of callable tuples
+
+Owned tuple branch results may now differ recursively in callable provenance.
+Analysis joins corresponding members, preserving unchanged data and canonical
+callable alternative sets. A concrete `aggregateJoin` retains one recursive
+adapter per arm, exact source/destination layouts, typed callable entry mappings,
+and `transfer-selected-result` ownership. Independent verification derives the
+expected adapter and rejects changed endpoints, member order, entries or ownership.
+The diagnostic printer marks these cases `selected-aggregate`.
+
+C lowering reconstructs only the selected result, moving each environment,
+disposer and exactly typed invocation field once. It adds no allocation or
+function-pointer casts. Existing aggregate capture, parameter/result transfer and
+recursive disposal paths handle the normalized tuple. Fourteen shared samples
+cover nested tuples, nested subset joins, partial and whole disposal, captured
+parameters, returned tuples and native/user lens callable members, with both
+branch selections.
+
+Differing tuple results of dynamic calls still require a result adapter; divergent
+branch storage versions and callable focus restoration retain their explicit
+restrictions. This implements tuple branch-result joins, not general callable
+restoration or the phase-6 exit gate.

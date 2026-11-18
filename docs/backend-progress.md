@@ -524,3 +524,43 @@ and Emscripten/Node at both optimization levels without retries (666.64 seconds)
 `bun test --path-ignore-patterns '**/c/execute.test.ts'`,
 `bun test test/c/execute.test.ts`, `bunx tsc --noEmit`, and `git diff --check`.
 Remote CI was not run.
+
+## Phase 6 slice: recursive callable tuple branch-result joins
+
+Representation inference now joins corresponding members of owned tuple branch
+results, retaining each canonical callable alternative set and unchanged data
+member. The aggregate join is enabled only for branch results: differing tuple
+results of dynamic calls still report the unsupported adapter diagnostic rather
+than reaching inconsistent call annotations.
+
+Concrete `aggregateJoin` contracts retain per-arm recursive move/aggregate/callable
+adapters, exact endpoint layouts, typed entry mappings and
+`transfer-selected-result` ownership. Independent analysis verification checks the
+recursive member alternatives. Independent concrete verification derives every
+adapter separately, including original callable ABIs. Callable descriptor discovery
+now recurses through aggregates and local-focus endpoints, covering unused joined
+members that are never invoked. The printer marks selected aggregate adapters.
+
+C emission reconstructs the selected tuple using typed compound literals. Each
+environment, disposer and entry field transfers once; no environment copy,
+additional allocation, function-pointer cast or storage address retention is
+introduced. Existing recursive disposal releases unused or partially consumed
+normalized aggregates. Fourteen shared samples cover both branch selections,
+nested tuples/subset joins, partial and whole disposal, capture/parameter transfer,
+returned tuples and native/user lens callable members. Corruption tests reject
+missing adapters, wrong ownership, layouts, member order, callable IDs, entry
+mappings and forged analysis provenance.
+
+General callable focus restoration, divergent branch storage versions and differing
+tuple results of dynamic calls remain open. Phase 6 is incomplete.
+
+Validation: **1,563 passes, 39 existing skips, zero failures across 38 files**:
+1,025 non-execution tests and 538 native/Wasm execution cases. The full harness
+passed strict C11, optimized native builds, supported native sanitizers and
+Emscripten/Node at both optimization levels without retries (706.18 seconds).
+After the final ownership-contract and diagnostic refinements, all 28 new
+native/Wasm cases also passed a targeted rerun. TypeScript and diff checks pass.
+Commands: `bun test --path-ignore-patterns '**/c/execute.test.ts'`,
+`bun test test/c/execute.test.ts`,
+`bun test test/c/execute.test.ts -t 'aggregate join'`,
+`bunx tsc --noEmit`, and `git diff --check`. Remote CI was not run.

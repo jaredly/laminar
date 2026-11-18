@@ -148,7 +148,7 @@ export function inferRepresentations(
         v.kind === 'lens' ? v.shape : fail('Expected lens representation');
     const key = representationKey;
     const equal = (a: ValueRepresentation, b: ValueRepresentation) => key(a) === key(b);
-    const join = (items: ValueRepresentation[]): ValueRepresentation => {
+    const join = (items: ValueRepresentation[], aggregate = false): ValueRepresentation => {
         const first = items[0] ?? fail('Empty representation join');
         if (items.every((v) => equal(first, v))) return first;
         if (
@@ -175,6 +175,25 @@ export function inferRepresentations(
                     .map(([, v]) => v),
             };
         }
+        if (
+            aggregate &&
+            first.kind === 'aggregate' &&
+            items.every((v) => v.kind === 'aggregate' && v.items.length === first.items.length)
+        )
+            return {
+                kind: 'aggregate',
+                items: first.items.map((_, index) =>
+                    join(
+                        items.map(
+                            (v) =>
+                                (v as Extract<ValueRepresentation, { kind: 'aggregate' }>).items[
+                                    index
+                                ]!,
+                        ),
+                        true,
+                    ),
+                ),
+            };
         throw new BackendDiagnostic(
             'unsupported-representation-join',
             'Different value representations require an adapter',
@@ -502,7 +521,7 @@ export function inferRepresentations(
                     out =
                         i.out.type.tag === 'flow'
                             ? { kind: 'lens', shape: reps.thin(i.out.type.read, i.out.type.write) }
-                            : join(branches);
+                            : join(branches, true);
                     break;
                 }
             }

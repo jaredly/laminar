@@ -4,15 +4,15 @@ Status: phases 0–3 are implemented through the concrete-IR exit gate; phases 4
 execute the documented scalar/tuple native C and Emscripten/Node subset. Typed
 indirect closure invocation and environment disposal implement part of phase 6.
 Compatible user-defined/native intrinsic joins and differing callable results
-execute, including differing lens-result shapes. Owned callable tuples execute through concrete recursive storage; callable
+execute, including differing lens-result shapes. Owned callable tuples and recursive callable tuple branch-result joins execute through concrete recursive storage; callable
 general focus storage/restoration remains open; direct whole-owned-local callable swaps execute. Phase 7 runtime and host integration and phase 8 optimization remain broader
 work. This is subset
 coverage, not completion of every phase exit gate.
 
 The scoped lens extensions are complete as of `707521c`; see the
 [completion record and follow-up mapping](checker-completeness-handoff.md).
-Latest local verification: **1512 pass / 39 existing skips / 0 failures across
-37 files**, with TypeScript and diff checks passing. The latest full execution run passed without retries. Remote CI was not run for
+Latest local verification: **1563 pass / 39 existing skips / 0 failures across
+38 files**, with TypeScript and diff checks passing. The latest full execution run passed without retries. Remote CI was not run for
 these slices. See also [the implementation record](backend-progress.md),
 [backend contract](backend-contract.md), [typed IR API](typed-ir.md), and
 [C backend](c-backend.md). Each further slice should be independently reviewable
@@ -366,3 +366,17 @@ data-to-captured-callable replacements. Divergent final descriptors still requir
 an explicit adapter and diagnose. Projected/borrowed callable focuses, persistent
 aliases, callable focus parameters/results, manual restoration, scattered callable
 focuses and differing aggregate joins remain open. Phase 6 is incomplete.
+
+## Latest phase 6 boundary: tuple branch-result adapters
+
+Branches returning tuples with differing callable members now normalize each
+member recursively, preserving original invocation ABIs and selected environment
+ownership. Concrete adapters retain exact endpoint layouts and entry mappings,
+independently checked before C emission. Nested subset joins, unused members,
+captures, parameters and returned normalized tuples execute through the existing
+storage/disposal paths. See the latest backend progress record for validation.
+
+Remaining aggregate work is differing tuple results of dynamic calls and divergent
+branch storage versions. Callable focus aliases/projections, parameters/results,
+manual restoration and scattered callable focuses still require representation-aware
+restoration contracts. Phase 6 remains open.

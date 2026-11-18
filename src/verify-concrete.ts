@@ -13,6 +13,7 @@ import type {
     ConcreteField,
     ConcreteBlock,
     ConcreteCode,
+    ConcreteValueAdapter,
 } from './concrete-ir.ts';
 
 /** Verify detached concrete records, their ABI references, and their correspondence to verified IR. */
@@ -242,6 +243,11 @@ export function verifyConcreteProgram(p: ConcreteProgram): void {
     >();
     const descriptors = new Map<string, ValueRepresentation>();
     function discover(v: ValueRepresentation): void {
+        if (v.kind === 'aggregate') v.items.forEach(discover);
+        if (v.kind === 'local-focus') {
+            discover(v.read);
+            discover(v.replacement);
+        }
         if (v.kind === 'callable' || v.kind === 'native' || v.kind === 'callable-choice') {
             descriptors.set(representationKey(v), v);
             if (v.kind === 'callable') v.captures.forEach(discover);
@@ -681,6 +687,69 @@ export function verifyConcreteProgram(p: ConcreteProgram): void {
                               }
                             : undefined;
                     eq(o.lensJoin, join, 'Selected-branch restoration adapter changed');
+                    function callableArm(from: ValueRepresentation, to: ValueRepresentation) {
+                        const targetCallable = callableByDescriptor.get(representationKey(to))!;
+                        const source = callableByDescriptor.get(representationKey(from))!;
+                        return {
+                            callable: source.id,
+                            entries: targetCallable.entries.map((entry) => {
+                                const dispatch = wrapper(entry.wrapper);
+                                if (dispatch.kind !== 'dispatch')
+                                    return fail('Join target lacks dispatch contract');
+                                const from =
+                                    source.entries.find((candidate) => {
+                                        const w = wrapper(candidate.wrapper);
+                                        return (
+                                            candidate.abi === entry.abi &&
+                                            (w.kind === 'dispatch'
+                                                ? w.targets.every((t) =>
+                                                      dispatch.targets.some(
+                                                          (d) =>
+                                                              d.callable === t.callable &&
+                                                              d.wrapper === t.wrapper,
+                                                      ),
+                                                  )
+                                                : dispatch.targets.some(
+                                                      (t) =>
+                                                          t.callable === source.id &&
+                                                          t.wrapper === candidate.wrapper,
+                                                  ))
+                                        );
+                                    }) ?? fail('Join source lacks compatible invocation entry');
+                                return { source: from.field, target: entry.field };
+                            }),
+                        };
+                    }
+                    function adapter(
+                        from: ValueRepresentation,
+                        to: ValueRepresentation,
+                    ): ConcreteValueAdapter {
+                        const endpoints = { from: storage(from), to: storage(to) };
+                        if (representationKey(from) === representationKey(to))
+                            return { ...endpoints, kind: 'move' };
+                        if (from.kind === 'aggregate' && to.kind === 'aggregate')
+                            return {
+                                ...endpoints,
+                                kind: 'aggregate',
+                                items: to.items.map((v, n) => adapter(from.items[n]!, v)),
+                            };
+                        if (to.kind !== 'callable-choice')
+                            return fail('Unsupported aggregate member adapter');
+                        const arm = callableArm(from, to);
+                        return { ...endpoints, kind: 'callable', ...arm };
+                    }
+                    eq(
+                        o.aggregateJoin,
+                        reps.get(i.out.id)!.kind === 'aggregate'
+                            ? {
+                                  ownership: 'transfer-selected-result',
+                                  arms: i.cases.map((arm) =>
+                                      adapter(reps.get(arm.body.result)!, reps.get(i.out.id)!),
+                                  ),
+                              }
+                            : undefined,
+                        'Aggregate join adapter changed',
+                    );
                     let callableJoin;
                     if (reps.get(i.out.id)!.kind === 'callable-choice') {
                         const targetCallable = callableByDescriptor.get(
@@ -689,41 +758,9 @@ export function verifyConcreteProgram(p: ConcreteProgram): void {
                         callableJoin = {
                             kind: 'erased-environment',
                             result: targetCallable.id,
-                            arms: i.cases.map((arm) => {
-                                const source = callableByDescriptor.get(
-                                    representationKey(reps.get(arm.body.result)!),
-                                )!;
-                                return {
-                                    callable: source.id,
-                                    entries: targetCallable.entries.map((entry) => {
-                                        const dispatch = wrapper(entry.wrapper);
-                                        if (dispatch.kind !== 'dispatch')
-                                            return fail('Join target lacks dispatch contract');
-                                        const from =
-                                            source.entries.find((candidate) => {
-                                                const w = wrapper(candidate.wrapper);
-                                                return (
-                                                    candidate.abi === entry.abi &&
-                                                    (w.kind === 'dispatch'
-                                                        ? w.targets.every((t) =>
-                                                              dispatch.targets.some(
-                                                                  (d) =>
-                                                                      d.callable === t.callable &&
-                                                                      d.wrapper === t.wrapper,
-                                                              ),
-                                                          )
-                                                        : dispatch.targets.some(
-                                                              (t) =>
-                                                                  t.callable === source.id &&
-                                                                  t.wrapper === candidate.wrapper,
-                                                          ))
-                                                );
-                                            }) ??
-                                            fail('Join source lacks compatible invocation entry');
-                                        return { source: from.field, target: entry.field };
-                                    }),
-                                };
-                            }),
+                            arms: i.cases.map((arm) =>
+                                callableArm(reps.get(arm.body.result)!, reps.get(i.out.id)!),
+                            ),
                         };
                     }
                     eq(o.callableJoin, callableJoin, 'Callable join adapter changed');
