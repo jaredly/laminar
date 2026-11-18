@@ -697,6 +697,11 @@ export function verifyRepresentations(
                                     [...new Set(members.map(repKey))].sort(),
                                     'Dynamic result alternatives changed',
                                 );
+                            } else if (
+                                callee.kind === 'callable-choice' &&
+                                v.kind === 'aggregate'
+                            ) {
+                                verifyJoin(v, results);
                             } else if (callee.kind === 'callable-choice' && v.kind === 'lens') {
                                 const first = results[0]!;
                                 if (results.every((r) => same(r, first)))

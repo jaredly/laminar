@@ -83,15 +83,3 @@ it('rejects forged aggregate join member provenance independently', () => {
     joined.representation.items[0].items[0] = joined.representation.items[0].items[0].options[0];
     expect(() => verifyConcreteProgram(c)).toThrow('Branch needs a representation adapter');
 });
-it('keeps differing aggregate results of dynamic calls explicit', () => {
-    const p = typedProgram(`{let x = 3
- let y = 5
- let f = match true {true -> fn () (fn () x, 1); false -> fn () (fn () y, 2)}
- let (g, n) = f()
- g() + n}`);
-    expect(() =>
-        compileConcreteProgram(p, wasm32Emscripten('test'), [
-            { unit: p.units.at(-1)!.id, arguments: [] },
-        ]),
-    ).toThrow('Different value representations require an adapter');
-});

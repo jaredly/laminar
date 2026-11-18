@@ -314,6 +314,21 @@ export function lowerConcreteProgram(
                 wrappers.set(id, w);
                 return w;
             }
+            if (raw.kind === 'aggregate' && c.result.kind === 'aggregate') {
+                const source = wrapper(g, { ...c, result: raw }, environment);
+                const w: ConcreteWrapper = {
+                    id,
+                    key,
+                    kind: 'adapt-aggregate-result',
+                    abi,
+                    environment,
+                    source: source.id,
+                    adapter: valueAdapter(raw, c.result),
+                    ownership: 'transfer-result',
+                };
+                wrappers.set(id, w);
+                return w;
+            }
             if (c.result.kind !== 'callable-choice') return fail('Unsupported result adapter');
             const source = wrapper(g, { ...c, result: raw }, environment);
             const from = callable(group(raw)),

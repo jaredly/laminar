@@ -564,3 +564,44 @@ Commands: `bun test --path-ignore-patterns '**/c/execute.test.ts'`,
 `bun test test/c/execute.test.ts`,
 `bun test test/c/execute.test.ts -t 'aggregate join'`,
 `bunx tsc --noEmit`, and `git diff --check`. Remote CI was not run.
+
+## Phase 6 slice: differing dynamic callable tuple results
+
+Following `939b809`, dynamic calls can now join recursive aggregate result
+descriptors. Each alternative body keeps its original result ABI. Concrete
+`adapt-aggregate-result` wrappers call that source ABI and transfer its result
+through the existing recursive value adapter. C lowering and independent concrete
+verification now share their respective branch/result conversion helpers; the
+verifier still derives expected contracts independently of lowering.
+
+The result adapter moves environment, disposer and exact invocation fields with
+no new allocation, code-pointer cast or disposal of the extracted result. Common
+result alternatives propagate through nested subset choices. Independent analysis
+verification checks recursive result alternatives; concrete verification checks the
+source wrapper, original ABI, exact endpoint layouts, recursive member mappings
+and `transfer-result` ownership. Printing exposes source and result layout IDs.
+
+Sixteen shared samples exercise both selections, nested tuples/subsets, partial
+and whole unused disposal, captured parameter transfer, native lens members and
+returned lens callees using thin/scattered arguments and type-changing replacement.
+Eight corruption tests reject altered source/ownership, endpoints, member order,
+callable IDs, entry mappings and forged result alternatives. The former dynamic
+tuple-result restriction test is replaced by positive execution coverage.
+
+Subsequent user commit `9f83b1a` is preserved. Its `cli/c.ts:46` accesses `err.loc`
+while the catch variable is `unknown`, so the default `bunx tsc --noEmit` reports
+TS18046. A temporary config extending the repository config and excluding only
+`cli/` (and `node_modules/`) passes; no CLI source was changed for this slice.
+
+Validation: **1,618 passes, 39 existing skips, zero failures across 39 files**:
+1,048 non-execution tests and 570 native/Wasm execution cases. The full harness
+passed strict C11, optimized native builds, supported native sanitizers and
+Emscripten/Node at both optimization levels without retries (621.34 seconds).
+`git diff --check` passes. The default TypeScript check has the unrelated CLI
+error described above; all files outside `cli/` pass the repository's compiler
+options via the temporary config. Remote CI was not run.
+Commands: `bun test --path-ignore-patterns '**/c/execute.test.ts'`,
+`bun test test/c/execute.test.ts`, `bunx tsc --noEmit`,
+`bunx tsc --noEmit -p /tmp/laminar-backend-tsconfig.json`, and `git diff --check`.
+General callable focus restoration and divergent branch storage versions remain
+open; phase 6 is incomplete.

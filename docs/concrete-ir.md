@@ -258,3 +258,23 @@ Differing tuple results of dynamic calls still require a result adapter; diverge
 branch storage versions and callable focus restoration retain their explicit
 restrictions. This implements tuple branch-result joins, not general callable
 restoration or the phase-6 exit gate.
+
+## Dynamic callable tuple results
+
+Dynamic calls may now return different recursive owned tuple descriptors.
+Analysis joins each member's callable alternatives, while each selected body
+retains its original tuple result ABI. An `adapt-aggregate-result` wrapper calls
+that original ABI and transfers the materialized result through the same recursive
+value adapter used by tuple branch joins. It allocates no additional environment
+and disposes no extracted result. Invocation pointers retain exact concrete types.
+
+Independent verification checks the original source wrapper/ABI, recursive endpoint
+layouts and entry mappings, common member alternatives and `transfer-result`
+ownership. C emission reuses the recursive typed compound-literal transfer path.
+Sixteen shared cases cover both selections, nested/subset results, partial and
+whole disposal, capture/parameter transfer, native members and returned lens
+callees with thin/scattered arguments and type-changing restoration.
+
+This removes the differing dynamic tuple-result restriction. Divergent branch
+storage versions and callable focus aliases/projections, call/return contracts,
+manual restoration and scattered focuses remain open. Phase 6 is incomplete.

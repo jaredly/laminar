@@ -4,15 +4,16 @@ Status: phases 0–3 are implemented through the concrete-IR exit gate; phases 4
 execute the documented scalar/tuple native C and Emscripten/Node subset. Typed
 indirect closure invocation and environment disposal implement part of phase 6.
 Compatible user-defined/native intrinsic joins and differing callable results
-execute, including differing lens-result shapes. Owned callable tuples and recursive callable tuple branch-result joins execute through concrete recursive storage; callable
+execute, including differing lens-result shapes and recursive callable tuple results. Owned callable tuples and recursive callable tuple branch-result joins execute through concrete recursive storage; callable
 general focus storage/restoration remains open; direct whole-owned-local callable swaps execute. Phase 7 runtime and host integration and phase 8 optimization remain broader
 work. This is subset
 coverage, not completion of every phase exit gate.
 
 The scoped lens extensions are complete as of `707521c`; see the
 [completion record and follow-up mapping](checker-completeness-handoff.md).
-Latest local verification: **1563 pass / 39 existing skips / 0 failures across
-38 files**, with TypeScript and diff checks passing. The latest full execution run passed without retries. Remote CI was not run for
+Latest local verification: **1618 pass / 39 existing skips / 0 failures across
+39 files**, with diff checks passing. TypeScript passes outside the subsequent
+CLI addition; the default check reports TS18046 in `cli/c.ts:46` (see backend progress). The latest full execution run passed without retries. Remote CI was not run for
 these slices. See also [the implementation record](backend-progress.md),
 [backend contract](backend-contract.md), [typed IR API](typed-ir.md), and
 [C backend](c-backend.md). Each further slice should be independently reviewable
@@ -380,3 +381,12 @@ Remaining aggregate work is differing tuple results of dynamic calls and diverge
 branch storage versions. Callable focus aliases/projections, parameters/results,
 manual restoration and scattered callable focuses still require representation-aware
 restoration contracts. Phase 6 remains open.
+
+## Latest phase 6 boundary: dynamic tuple-result adapters
+
+Dynamic callees with differing owned tuple results now normalize recursively
+through exact source-ABI wrappers and affine member transfer. Tuple branch and
+call-result adapters share their physical value conversion contract and independent
+verification. Remaining work includes divergent branch storage versions and general
+callable focus restoration (aliases/projections, parameters/results, manual cleanup
+and scattered focuses). Phase 6 remains open; see backend progress for validation.

@@ -174,36 +174,44 @@ export function lconcrete(program: ConcreteProgram, options: ConcretePrintOption
                             ? words('invoke', name(v.code))
                             : v.kind === 'native'
                               ? words('native', quote(v.definition))
-                              : v.kind === 'adapt-lens-result'
+                              : v.kind === 'adapt-aggregate-result'
                                 ? words(
-                                      'adapt-lens-result',
+                                      'adapt-aggregate-result',
                                       name(v.source),
-                                      quote(v.from),
+                                      name(v.adapter.from),
                                       '->',
-                                      quote(v.to),
-                                      tuple(v.order),
+                                      name(v.adapter.to),
                                   )
-                                : v.kind === 'adapt-result'
+                                : v.kind === 'adapt-lens-result'
                                   ? words(
-                                        'adapt-result',
+                                        'adapt-lens-result',
                                         name(v.source),
-                                        name(v.from),
+                                        quote(v.from),
                                         '->',
-                                        name(v.to),
-                                        tuple(
-                                            v.entries.map((e) => words(e.source, '->', e.target)),
-                                        ),
+                                        quote(v.to),
+                                        tuple(v.order),
                                     )
-                                  : v.kind === 'dispatch'
+                                  : v.kind === 'adapt-result'
                                     ? words(
-                                          'dispatch',
+                                          'adapt-result',
+                                          name(v.source),
+                                          name(v.from),
+                                          '->',
+                                          name(v.to),
                                           tuple(
-                                              v.targets.map((t) =>
-                                                  words(name(t.callable), name(t.wrapper)),
-                                              ),
+                                              v.entries.map((e) => words(e.source, '->', e.target)),
                                           ),
                                       )
-                                    : words('dispose', tuple(v.captures.map(name))),
+                                    : v.kind === 'dispatch'
+                                      ? words(
+                                            'dispatch',
+                                            tuple(
+                                                v.targets.map((t) =>
+                                                    words(name(t.callable), name(t.wrapper)),
+                                                ),
+                                            ),
+                                        )
+                                      : words('dispose', tuple(v.captures.map(name))),
                         v.ownership,
                     ),
                 ),

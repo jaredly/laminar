@@ -377,6 +377,52 @@ export function verifyConcreteProgram(p: ConcreteProgram): void {
     if (p.graphKey !== graphKey) fail('Concrete graph cache identity mismatch');
     const codeName = (variant: string) =>
         concreteName('code', JSON.stringify([target, graphKey, variant]));
+    function callableArm(from: ValueRepresentation, to: ValueRepresentation) {
+        const targetCallable = callableByDescriptor.get(representationKey(to))!;
+        const source = callableByDescriptor.get(representationKey(from))!;
+        return {
+            callable: source.id,
+            entries: targetCallable.entries.map((entry) => {
+                const dispatch = wrapper(entry.wrapper);
+                if (dispatch.kind !== 'dispatch')
+                    return fail('Join target lacks dispatch contract');
+                const from =
+                    source.entries.find((candidate) => {
+                        const w = wrapper(candidate.wrapper);
+                        return (
+                            candidate.abi === entry.abi &&
+                            (w.kind === 'dispatch'
+                                ? w.targets.every((t) =>
+                                      dispatch.targets.some(
+                                          (d) =>
+                                              d.callable === t.callable && d.wrapper === t.wrapper,
+                                      ),
+                                  )
+                                : dispatch.targets.some(
+                                      (t) =>
+                                          t.callable === source.id &&
+                                          t.wrapper === candidate.wrapper,
+                                  ))
+                        );
+                    }) ?? fail('Join source lacks compatible invocation entry');
+                return { source: from.field, target: entry.field };
+            }),
+        };
+    }
+    function adapter(from: ValueRepresentation, to: ValueRepresentation): ConcreteValueAdapter {
+        const endpoints = { from: storage(from), to: storage(to) };
+        if (representationKey(from) === representationKey(to))
+            return { ...endpoints, kind: 'move' };
+        if (from.kind === 'aggregate' && to.kind === 'aggregate')
+            return {
+                ...endpoints,
+                kind: 'aggregate',
+                items: to.items.map((v, n) => adapter(from.items[n]!, v)),
+            };
+        if (to.kind !== 'callable-choice') return fail('Unsupported aggregate member adapter');
+        const arm = callableArm(from, to);
+        return { ...endpoints, kind: 'callable', ...arm };
+    }
     const usedWrappers = new Set<string>();
     for (const c of cs.values()) {
         const k = representationKey(c.descriptor),
@@ -453,9 +499,13 @@ export function verifyConcreteProgram(p: ConcreteProgram): void {
                     ]);
                     const memberWrapper = wrapper(concreteName('wrapper', memberKey));
                     if (
-                        !['invoke', 'native', 'adapt-result', 'adapt-lens-result'].includes(
-                            memberWrapper.kind,
-                        ) ||
+                        ![
+                            'invoke',
+                            'native',
+                            'adapt-result',
+                            'adapt-lens-result',
+                            'adapt-aggregate-result',
+                        ].includes(memberWrapper.kind) ||
                         memberWrapper.abi !== w.abi
                     )
                         return fail('Dynamic callable ABI mismatch');
@@ -496,6 +546,32 @@ export function verifyConcreteProgram(p: ConcreteProgram): void {
                 )
                     fail('Invalid lens result restoration adapter');
                 eq(w.order, ['restore-source', 'release'], 'Lens result restoration order changed');
+            } else if (w.kind === 'adapt-aggregate-result') {
+                const raw = rawResult(c.descriptor, contract);
+                if (
+                    raw?.kind !== 'aggregate' ||
+                    contract.result.kind !== 'aggregate' ||
+                    representationKey(raw) === representationKey(contract.result)
+                )
+                    return fail('Missing aggregate result contract');
+                const rawABI = aid(contract.arguments.map(storage), storage(raw));
+                const rawKey = JSON.stringify([
+                    'wrapper',
+                    target,
+                    graphKey,
+                    k,
+                    contractKey({ ...contract, result: raw }),
+                    rawABI,
+                    c.environment,
+                ]);
+                const source = wrapper(concreteName('wrapper', rawKey));
+                if (
+                    source.kind !== 'invoke' ||
+                    w.source !== source.id ||
+                    w.ownership !== 'transfer-result'
+                )
+                    fail('Invalid aggregate result transfer adapter');
+                eq(w.adapter, adapter(raw, contract.result), 'Aggregate result adapter changed');
             } else if (w.kind === 'adapt-result') {
                 const variant =
                     p.analysis.variants.find((v) => v.id === contract.target) ??
@@ -687,57 +763,6 @@ export function verifyConcreteProgram(p: ConcreteProgram): void {
                               }
                             : undefined;
                     eq(o.lensJoin, join, 'Selected-branch restoration adapter changed');
-                    function callableArm(from: ValueRepresentation, to: ValueRepresentation) {
-                        const targetCallable = callableByDescriptor.get(representationKey(to))!;
-                        const source = callableByDescriptor.get(representationKey(from))!;
-                        return {
-                            callable: source.id,
-                            entries: targetCallable.entries.map((entry) => {
-                                const dispatch = wrapper(entry.wrapper);
-                                if (dispatch.kind !== 'dispatch')
-                                    return fail('Join target lacks dispatch contract');
-                                const from =
-                                    source.entries.find((candidate) => {
-                                        const w = wrapper(candidate.wrapper);
-                                        return (
-                                            candidate.abi === entry.abi &&
-                                            (w.kind === 'dispatch'
-                                                ? w.targets.every((t) =>
-                                                      dispatch.targets.some(
-                                                          (d) =>
-                                                              d.callable === t.callable &&
-                                                              d.wrapper === t.wrapper,
-                                                      ),
-                                                  )
-                                                : dispatch.targets.some(
-                                                      (t) =>
-                                                          t.callable === source.id &&
-                                                          t.wrapper === candidate.wrapper,
-                                                  ))
-                                        );
-                                    }) ?? fail('Join source lacks compatible invocation entry');
-                                return { source: from.field, target: entry.field };
-                            }),
-                        };
-                    }
-                    function adapter(
-                        from: ValueRepresentation,
-                        to: ValueRepresentation,
-                    ): ConcreteValueAdapter {
-                        const endpoints = { from: storage(from), to: storage(to) };
-                        if (representationKey(from) === representationKey(to))
-                            return { ...endpoints, kind: 'move' };
-                        if (from.kind === 'aggregate' && to.kind === 'aggregate')
-                            return {
-                                ...endpoints,
-                                kind: 'aggregate',
-                                items: to.items.map((v, n) => adapter(from.items[n]!, v)),
-                            };
-                        if (to.kind !== 'callable-choice')
-                            return fail('Unsupported aggregate member adapter');
-                        const arm = callableArm(from, to);
-                        return { ...endpoints, kind: 'callable', ...arm };
-                    }
                     eq(
                         o.aggregateJoin,
                         reps.get(i.out.id)!.kind === 'aggregate'
@@ -803,6 +828,7 @@ export function verifyConcreteProgram(p: ConcreteProgram): void {
                                 let candidate = wrapper(id);
                                 if (
                                     candidate.kind === 'adapt-result' ||
+                                    candidate.kind === 'adapt-aggregate-result' ||
                                     candidate.kind === 'adapt-lens-result'
                                 )
                                     candidate = wrapper(candidate.source);

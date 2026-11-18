@@ -39,6 +39,12 @@ export type ConcreteWrapper = {
           ownership: 'transfer-result';
       }
     | {
+          kind: 'adapt-aggregate-result';
+          source: string;
+          adapter: ConcreteValueAdapter;
+          ownership: 'transfer-result';
+      }
+    | {
           kind: 'adapt-lens-result';
           source: string;
           from: string;

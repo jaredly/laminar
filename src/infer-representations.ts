@@ -279,7 +279,7 @@ export function inferRepresentations(
             ) {
                 if (resultType?.tag !== 'flow') return fail('Missing dynamic lens result contract');
                 result = { kind: 'lens', shape: reps.thin(resultType.read, resultType.write) };
-            } else result = join(results);
+            } else result = join(results, true);
             const targets = calls.map((call) => call.target);
             return { target: JSON.stringify(['dispatch', targets]), targets, result };
         }
