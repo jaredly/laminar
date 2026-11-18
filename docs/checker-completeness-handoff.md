@@ -2,45 +2,51 @@
 
 ## Start here
 
-Continue in the `ts/` Git repository. This handoff supersedes the earlier audit of
-checker restrictions: computed aliases and lens-valued branches are implemented,
-and manual restoration now has semantic/reference and scalar/tuple C/Wasm support. Do not reimplement
-those milestones or treat their old rejection paths as current restrictions.
+Continue in the `ts/` Git repository. **Start with `aslens`: pattern-bound
+temporary focuses**, described below. Borrowed matching and constructor alias
+patterns are also outstanding, but require a user decision about constructor
+reconstruction before implementation.
 
-Manual restoration now has staging and retained-context adapters for the tested
-scalar/tuple subset, including returned and selected-branch focuses. Remaining
-checker work is borrowed matching, constructor alias patterns, and `aslens`.
-Computed-owner guards are now path-sensitive in both inference and typed
-verification, covering disjoint sibling cleanup, RHS, and argument updates.
-Captured cleanup invocation and callable focus storage retain separate backend
-restrictions.
+Manual restoration, computed/tuple aliases, lens-valued branches, and
+path-sensitive computed-owner invalidation are implemented for the documented
+scope. Do not reimplement those milestones, restore their former rejection paths,
+or treat their old backend diagnostics as current restrictions. In particular,
+disjoint sibling changes during cleanup, assignment RHS, and callee/argument
+evaluation now pass checking, typed verification, and the shared C/Wasm corpus.
 
-This is a status and implementation handoff, not a proof that checking or the
-remaining ownership model is sound or complete. Do not infer new language rules
-from existing rejection paths or backend limitations.
+This handoff is not a proof of checker or ownership-model completeness. Preserve
+established language decisions; do not infer new rules from rejection paths or
+physical backend limitations. Captured cleanup invocation and callable focus
+storage remain separate backend work.
 
 ## Repository and verification baseline
 
-The original semantic milestone was committed as `b56eb04`; concrete contracts
-are committed through `b573d01`. C/Wasm adapter changes follow that baseline. Inspect `git status` and `git log` when resuming,
-and preserve any later user edits.
+Implementation is committed through **`f6e797c`**. The working tree was clean
+before this handoff-only update. Inspect `git status` and `git log` when resuming,
+and preserve later user edits.
 
 | Commit | Milestone |
 | --- | --- |
-| `c0d870d` | Phase 5: typed C storage versions and returned-lens restoration |
+| `c0d870d` | Typed C storage versions and returned-lens restoration |
 | `20766e9` | Retained alias protection verification |
 | `fca0c20` | Persistent computed/tuple aliases through native C and Wasm |
 | `1a9d2e4` | Lens-valued branches through checking and reference execution |
 | `9e6e327` | Selected-branch adapters through concrete IR, C, and Wasm |
 | `b56eb04` | Scoped manual restoration through checking and reference execution |
+| `f52c89d` | Shared manual-restoration acceptance corpus |
+| `64abe8b` | Deferred-cleanup representation analysis and verification |
+| `b573d01` | Concrete manual restoration contracts and independent verification |
+| `6aafda4` | Manual staging and retained contexts through native C and Wasm |
+| `ff39cdb` | Path-sensitive typed computed-owner revision guards |
+| `f6e797c` | Path-sensitive inference guards for RHS and callee/argument updates |
 
-Last full implementation verification: **809 passing tests, 39 existing skips,
-zero failures across 30 files**. `bunx tsc --noEmit` and `git diff --check` passed.
-The existing C-supported corpus passes native strict C11 at `-O0`, `-O2`, and
-ASan/UBSan with stack-use-after-return detection, and Emscripten/Node at `-O0` and
-`-O2`. Manual scalar/tuple restoration now has the same execution coverage for
-the 23 shared samples described below. Remote CI was not run
-and has not been requested as a prerequisite.
+Latest full implementation verification: **918 pass, 39 existing skips, 0 failures
+across 30 files**. `bunx tsc --noEmit` and `git diff --check` passed. The shared
+C-supported corpus passes native strict C11 at `-O0`, `-O2`, and ASan/UBSan with
+stack-use-after-return detection, and Emscripten/Node at `-O0` and `-O2`.
+This includes **23 manual-restoration samples**, **24 computed-alias samples**,
+and **12 lens-branch samples**. This is tested subset coverage, not universal
+backend support. Remote CI was not run or requested as a prerequisite.
 
 Read before implementation:
 
@@ -97,135 +103,57 @@ use explicit backend diagnostics for missing adapters, without evaluator fallbac
 - Non-exhaustive ordinary and lens-valued matches trap. Exhaustiveness policy has
   not changed.
 
-## 1. Implemented slice: manual restoration backend adapter
+## 1. Next slice: `aslens` pattern-bound temporary focuses
 
-This program checks and returns `8` in both detached typed IR and checked legacy
-execution:
+Verified checker restriction:
 
 ```lm
-fn shifted(~x) ~{
-    let v = x + 2
-    @(v, fn () {x := v - 2})
-}
-{
-    let x = 1
-    shifted(~x) := 10
-    x
-}
+fn temp() ~{lens v <- 1
+ v}
 ```
 
-This example also executes as generated native C and Wasm, returning `8`.
-Captured generic cleanup invocation still reports `unsupported-c` with
-“Captured closures require phase 6”; callable focus storage retains its
-representation-layer diagnostic.
-### Existing semantic and executable contract
+```text
+unsupported-lens
+aslens lenses require scoped restoration checking
+```
 
-1. Set up the frontend once.
-2. Stage the final replacement contents into its focus.
-3. Evaluate cleanup at restoration time. Execute a scoped function-literal body,
-   or evaluate the generic expression and invoke its result with zero arguments.
-4. Dispose the cleanup's owned result.
-5. Complete the frontend's original restoration and enclosing cleanup.
+This form is still separate from explicit manual owned-focus retention.
+`Lens.aslens` exists in `src/ast.ts`/`src/laminar.cst`. The active decomposition's
+`aslens` case allocates the value using `heap`, returns a focus and deferred
+cleanup, binds the pattern by reference during cleanup, evaluates the linear body,
+then invokes the backing disposer. Audit that implementation and its unchecked
+fixtures; do not mistake setup-time binding for restoration-time binding.
 
-Nested manual cleanup runs outer cleanup before inner cleanup. Tuple focuses must
-have all final contents staged before cleanup reads them. For branches, only the
-selected setup and cleanup execute. Dependencies remain protected for the entire
-borrow lifetime, including an initially empty owner that cleanup must refill.
-Pending computed owners remain inaccessible before their restoration.
+Specify and test owned temporary lifetime, the pattern's final-content type,
+consumption/refill during cleanup, result disposal, and cleanup ordering. Extend
+retained metadata and independent typed verification. Prevent access after
+cleanup while allowing intended scoped operations and type changes. Reuse manual
+staging and owned retention without weakening ordinary closure or raw-local
+escape checks. Carry supported forms through physical adapters afterward.
 
-Implementation anchors:
+Suggested implementation sequence:
 
-- `src/infer.ts`: `View.stage`, `Inferencer.stage`, `manual`, `lensCase`,
-  `computedAlias`, and lens-valued `letBody`. `stage` returns a completion action;
-  ordinary restoration still uses `put`. Manual ownership permits retained owned
-  storage while preserving raw-local escape rejection elsewhere.
-- `src/elaborated.ts`: `manuals` records frontend/cleanup node IDs, dependency
-  binding IDs, scoped-literal mode, and staged/cleaned/restored states.
-- `src/backend/verify-elaboration.ts`: manual metadata coverage and phase checks.
-- `src/typed-ir.ts` and `src/lower-typed.ts`: `manual` consumes a frontend lens and
-  retains `holds: SlotRef[]` plus a deferred `cleanup: IRBlock`.
-- `src/verify-ir.ts`: manual capabilities, `stage`, `pending`, dependency scanning,
-  protected-owner locks, deferred disposal, and explicit owned-focus retention.
-  Dependencies are derived from cleanup instructions, excluding local places and
-  normalizing nested permits, rather than trusted from `holds`.
-- `src/eval-typed.ts`: deferred block execution, owned-result disposal, and cleanup
-  indexing. This path executes serialized IR without the AST or inference closures.
-- `src/decompose.ts`, `src/expr.ts`, `src/eval.ts`: compiler-generated retained
-  cleanup thunks preserve lexical storage frames. Do not restore the old eager
-  value-capture behavior: cleanup must see the final temporary contents.
+1. Audit the active `aslens` decomposition and unchecked fixtures, then add focused
+   positive and ownership-negative regressions before broadening acceptance.
+   Start with identifier/tuple patterns so constructor reconstruction is not
+   silently decided as part of this slice.
+2. Specify the setup/staging/cleanup/disposal contract using the existing language
+   decisions and executable reference. Pattern binding happens at restoration;
+   do not lower it as a setup-time binding. Raise any newly discovered language
+   ambiguity explicitly rather than deriving a rule from a backend limitation.
+3. Implement checking/elaboration, retained typed IR, independent verification,
+   and detached typed execution. Reuse manual owned retention and staging while
+   rejecting raw local escapes, unrestored borrowed storage, and access after cleanup.
+4. Compare checked legacy and detached typed results. Corrupt serialized metadata
+   and IR to test missing retention, premature disposal, and lost permissions.
+5. Carry the supported scalar/tuple subset through representation/concrete
+   verification and C/Wasm execution. Keep other physical adapters explicit and
+   use the verification gates at the end of this handoff.
 
-### Backend adapter status and remaining changes
+Do not implement borrowed matching or constructor alias reconstruction implicitly
+while adding `aslens`; the separate decision below remains unresolved.
 
-- `src/infer-representations.ts` and `src/verify-representations.ts` now cover
-  deferred cleanup regions, retaining frontend topology with manual endpoints and
-  complete temporary/call coverage. Data moves use independently verified
-  restoration-time semantic annotations; protected lexical callable dependencies
-  retain their provenance. Analysis visits deferred regions after setup without
-  applying cleanup effects to the setup state. This is representation analysis,
-  not a physical staging or lifetime adapter.
-- Audit every nested-block walker. A manual cleanup block is a new executable
-  region, alongside scopes, branches, and function bodies. Semantic specialization
-  recursively rewrites objects, but other analyses/indexers may require explicit
-  handling. Retain complete temporary, call, and cleanup coverage.
-- `src/concrete-ir.ts` and `src/lower-concrete.ts` retain a concrete `manual`
-  operation with a recursively lowered cleanup block. Its independently checked
-  restoration contract names frontend/result shapes, protected logical references,
-  stage/cleanup/result-disposal/restore/release order, and retention through enclosing
-  cleanup. Typed verification still establishes ownership and dependency validity;
-  concrete verification checks correspondence, layouts, invocation contracts, and
-  these adapter records. Physical retained contexts reuse the existing C returned-lens machinery.
-  Both concrete callable indexers and the printer traverse deferred regions.
-- `src/c/lower.ts` represents a lens with `view`, `finish`, and an optional
-  `stage` action returning a completion. Manual lowering stages its frontend,
-  lowers deferred cleanup against final logical storage, then runs completion.
-  Tuple staging prepares every child before completion. Selected branches commit
-  and merge the selected owner's replacement during staging; completion preserves
-  subsequent cleanup changes before original restoration and normalization.
-- Logical cells/paths and returned contexts retain owned temporary focuses and
-  deferred callbacks across function return. Required setup variables are copied
-  into returned contexts; call backing remains heap-resident until completion.
-  Context/backing release retains the existing allocation accounting and sanitizer
-  checks. No manual evaluator fallback is used.
-- Keep generic callback limitations separate: a scalar inline cleanup can be
-  supported before captured closure invocation. Unsupported callable/environment
-  adapters must produce precise backend diagnostics, not checker restrictions.
-- Extend concrete diagnostic printing with complete inline expected output.
-  Storage/restoration lowering belongs outside C syntax printing.
-
-### Acceptance gates for this slice
-
-Acceptance-corpus preparation is in `test/backend/manual-restoration-samples.ts`:
-23 shared cases cover the original examples plus both selections of tuple staging
-around a branch, selected cleanup effects, late generic cleanup reads, initially
-empty dependency refill, cleanup-only definition reachability, unused/duplicated
-focuses, and an owned cleanup result. `test/manual-restoration.test.ts` runs every
-case through checked legacy execution, JSON-detached typed execution, and
-JSON-detached semantic-specialized typed execution. The dedicated event-order,
-disposal-count, ownership-negative, and artifact-corruption tests remain in place.
-Every case also passes representation analysis and independent serialized analysis
-verification. Corruption tests reject missing cleanup temporaries, missing calls,
-and substituted callable provenance. Callable focus replacement retains its existing
-closure-storage representation diagnostic. Concrete manual contracts pass
-independent verification after JSON round trips.
-Corruption tests reject missing cleanup/dependencies, incorrect shapes, ordering,
-retention, and invocation records; complete concrete and C printer output is
-inline. All 23 samples are also in the shared native/Wasm execution corpus,
-including returned manual branches, returned owned branch focuses, and nested
-manual staging around a branch.
-
-Start from all 50 tests in `test/manual-restoration.test.ts`. Carry the supported
-subset into shared C execution samples rather than replacing reference tests.
-Cover shifted owned focuses, final-type changes, tuple staging, manual around a
-branch, branch-selected manual cleanup, nested ordering, owned callback parameters,
-late generic cleanup expressions, owned results, and unused/duplicated focuses.
-`manual around branch` is especially important for staging order.
-
-Check serialized concrete artifacts and reject missing cleanup, lost dependencies,
-wrong capture/lifetime records, premature release, and incorrect ordering.
-Compare native strict/optimized/sanitized and Wasm execution against typed/legacy
-results. Existing branch and computed-alias C samples must continue to pass.
-
-## 2. Borrowed matching and constructor alias patterns
+## 2. Remaining: borrowed matching and constructor alias patterns
 
 These are distinct from implemented branches that **produce** lenses. Verified
 current examples and diagnostics:
@@ -272,35 +200,132 @@ List/variant C representation may additionally require later nominal/runtime dat
 support. Accept established semantic forms independently of that backend work.
 Ordinary unmatched-case trap behavior must remain unchanged.
 
-## 3. `aslens`: pattern-bound temporary focuses
+## Completed: manual restoration through C/Wasm
 
-Verified checker restriction:
+This program checks and returns `8` in both detached typed IR and checked legacy
+execution:
 
 ```lm
-fn temp() ~{lens v <- 1
- v}
+fn shifted(~x) ~{
+    let v = x + 2
+    @(v, fn () {x := v - 2})
+}
+{
+    let x = 1
+    shifted(~x) := 10
+    x
+}
 ```
 
-```text
-unsupported-lens
-aslens lenses require scoped restoration checking
-```
+This example also executes as generated native C and Wasm, returning `8`.
+Captured generic cleanup invocation still reports `unsupported-c` with
+“Captured closures require phase 6”; callable focus storage retains its
+representation-layer diagnostic.
 
-This form is still separate from explicit manual owned-focus retention.
-`Lens.aslens` exists in `src/ast.ts`/`src/laminar.cst`. The active decomposition's
-`aslens` case allocates the value using `heap`, returns a focus and deferred
-cleanup, binds the pattern by reference during cleanup, evaluates the linear body,
-then invokes the backing disposer. Audit that implementation and its unchecked
-fixtures; do not mistake setup-time binding for restoration-time binding.
+### Existing semantic and executable contract
 
-Specify and test owned temporary lifetime, the pattern's final-content type,
-consumption/refill during cleanup, result disposal, and cleanup ordering. Extend
-retained metadata and independent typed verification. Prevent access after
-cleanup while allowing intended scoped operations and type changes. Reuse manual
-staging and owned retention without weakening ordinary closure or raw-local
-escape checks. Carry supported forms through physical adapters afterward.
+1. Set up the frontend once.
+2. Stage the final replacement contents into its focus.
+3. Evaluate cleanup at restoration time. Execute a scoped function-literal body,
+   or evaluate the generic expression and invoke its result with zero arguments.
+4. Dispose the cleanup's owned result.
+5. Complete the frontend's original restoration and enclosing cleanup.
 
-## 4. Implemented path-sensitive computed-owner invalidation
+Nested manual cleanup runs outer cleanup before inner cleanup. Tuple focuses must
+have all final contents staged before cleanup reads them. For branches, only the
+selected setup and cleanup execute. Dependencies remain protected for the entire
+borrow lifetime, including an initially empty owner that cleanup must refill.
+Pending computed owners remain inaccessible before their restoration.
+
+Implementation anchors:
+
+- `src/infer.ts`: `View.stage`, `Inferencer.stage`, `manual`, `lensCase`,
+  `computedAlias`, and lens-valued `letBody`. `stage` returns a completion action;
+  ordinary restoration still uses `put`. Manual ownership permits retained owned
+  storage while preserving raw-local escape rejection elsewhere.
+- `src/elaborated.ts`: `manuals` records frontend/cleanup node IDs, dependency
+  binding IDs, scoped-literal mode, and staged/cleaned/restored states.
+- `src/backend/verify-elaboration.ts`: manual metadata coverage and phase checks.
+- `src/typed-ir.ts` and `src/lower-typed.ts`: `manual` consumes a frontend lens and
+  retains `holds: SlotRef[]` plus a deferred `cleanup: IRBlock`.
+- `src/verify-ir.ts`: manual capabilities, `stage`, `pending`, dependency scanning,
+  protected-owner locks, deferred disposal, and explicit owned-focus retention.
+  Dependencies are derived from cleanup instructions, excluding local places and
+  normalizing nested permits, rather than trusted from `holds`.
+- `src/eval-typed.ts`: deferred block execution, owned-result disposal, and cleanup
+  indexing. This path executes serialized IR without the AST or inference closures.
+- `src/decompose.ts`, `src/expr.ts`, `src/eval.ts`: compiler-generated retained
+  cleanup thunks preserve lexical storage frames. Do not restore the old eager
+  value-capture behavior: cleanup must see the final temporary contents.
+
+### Retained representations and physical adapters
+
+- `src/infer-representations.ts` and `src/verify-representations.ts` now cover
+  deferred cleanup regions, retaining frontend topology with manual endpoints and
+  complete temporary/call coverage. Data moves use independently verified
+  restoration-time semantic annotations; protected lexical callable dependencies
+  retain their provenance. Analysis visits deferred regions after setup without
+  applying cleanup effects to the setup state. This is representation analysis,
+  not a physical staging or lifetime adapter.
+- Manual cleanup is an executable region alongside scopes, branches, and function
+  bodies. Existing typed/concrete indexers and printers traverse it; preserve this
+  coverage when adding new walkers or executable regions. Semantic specialization
+  recursively rewrites objects.
+- `src/concrete-ir.ts` and `src/lower-concrete.ts` retain a concrete `manual`
+  operation with a recursively lowered cleanup block. Its independently checked
+  restoration contract names frontend/result shapes, protected logical references,
+  stage/cleanup/result-disposal/restore/release order, and retention through enclosing
+  cleanup. Typed verification still establishes ownership and dependency validity;
+  concrete verification checks correspondence, layouts, invocation contracts, and
+  these adapter records. Physical retained contexts reuse the existing C
+  returned-lens machinery.
+  Both concrete callable indexers and the printer traverse deferred regions.
+- `src/c/lower.ts` represents a lens with `view`, `finish`, and an optional
+  `stage` action returning a completion. Manual lowering stages its frontend,
+  lowers deferred cleanup against final logical storage, then runs completion.
+  Tuple staging prepares every child before completion. Selected branches commit
+  and merge the selected owner's replacement during staging; completion preserves
+  subsequent cleanup changes before original restoration and normalization.
+- Logical cells/paths and returned contexts retain owned temporary focuses and
+  deferred callbacks across function return. Required setup variables are copied
+  into returned contexts; call backing remains heap-resident until completion.
+  Context/backing release retains the existing allocation accounting and sanitizer
+  checks. No manual evaluator fallback is used.
+- Capture-free known callbacks and scoped cleanup bodies work in the tested
+  subset. Captured callback invocation and callable focus storage still produce
+  explicit backend diagnostics; these are not checker restrictions.
+- Complete concrete and C diagnostic output is covered inline. Storage/restoration
+  lowering remains outside C syntax printing.
+
+### Regression coverage to preserve
+
+The shared acceptance corpus is `test/backend/manual-restoration-samples.ts`:
+23 shared cases cover the original examples plus both selections of tuple staging
+around a branch, selected cleanup effects, late generic cleanup reads, initially
+empty dependency refill, cleanup-only definition reachability, unused/duplicated
+focuses, and an owned cleanup result. `test/manual-restoration.test.ts` runs every
+case through checked legacy execution, JSON-detached typed execution, and
+JSON-detached semantic-specialized typed execution. The dedicated event-order,
+disposal-count, ownership-negative, and artifact-corruption tests remain in place.
+Every case also passes representation analysis and independent serialized analysis
+verification. Corruption tests reject missing cleanup temporaries, missing calls,
+and substituted callable provenance. Callable focus replacement retains its existing
+closure-storage representation diagnostic. Concrete manual contracts pass
+independent verification after JSON round trips.
+Corruption tests reject missing cleanup/dependencies, incorrect shapes, ordering,
+retention, and invocation records; complete concrete and C printer output is
+inline. All 23 samples are also in the shared native/Wasm execution corpus,
+including returned manual branches, returned owned branch focuses, and nested
+manual staging around a branch.
+
+Preserve all 50 tests in `test/manual-restoration.test.ts` and the shared
+execution samples. They cover shifted owned focuses, final-type changes, tuple
+staging, manual around a branch, branch-selected cleanup, nested ordering,
+callbacks, late cleanup expressions, owned results, and unused/duplicated focuses.
+`manual around branch` is essential: cleanup must see the selected replacement,
+and original branch restoration must preserve cleanup's subsequent changes.
+
+## Completed: path-sensitive computed-owner invalidation
 
 Both inference and typed verification now use per-write-path revision counters.
 Inference snapshots these guards after lens setup and before the callee, ordinary
@@ -370,9 +395,12 @@ and C logical cell/path storage enforce their corresponding retained contracts.
 - `A & B` remains a front-end/language-design gap: the README marks it unimplemented
   and the AST lacks a form. Do not silently include parser/type-system design in a
   scoped restoration fix.
-- Captured closure invocation, dynamic callable joins, nominal/runtime data, and
-  host-callable root adapters remain separate backend milestones. Existing explicit
-  diagnostics must remain until their contracts and implementations exist.
+- Captured closure invocation (including generic manual cleanup callbacks),
+  callable focus storage/replacement, dynamic callable joins, nominal/heap runtime
+  data, and host-callable root adapters remain separate backend milestones.
+  Existing explicit diagnostics must remain until their contracts and
+  implementations exist. List/variant support for borrowed matching may depend
+  on nominal/runtime adapters; semantic checking must not depend on that schedule.
 
 ## Completed machinery to preserve and regression locations
 
@@ -396,29 +424,17 @@ and C logical cell/path storage enforce their corresponding retained contracts.
 
 ## Verification and reporting
 
-Manual C/Wasm adapter verification: `bun test` reports **881 pass,
-39 existing skips, 0 failures across 30 files** (50 manual-restoration reference
-and artifact tests plus 46 shared manual backend execution tests).
-`bunx tsc --noEmit` and `git diff --check` pass. All 23 shared manual samples pass
-native strict C11 at `-O0`, `-O2`, and ASan/UBSan with stack-use-after-return
-checking, and Emscripten/Node at `-O0` and `-O2`. Existing branch/computed-alias
-samples remain passing. Remote CI was not run.
+Use **918 pass / 39 existing skips / 0 fail across 30 files** as the current
+baseline, not the historical 809/881/894 counts. The last implementation run
+covered all 23 manual samples and all 24 computed-alias samples in detached
+reference paths and native strict/optimized/sanitized plus Wasm `-O0`/`-O2` modes.
+Same-type overlapping-write rejection remains covered in both checker negatives
+and a deliberately corrupted typed artifact. TypeScript and diff checks passed;
+remote CI was not run.
 
-Path-sensitive typed guard follow-up: `bun test` reports **894 pass, 39 existing
-skips, 0 failures across 30 files**. Four new shared computed-alias cases execute
-through detached typed/legacy paths and all five native/Wasm modes. A forged
-overlapping move/refill remains rejected even at unchanged final type.
-`bunx tsc --noEmit` and `git diff --check` pass. This milestone fixed the cleanup
-verifier gap; the subsequent inference follow-up also permits disjoint updates
-during setup/RHS/argument evaluation as described above.
-
-Inference guard follow-up: `bun test` reports **918 pass, 39 existing skips,
-0 failures across 30 files**. Seven new shared computed-alias cases cover the RHS
-and ordinary-argument examples, sibling type changes, callee-side updates, and
-both selections of a branching RHS; all pass detached typed/legacy execution and
-native strict/optimized/sanitized plus Wasm `-O0`/`-O2`. Three checker negatives
-preserve same-type overlapping-write rejection. `bunx tsc --noEmit` and
-`git diff --check` pass. No new skips or remote CI execution.
+The handoff-only refresh rechecked the three unsupported examples above against
+the current checker; their diagnostic codes/messages are current. It does not
+constitute another full implementation test run.
 
 For each slice:
 
@@ -435,7 +451,7 @@ For each slice:
 5. Keep complete expected diagnostics/printer output inline; no abbreviated
    assertions or external generated snapshots in place of the current style.
 6. Run `bun test`, `bunx tsc --noEmit`, and `git diff --check`. Compare against
-   **809 pass / 39 existing skips / 0 fail** and explain any new skips.
+   **918 pass / 39 existing skips / 0 fail** and explain any new skips.
 7. Update current-restriction documentation only after corresponding checking,
    retained verification, and execution paths are covered.
 
