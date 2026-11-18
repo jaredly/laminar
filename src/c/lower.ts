@@ -131,8 +131,36 @@ export function lowerC(program: ConcreteProgram): TranslationUnit {
     program.code.forEach((c) => declarations.push(signature(c) + ';'));
     const helpers: TranslationUnit['functions'] = [];
     let helperCounter = 0;
+    const disposers = new Map(
+        program.wrappers.filter((w) => w.kind === 'dispose').map((w, i) => [w.id, `dispose${i}`]),
+    );
+    const drop = (data: Data, body: Statement[]): void => {
+        if (Array.isArray(data)) return data.forEach((d) => drop(d, body));
+        const l = layout(data.layout);
+        if (l.fields.some((f) => f.name === 'dispose')) {
+            body.push({
+                head: `if ((${data.expression}).dispose)`,
+                body: [`(${data.expression}).dispose((${data.expression}).environment);`],
+            });
+        } else if (l.kind === 'record') {
+            l.fields.forEach((f, i) => {
+                if (f.kind === 'value')
+                    drop({ expression: field(data.expression, i), layout: f.layout }, body);
+            });
+        }
+    };
+    for (const w of program.wrappers) {
+        if (w.kind !== 'dispose' || !w.captures.length) continue;
+        const signature = `${type(unit.id)} ${disposers.get(w.id)}(void *environment)`;
+        declarations.push(signature + ';');
+        const body: Statement[] = [`${type(w.environment)} *captured = environment;`];
+        w.captures.forEach((id, i) =>
+            drop({ expression: `captured->capture${i}`, layout: id }, body),
+        );
+        body.push('release_context(captured);', `return ${zero(unit.id)};`);
+        helpers.push({ signature, body });
+    }
     const functions = program.code.map((c) => {
-        if (c.captures.length) unsupported('Captured closures require phase 6');
         const values = new Map<string, string>(),
             lenses = new Map<string, Lens>(),
             places = new Map<string, View>(),
@@ -153,11 +181,13 @@ export function lowerC(program: ConcreteProgram): TranslationUnit {
             body.push(`${type(id)} ${name} = ${expression};`, `(void)${name};`);
             return name;
         };
-        const bind = (p: IRPattern, data: Data) => {
+        const setup: Statement[] = [];
+        const bind = (p: IRPattern, data: Data, body: Statement[] = setup) => {
             if (p.kind === 'bind') places.set(p.slot.place, storage.own(data));
             else if (p.kind === 'tuple')
-                p.items.forEach((p, i) => bind(p, storage.parts(data)[i]!));
+                p.items.forEach((p, i) => bind(p, storage.parts(data)[i]!, body));
             else if (p.kind === 'constructor') unsupported('Constructor pattern requires phase 7');
+            else if (p.kind === 'drop') drop(data, body);
         };
         const parameters: { expression: string; layout: string; view: View }[] = [];
         c.parameters.forEach((p, i) => {
@@ -318,10 +348,14 @@ export function lowerC(program: ConcreteProgram): TranslationUnit {
         const block = (b: ConcreteBlock, body: Statement[]): string => {
             for (const i of b.instructions) {
                 if (i.op === 'bind') {
-                    bind(i.pattern, {
-                        expression: value(i.value),
-                        layout: outputLayouts.get(i.value)!,
-                    });
+                    bind(
+                        i.pattern,
+                        {
+                            expression: value(i.value),
+                            layout: outputLayouts.get(i.value)!,
+                        },
+                        body,
+                    );
                     continue;
                 }
                 if (i.op === 'borrow') {
@@ -345,7 +379,8 @@ export function lowerC(program: ConcreteProgram): TranslationUnit {
                             stage: (output) => {
                                 const complete = stage(frontend, output);
                                 return (output) => {
-                                    block(i.cleanup, output);
+                                    const result = block(i.cleanup, output);
+                                    drop({ expression: result, layout: i.cleanup.layout }, output);
                                     complete(output);
                                 };
                             },
@@ -354,17 +389,34 @@ export function lowerC(program: ConcreteProgram): TranslationUnit {
                         lenses.set(i.out.id, manual);
                         continue;
                     }
-                    case 'make-callable':
-                        if (
-                            i.captures.length &&
-                            program.callables.find((c) => c.id === i.callable)!.entries.length
-                        )
-                            unsupported('Captured closures require phase 6');
-                        // Invocation-erased environments contain only this backend's scalar/tuple data.
-                        // Capture moves are already explicit; discarding those values requires no runtime drop.
+                    case 'make-callable': {
+                        const callable = program.callables.find((c) => c.id === i.callable)!;
                         direct.set(i.out.id, i.callable);
-                        values.set(i.out.id, zero(id));
-                        continue;
+                        if (!i.captures.length) {
+                            values.set(i.out.id, zero(id));
+                            continue;
+                        }
+                        const environment = fresh();
+                        variables.push({
+                            name: environment,
+                            type: `${type(callable.environment)} *`,
+                        });
+                        body.push(
+                            `${type(callable.environment)} *${environment} = allocate_context(sizeof *${environment});`,
+                        );
+                        i.captures.forEach((capture, n) =>
+                            body.push(`${environment}->capture${n} = ${value(capture.value)};`),
+                        );
+                        expr = `(${type(id)}){.environment=${environment}, .dispose=${disposers.get(callable.dispose)}${callable.entries
+                            .map((e) => {
+                                const w = program.wrappers.find((w) => w.id === e.wrapper)!;
+                                if (w.kind !== 'invoke')
+                                    return unsupported('Captured native callable');
+                                return `, .${e.field}=${codes.get(w.code)}`;
+                            })
+                            .join('')}}`;
+                        break;
+                    }
                     case 'constant':
                         expr = literal(i.value, id);
                         break;
@@ -418,10 +470,14 @@ export function lowerC(program: ConcreteProgram): TranslationUnit {
                             const input = endpoint(id, 'read');
                             const focus = declare(input, zero(input), body);
                             const joined = storage.own({ expression: focus, layout: input });
-                            const normalize = (actions: (typeof i.cases)[number]['setup']) =>
+                            const normalize = (
+                                actions: (typeof i.cases)[number]['setup'],
+                                output: Statement[],
+                            ) =>
                                 actions?.forEach((a) => {
                                     if (a.kind !== 'drop-place')
                                         return unsupported('Invalid branch normalization');
+                                    drop(storage.get(ref(a.slot)), output);
                                     storage.put(ref(a.slot), {
                                         expression: zero(unit.id),
                                         layout: unit.id,
@@ -487,12 +543,16 @@ export function lowerC(program: ConcreteProgram): TranslationUnit {
                                 storage.reset(before);
                                 const start = variables.length;
                                 const nested: Statement[] = [];
-                                bind(arm.pattern, {
-                                    expression: value(i.value),
-                                    layout: outputLayouts.get(i.value)!,
-                                });
+                                bind(
+                                    arm.pattern,
+                                    {
+                                        expression: value(i.value),
+                                        layout: outputLayouts.get(i.value)!,
+                                    },
+                                    nested,
+                                );
                                 block(arm.body, nested);
-                                normalize(arm.setup);
+                                normalize(arm.setup, nested);
                                 const lens = lenses.get(arm.body.result)!;
                                 nested.push(
                                     `${selected} = ${n};`,
@@ -578,7 +638,7 @@ export function lowerC(program: ConcreteProgram): TranslationUnit {
                                             );
                                             const nested: Statement[] = [];
                                             entry.complete(nested);
-                                            normalize(entry.arm.arm.restored);
+                                            normalize(entry.arm.arm.restored, nested);
                                             return { nested, state: storage.snapshot() };
                                         });
                                         storage.reset(cleaned);
@@ -603,7 +663,7 @@ export function lowerC(program: ConcreteProgram): TranslationUnit {
                                         storage.put(arm.lens.view, replacement);
                                         const nested: Statement[] = [];
                                         arm.lens.finish(nested);
-                                        normalize(arm.arm.restored);
+                                        normalize(arm.arm.restored, nested);
                                         return { nested, state: storage.snapshot() };
                                     });
                                     storage.reset(current);
@@ -625,10 +685,14 @@ export function lowerC(program: ConcreteProgram): TranslationUnit {
                         const arms = i.cases.map((arm) => {
                             storage.reset(before);
                             const nested: Statement[] = [];
-                            bind(arm.pattern, {
-                                expression: value(i.value),
-                                layout: outputLayouts.get(i.value)!,
-                            });
+                            bind(
+                                arm.pattern,
+                                {
+                                    expression: value(i.value),
+                                    layout: outputLayouts.get(i.value)!,
+                                },
+                                nested,
+                            );
                             const result = block(arm.body, nested);
                             nested.push(`${name} = ${result};`);
                             const state = storage.snapshot();
@@ -721,7 +785,7 @@ export function lowerC(program: ConcreteProgram): TranslationUnit {
                                 return a.expression;
                             });
                             if (w.kind === 'invoke')
-                                expr = `${codes.get(w.code)}(NULL${args.map((a) => `, ${a}`).join('')})`;
+                                expr = `${codes.get(w.code)}(${program.code.find((c) => c.id === w.code)!.captures.length ? `(${value(i.callee)}).environment` : 'NULL'}${args.map((a) => `, ${a}`).join('')})`;
                             else if (w.kind === 'native') {
                                 const op = w.definition.slice(7);
                                 if (['+', '-', '*', '/', '==', '>=', '<='].includes(op))
@@ -753,6 +817,7 @@ export function lowerC(program: ConcreteProgram): TranslationUnit {
                         const lens = loans.get(c.loan);
                         if (lens) lens.finish(body);
                     } else if (c.kind === 'drop-place') {
+                        drop(storage.get(ref(c.slot)), body);
                         storage.put(ref(c.slot), { expression: zero(unit.id), layout: unit.id });
                     }
                 });
@@ -789,7 +854,17 @@ export function lowerC(program: ConcreteProgram): TranslationUnit {
         const body: Statement[] = [
             '(void)environment;',
             ...c.parameters.map((_, i) => `(void)arg${i};`),
+            ...setup,
         ];
+        c.captures.forEach((capture, i) => {
+            const name = declare(
+                capture.layout,
+                `((${type(c.environment)} *)environment)->capture${i}`,
+                body,
+            );
+            places.set(capture.place, storage.own({ expression: name, layout: capture.layout }));
+        });
+        if (c.captures.length) body.push('release_context(environment);');
         const result = block(c.body, body);
         if (lenses.has(c.body.result)) {
             const lens = lenses.get(c.body.result)!;

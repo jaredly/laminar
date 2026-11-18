@@ -17,8 +17,7 @@ evaluation now pass checking, typed verification, and the shared C/Wasm corpus.
 
 This handoff is not a proof of checker or ownership-model completeness. Preserve
 established language decisions; do not infer new rules from rejection paths or
-physical backend limitations. Captured cleanup invocation and callable focus
-storage remain separate backend work.
+physical backend limitations. Callable focus storage and dynamic callable joins remain separate backend work.
 
 ## Repository and verification baseline
 
@@ -75,8 +74,7 @@ pointer path is `src/decompose.ts` and `src/eval.ts`, not `src/value-passing/`.
 | Constructor alias patterns | Implemented | Retained reconstruction | Tested | Nominal layouts remain explicit |
 | `aslens`: `lens pattern <- value` | Identifier/wildcard/tuple patterns | Retained manual capability | Tested | Tested scalar/tuple subset |
 
-“Tested” is not universal backend coverage. Captured closure invocation, dynamic
-callable joins, and nominal/heap runtime data retain their existing later-phase
+“Tested” is not universal backend coverage. Dynamic callable joins, and nominal/heap runtime data retain their existing later-phase
 restrictions. Semantic acceptance must remain independent of physical topology;
 use explicit backend diagnostics for missing adapters, without evaluator fallback.
 
@@ -169,7 +167,7 @@ interpreter, not inferred from heap-cell release. Existing unchecked fixture
 anchors remain `makelens` in `src/systematic.test.lm` and `aside` / `useFile` in
 `test/flow.test.lm`.
 
-General callable focus storage, captured callback invocation, and nominal data adapters
+General callable focus storage and nominal data adapters
 remain separate restrictions.
 
 ## Completed: borrowed matching and constructor aliases
@@ -254,9 +252,9 @@ fn shifted(~x) ~{
 ```
 
 This example also executes as generated native C and Wasm, returning `8`.
-Captured generic cleanup invocation still reports `unsupported-c` with
-“Captured closures require phase 6”; callable focus storage retains its
-representation-layer diagnostic.
+Known captured cleanup callbacks now execute through typed heap environments in
+the tested C/Wasm subset. Callable focus storage retains its representation-layer
+diagnostic.
 
 ### Existing semantic and executable contract
 
@@ -327,9 +325,9 @@ Implementation anchors:
   into returned contexts; call backing remains heap-resident until completion.
   Context/backing release retains the existing allocation accounting and sanitizer
   checks. No manual evaluator fallback is used.
-- Capture-free known callbacks and scoped cleanup bodies work in the tested
-  subset. Captured callback invocation and callable focus storage still produce
-  explicit backend diagnostics; these are not checker restrictions.
+- Known capture-free/captured callbacks and scoped cleanup bodies work in the
+  tested subset. Callable focus storage and dynamic callable joins retain explicit
+  backend diagnostics; these are not checker restrictions.
 - Complete concrete and C diagnostic output is covered inline. Storage/restoration
   lowering remains outside C syntax printing.
 
@@ -461,13 +459,40 @@ scalar/tuple examples additionally exercise serialized representation/concrete
 verification and native C/Wasm execution. No new language forms, IR instructions,
 or physical adapters were introduced.
 
+## Completed: known captured cleanup callbacks through C/Wasm
+
+C lowering now allocates the concrete callable's typed capture environment,
+materializes the exact invocation entry pointers and a recursive disposer, and
+passes the owned environment to the independently verified direct code target.
+Invocation transfers captures into owned locals and releases the environment;
+returned restoration contexts retain any locals needed for deferred cleanup.
+Capture-free callables keep the existing allocation-free path.
+
+Manual cleanup results, wildcard bindings, scope disposal, and branch normalization
+now dispose owned callable environments. Nested captured callables are disposed
+recursively. Allocation accounting covers these environments alongside restoration
+contexts/backing, with native sanitizer coverage for use-after-free and double free.
+No new IR operation, checker rule, or evaluator fallback was introduced.
+
+Nine samples in `test/backend/captured-cleanup-samples.ts` cover callback parameters,
+returned callbacks, late construction, nested invocation, owned closure results,
+unused/wildcard disposal, and both branch selections. They have detached generic /
+specialized typed and checked legacy reference coverage, serialized concrete
+verification, and native/Wasm execution. The existing `closure` and
+`capture-restore` phase-6 examples also execute. Complete C output is inline in
+`test/captured-cleanup.test.ts`; corrupt capture/environment/ownership/disposal
+contracts are independently rejected before emission.
+
+This is support for known callable provenance and supported physical capture
+layouts. Dynamic callable joins, callable focus storage/replacement, nominal data,
+and host-callable adapters remain separate work.
+
 ## Separate broader work
 
 - `A & B` remains a front-end/language-design gap: the README marks it unimplemented
   and the AST lacks a form. Do not silently include parser/type-system design in a
   scoped restoration fix.
-- Captured closure invocation (including generic manual cleanup callbacks),
-  callable focus storage/replacement, dynamic callable joins, nominal/heap runtime
+- Callable focus storage/replacement, dynamic callable joins, nominal/heap runtime
   data, and host-callable root adapters remain separate backend milestones.
   Existing explicit diagnostics must remain until their contracts and
   implementations exist. List/variant support for borrowed matching may depend
@@ -490,10 +515,20 @@ or physical adapters were introduced.
   latter caused ordinary branch/recursion regressions during the adapter work;
   those cases are now covered and passing. Do not revert either transition.
 - Alias contents captured by an ordinary closure are moved and require refill.
-  Captured closure **invocation** in C remains separate from preserving the move
-  and discarding an invocation-erased closure environment.
+  Known captured closure invocation and recursive environment disposal execute in
+  the tested C/Wasm subset; capture moves and refill obligations remain explicit.
 
 ## Verification and reporting
+
+After captured callback support, the full run reports **1108 pass / 39 existing
+skips / 0 failures across 33 files**, with 38 inline snapshots. All nine new shared
+captured-cleanup cases and both existing phase-6 closure samples pass strict native
+C11 at `-O0`, `-O2`, and ASan/UBSan, plus Emscripten/Node at `-O0` and `-O2`.
+Detached generic/specialized typed execution, checked legacy execution, and
+serialized concrete verification pass for the new shared samples. Corruption tests
+reject invalid capture layouts, environments, invocation ownership and disposal
+layouts. `bunx tsc --noEmit` and `git diff --check` pass. No new skips; remote CI
+was not run.
 
 After the bounded computed-focus branch audit, the full run reports **1077 pass /
 39 existing skips / 0 failures across 32 files**. The borrowed-pattern suite has

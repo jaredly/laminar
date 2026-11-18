@@ -139,8 +139,8 @@ restoration-time data annotations and protected callable provenance. Concrete
 lowering retains independently checked deferred cleanup blocks and restoration
 contracts. C lowering stages final scalar/tuple contents before cleanup and
 retains returned state in contexts; the 23 shared samples execute on native C and
-Wasm. Captured cleanup invocation and callable focus storage remain separate
-backend restrictions.
+Wasm. Known captured cleanup callbacks execute through typed environments in the tested
+C/Wasm subset; callable focus storage remains a separate backend restriction.
 
 ## Pattern-bound temporary focuses
 

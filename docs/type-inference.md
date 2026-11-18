@@ -96,8 +96,8 @@ overlapping ancestor/descendant writes still invalidate the computed owner even
 if the final type is unchanged. Branch joins merge revision counters per path.
 C/Wasm lowering supports the
 tested scalar/tuple manual subset, including returned focuses and selected-branch
-staging, without an evaluator fallback. Captured cleanup invocation and callable
-focus storage retain their separate backend restrictions.
+staging, without an evaluator fallback. Known captured cleanup callbacks execute in the tested C/Wasm subset; callable
+focus storage retains its separate backend restriction.
 
 ## Pattern-bound temporary focuses
 

@@ -1,4 +1,4 @@
-# C backend: phases 4–5
+# C backend: phases 4–6 subset
 
 `src/c/lower.ts` consumes independently verified concrete IR. It resolves logical
 places, projections, thin/scattered lenses, typed storage versions, and restoration
@@ -21,7 +21,7 @@ const results = await buildAndRun(source, {
 ```
 
 The generated translation unit includes concrete scalar/record types, typed ABI
-pointer declarations, prototypes, capture-free direct function bodies with the
+pointer declarations, prototypes, direct function bodies with the
 opaque environment argument, and a test-only `main` adapter. Each expression
 entry prints one JSON result line. Special doubles use the backend contract's
 tagged number protocol. This is not a public host ABI.
@@ -63,11 +63,16 @@ undefined behavior configured to stop execution.
 Statically known, capture-free function values retain compile-time provenance,
 including specialized higher-order parameters used by `map`. Their finite call
 contracts select verified direct wrappers; no runtime code pointer is invoked.
-Invocation-erased closures containing this subset's scalar/tuple captures preserve
-the explicit capture moves and need no runtime destructor. The discarded-capture
-refill test exercises this rule. Invoking captured closures, dynamic callable
-joins, nominal/heap data, and unsupported native imports retain explicit backend
-diagnostics. Executing captured closure bodies remains phase 6.
+Captured callable values use concrete typed heap environments. Invocation copies
+captures into owned locals and releases the environment before executing the body;
+returned restoration contexts retain any locals needed later. Generated disposers
+recursively dispose captured callable values and release unused environments.
+Wildcard bindings, scope cleanup, branch normalization, and manual cleanup results
+all run the corresponding disposal paths. Capture-free callable values retain the
+existing allocation-free representation and verified direct invocation.
+Dynamic callable joins, callable focus storage, nominal/heap data, and unsupported
+native imports retain explicit diagnostics. This is a statically known callable
+subset, not general phase-6 completeness.
 
 Implemented imports are numeric `+`, `-`, `*`, `/`, `==`, `>=`, `<=`, data `dup`,
 and logical `fst`. `dup` of a computed focus restores that focus after copying it.
@@ -79,9 +84,8 @@ restoration now supports the tested scalar/tuple subset on C/Wasm. Its lens
 adapter separates staging from completion: final contents reach the selected
 owner before cleanup reads them, and original restoration runs afterward.
 Returned contexts retain owned temporary focuses and deferred cleanup state;
-late callback expressions execute at restoration. Capture-free known callbacks
-are supported, while captured cleanup invocation retains “Captured closures
-require phase 6” and callable focus storage retains its representation restriction.
+late callback expressions execute at restoration. Known capture-free and captured callbacks are supported for the tested subset;
+callable focus storage retains its representation restriction.
 The 23 shared manual samples cover tuple staging, both branch selections, nested
 ordering, returned owned focuses, owned callback parameters/results, late cleanup,
 and unused/duplicated focuses. Lens-valued
@@ -124,7 +128,8 @@ the phase-4 corpus, cases cover Number/Bool and small/large transitions, nested
 mixed shapes, offset-changing aggregate reconstruction, `take`, `map`, native and
 user-defined focus assignment, repeated and nested returned calls, alias refill,
 discarded captures, computed-focus `dup`, branch changes, and empty/unit lenses.
-Invoked captured closures and corrupt concrete artifacts retain negative tests.
+Captured callbacks and corrupt concrete artifacts have positive execution and
+negative verification tests.
 
 ## Pattern-bound temporary focuses
 
@@ -152,5 +157,17 @@ lowering retains this contract and verification checks it against semantic IR.
 The scalar/tuple borrowed-match cases in `test/backend/borrowed-pattern-samples.ts`
 execute through the existing C/Wasm manual adapter. List patterns execute in checked
 legacy and detached typed paths; physical list lowering retains the explicit
-`unsupported-layout: No storage definition for List` restriction. Captured invocation
-and callable storage restrictions are unchanged.
+`unsupported-layout: No storage definition for List` restriction. Callable storage restrictions are unchanged.
+
+## Captured cleanup environments
+
+`test/backend/captured-cleanup-samples.ts` adds nine shared cases for captured
+callback parameters, callbacks returned by functions, late construction, nested
+callables, owned closure results, wildcard/unused disposal, and both branch
+selections. They run through checked legacy and detached generic/specialized typed
+execution, independent serialized concrete verification, and the strict native /
+Wasm execution harness. The existing phase-6 `closure` and `capture-restore`
+examples also execute in that harness. Allocation accounting checks all environment
+and restoration allocations are released; native sanitizers check invalid accesses.
+`test/captured-cleanup.test.ts` retains complete generated C inline and rejects
+corrupted capture layouts, environments, invocation ownership, and disposal layouts.

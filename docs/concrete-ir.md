@@ -97,8 +97,8 @@ representation analysis, including cleanup output ownership, complete instructio
 coverage, layouts, and concrete invocation wrappers. The callable indexers and
 diagnostic printer include deferred cleanup regions. C lowering implements staged
 manual restoration for the tested scalar/tuple subset using logical storage and
-retained returned-lens contexts. Captured cleanup invocation and callable focus
-storage retain their separate explicit backend restrictions.
+retained returned-lens contexts. Known captured cleanup callbacks execute through typed environments in the tested
+C/Wasm subset; callable focus storage retains its explicit backend restriction.
 
 ## Pattern-bound temporary focuses
 

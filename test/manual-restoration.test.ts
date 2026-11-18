@@ -339,7 +339,7 @@ it('prints the complete concrete deferred-cleanup contract', () => {
     `);
 });
 
-it('keeps captured generic cleanup invocation at the C callable boundary', () => {
+it('lowers captured generic cleanup invocation through the C callable boundary', () => {
     const p = typedProgram(
         '{let x = 1\n let resource = 2\n let cleanup = fn () resource\n {let f = ~{@(x, cleanup)}\n f := true}\n x}',
     );
@@ -347,5 +347,5 @@ it('keeps captured generic cleanup invocation at the C callable boundary', () =>
     const concrete = compileConcreteProgram(p, wasm32Emscripten('test'), [
         { unit: p.units.at(-1)!.id, arguments: [] },
     ]);
-    expect(() => lowerC(concrete)).toThrow('Captured closures require phase 6');
+    expect(() => lowerC(JSON.parse(JSON.stringify(concrete)))).not.toThrow();
 });
