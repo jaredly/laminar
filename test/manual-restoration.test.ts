@@ -63,24 +63,6 @@ for (const [source, code] of [
             expect((e as TypeDiagnostic).code).toBe(code);
         }
     });
-it('stops at C lowering until the staging and retained-context adapter exists', () => {
-    const p = typedProgram(samples[1].source);
-    try {
-        lowerC(
-            compileConcreteProgram(p, wasm32Emscripten('test'), [
-                { unit: p.units.at(-1)!.id, arguments: [] },
-            ]),
-        );
-        throw Error('Expected backend restriction');
-    } catch (e) {
-        expect(e).toBeInstanceOf(BackendDiagnostic);
-        expect((e as BackendDiagnostic).code).toBe('unsupported-c');
-        expect((e as Error).message).toBe(
-            'Manual restoration requires a C staging and retained-context adapter',
-        );
-    }
-});
-
 it('evaluates the cleanup expression and its result only at restoration', () => {
     const source =
         '{let x = 1\n let count = 0\n {let f = ~{@(x, {count := count + 1\n fn () ()})}\n f := true}\n (x, count)}';
@@ -355,4 +337,15 @@ it('prints the complete concrete deferred-cleanup contract', () => {
           return %1 : L1
       }"
     `);
+});
+
+it('keeps captured generic cleanup invocation at the C callable boundary', () => {
+    const p = typedProgram(
+        '{let x = 1\n let resource = 2\n let cleanup = fn () resource\n {let f = ~{@(x, cleanup)}\n f := true}\n x}',
+    );
+    expect(executeTypedProgram(JSON.parse(JSON.stringify(p)))).toBe(true);
+    const concrete = compileConcreteProgram(p, wasm32Emscripten('test'), [
+        { unit: p.units.at(-1)!.id, arguments: [] },
+    ]);
+    expect(() => lowerC(concrete)).toThrow('Captured closures require phase 6');
 });

@@ -124,4 +124,29 @@ export const manualRestorationSamples = [
  x}`,
         expected: true,
     },
+    {
+        name: 'returned manual around branch',
+        source: `fn choose(~x) ~{@({match true {true -> x; false -> x}}, fn () {x := x + 1})}
+{let x = 1
+ choose(~x) := 4
+ x}`,
+        expected: 5,
+    },
+    {
+        name: 'returned owned branch focus',
+        source: `fn shifted(~x) ~{let v = x + 2
+ @({match false {true -> v; false -> v}}, fn () {x := v - 2})}
+{let x = 1
+ shifted(~x) := 10
+ x}`,
+        expected: 8,
+    },
+    {
+        name: 'nested manual around branch',
+        source: `{let x = 1
+ {let f = ~{@(@({match true {true -> x; false -> x}}, fn () {x := x + 1}), fn () {x := x * 2})}
+ f := 4}
+ x}`,
+        expected: 9,
+    },
 ];

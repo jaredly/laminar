@@ -5,6 +5,7 @@ import { afterAll } from 'bun:test';
 import { it, expect } from 'bun:test';
 import { spawnSync } from 'node:child_process';
 import { typedProgram } from '../backend/typed-program.ts';
+import { manualRestorationSamples } from '../backend/manual-restoration-samples.ts';
 import { lensBranchSamples } from '../backend/lens-branch-samples.ts';
 import { computedAliases } from '../backend/computed-alias-samples.ts';
 import { phase5Samples } from './phase5-samples.ts';
@@ -57,6 +58,7 @@ const samples = [
     ...phase5Samples,
     ...computedAliases,
     ...lensBranchSamples,
+    ...manualRestorationSamples.map((s) => ({ ...s, name: `manual: ${s.name}` })),
     { name: 'lexical-alias', source: '{let x = 1\n {let y = ~x\n y := y + 1}\n x}', expected: 2 },
     { name: 'empty-swap', source: '{let x = 1\n x := x + 1}', expected: null },
     { name: 'full-swap-order', source: '{let x = 1\n (x := 2, x := 3, x)}', expected: [1, 2, 3] },

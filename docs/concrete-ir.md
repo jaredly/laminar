@@ -95,6 +95,7 @@ cleanup. These are serialized lowering obligations, not allocated C contexts.
 Independent verification checks the contract against verified typed IR and
 representation analysis, including cleanup output ownership, complete instruction
 coverage, layouts, and concrete invocation wrappers. The callable indexers and
-diagnostic printer include deferred cleanup regions. C lowering currently reports
-`unsupported-c`: “Manual restoration requires a C staging and retained-context
-adapter”. No manual C/Wasm execution is claimed.
+diagnostic printer include deferred cleanup regions. C lowering implements staged
+manual restoration for the tested scalar/tuple subset using logical storage and
+retained returned-lens contexts. Captured cleanup invocation and callable focus
+storage retain their separate explicit backend restrictions.

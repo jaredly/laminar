@@ -64,5 +64,8 @@ An explicit manual contract retains owned frontend storage through restoration
 and enclosing-scope disposal. This permits returned manual focuses backed by
 owned storage, while raw owned-local lens returns remain invalid. Typed execution
 retains these storage cells and scopes explicitly; no inference closure or source
-AST is needed after serialization. Manual concrete/C/Wasm adapters are pending
-and produce an explicit representation diagnostic rather than evaluator fallback.
+AST is needed after serialization. Concrete manual contracts independently retain
+cleanup ordering, dependencies, shapes, and lifetime obligations. C/Wasm adapters
+stage scalar/tuple focuses before cleanup and retain returned state using the
+existing context machinery. Captured callback invocation and callable focus
+storage remain explicit backend restrictions; no evaluator fallback is used.

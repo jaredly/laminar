@@ -75,10 +75,16 @@ There is no evaluator fallback. Function roots with parameters need a future hos
 adapter, and borrowed lenses cannot escape the test entry boundary. Existing
 checker restrictions still apply: matching borrowed scrutinees is unsupported,
 and raw owned-local lenses cannot escape through function returns. Explicit manual
-restoration may retain owned focuses in typed/legacy execution, but its physical
-adapter is pending and reports `unsupported-c`: “Manual restoration
-requires a C staging and retained-context adapter”. No manual C/Wasm execution
-is claimed. Lens-valued
+restoration now supports the tested scalar/tuple subset on C/Wasm. Its lens
+adapter separates staging from completion: final contents reach the selected
+owner before cleanup reads them, and original restoration runs afterward.
+Returned contexts retain owned temporary focuses and deferred cleanup state;
+late callback expressions execute at restoration. Capture-free known callbacks
+are supported, while captured cleanup invocation retains “Captured closures
+require phase 6” and callable focus storage retains its representation restriction.
+The 23 shared manual samples cover tuple staging, both branch selections, nested
+ordering, returned owned focuses, owned callback parameters/results, late cleanup,
+and unused/duplicated focuses. Lens-valued
 branches normalize their focus into thin storage and retain a selector plus each
 arm’s original restoration operation. Only the selected arm runs setup,
 normalization, and cleanup. Deferred branch variables are initialized outside the

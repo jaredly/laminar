@@ -89,6 +89,7 @@ effects are independently rejected before execution.
 
 Manual cleanup cannot access an owner whose computed frontend still has pending
 restoration. The existing whole-owner invalidation guard also remains conservative
-for disjoint projections of a shared computed owner. C/Wasm lowering currently
-reports `unsupported-c` with “Manual restoration requires a
-C staging and retained-context adapter”; it does not execute a fallback.
+for disjoint projections of a shared computed owner. C/Wasm lowering supports the
+tested scalar/tuple manual subset, including returned focuses and selected-branch
+staging, without an evaluator fallback. Captured cleanup invocation and callable
+focus storage retain their separate backend restrictions.
