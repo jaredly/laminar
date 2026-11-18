@@ -381,6 +381,44 @@ export function lowerTypedUnit(e: Elaboration): IRUnit {
                 return call(n, b);
             case 'let':
                 return letBody(n, b, true);
+            case 'aslens': {
+                const record =
+                    e.manuals.find((m) => m.node === id(n)) ??
+                    fail('Missing temporary lens restoration metadata', n);
+                const backing =
+                    e.bindings.find((v) => v.id === record.temporary) ??
+                    fail('Missing temporary lens backing', n);
+                const nested = block(n);
+                const value = linear(n.value, nested);
+                nested.instructions.push({
+                    op: 'bind',
+                    origin: id(n),
+                    value: value.id,
+                    pattern: { kind: 'bind', slot: ref(backing), type: backing.initialType },
+                });
+                const frontend = emit(nested, n, { op: 'acquire', slot: ref(backing) });
+                const cleanup = block(n.body);
+                const final = emit(cleanup, n.pat, { op: 'move', slot: ref(backing) });
+                const p = pattern(n.pat);
+                cleanup.instructions.push({
+                    op: 'bind',
+                    origin: id(n.pat),
+                    value: final.id,
+                    pattern: p,
+                });
+                cleanup.result = linear(n.body, cleanup).id;
+                cleanup.cleanup.push(...drops(p));
+                nested.result = emit(nested, n, {
+                    op: 'manual',
+                    lens: frontend.id,
+                    holds: record.dependencies.map((id) =>
+                        ref(e.bindings.find((v) => v.id === id)!),
+                    ),
+                    cleanup,
+                }).id;
+                nested.cleanup.push({ kind: 'drop-place', slot: ref(backing) });
+                return emit(b, n, { op: 'scope', body: nested });
+            }
             case 'manual': {
                 const frontend = lens(n.frontend, b);
                 const record =
@@ -431,7 +469,7 @@ export function lowerTypedUnit(e: Elaboration): IRUnit {
                 return emit(b, n, { op: 'case', value: value.id, cases });
             }
             default:
-                return fail(`Unchecked lens form ${n.type}`, n);
+                return fail('Unchecked lens form', n);
         }
     };
     const entry = block(e.source);

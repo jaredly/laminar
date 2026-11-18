@@ -332,8 +332,15 @@ export function verifyTypedProgram(program: TypedProgram): void {
             if (c.kind === 'choice')
                 return c.arms.flatMap((a) => externalTargets(outer, a.state, a.cap));
             if (c.kind === 'scope') return externalTargets(outer, branch, c.inner);
+            // Cleanup holds may name retained branch locals or branch-local permits.
+            // Resolve them just like frontend places before exposing outer owners.
             if (c.kind === 'manual')
-                return normalized([...externalTargets(outer, branch, c.inner), ...c.holds]);
+                return normalized([
+                    ...externalTargets(outer, branch, c.inner),
+                    ...c.holds.flatMap((r) =>
+                        externalTargets(outer, branch, { kind: 'place', slot: r }),
+                    ),
+                ]);
             if (c.kind === 'tuple')
                 return c.items.flatMap((v) => externalTargets(outer, branch, v));
             if (c.kind === 'call')

@@ -40,7 +40,7 @@ const compiled = checkFile(file);
 
 ## Current restrictions
 
-Complex lens restoration remains explicit future work. `aslens`, matching borrowed scrutinees, and constructor alias patterns produce unsupported-form diagnostics. Manual restoration is checked and executed by typed/legacy reference paths; its tested scalar/tuple subset also executes on C/Wasm through staged restoration and retained contexts. Branches producing lenses are checked with separate setup and restoration state joins; only the selected branch executes, and its pattern storage and cleanup remain live until restoration. The typed reference and legacy evaluators execute these branches. Representation and concrete lowering retain a selected-branch restoration adapter, and scalar/tuple branch cases execute on C/Wasm, including thin/scattered joins. Persistent aliases accept computed and tuple lenses, retaining an independent focus and deferred restoration while protecting their owners. Raw returned lenses must be based on a lens parameter. An explicit manual restoration contract can retain owned focus storage until cleanup and disposal; an unmarked pointer into owned local storage still cannot escape. Overlapping tuple lenses and overlapping changes to an active computed owner are rejected; disjoint sibling changes are permitted. Affine use and lens restoration are checked statically. Unused owned bindings are permitted; exhaustiveness and a stricter exactly-once resource discipline remain future work. Runtime checks remain in place.
+Complex lens restoration remains explicit future work. `aslens` accepts identifier, wildcard, and tuple cleanup patterns; matching borrowed scrutinees and constructor alias patterns still produce unsupported-form diagnostics. Manual restoration is checked and executed by typed/legacy reference paths; its tested scalar/tuple subset also executes on C/Wasm through staged restoration and retained contexts. Branches producing lenses are checked with separate setup and restoration state joins; only the selected branch executes, and its pattern storage and cleanup remain live until restoration. The typed reference and legacy evaluators execute these branches. Representation and concrete lowering retain a selected-branch restoration adapter, and scalar/tuple branch cases execute on C/Wasm, including thin/scattered joins. Persistent aliases accept computed and tuple lenses, retaining an independent focus and deferred restoration while protecting their owners. Raw returned lenses must be based on a lens parameter. An explicit manual restoration contract can retain owned focus storage until cleanup and disposal; an unmarked pointer into owned local storage still cannot escape. Overlapping tuple lenses and overlapping changes to an active computed owner are rejected; disjoint sibling changes are permitted. Affine use and lens restoration are checked statically. Unused owned bindings are permitted; exhaustiveness and a stricter exactly-once resource discipline remain future work. Runtime checks remain in place.
 
 Assignment returns the value currently in its target when the swap happens. If the RHS has already consumed that value, the empty slot has unit type: `fn inc(~x) { x := x + 1 }` therefore returns unit. Swapping a full slot, as in `fn take(~x) { x := () }`, returns its old type. This distinction is tracked separately from whether a slot contains an actual unit value. Existing unchecked snapshots remain available for evaluator coverage.
 
@@ -98,3 +98,27 @@ C/Wasm lowering supports the
 tested scalar/tuple manual subset, including returned focuses and selected-branch
 staging, without an evaluator fallback. Captured cleanup invocation and callable
 focus storage retain their separate backend restrictions.
+
+## Pattern-bound temporary focuses
+
+`~{lens pattern <- value
+ cleanup}` evaluates `value` once into owned backing.
+At restoration it stages the replacement, then binds `pattern` to the final
+contents and runs `cleanup`. The pattern describes the replacement type and shape,
+which may differ from the initial value. Identifier, wildcard, and tuple patterns
+are supported. Constructor and literal cleanup patterns remain explicitly unsupported.
+
+Cleanup variables own the temporary contents and may consume or refill them.
+Borrowed lexical storage retains its ordinary refill requirements. Cleanup lexical
+dependencies remain exclusively protected until restoration ends; ordinary and
+nested escaping closures retain their capture restrictions. Cleanup results and
+unused cleanup-local contents are disposed once. Raw local lens escapes remain
+rejected; this form retains its own backing through restoration and enclosing disposal.
+
+Elaboration retains temporary backing and staged/cleaned/restored phases alongside
+manual restoration records. Typed lowering uses an owned scope and the existing
+`manual` capability: cleanup moves the final contents into owned pattern bindings
+only at restoration. Detached typed execution and independent verification cover
+these capabilities, and the shared scalar/tuple corpus executes through C/Wasm's
+existing retained-context adapter. This is subset coverage, not general nominal
+or callable focus support.

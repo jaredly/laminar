@@ -2,10 +2,10 @@
 
 ## Start here
 
-Continue in the `ts/` Git repository. **Start with `aslens`: pattern-bound
-temporary focuses**, described below. Borrowed matching and constructor alias
-patterns are also outstanding, but require a user decision about constructor
-reconstruction before implementation.
+Continue in the `ts/` Git repository. Identifier/wildcard/tuple `aslens` temporary
+focuses are now implemented using retained manual staging. Borrowed matching and
+constructor alias patterns are the remaining scoped slice, and require a user
+decision about constructor reconstruction before implementation.
 
 Manual restoration, computed/tuple aliases, lens-valued branches, and
 path-sensitive computed-owner invalidation are implemented for the documented
@@ -21,9 +21,9 @@ storage remain separate backend work.
 
 ## Repository and verification baseline
 
-Implementation is committed through **`f6e797c`**. The working tree was clean
-before this handoff-only update. Inspect `git status` and `git log` when resuming,
-and preserve later user edits.
+The earlier implementation baseline is **`f6e797c`**; the temporary-lens audit
+is committed as **`83d9003`**. The implementation below extends that baseline.
+Inspect `git status` and `git log` when resuming, and preserve later user edits.
 
 | Commit | Milestone |
 | --- | --- |
@@ -40,7 +40,7 @@ and preserve later user edits.
 | `ff39cdb` | Path-sensitive typed computed-owner revision guards |
 | `f6e797c` | Path-sensitive inference guards for RHS and callee/argument updates |
 
-Latest full implementation verification: **918 pass, 39 existing skips, 0 failures
+Pre-aslens implementation verification: **918 pass, 39 existing skips, 0 failures
 across 30 files**. `bunx tsc --noEmit` and `git diff --check` passed. The shared
 C-supported corpus passes native strict C11 at `-O0`, `-O2`, and ASan/UBSan with
 stack-use-after-return detection, and Emscripten/Node at `-O0` and `-O2`.
@@ -71,7 +71,7 @@ pointer path is `src/decompose.ts` and `src/eval.ts`, not `src/value-passing/`.
 | Manual `@(focus, cleanup)` | Implemented | Implemented | Tested | Tested scalar/tuple subset |
 | Matching a borrowed scrutinee | Unsupported | Not implemented | Unchecked machinery exists | Not implemented |
 | Constructor alias patterns | Unsupported | Not implemented | Unchecked machinery exists | Not implemented |
-| `aslens`: `lens pattern <- value` | Unsupported | Not implemented | Unchecked machinery exists | Not implemented |
+| `aslens`: `lens pattern <- value` | Identifier/wildcard/tuple patterns | Retained manual capability | Tested | Tested scalar/tuple subset |
 
 “Tested” is not universal backend coverage. Captured closure invocation, dynamic
 callable joins, and nominal/heap runtime data retain their existing later-phase
@@ -103,98 +103,72 @@ use explicit backend diagnostics for missing adapters, without evaluator fallbac
 - Non-exhaustive ordinary and lens-valued matches trap. Exhaustiveness policy has
   not changed.
 
-## 1. Next slice: `aslens` pattern-bound temporary focuses
-
-Verified checker restriction:
+## Completed: `aslens` pattern-bound temporary focuses
 
 ```lm
-fn temp() ~{lens v <- 1
- v}
+fn shifted(~x) ~{lens v <- x + 2
+ x := v - 2}
+{let x = 1
+ shifted(~x) := 10
+ x}
 ```
 
-```text
-unsupported-lens
-aslens lenses require scoped restoration checking
-```
+This checks and returns `8` in checked legacy, JSON-detached typed execution,
+native C, and Wasm. Identifier, wildcard, and recursively nested tuple cleanup
+patterns are supported. Constructor reconstruction has not been decided or added;
+constructor and literal cleanup patterns retain an explicit
+`unsupported-lens-pattern` diagnostic.
 
-This form is still separate from explicit manual owned-focus retention.
-`Lens.aslens` exists in `src/ast.ts`/`src/laminar.cst`. The active decomposition's
-`aslens` case allocates the value using `heap`, returns a focus and deferred
-cleanup, binds the pattern by reference during cleanup, evaluates the linear body,
-then invokes the backing disposer. Audit that implementation and its unchecked
-fixtures; do not mistake setup-time binding for restoration-time binding.
+The contract is:
 
-Specify and test owned temporary lifetime, the pattern's final-content type,
-consumption/refill during cleanup, result disposal, and cleanup ordering. Extend
-retained metadata and independent typed verification. Prevent access after
-cleanup while allowing intended scoped operations and type changes. Reuse manual
-staging and owned retention without weakening ordinary closure or raw-local
-escape checks. Carry supported forms through physical adapters afterward.
+1. Evaluate the initial value once and allocate owned backing during setup.
+2. Keep backing and lexical cleanup dependencies protected through consumer execution.
+3. Stage the final replacement; bind the pattern at restoration. Its type and shape
+   describe the replacement, not the initial value. A number can be replaced by a
+   tuple and destructured by a tuple cleanup pattern.
+4. Run cleanup with owned final-content bindings. These may be consumed without
+   refill or replenished with a different type. Borrowed lexical owners and lens
+   parameters must still be restored at their ordinary lifetime boundaries.
+5. Dispose the owned cleanup result and remaining cleanup-local contents once,
+   then complete enclosing restoration and release backing. Manual cleanup wrapping
+   a temporary runs before the temporary's own cleanup.
 
-### Active-path audit and executable contract
+`Inferencer.aslens` retains a private temporary binding in `elaboration.manuals`
+with `temporary`, initial-value/cleanup node IDs, dependency IDs, and all three
+lifetime phases. It does not expose the pattern during setup or relax closure
+capture rules. `verifyElaboration` independently requires backing retention and
+full staged / empty transferred-backing cleanup states.
 
-`test/aslens.test.ts` now isolates the active `src/decompose.ts` / `src/eval.ts`
-path in eight deliberately unchecked execution regressions and one checked-boundary
-regression. These are preparatory coverage, not checker or backend acceptance.
+`lower-typed.ts` allocates the private place in an owned scope and emits the existing
+`manual` instruction over its acquired focus. The deferred cleanup moves the staged
+contents into owned pattern storage, evaluates the body, and disposes remaining
+locals; the enclosing scope disposes backing. No source rewrite, solver closure,
+new evaluator fallback, or unchecked typed instruction is involved. Independent
+verification derives dependency protection, checks raw-local escapes, deferred
+storage lifetime, cleanup-local disposal, and refill of borrowed lexical storage.
+Branch verification resolves cleanup holds against outer storage, excluding
+branch-local retained backing and normalizing lexical permits.
 
-The execution regressions establish:
+Representation analysis, concrete contracts, and C/Wasm reuse the existing manual
+retained-context adapter. `test/backend/aslens-samples.ts` contains 17 shared
+scalar/tuple cases, including final-type changes, returned backing, lexical refill,
+selected branches, wildcard disposal, nested cleanup order, unused/duplicated focuses,
+and owned cleanup results. Each runs through checked legacy and detached generic /
+specialized typed execution, serialized representation and concrete verification,
+and the shared native/Wasm execution corpus.
 
-- Setup evaluates once. The heap cell is allocated before consumer execution,
-  remains live during cleanup, and is released afterward.
-- The pattern binds by reference at restoration, after consumer execution. Its
-  shape and type describe the **final replacement**, not the initial value:
-  an initial number can be replaced with a tuple and destructured by a tuple
-  cleanup pattern.
-- Cleanup may consume the temporary without refill; the backing disposer deletes
-  the remaining cell, including an empty cell. Cleanup may also refill it, including
-  with a different type. This owned-temporary behavior must not be implemented as
-  an ordinary persistent alias that demands refill at its lifetime boundary.
-- Unused focuses restore once, and backing survives a returned lens until the
-  caller restores it.
+`test/aslens.test.ts` retains the original eight unchecked audit regressions and
+adds checked acceptance, ownership negatives, exact-once closure disposal, and
+corruption rejection for missing metadata/backing/protection/phases, removed
+cleanup-local disposal, retired places, raw focus escape, and premature backing
+consumption. The legacy evaluator's heap disposer deletes a cell without general
+recursive resource disposal; disposal counts are established by the detached typed
+interpreter, not inferred from heap-cell release. Existing unchecked fixture
+anchors remain `makelens` in `src/systematic.test.lm` and `aside` / `useFile` in
+`test/flow.test.lm`.
 
-Existing fixtures corroborate consumption without refill:
-`src/systematic.test.lm`'s `makelens` and `test/flow.test.lm`'s `aside` / `useFile`.
-The latter consumes tuple components and restores a lexical lens parameter.
-Constructor patterns are outside this audit.
-
-The legacy evaluator is **not** an owned-disposal oracle: block cleanup ignores
-its result, and the `heap` disposer deletes its cell without recursively disposing
-its contents. Thus freeing the cell does not prove cleanup-result or residual-focus
-resource disposal. The typed implementation must explicitly dispose both owned
-results and residual temporary contents once, using retained/manual machinery.
-The audit tests intentionally make no disposal-count claim.
-
-Checker acceptance, retained `aslens` metadata, independent verification, detached
-typed execution, and C/Wasm adapters remain unimplemented. The checked-boundary test
-preserves the existing explicit diagnostic until that work lands. Audit verification: `bun test` reports **927 pass, 39 existing skips, 0 failures
-across 31 files** (nine new tests); native and Wasm corpus checks passed.
-`bunx tsc --noEmit` and `git diff --check` passed.
-
-The next edit should add ownership-negative regressions alongside inference/retained IR support;
-do not simply remove the unsupported diagnostic or reuse a borrowed alias's refill
-rule for the owned temporary.
-
-Suggested implementation sequence:
-
-1. Audit the active `aslens` decomposition and unchecked fixtures, then add focused
-   positive and ownership-negative regressions before broadening acceptance.
-   Start with identifier/tuple patterns so constructor reconstruction is not
-   silently decided as part of this slice.
-2. Specify the setup/staging/cleanup/disposal contract using the existing language
-   decisions and executable reference. Pattern binding happens at restoration;
-   do not lower it as a setup-time binding. Raise any newly discovered language
-   ambiguity explicitly rather than deriving a rule from a backend limitation.
-3. Implement checking/elaboration, retained typed IR, independent verification,
-   and detached typed execution. Reuse manual owned retention and staging while
-   rejecting raw local escapes, unrestored borrowed storage, and access after cleanup.
-4. Compare checked legacy and detached typed results. Corrupt serialized metadata
-   and IR to test missing retention, premature disposal, and lost permissions.
-5. Carry the supported scalar/tuple subset through representation/concrete
-   verification and C/Wasm execution. Keep other physical adapters explicit and
-   use the verification gates at the end of this handoff.
-
-Do not implement borrowed matching or constructor alias reconstruction implicitly
-while adding `aslens`; the separate decision below remains unresolved.
+General callable focus storage, captured callback invocation, nominal data adapters,
+and borrowed constructor reconstruction remain separate restrictions.
 
 ## 2. Remaining: borrowed matching and constructor alias patterns
 
@@ -467,17 +441,13 @@ and C logical cell/path storage enforce their corresponding retained contracts.
 
 ## Verification and reporting
 
-Use **918 pass / 39 existing skips / 0 fail across 30 files** as the current
-baseline, not the historical 809/881/894 counts. The last implementation run
-covered all 23 manual samples and all 24 computed-alias samples in detached
-reference paths and native strict/optimized/sanitized plus Wasm `-O0`/`-O2` modes.
-Same-type overlapping-write rejection remains covered in both checker negatives
-and a deliberately corrupted typed artifact. TypeScript and diff checks passed;
-remote CI was not run.
-
-The handoff-only refresh rechecked the three unsupported examples above against
-the current checker; their diagnostic codes/messages are current. It does not
-constitute another full implementation test run.
+The final `aslens` implementation full run reports **1001 pass / 39 existing skips /
+0 failures across 31 files**. The focused temporary suite has **49 passing tests**.
+The shared corpus includes 17 temporary-focus cases, all passing native strict
+C11 at `-O0`, `-O2`, and ASan/UBSan, plus Emscripten/Node at `-O0` and `-O2`.
+`bunx tsc --noEmit` and `git diff --check` pass. No new skips were introduced;
+remote CI was not run. Historical implementation baseline: 918 pass / 39 skips
+across 30 files; audit-only baseline: 927 pass / 39 skips across 31 files.
 
 For each slice:
 
@@ -494,7 +464,7 @@ For each slice:
 5. Keep complete expected diagnostics/printer output inline; no abbreviated
    assertions or external generated snapshots in place of the current style.
 6. Run `bun test`, `bunx tsc --noEmit`, and `git diff --check`. Compare against
-   **918 pass / 39 existing skips / 0 fail** and explain any new skips.
+   the latest baseline above and explain any new skips.
 7. Update current-restriction documentation only after corresponding checking,
    retained verification, and execution paths are covered.
 

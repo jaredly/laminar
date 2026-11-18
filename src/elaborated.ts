@@ -52,6 +52,8 @@ export type Elaboration = {
     manuals: {
         node: NodeId;
         frontend: NodeId;
+        /** Owned backing for a pattern-bound temporary; absent for explicit manual lenses. */
+        temporary?: BindingId;
         cleanup: NodeId;
         scoped: boolean;
         dependencies: BindingId[];
@@ -132,6 +134,8 @@ export class ElaborationBuilder {
     readonly manuals: {
         node: NodeId;
         frontend: NodeId;
+        /** Owned backing for a pattern-bound temporary; absent for explicit manual lenses. */
+        temporary?: BindingId;
         cleanup: NodeId;
         scoped: boolean;
         dependencies: BindingId[];

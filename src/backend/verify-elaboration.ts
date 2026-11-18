@@ -130,23 +130,48 @@ export function verifyElaboration(e: Elaboration): void {
         'manual restoration',
     );
     for (const n of e.nodes)
-        if (n.kind === 'manual' && n.type && !manuals.some((m) => m.node === n.id))
+        if (
+            (n.kind === 'manual' || n.kind === 'aslens') &&
+            n.type &&
+            !manuals.some((m) => m.node === n.id)
+        )
             fail('Missing manual restoration metadata', n.id);
     manuals.forEach((m) => {
         node(m.node);
         node(m.frontend);
         node(m.cleanup);
+        const temporary = e.nodes.find((n) => n.id === m.node)!.kind === 'aslens';
         if (
-            e.nodes.find((n) => n.id === m.node)!.kind !== 'manual' ||
-            e.nodes.find((n) => n.id === m.frontend)!.type?.tag !== 'flow'
+            (!temporary && e.nodes.find((n) => n.id === m.node)!.kind !== 'manual') ||
+            e.nodes.find((n) => n.id === m.frontend)!.type?.tag !== (temporary ? 'plain' : 'flow')
         )
             fail('Invalid manual restoration source', m.node);
-        unique(m.dependencies, 'cleanup dependency');
-        m.dependencies.forEach(binding);
         for (const phase of [m.staged, m.cleaned, m.restored]) {
             if (!Array.isArray(phase)) fail('Missing manual restoration phase', m.node);
             phase.forEach(state);
         }
+        if (temporary) {
+            const backing =
+                e.bindings.find((b) => b.id === m.temporary) ??
+                fail('Missing temporary lens backing retention', m.node);
+            if (
+                backing.kind !== 'local' ||
+                backing.declaration !== m.node ||
+                !m.scoped ||
+                !m.dependencies.includes(backing.id)
+            )
+                fail('Missing temporary lens backing retention', m.node);
+            if (
+                !m.staged.some((s) => s.place === backing.place && !s.empty.length) ||
+                !m.cleaned.some(
+                    (s) => s.place === backing.place && s.empty.some((p) => !p.length),
+                ) ||
+                !m.restored.some((s) => s.place === backing.place && s.empty.some((p) => !p.length))
+            )
+                fail('Invalid temporary lens lifetime phases', m.node);
+        } else if (m.temporary) fail('Unexpected temporary backing on manual lens', m.node);
+        unique(m.dependencies, 'cleanup dependency');
+        m.dependencies.forEach(binding);
     });
     e.uses.forEach((u) => {
         node(u.node);

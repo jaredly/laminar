@@ -141,3 +141,16 @@ contracts. C lowering stages final scalar/tuple contents before cleanup and
 retains returned state in contexts; the 23 shared samples execute on native C and
 Wasm. Captured cleanup invocation and callable focus storage remain separate
 backend restrictions.
+
+## Pattern-bound temporary focuses
+
+Identifier/wildcard/tuple `aslens` forms reuse retained manual restoration. Setup
+allocates owned backing; deferred cleanup transfers the staged final contents into
+owned pattern bindings and disposes its result and remaining locals before backing
+release. Elaboration records the backing identity and lifetime phases. Typed IR uses
+existing `scope`, `acquire`, `manual`, `move`, and `bind` instructions; representation
+and concrete lowering retain the same manual contracts and physical context adapter.
+The 17 shared samples in `test/backend/aslens-samples.ts` cover detached verification
+and execution plus native strict/optimized/sanitized C and Wasm at both optimization
+levels. Constructor cleanup patterns, nominal runtime data, and callable focus
+storage retain their explicit separate restrictions.

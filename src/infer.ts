@@ -926,11 +926,7 @@ export class Inferencer {
             case 'manual':
                 return this.manual(n, env);
             case 'aslens':
-                return this.error(
-                    'unsupported-lens',
-                    n.loc,
-                    `${n.type} lenses require scoped restoration checking`,
-                );
+                return this.aslens(n, env);
         }
     }
     private disjoint(targets: Binding[], loc: number): void {
@@ -990,6 +986,67 @@ export class Inferencer {
                 this.solver.unify(write, t, n.loc);
                 view?.put(replacement);
             },
+        };
+    }
+    private aslens(n: Lens & { type: 'aslens' }, env: Env): View {
+        const supported = (p: Pat): boolean =>
+            p.type === 'id' ||
+            p.type === 'drop' ||
+            (p.type === 'tuple' && p.items.every(supported));
+        if (!supported(n.pat))
+            this.error(
+                'unsupported-lens-pattern',
+                n.pat.loc,
+                'Temporary lens cleanup supports identifier, wildcard, and tuple patterns',
+            );
+        const read = this.linear(n.value, env);
+        const temporary = this.freshBinding(read);
+        this.declare(temporary, '$temporary', n, 'local');
+        const bound = new Set(names(n.pat));
+        const dependencies = [...new Set(free(n.body))]
+            .filter((name) => !bound.has(name))
+            .flatMap((name) => {
+                const b = this.lookup(env, name, n.loc);
+                return b.scheme ? [] : [b];
+            });
+        const record: (typeof this.builder.manuals)[number] = {
+            node: this.builder.node(n),
+            frontend: this.builder.node(n.value),
+            temporary: temporary.id!,
+            cleanup: this.builder.node(n.body),
+            scoped: true,
+            dependencies: [temporary.id!, ...dependencies.map((b) => b.id!)],
+            staged: [],
+            cleaned: [],
+            restored: [],
+        };
+        this.builder.manuals.push(record);
+        const stage = (type: Ty) => {
+            this.put(temporary, type, n.loc);
+            record.staged = [...this.states(env), this.state(temporary.root)];
+            return () => {
+                // Transfer the owned final contents into cleanup-local storage. These
+                // bindings do not borrow an enclosing owner and need not be refilled.
+                const final = this.consume(temporary, n.loc);
+                const sub = new Map(env);
+                this.pattern(n.pat, final, sub);
+                this.linear(n.body, sub);
+                const locals = names(n.pat).map((name) => sub.get(name)!);
+                this.builder.scopes.push({
+                    node: this.builder.node(n),
+                    bindings: locals.map((b) => b.id!),
+                    exit: locals.map((b) => this.state(b.root)),
+                });
+                record.cleaned = [...this.states(env), this.state(temporary.root)];
+                record.restored = record.cleaned;
+            };
+        };
+        return {
+            read,
+            targets: [temporary, ...dependencies],
+            provenance: [],
+            stage,
+            put: (t) => stage(t)(),
         };
     }
     private manual(n: Lens & { type: 'manual' }, env: Env): View {
