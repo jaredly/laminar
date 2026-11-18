@@ -402,5 +402,7 @@ Direct lexical manual completion now applies verified descriptor transitions at
 loan release or immediate swap before continuation analysis. Scope forwarding and
 nested direct manuals preserve completion order. Independent verification derives
 these boundaries and checks each transition's input provenance plus subsequent
-reads. This does not generalize effects through selected cases, scattered lens
-tuples or returned calls; the corresponding restoration adapters remain open.
+reads. Lens tuples also compose captured member handlers in source order,
+recursively through mixed/nested frontends and scope forwarding. This does not
+generalize effects through selected cases or returned calls; the corresponding
+restoration adapters remain open. Callable focus endpoint ABIs remain separate.

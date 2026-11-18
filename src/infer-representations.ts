@@ -527,12 +527,20 @@ export function inferRepresentations(
                     deferred.push({ value: i.out.id, body: i.cleanup });
                     break;
                 }
-                case 'lens-tuple':
+                case 'lens-tuple': {
                     out = {
                         kind: 'lens',
                         shape: reps.tuple(i.items.map((id) => shape(get(s, id)))),
                     };
+                    // Capture member handlers before forwarding this value through
+                    // scopes; their local IDs need not exist in the release state.
+                    const finishes = i.items.map((id) => s.finishes.get(id));
+                    if (finishes.some(Boolean))
+                        s.finishes.set(i.out.id, (state, apply) =>
+                            finishes.forEach((finish) => finish?.(state, apply)),
+                        );
                     break;
+                }
                 case 'swap': {
                     if (i.out.type.tag !== 'plain') return fail('Swap produced a lens');
                     const focus = get(s, i.lens);

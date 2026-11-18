@@ -819,3 +819,32 @@ Validation: **1,890 pass / 39 existing skips / 0 failures across 42 files**:
 native, supported sanitizer, and Emscripten/Node execution at both optimization
 levels passed without retries (284.29 seconds). `bunx tsc --noEmit` and
 `git diff --check` pass. Remote CI was not run.
+
+## Scattered manual release effects
+
+Lens-tuple representation analysis now captures each member's completion handler
+and composes them in source order, matching existing C staging/completion. Nested
+tuples recurse; ordinary members contribute no descriptor effect. Captured handlers
+survive scope forwarding without requiring their original local SSA identifiers
+in the eventual release state. Independent verification derives the ordered
+composition separately and checks continuation provenance against the resulting
+owner descriptors. Exact `cleanupStorage`/`storageTransitions` ownership and original
+callable ABIs remain unchanged; no C runtime or storage change is required.
+
+Twelve shared cases cover both boolean replacements, multiple callable owners,
+unused alias release, immediate swaps, nested/mixed tuples, aggregate replacement,
+and a manual wrapper around a scattered frontend. The initial two cases failed
+with stale continuation ABI storage reads before the fix. Three serialized
+corruption tests reject stale callable/aggregate provenance after ordinary or
+nested tuple release, before emission.
+
+This is descriptor-effect propagation through scalar/tuple lens frontends, not
+callable focus endpoint storage. Selected branch effects, call/returned contexts,
+selected post-cleanup normalization adapters and general callable focus ABIs remain
+open. The selected divergent replacement guard remains intact; phase 6 is incomplete.
+
+Validation: **1,929 pass / 39 existing skips / 0 failures across 42 files**:
+1,183 non-execution tests and 746 native/Wasm cases. Full strict C11, optimized
+native, supported sanitizer, and Emscripten/Node execution at both optimization
+levels passed without retries (278.16 seconds). `bunx tsc --noEmit` and
+`git diff --check` pass. Remote CI was not run.

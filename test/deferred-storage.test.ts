@@ -217,3 +217,20 @@ it('independently rejects stale callable provenance after alias release', () => 
     expect(() => verifyConcreteProgram(c)).toThrow('Moved callable provenance changed');
     expect(() => emitC(c)).toThrow('Moved callable provenance changed');
 });
+for (const name of [
+    'deferred scattered continuation true',
+    'deferred nested scattered continuation true',
+    'deferred scattered aggregate continuation true',
+])
+    it(`independently rejects stale provenance after ${name}`, () => {
+        const c = concrete(deferredStorageSamples.find((s) => s.name === name)!.source);
+        const values = c.analysis.entries[0].values;
+        const transition = values.find((v: any) => v.cleanupStorage).cleanupStorage[0];
+        const moved = values.findLast(
+            (v: any) => JSON.stringify(v.representation) === JSON.stringify(transition.after),
+        );
+        expect(moved).toBeDefined();
+        moved.representation = transition.before;
+        expect(() => verifyConcreteProgram(c)).toThrow('Moved callable provenance changed');
+        expect(() => emitC(c)).toThrow('Moved callable provenance changed');
+    });

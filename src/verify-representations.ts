@@ -648,6 +648,11 @@ export function verifyRepresentations(
                             i.items.map((id) => lens(get(s, id)).id),
                             'Lens tuple children changed',
                         );
+                        const finishes = i.items.map((id) => s.finishes.get(id));
+                        if (finishes.some(Boolean))
+                            s.finishes.set(i.out.id, (state, apply) => {
+                                for (const finish of finishes) finish?.(state, apply);
+                            });
                         break;
                     }
                     case 'global': {

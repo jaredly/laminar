@@ -464,5 +464,8 @@ Direct manual replacement can now be followed by callable/aggregate reads after
 lexical alias release or an immediate swap. Analysis and independent verification
 apply the retained descriptor transitions at completion, matching the C backend's
 existing versioned storage. Nested direct manuals and repeated releases preserve
-exact original and replacement ABIs. Selected divergent replacement, scattered
-completion and call/return effect propagation remain separate phase-6 work.
+exact original and replacement ABIs. Scattered scalar/tuple frontends now compose
+member descriptor effects in the same source order as existing C completion,
+including nested tuples and outer manual wrappers. This does not add scattered
+callable focus endpoint ABIs. Selected divergent replacement and call/return effect
+propagation remain separate phase-6 work.

@@ -232,4 +232,92 @@ export const deferredStorageSamples = (['true', 'false'] as const).flatMap((cond
  (f(), x)}`,
         expected: [12, condition === 'true'],
     },
+    {
+        name: `deferred scattered continuation ${condition}`,
+        source: `{let x = 1
+ let y = 2
+ let v = 3
+ let f = fn () v
+ let g = fn () 4
+ {let focus = ~(@(x, {let old = f := fn () 9
+ old()
+ fn () ()}), @(y, {let old = g := fn () 8
+ old()
+ fn () ()}))
+ focus := (${condition}, 7)}
+ (f() + g(), x, y)}`,
+        expected: [17, condition === 'true', 7],
+    },
+    {
+        name: `deferred scattered unused continuation ${condition}`,
+        source: `{let x = 1
+ let y = 2
+ let v = 3
+ let f = fn () v
+ {let focus = ~(x, @(y, {let old = f := fn () 9
+ old()
+ fn () ()}))
+ ()}
+ (f(), x, y, ${condition})}`,
+        expected: [9, 1, 2, condition === 'true'],
+    },
+    {
+        name: `deferred scattered immediate continuation ${condition}`,
+        source: `{let x = 1
+ let y = 2
+ let v = 3
+ let f = fn () v
+ (x, @(y, {let old = f := fn () 9
+ old()
+ fn () ()})) := (${condition}, 7)
+ (f(), x, y)}`,
+        expected: [9, condition === 'true', 7],
+    },
+    {
+        name: `deferred nested scattered continuation ${condition}`,
+        source: `{let x = 1
+ let y = 2
+ let z = 3
+ let v = 4
+ let f = fn () v
+ let g = fn () 5
+ {let focus = ~(x, (@(y, {let old = f := fn () 9
+ old()
+ fn () ()}), @(z, {let old = g := fn () 8
+ old()
+ fn () ()})))
+ focus := (${condition}, (6, 7))}
+ (f() + g(), x, y, z)}`,
+        expected: [17, condition === 'true', 6, 7],
+    },
+    {
+        name: `deferred scattered aggregate continuation ${condition}`,
+        source: `{let x = 1
+ let y = 2
+ let v = 3
+ let packed = (fn () v, 4)
+ {let focus = ~(@(x, {let (old, n) = packed := (fn () 9, 6)
+ old() + n
+ fn () ()}), y)
+ focus := (${condition}, 7)}
+ let (f, n) = packed
+ (f() + n, x, y)}`,
+        expected: [15, condition === 'true', 7],
+    },
+    {
+        name: `deferred manual scattered continuation ${condition}`,
+        source: `{let x = 1
+ let y = 2
+ let v = 3
+ let f = fn () v
+ let g = fn () 4
+ {let focus = ~{@((@(x, {let old = f := fn () 9
+ old()
+ fn () ()}), y), {let old = g := fn () 8
+ old()
+ fn () ()})}
+ focus := (${condition}, 7)}
+ (f() + g(), x, y)}`,
+        expected: [17, condition === 'true', 7],
+    },
 ]);
