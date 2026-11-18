@@ -397,3 +397,10 @@ The list is absent for descriptor-preserving cleanup, including consumption alon
 It does not encode availability, compose nested effects, or authorize a callable
 ABI change in continuation code. See [the plan](c-codegen-plan.md) for the remaining
 release-aware propagation and selected normalization requirements.
+
+Direct lexical manual completion now applies verified descriptor transitions at
+loan release or immediate swap before continuation analysis. Scope forwarding and
+nested direct manuals preserve completion order. Independent verification derives
+these boundaries and checks each transition's input provenance plus subsequent
+reads. This does not generalize effects through selected cases, scattered lens
+tuples or returned calls; the corresponding restoration adapters remain open.

@@ -85,6 +85,8 @@ type State = {
     values: Map<string, ValueRepresentation>;
     places: Map<string, ValueRepresentation>;
     lenses: Map<string, LensRepId>;
+    finishes: Map<string, (state: State, apply: boolean) => void>;
+    loanFinishes: Map<string, string>;
 };
 
 /** Infer representation variants from explicit expression roots. No physical callable ABI is selected. */
@@ -141,11 +143,19 @@ export function inferRepresentations(
     const entries: RepresentationAnalysis['entries'] = [];
     const roots: RepresentationAnalysis['roots'] = [];
     const exports: RepresentationAnalysis['exports'] = [];
-    const fresh = (): State => ({ values: new Map(), places: new Map(), lenses: new Map() });
+    const fresh = (): State => ({
+        values: new Map(),
+        places: new Map(),
+        lenses: new Map(),
+        finishes: new Map(),
+        loanFinishes: new Map(),
+    });
     const clone = (s: State): State => ({
         values: new Map(s.values),
         places: new Map(s.places),
         lenses: new Map(s.lenses),
+        finishes: new Map(s.finishes),
+        loanFinishes: new Map(s.loanFinishes),
     });
     const fail = (message: string): never => {
         throw new BackendDiagnostic('unsupported-representation', message);
@@ -417,6 +427,7 @@ export function inferRepresentations(
             if (i.op === 'borrow') {
                 const loan = unit.loans.find((l) => l.id === i.loan)!;
                 if (loan.owners) s.lenses.set(loan.place, shape(get(s, i.lens)));
+                s.loanFinishes.set(i.loan, i.lens);
                 continue;
             }
             let out: ValueRepresentation;
@@ -481,14 +492,41 @@ export function inferRepresentations(
                     };
                     break;
                 }
-                case 'manual':
+                case 'manual': {
                     if (i.out.type.tag !== 'flow') return fail('Manual produced data');
                     out = {
                         kind: 'lens',
                         shape: retype(shape(get(s, i.lens)), i.out.type.read, i.out.type.write),
                     };
+                    const frontendFinish = s.finishes.get(i.lens);
+                    // Analyze each retained region once. A release reuses its verified
+                    // descriptor effects without replaying SSA/call annotations.
+                    let analyzed = false;
+                    const finish = (state: State, apply: boolean) => {
+                        const annotation = record.values.find((v) => v.value === i.out.id)!;
+                        if (!analyzed) {
+                            analyzed = true;
+                            const restored = clone(state);
+                            block(unit, i.cleanup, restored, record, chain);
+                            const transitions = [...state.places].flatMap(([place, before]) => {
+                                const after = restored.places.get(place)!;
+                                return equal(before, after) ? [] : [{ place, before, after }];
+                            });
+                            if (transitions.length) annotation.cleanupStorage = transitions;
+                        }
+                        if (apply) {
+                            annotation.cleanupStorage?.forEach(({ place, before, after }) => {
+                                if (!equal(state.places.get(place)!, before))
+                                    fail('Cleanup storage input provenance changed');
+                                state.places.set(place, after);
+                            });
+                            frontendFinish?.(state, true);
+                        }
+                    };
+                    s.finishes.set(i.out.id, finish);
                     deferred.push({ value: i.out.id, body: i.cleanup });
                     break;
+                }
                 case 'lens-tuple':
                     out = {
                         kind: 'lens',
@@ -506,6 +544,7 @@ export function inferRepresentations(
                             focus.replacement,
                         );
                     } else out = data(i.out.type.value);
+                    s.finishes.get(i.lens)?.(s, true);
                     break;
                 }
                 case 'global': {
@@ -557,6 +596,8 @@ export function inferRepresentations(
                     const nested = clone(s);
                     out = block(unit, i.body, nested, record, chain);
                     s.places.forEach((_, place) => s.places.set(place, nested.places.get(place)!));
+                    const finish = nested.finishes.get(i.body.result);
+                    if (finish) s.finishes.set(i.out.id, finish);
                     break;
                 }
                 case 'case': {
@@ -617,20 +658,16 @@ export function inferRepresentations(
             });
         }
         const result = get(s, body.result);
-        // Analyze retained regions independently after setup, without applying
-        // cleanup effects to setup state. Runtime staging/order remains in typed IR.
-        for (const cleanup of deferred.reverse()) {
-            const restored = clone(s);
-            block(unit, cleanup.body, restored, record, chain);
-            // Record descriptor effects without confusing restoration time with setup.
-            // Availability and nested deferred effects remain separate contracts.
-            const transitions = [...s.places].flatMap(([place, before]) => {
-                const after = restored.places.get(place)!;
-                return equal(before, after) ? [] : [{ place, before, after }];
-            });
-            if (transitions.length)
-                record.values.find((v) => v.value === cleanup.value)!.cleanupStorage = transitions;
-        }
+        // A plain block releases its lexical loans before its caller continues.
+        // Lens results defer those releases; analyze remaining regions without
+        // applying their effects to setup state.
+        if (result.kind !== 'lens' && result.kind !== 'local-focus')
+            for (const action of body.cleanup)
+                if (action.kind === 'release') {
+                    const value = s.loanFinishes.get(action.loan);
+                    if (value) s.finishes.get(value)?.(s, true);
+                }
+        for (const cleanup of deferred.reverse()) s.finishes.get(cleanup.value)!(s, false);
         return result;
     }
     for (const [rootIndex, id] of source.roots.entries()) {

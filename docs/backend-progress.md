@@ -787,3 +787,35 @@ Emscripten/Node at both optimization levels without retries (256.19 seconds).
 TypeScript and diff checks pass; remote CI was not run. Eight new tests cover
 physical transition endpoint layouts, ownership, missing/extra/forged records,
 consumption-only omission, and diagnostic printing.
+
+## Release-aware direct manual cleanup effects
+
+Representation inference now associates lexical loans with direct manual completion
+handlers. A plain block applies its release actions before returning its owner
+state to the continuation; an immediate manual swap applies completion immediately.
+Scope results forward direct handlers, and nested manual completion applies the
+outer cleanup followed by the original frontend completion. Cleanup regions are
+analyzed once, retaining the existing exact `cleanupStorage` and physical
+`storageTransitions` contracts; completion checks input provenance before applying
+the recorded descriptor effects. Independent serialized verification derives the
+same releases and rejects stale continuation callable provenance without invoking
+inference or concrete lowering.
+
+Twelve shared cases cover callable/aggregate continuation reads, unused alias
+release, immediate swaps, nested manual completion and repeated releases, for both
+boolean replacements. Existing C versioned storage already preserves the physical
+replacement through these boundaries; no C runtime or ownership convention changed.
+A new corruption test rejects the original callable descriptor on a post-release
+move before emission.
+
+This expands direct lexical manual cleanup support only. Selected case effects,
+lens tuples/scattered completion, call-return effects and escaping local backing
+still require effect composition and representation-aware restoration adapters.
+The divergent selected deferred replacement guard is unchanged. Phase 6 remains
+incomplete.
+
+Validation: **1,890 pass / 39 existing skips / 0 failures across 42 files**:
+1,168 non-execution tests and 722 native/Wasm cases. Full strict C11, optimized
+native, supported sanitizer, and Emscripten/Node execution at both optimization
+levels passed without retries (284.29 seconds). `bunx tsc --noEmit` and
+`git diff --check` pass. Remote CI was not run.

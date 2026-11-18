@@ -306,12 +306,22 @@ export function verifyRepresentations(
         values: Map<string, ValueRepresentation>;
         places: Map<string, ValueRepresentation>;
         lenses: Map<string, LensRep>;
+        finishes: Map<string, (state: State, apply: boolean) => void>;
+        loanFinishes: Map<string, string>;
     };
-    const fresh = (): State => ({ values: new Map(), places: new Map(), lenses: new Map() });
+    const fresh = (): State => ({
+        values: new Map(),
+        places: new Map(),
+        lenses: new Map(),
+        finishes: new Map(),
+        loanFinishes: new Map(),
+    });
     const clone = (s: State): State => ({
         values: new Map(s.values),
         places: new Map(s.places),
         lenses: new Map(s.lenses),
+        finishes: new Map(s.finishes),
+        loanFinishes: new Map(s.loanFinishes),
     });
     const get = (s: State, id: string): ValueRepresentation =>
         s.values.get(id) ?? fail('Missing operand annotation');
@@ -502,6 +512,7 @@ export function verifyRepresentations(
                 if (i.op === 'borrow') {
                     const loan = unit.loans.find((l) => l.id === i.loan)!;
                     if (loan.owners) s.lenses.set(loan.place, lens(get(s, i.lens)));
+                    s.loanFinishes.set(i.loan, i.lens);
                     continue;
                 }
                 const v =
@@ -534,6 +545,7 @@ export function verifyRepresentations(
                                 focus.replacement,
                             );
                         } else if (v.kind !== 'data') fail('Swap lacks callable focus provenance');
+                        s.finishes.get(i.lens)?.(s, true);
                         break;
                     }
                     case 'tuple':
@@ -592,10 +604,42 @@ export function verifyRepresentations(
                         else if (actual.kind !== 'thin') fail('Owned acquisition must be thin');
                         break;
                     }
-                    case 'manual':
+                    case 'manual': {
                         topology(lens(get(s, i.lens)), lens(v));
+                        const frontendFinish = s.finishes.get(i.lens);
+                        let analyzed = false;
+                        const finish = (state: State, apply: boolean) => {
+                            const annotation = annotations.get(i.out.id)!;
+                            if (!analyzed) {
+                                analyzed = true;
+                                const restored = clone(state);
+                                block(i.cleanup, restored);
+                                const transitions = [...state.places].flatMap(([place, before]) => {
+                                    const after = restored.places.get(place)!;
+                                    return same(before, after) ? [] : [{ place, before, after }];
+                                });
+                                requireEqual(
+                                    annotation.cleanupStorage,
+                                    transitions.length ? transitions : undefined,
+                                    'Cleanup storage transitions changed',
+                                );
+                            }
+                            if (apply) {
+                                annotation.cleanupStorage?.forEach(({ place, before, after }) => {
+                                    requireEqual(
+                                        state.places.get(place),
+                                        before,
+                                        'Cleanup storage input provenance changed',
+                                    );
+                                    state.places.set(place, after);
+                                });
+                                frontendFinish?.(state, true);
+                            }
+                        };
+                        s.finishes.set(i.out.id, finish);
                         deferred.push({ value: i.out.id, body: i.cleanup });
                         break;
+                    }
                     case 'lens-tuple': {
                         const actual = lens(v);
                         if (actual.kind !== 'tuple') return fail('Lens tuple lost its topology');
@@ -651,6 +695,8 @@ export function verifyRepresentations(
                         s.places.forEach((_, place) =>
                             s.places.set(place, nested.places.get(place)!),
                         );
+                        const finish = nested.finishes.get(i.body.result);
+                        if (finish) s.finishes.set(i.out.id, finish);
                         break;
                     }
                     case 'case': {
@@ -825,19 +871,13 @@ export function verifyRepresentations(
                 s.values.set(i.out.id, v);
             }
             const result = get(s, b.result);
-            for (const cleanup of deferred.reverse()) {
-                const restored = clone(s);
-                block(cleanup.body, restored);
-                const transitions = [...s.places].flatMap(([place, before]) => {
-                    const after = restored.places.get(place)!;
-                    return same(before, after) ? [] : [{ place, before, after }];
-                });
-                requireEqual(
-                    annotations.get(cleanup.value)!.cleanupStorage,
-                    transitions.length ? transitions : undefined,
-                    'Cleanup storage transitions changed',
-                );
-            }
+            if (result.kind !== 'lens' && result.kind !== 'local-focus')
+                for (const action of b.cleanup)
+                    if (action.kind === 'release') {
+                        const value = s.loanFinishes.get(action.loan);
+                        if (value) s.finishes.get(value)?.(s, true);
+                    }
+            for (const cleanup of deferred.reverse()) s.finishes.get(cleanup.value)!(s, false);
             return result;
         }
         const result = block(body, state);

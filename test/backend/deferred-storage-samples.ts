@@ -153,4 +153,83 @@ export const deferredStorageSamples = (['true', 'false'] as const).flatMap((cond
  (old, x)}`,
         expected: [1, true],
     },
+    {
+        name: `deferred storage continuation ${condition}`,
+        source: `{let x = 1
+ let v = 3
+ let f = fn () v
+ {let focus = ~{@(x, {let old = f := fn () 9
+ old()
+ fn () ()})}
+ focus := ${condition}}
+ (f(), x)}`,
+        expected: [9, condition === 'true'],
+    },
+    {
+        name: `deferred aggregate continuation ${condition}`,
+        source: `{let x = 1
+ let v = 3
+ let packed = (fn () v, 4)
+ {let focus = ~{@(x, {let (old, n) = packed := (fn () 9, 6)
+ old() + n
+ fn () ()})}
+ focus := ${condition}}
+ let (f, n) = packed
+ (f() + n, x)}`,
+        expected: [15, condition === 'true'],
+    },
+    {
+        name: `deferred storage unused continuation ${condition}`,
+        source: `{let x = 1
+ let v = 3
+ let f = fn () v
+ {let focus = ~{@(x, {let old = f := fn () 9
+ old()
+ fn () ()})}
+ ()}
+ (f(), x, ${condition})}`,
+        expected: [9, 1, condition === 'true'],
+    },
+    {
+        name: `deferred storage immediate continuation ${condition}`,
+        source: `{let x = 1
+ let v = 3
+ let f = fn () v
+ {@(x, {let old = f := fn () 9
+ old()
+ fn () ()})} := ${condition}
+ (f(), x)}`,
+        expected: [9, condition === 'true'],
+    },
+    {
+        name: `deferred nested continuation ${condition}`,
+        source: `{let x = 1
+ let v = 3
+ let f = fn () v
+ let g = fn () 4
+ {let focus = ~{@(@(x, {let old = f := fn () 9
+ old()
+ fn () ()}), {let old = g := fn () 8
+ old()
+ fn () ()})}
+ focus := ${condition}}
+ (f() + g(), x)}`,
+        expected: [17, condition === 'true'],
+    },
+    {
+        name: `deferred repeated continuation ${condition}`,
+        source: `{let x = 1
+ let v = 3
+ let f = fn () v
+ {let focus = ~{@(x, {let old = f := fn () 9
+ old()
+ fn () ()})}
+ focus := ${condition}}
+ {let focus = ~{@(x, {let old = f := fn () 12
+ old()
+ fn () ()})}
+ ()}
+ (f(), x)}`,
+        expected: [12, condition === 'true'],
+    },
 ]);

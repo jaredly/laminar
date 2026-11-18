@@ -203,3 +203,17 @@ it('rejects invented physical transitions on consumption-only cleanup', () => {
     expect(c.code.some((code: any) => mutate(code.body))).toBe(true);
     expect(() => verifyConcreteProgram(c)).toThrow('Manual restoration contract changed');
 });
+it('independently rejects stale callable provenance after alias release', () => {
+    const c = concrete(
+        deferredStorageSamples.find((s) => s.name === 'deferred storage continuation true')!.source,
+    );
+    const values = c.analysis.entries[0].values;
+    const transition = values.find((v: any) => v.cleanupStorage).cleanupStorage[0];
+    const moved = values.findLast(
+        (v: any) => JSON.stringify(v.representation) === JSON.stringify(transition.after),
+    );
+    expect(moved).toBeDefined();
+    moved.representation = transition.before;
+    expect(() => verifyConcreteProgram(c)).toThrow('Moved callable provenance changed');
+    expect(() => emitC(c)).toThrow('Moved callable provenance changed');
+});

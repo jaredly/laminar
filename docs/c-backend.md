@@ -459,3 +459,10 @@ physical endpoint layouts and `transfer-cleanup-storage` ownership. Printing mak
 these visible; emission rejects forged contracts through independent verification.
 Runtime restoration behavior is unchanged. Release-aware descriptor propagation
 and selected replacement normalization remain prerequisites for expanding support.
+
+Direct manual replacement can now be followed by callable/aggregate reads after
+lexical alias release or an immediate swap. Analysis and independent verification
+apply the retained descriptor transitions at completion, matching the C backend's
+existing versioned storage. Nested direct manuals and repeated releases preserve
+exact original and replacement ABIs. Selected divergent replacement, scattered
+completion and call/return effect propagation remain separate phase-6 work.
