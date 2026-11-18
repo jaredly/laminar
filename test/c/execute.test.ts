@@ -1,3 +1,4 @@
+import { lensStorageJoinSamples } from '../backend/lens-storage-join-samples.ts';
 import { storageJoinSamples } from '../backend/storage-join-samples.ts';
 import { aggregateResultSamples } from '../backend/aggregate-result-samples.ts';
 import { aggregateJoinSamples } from '../backend/aggregate-join-samples.ts';
@@ -88,6 +89,7 @@ const native =
           })
         : undefined;
 const samples = [
+    ...lensStorageJoinSamples,
     ...storageJoinSamples,
     ...aggregateResultSamples,
     ...aggregateJoinSamples,

@@ -362,6 +362,38 @@ export function inferRepresentations(
         const deferred: IRBlock[] = [];
         const localFocusPlaces = new Map<string, string>();
 
+        function deferredStorageUse(body: IRBlock, place: string, delayed = false): boolean {
+            const actionUses = (actions: IRBlock['cleanup'] | undefined) =>
+                actions?.some((a) =>
+                    a.kind === 'release'
+                        ? unit.loans.some(
+                              (l) =>
+                                  l.id === a.loan &&
+                                  (l.place === place || l.owners?.some((s) => s.place === place)),
+                          )
+                        : a.slot.place === place,
+                ) ?? false;
+            const result = record.values.find((v) => v.value === body.result)?.representation;
+            if ((delayed || result?.kind === 'lens') && actionUses(body.cleanup)) return true;
+            return body.instructions.some((i) => {
+                if (delayed && (i.op === 'move' || i.op === 'acquire') && i.slot.place === place)
+                    return true;
+                if (i.op === 'manual')
+                    return (
+                        i.holds.some((s) => s.place === place) ||
+                        deferredStorageUse(i.cleanup, place, true)
+                    );
+                if (i.op === 'scope') return deferredStorageUse(i.body, place, delayed);
+                if (i.op === 'case')
+                    return i.cases.some(
+                        (arm) =>
+                            deferredStorageUse(arm.body, place, delayed) ||
+                            actionUses(arm.restored) ||
+                            (delayed && actionUses(arm.setup)),
+                    );
+                return false;
+            });
+        }
         for (const i of body.instructions) {
             if (i.op === 'bind') {
                 bind(i.pattern, get(s, i.value), s);
@@ -526,9 +558,20 @@ export function inferRepresentations(
                             states[0] ?? fail('Branch has no storage continuation')
                         ).places.get(place)!;
                         if (states.some((state) => !equal(current, state.places.get(place)!))) {
-                            if (i.out.type.tag === 'flow')
+                            if (
+                                i.out.type.tag === 'flow' &&
+                                i.cases.some((arm) =>
+                                    deferredStorageUse(
+                                        {
+                                            ...arm.body,
+                                            cleanup: [...arm.body.cleanup, ...(arm.restored ?? [])],
+                                        },
+                                        place,
+                                    ),
+                                )
+                            )
                                 return fail(
-                                    'Divergent storage in lens-valued branches requires a restoration adapter',
+                                    'Deferred callable storage use requires a restoration adapter',
                                 );
                             const arms = states.map((state) => state.places.get(place)!);
                             const result = join(arms, true);

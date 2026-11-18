@@ -11,9 +11,8 @@ coverage, not completion of every phase exit gate.
 
 The scoped lens extensions are complete as of `707521c`; see the
 [completion record and follow-up mapping](checker-completeness-handoff.md).
-Latest local verification: **1702 pass / 39 existing skips / 0 failures across
-40 files**, with diff checks passing. TypeScript passes outside the subsequent
-CLI addition; the default check reports TS18046 in `cli/c.ts:46` (see backend progress). The latest full execution run passed without retries. Remote CI was not run for
+Latest local verification: **1763 pass / 39 existing skips / 0 failures across
+41 files**, with default TypeScript and diff checks passing. The latest full execution run passed without retries. Remote CI was not run for
 these slices. See also [the implementation record](backend-progress.md),
 [backend contract](backend-contract.md), [typed IR API](typed-ir.md), and
 [C backend](c-backend.md). Each further slice should be independently reviewable
@@ -399,3 +398,13 @@ selected environment ownership. Later moves, captures, calls and swaps use the
 common descriptor. General callable focus restoration remains open, including
 divergent storage changes inside lens-valued branches: those need a deferred
 restoration-aware merge and retain an explicit diagnostic. Phase 6 stays open.
+
+## Latest phase 6 boundary: selected-lens setup storage
+
+Lens-valued branches now normalize setup-only divergent callable/aggregate owners
+before retaining selected-arm state. Independent dependency checks keep deferred
+arm access to those owners explicit until representation-aware restoration exists.
+Current merged versions survive staging, completion and intervening replacements;
+outer cleanup can use their common descriptor. General callable focus aliases,
+projections, parameters/results, manual cleanup and scattered focuses remain open.
+Phase 6 is incomplete.

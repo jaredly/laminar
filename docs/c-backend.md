@@ -389,3 +389,27 @@ and invocation entry mappings.
 Divergent storage inside lens-valued branches retains an explicit restoration-adapter
 diagnostic. Callable focus aliases/projections, parameters/results, manual cleanup
 and scattered focuses also remain open. Phase 6 is incomplete.
+
+## Setup-only divergent storage in selected lenses
+
+Lens-valued branches may now normalize divergent owned callable/aggregate storage
+when their deferred arm restoration does not access the changed place. Inference
+and independent serialized verification conservatively inspect nested cleanup,
+protected manual dependencies, deferred slot accesses and restoration normalization.
+Arm-specific deferred access still diagnoses
+`Deferred callable storage use requires a restoration adapter`.
+
+C setup applies the verified storage adapters before retaining each selected-arm
+snapshot. Conversion temporaries participate in the existing lifting/heap-retention
+machinery. Staging and completion preserve the current merged owner versions,
+including replacements or consumption occurring after acquisition. Cleanup outside
+the selection can use the common descriptor; arm-specific cleanup retains its
+original ABI and is rejected when it depends on a divergent place.
+
+Eighteen shared samples cover both selections, aggregate owners, intervening
+replacement, unrelated selected cleanup, unused aliases, returned call backing,
+outer cleanup consuming the common owner, mixed thin/scattered focuses and nested
+selections. Corruption tests independently protect storage and lens adapter records
+and owner provenance. No callable focus endpoint, pointer cast, environment copy or
+new allocation convention is introduced. General callable focus restoration and
+deferred arm access to divergent callable owners remain open; phase 6 is incomplete.

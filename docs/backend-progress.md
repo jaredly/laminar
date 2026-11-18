@@ -648,3 +648,44 @@ config documented in the previous slice. Remote CI was not run.
 Commands: `bun test --path-ignore-patterns '**/c/execute.test.ts'`,
 `bun test test/c/execute.test.ts`, `bunx tsc --noEmit`,
 `bunx tsc --noEmit -p /tmp/laminar-backend-tsconfig.json`, and `git diff --check`.
+
+## Phase 6 slice: setup-only divergent storage in lens-valued branches
+
+Following `9785c86`, selected lens branches can normalize divergent owned callable
+or aggregate descriptors during setup. The supported boundary excludes deferred
+arm cleanup/restoration accessing the divergent place. Inference and independent
+representation verification each conservatively traverse nested scopes/cases,
+manual protected dependencies, deferred slot access and restoration normalization.
+Such dependencies diagnose `Deferred callable storage use requires a restoration
+adapter`; no source typing rule is changed.
+
+C lowering shares its availability-preserving storage conversion helper between
+ordinary and lens cases. Selected lens setup adapts the owners before snapshot
+retention and lifts conversion temporaries with other selected-arm variables.
+Existing staging/completion preserves the current merged versions rather than
+restoring obsolete setup descriptors. Later replacement and outer cleanup using
+the common descriptor execute correctly. Existing returned-lens contexts retain
+required backing and deferred owned values through completion. No new allocation
+convention, function-pointer cast, environment copy or old-value disposal is added.
+
+Eighteen shared samples cover both selections, nested aggregate owners, intervening
+replacement, unrelated selected cleanup, unused aliases, returned call backing,
+outer cleanup consuming the common owner, mixed thin/scattered focuses and nested
+selections. Six physical corruption tests protect independent lens/storage records;
+a provenance corruption test protects the common owner; a negative source test
+keeps deferred arm access explicit. The previous blanket lens-branch restriction
+test is replaced by this coverage.
+
+The subsequent CLI fix `760be7c` is preserved and the default TypeScript check now
+passes. General callable focus aliases/projections, parameters/results, manual
+restoration and scattered focuses, plus deferred arm access to divergent owners,
+remain open; phase 6 is incomplete.
+
+Validation: **1,763 passes, 39 existing skips, zero failures across 41 files**:
+1,109 non-execution tests and 654 native/Wasm execution cases. The full concurrent
+harness passed strict C11, optimized native builds, supported native sanitizers and
+Emscripten/Node at both optimization levels without retries (215.06 seconds).
+Default TypeScript and diff checks pass. Commands:
+`bun test --path-ignore-patterns '**/c/execute.test.ts'`,
+`bun test test/c/execute.test.ts`, `bunx tsc --noEmit`, and `git diff --check`.
+Remote CI was not run.

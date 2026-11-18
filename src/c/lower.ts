@@ -327,6 +327,20 @@ export function lowerC(program: ConcreteProgram): TranslationUnit {
             body.push(`${type(id)} ${name} = ${expression};`, `(void)${name};`);
             return name;
         };
+        const adaptStorage = (a: ConcreteValueAdapter, data: Data, output: Statement[]): Data => {
+            // Typed IR normalizes branch availability. Empty projections own no
+            // environment and must never be reconstructed as initialized values.
+            if (!Array.isArray(data) && data.layout === unit.id) return data;
+            if (a.kind === 'move') return data;
+            if (a.kind === 'aggregate')
+                return storage
+                    .parts(data)
+                    .map((child, n) => adaptStorage(a.items[n]!, child, output));
+            return {
+                expression: declare(a.to, adaptValue(a, read(data, a.from)), output),
+                layout: a.to,
+            };
+        };
         const setup: Statement[] = [];
         const bind = (p: IRPattern, data: Data, body: Statement[] = setup) => {
             if (p.kind === 'bind') places.set(p.slot.place, storage.own(data));
@@ -710,6 +724,15 @@ export function lowerC(program: ConcreteProgram): TranslationUnit {
                                 );
                                 block(arm.body, nested);
                                 normalize(arm.setup, nested);
+                                i.storageJoins?.forEach((join) => {
+                                    const view =
+                                        places.get(join.place) ??
+                                        unsupported('Missing branch storage owner');
+                                    storage.put(
+                                        view,
+                                        adaptStorage(join.arms[n]!, storage.get(view), nested),
+                                    );
+                                });
                                 const lens = lenses.get(arm.body.result)!;
                                 nested.push(
                                     `${selected} = ${n};`,
@@ -867,31 +890,13 @@ export function lowerC(program: ConcreteProgram): TranslationUnit {
                                     `${name} = (${type(id)}){.environment=(${result}).environment, .dispose=(${result}).dispose${entries}};`,
                                 );
                             } else nested.push(`${name} = ${result};`);
-                            const adaptStorage = (a: ConcreteValueAdapter, data: Data): Data => {
-                                // Typed IR normalizes branch availability. Empty projections own no
-                                // environment and must never be reconstructed as initialized values.
-                                if (!Array.isArray(data) && data.layout === unit.id) return data;
-                                if (a.kind === 'move') return data;
-                                if (a.kind === 'aggregate')
-                                    return storage
-                                        .parts(data)
-                                        .map((child, n) => adaptStorage(a.items[n]!, child));
-                                return {
-                                    expression: declare(
-                                        a.to,
-                                        adaptValue(a, read(data, a.from)),
-                                        nested,
-                                    ),
-                                    layout: a.to,
-                                };
-                            };
                             i.storageJoins?.forEach((join) => {
                                 const view =
                                     places.get(join.place) ??
                                     unsupported('Missing branch storage owner');
                                 storage.put(
                                     view,
-                                    adaptStorage(join.arms[armIndex]!, storage.get(view)),
+                                    adaptStorage(join.arms[armIndex]!, storage.get(view), nested),
                                 );
                             });
                             const state = storage.snapshot();

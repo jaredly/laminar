@@ -93,15 +93,3 @@ for (const mutation of ['missing', 'place', 'arms', 'result', 'continuation'] as
         expect(() => verifyConcreteProgram(c)).toThrow();
         expect(() => emitC(c)).toThrow();
     });
-it('keeps divergent versions inside lens-valued branches explicit', () => {
-    expect(() =>
-        concrete(`{let x = 1
- let v = 3
- let f = fn () v
- let y = 5
- {let focus = ~{match true {true -> {let old = f := fn () y
- x}; false -> x}}
- focus := 2}
- f()}`),
-    ).toThrow('Divergent storage in lens-valued branches requires a restoration adapter');
-});
