@@ -363,3 +363,22 @@ returned backing, staged outer cleanup ordering and returned staged backing.
 Retention corruption tests cover original layouts, ordering, ownership and analysis
 mode. Deferred replacement and general callable focus restoration remain open;
 phase 6 is incomplete.
+
+## Deferred cleanup descriptor transitions
+
+Manual value annotations now retain optional `cleanupStorage` records with ordered
+`place`, `before`, and `after` representation descriptors. Inference compares the
+cleanup's cloned final state with its setup state, recording changes only to
+places present in that setup state. Recursive aggregate descriptors retain exact
+callable provenance. Independent serialized verification derives the endpoints
+from cleanup instructions and rejects missing, extra, altered, or misplaced records.
+Consumption alone does not change a descriptor and does not produce a transition;
+these records do not encode availability or compose nested deferred effects.
+
+This is a prerequisite for deferred replacement adapters, not an expansion of
+selected callable restoration. Analysis still does not apply cleanup descriptor
+effects to setup/continuation state. Divergent selected deferred acquisition and
+replacement keep their explicit diagnostic. The next slice must compose effects
+in restoration order, propagate post-cleanup descriptors at release boundaries,
+and retain exact post-cleanup adapters through staging/completion and escaping
+contexts before relaxing that guard. Phase 6 remains incomplete.

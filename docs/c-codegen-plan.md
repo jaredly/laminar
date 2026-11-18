@@ -11,7 +11,7 @@ coverage, not completion of every phase exit gate.
 
 The scoped lens extensions are complete as of `707521c`; see the
 [completion record and follow-up mapping](checker-completeness-handoff.md).
-Latest local verification: **1825 pass / 39 existing skips / 0 failures across
+Latest local verification: **1845 pass / 39 existing skips / 0 failures across
 42 files**, with default TypeScript and diff checks passing. The latest full execution run passed without retries. Remote CI was not run for
 these slices. See also [the implementation record](backend-progress.md),
 [backend contract](backend-contract.md), [typed IR API](typed-ir.md), and
@@ -418,3 +418,22 @@ completion normalize surviving fields afterward and retain backing for returned
 contexts. Deferred replacement/acquisition of those owners still needs a descriptor
 transition adapter; callable focus aliases/projections, parameters/results, manual
 restoration and scattered focuses remain open. Phase 6 is incomplete.
+
+## Deferred cleanup descriptor transitions
+
+Manual value annotations now retain optional `cleanupStorage` records with ordered
+`place`, `before`, and `after` representation descriptors. Inference compares the
+cleanup's cloned final state with its setup state, recording changes only to
+places present in that setup state. Recursive aggregate descriptors retain exact
+callable provenance. Independent serialized verification derives the endpoints
+from cleanup instructions and rejects missing, extra, altered, or misplaced records.
+Consumption alone does not change a descriptor and does not produce a transition;
+these records do not encode availability or compose nested deferred effects.
+
+This is a prerequisite for deferred replacement adapters, not an expansion of
+selected callable restoration. Analysis still does not apply cleanup descriptor
+effects to setup/continuation state. Divergent selected deferred acquisition and
+replacement keep their explicit diagnostic. The next slice must compose effects
+in restoration order, propagate post-cleanup descriptors at release boundaries,
+and retain exact post-cleanup adapters through staging/completion and escaping
+contexts before relaxing that guard. Phase 6 remains incomplete.

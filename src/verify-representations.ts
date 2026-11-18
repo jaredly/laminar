@@ -491,7 +491,7 @@ export function verifyRepresentations(
             });
         }
         function block(b: IRBlock, s: State): ValueRepresentation {
-            const deferred: IRBlock[] = [];
+            const deferred: { value: string; body: IRBlock }[] = [];
             const localFocusPlaces = new Map<string, string>();
 
             for (const i of b.instructions) {
@@ -510,6 +510,8 @@ export function verifyRepresentations(
                 if (usedValues.has(i.out.id)) fail('Repeated temporary annotation use');
                 usedValues.add(i.out.id);
                 fit(v, i.out.type);
+                if (i.op !== 'manual' && annotations.get(i.out.id)!.cleanupStorage !== undefined)
+                    fail('Unexpected cleanup storage annotation');
                 if (i.op !== 'case' && annotations.get(i.out.id)!.storageJoins !== undefined)
                     fail('Unexpected storage join annotation');
                 switch (i.op) {
@@ -592,7 +594,7 @@ export function verifyRepresentations(
                     }
                     case 'manual':
                         topology(lens(get(s, i.lens)), lens(v));
-                        deferred.push(i.cleanup);
+                        deferred.push({ value: i.out.id, body: i.cleanup });
                         break;
                     case 'lens-tuple': {
                         const actual = lens(v);
@@ -823,7 +825,19 @@ export function verifyRepresentations(
                 s.values.set(i.out.id, v);
             }
             const result = get(s, b.result);
-            for (const cleanup of deferred.reverse()) block(cleanup, clone(s));
+            for (const cleanup of deferred.reverse()) {
+                const restored = clone(s);
+                block(cleanup.body, restored);
+                const transitions = [...s.places].flatMap(([place, before]) => {
+                    const after = restored.places.get(place)!;
+                    return same(before, after) ? [] : [{ place, before, after }];
+                });
+                requireEqual(
+                    annotations.get(cleanup.value)!.cleanupStorage,
+                    transitions.length ? transitions : undefined,
+                    'Cleanup storage transitions changed',
+                );
+            }
             return result;
         }
         const result = block(body, state);

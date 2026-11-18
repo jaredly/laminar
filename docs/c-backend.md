@@ -445,3 +445,11 @@ returned backing, staged outer cleanup ordering and returned staged backing.
 Retention corruption tests cover original layouts, ordering, ownership and analysis
 mode. Deferred replacement and general callable focus restoration remain open;
 phase 6 is incomplete.
+
+Manual cleanup descriptor changes are now retained as independently verified
+analysis `cleanupStorage` transitions (see [concrete IR](concrete-ir.md)). They
+record endpoints for future restoration adapters; C lowering does not use them
+to relax deferred replacement restrictions. Four additional shared execution
+samples cover callable and aggregate cleanup replacement, old-value invocation,
+and unused replacement disposal. General post-cleanup propagation and selected
+replacement remain open phase-6 work.

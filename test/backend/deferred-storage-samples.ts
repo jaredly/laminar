@@ -1,6 +1,32 @@
 /** Selected deferred cleanup consumes original typed storage before normalization. */
 export const deferredStorageSamples = (['true', 'false'] as const).flatMap((condition) => [
     {
+        name: `deferred storage descriptor transition ${condition}`,
+        source: `{let x = 1
+ let seen = 0
+ let v = 3
+ let f = fn () v
+ {let focus = ~{@(x, {let old = f := fn () 9
+ seen := old()
+ fn () ()})}
+ focus := ${condition}}
+ (seen, x)}`,
+        expected: [3, condition === 'true'],
+    },
+    {
+        name: `deferred aggregate descriptor transition ${condition}`,
+        source: `{let x = 1
+ let seen = 0
+ let v = 3
+ let packed = (fn () v, 4)
+ {let focus = ~{@(x, {let (old, n) = packed := (fn () 9, 6)
+ seen := old() + n
+ fn () ()})}
+ focus := ${condition}}
+ (seen, x)}`,
+        expected: [7, condition === 'true'],
+    },
+    {
         name: `deferred storage consume ${condition}`,
         source: `{let x = 1
  let seen = 0

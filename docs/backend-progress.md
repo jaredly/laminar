@@ -733,3 +733,28 @@ Default TypeScript and diff checks pass. Commands:
 `bun test --path-ignore-patterns '**/c/execute.test.ts'`,
 `bun test test/c/execute.test.ts`, `bunx tsc --noEmit`, and `git diff --check`.
 Remote CI was not run.
+
+## Deferred cleanup descriptor transitions
+
+Manual value annotations now retain optional `cleanupStorage` records with ordered
+`place`, `before`, and `after` representation descriptors. Inference compares the
+cleanup's cloned final state with its setup state, recording changes only to
+places present in that setup state. Recursive aggregate descriptors retain exact
+callable provenance. Independent serialized verification derives the endpoints
+from cleanup instructions and rejects missing, extra, altered, or misplaced records.
+Consumption alone does not change a descriptor and does not produce a transition;
+these records do not encode availability or compose nested deferred effects.
+
+This is a prerequisite for deferred replacement adapters, not an expansion of
+selected callable restoration. Analysis still does not apply cleanup descriptor
+effects to setup/continuation state. Divergent selected deferred acquisition and
+replacement keep their explicit diagnostic. The next slice must compose effects
+in restoration order, propagate post-cleanup descriptors at release boundaries,
+and retain exact post-cleanup adapters through staging/completion and escaping
+contexts before relaxing that guard. Phase 6 remains incomplete.
+
+Validation for cleanup descriptor transitions: **1,845 pass / 39 existing skips /
+0 failures across 42 files** (1,147 non-execution tests and 698 native/Wasm cases).
+`bunx tsc --noEmit` and `git diff --check` pass. The full execution harness passed
+strict C11, optimized native, supported sanitizers and Emscripten/Node at both
+optimization levels without retries (258.91 seconds). Remote CI was not run.

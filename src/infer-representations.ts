@@ -37,6 +37,11 @@ export type RepresentationVariant = {
     values: {
         value: string;
         representation: ValueRepresentation;
+        cleanupStorage?: {
+            place: string;
+            before: ValueRepresentation;
+            after: ValueRepresentation;
+        }[];
         storageJoins?: {
             place: string;
             arms: ValueRepresentation[];
@@ -360,7 +365,7 @@ export function inferRepresentations(
         // Cleanup is a separate executable region. Its data moves carry the
         // restoration-time types verified by typed IR, rather than setup types.
         // Callable dependencies retain their protected lexical provenance.
-        const deferred: IRBlock[] = [];
+        const deferred: { value: string; body: IRBlock }[] = [];
         const localFocusPlaces = new Map<string, string>();
 
         function deferredStorageUse(
@@ -482,7 +487,7 @@ export function inferRepresentations(
                         kind: 'lens',
                         shape: retype(shape(get(s, i.lens)), i.out.type.read, i.out.type.write),
                     };
-                    deferred.push(i.cleanup);
+                    deferred.push({ value: i.out.id, body: i.cleanup });
                     break;
                 case 'lens-tuple':
                     out = {
@@ -614,7 +619,18 @@ export function inferRepresentations(
         const result = get(s, body.result);
         // Analyze retained regions independently after setup, without applying
         // cleanup effects to setup state. Runtime staging/order remains in typed IR.
-        for (const cleanup of deferred.reverse()) block(unit, cleanup, clone(s), record, chain);
+        for (const cleanup of deferred.reverse()) {
+            const restored = clone(s);
+            block(unit, cleanup.body, restored, record, chain);
+            // Record descriptor effects without confusing restoration time with setup.
+            // Availability and nested deferred effects remain separate contracts.
+            const transitions = [...s.places].flatMap(([place, before]) => {
+                const after = restored.places.get(place)!;
+                return equal(before, after) ? [] : [{ place, before, after }];
+            });
+            if (transitions.length)
+                record.values.find((v) => v.value === cleanup.value)!.cleanupStorage = transitions;
+        }
         return result;
     }
     for (const [rootIndex, id] of source.roots.entries()) {

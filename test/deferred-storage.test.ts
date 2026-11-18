@@ -27,7 +27,9 @@ for (const sample of deferredStorageSamples)
         verifyConcreteProgram(c);
         expect(() => emitC(c)).not.toThrow();
     });
-function concrete(source = deferredStorageSamples[0]!.source) {
+function concrete(
+    source = deferredStorageSamples.find((s) => s.name === 'deferred storage consume true')!.source,
+) {
     const p = typedProgram(source);
     return JSON.parse(
         JSON.stringify(
@@ -99,4 +101,47 @@ it('keeps deferred replacement of divergent storage explicit', () => {
             { unit: p.units.at(-1)!.id, arguments: [] },
         ]),
     ).toThrow('Deferred callable storage replacement requires a restoration adapter');
+});
+
+for (const mutation of ['missing', 'place', 'before', 'after', 'extra', 'operation'] as const)
+    it(`independently rejects forged cleanup storage transition ${mutation}`, () => {
+        const c = concrete(deferredStorageSamples[0]!.source);
+        const values = c.analysis.entries[0].values;
+        const annotation = values.find((v: any) => v.cleanupStorage);
+        expect(annotation).toBeDefined();
+        const transition = annotation.cleanupStorage[0];
+        expect(transition.before).not.toEqual(transition.after);
+        if (mutation === 'missing') delete annotation.cleanupStorage;
+        if (mutation === 'place') transition.place = 'unknown-place';
+        if (mutation === 'before') transition.before = transition.after;
+        if (mutation === 'after') transition.after = transition.before;
+        if (mutation === 'extra') annotation.cleanupStorage.push(transition);
+        if (mutation === 'operation') {
+            const other = values.find((v: any) => v !== annotation);
+            other.cleanupStorage = annotation.cleanupStorage;
+        }
+        const diagnostic =
+            mutation === 'operation'
+                ? 'Unexpected cleanup storage annotation'
+                : 'Cleanup storage transitions changed';
+        expect(() => verifyConcreteProgram(c)).toThrow(diagnostic);
+        expect(() => emitC(c)).toThrow(diagnostic);
+    });
+it('retains recursive cleanup descriptor endpoints without changing setup provenance', () => {
+    const c = concrete(deferredStorageSamples[1]!.source);
+    const values = c.analysis.entries[0].values;
+    const transitions = values.flatMap((v: any) => v.cleanupStorage ?? []);
+    expect(transitions).toHaveLength(1);
+    const transition = transitions[0];
+    expect(transition.before.kind).toBe('aggregate');
+    expect(transition.after.kind).toBe('aggregate');
+    expect(transition.before.items[0].kind).toBe('callable');
+    expect(transition.after.items[0].kind).toBe('callable');
+    expect(transition.before.items[0]).not.toEqual(transition.after.items[0]);
+    expect(transition.before.items[1]).toEqual(transition.after.items[1]);
+    verifyConcreteProgram(c);
+});
+it('does not mistake deferred consumption for a descriptor transition', () => {
+    const c = concrete();
+    expect(c.analysis.entries[0].values.some((v: any) => v.cleanupStorage)).toBe(false);
 });
