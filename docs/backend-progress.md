@@ -689,3 +689,47 @@ Default TypeScript and diff checks pass. Commands:
 `bun test --path-ignore-patterns '**/c/execute.test.ts'`,
 `bun test test/c/execute.test.ts`, `bunx tsc --noEmit`, and `git diff --check`.
 Remote CI was not run.
+
+## Phase 6 slice: deferred consumption of divergent selected storage
+
+Following `aa1da9b`, deferred selected-arm cleanup may consume/dispose divergent
+owned callable or aggregate storage. Analysis records `restoration: 'consume'` for
+such joins; independent verification derives the mode from retained semantic IR.
+Deferred acquisition/replacement of the divergent place still diagnoses that a
+restoration adapter is needed, preventing untracked post-cleanup descriptors.
+
+An inverse of the forward field mapping is insufficient: the common callable can
+have zero invocation entries when only deferred original-ABI code invokes it.
+Instead, concrete joins record original per-arm retention layouts,
+`retain-selected-storage` ownership and `restore-retained`, `cleanup`, `normalize`
+ordering. Independent concrete verification derives the exact contract from
+verified analysis. Printing marks retained selected storage.
+
+C lowering saves each arm's logical storage before setup normalization. Before
+stage/completion it reinstates the selected retained contents for original-ABI
+cleanup, then normalizes any surviving fields with the existing forward adapter.
+Staging preserves current retained contents until completion. Empty slots remain
+empty, including branch-normalized disposal and refill afterward. Existing returned
+contexts retain referenced original backing through cleanup. There is no new
+environment allocation/copy, extra affine owner, disposer or function-pointer cast.
+
+Eighteen shared cases exercise both selections, deferred invocation, recursive tuple
+consumption, refill, unused aliases, owned cleanup results, nested selections,
+returned backing, staged outer cleanup ordering and returned staged backing.
+Coverage explicitly asserts original invocation slots survive a slot-free common
+callable. Five physical and two analysis corruption tests reject forged retention
+contracts; a source test retains the deferred-replacement boundary. The previous
+blanket deferred-access restriction test is replaced by this coverage.
+
+Deferred replacement of divergent owners and general callable focus
+aliases/projections, parameters/results, manual restoration and scattered focuses
+remain open. Phase 6 is incomplete.
+
+Validation: **1,825 passes, 39 existing skips, zero failures across 42 files**:
+1,135 non-execution tests and 690 native/Wasm execution cases. The full concurrent
+harness passed strict C11, optimized native builds, supported native sanitizers and
+Emscripten/Node at both optimization levels without retries (270.40 seconds).
+Default TypeScript and diff checks pass. Commands:
+`bun test --path-ignore-patterns '**/c/execute.test.ts'`,
+`bun test test/c/execute.test.ts`, `bunx tsc --noEmit`, and `git diff --check`.
+Remote CI was not run.

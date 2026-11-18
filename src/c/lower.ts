@@ -710,6 +710,25 @@ export function lowerC(program: ConcreteProgram): TranslationUnit {
                                         )),
                                 );
                             };
+                            const retainedStorage = () =>
+                                new Map(
+                                    i.storageJoins
+                                        ?.filter((j) => j.restoration)
+                                        .map((j) => [j.place, storage.get(places.get(j.place)!)]),
+                                );
+                            const restoreStorage = (retained: Map<string, Data>) =>
+                                retained.forEach((data, place) =>
+                                    storage.put(places.get(place)!, data),
+                                );
+                            const normalizeStorage = (arm: number, output: Statement[]) =>
+                                i.storageJoins?.forEach((j) => {
+                                    if (!j.restoration) return;
+                                    const view = places.get(j.place)!;
+                                    storage.put(
+                                        view,
+                                        adaptStorage(j.arms[arm]!, storage.get(view), output),
+                                    );
+                                });
                             const arms = i.cases.map((arm, n) => {
                                 storage.reset(before);
                                 const start = variables.length;
@@ -724,6 +743,7 @@ export function lowerC(program: ConcreteProgram): TranslationUnit {
                                 );
                                 block(arm.body, nested);
                                 normalize(arm.setup, nested);
+                                const retained = retainedStorage();
                                 i.storageJoins?.forEach((join) => {
                                     const view =
                                         places.get(join.place) ??
@@ -770,6 +790,8 @@ export function lowerC(program: ConcreteProgram): TranslationUnit {
                                     state: storage.snapshot(),
                                     lens,
                                     arm,
+                                    retained,
+                                    index: n,
                                 };
                             });
                             storage.reset(before);
@@ -795,8 +817,17 @@ export function lowerC(program: ConcreteProgram): TranslationUnit {
                                         );
                                         storage.put(arm.lens.view, replacement);
                                         const nested: Statement[] = [];
+                                        restoreStorage(arm.retained);
                                         const complete = stage(arm.lens, nested);
-                                        return { nested, complete, state: storage.snapshot(), arm };
+                                        const retained = retainedStorage();
+                                        normalizeStorage(arm.index, nested);
+                                        return {
+                                            nested,
+                                            complete,
+                                            state: storage.snapshot(),
+                                            arm,
+                                            retained,
+                                        };
                                     });
                                     storage.reset(current);
                                     merge(staged, output);
@@ -817,8 +848,10 @@ export function lowerC(program: ConcreteProgram): TranslationUnit {
                                                 (_, cell) => (cell.data = cleaned.get(cell)!),
                                             );
                                             const nested: Statement[] = [];
+                                            restoreStorage(entry.retained);
                                             entry.complete(nested);
                                             normalize(entry.arm.arm.restored, nested);
+                                            normalizeStorage(entry.arm.index, nested);
                                             return { nested, state: storage.snapshot() };
                                         });
                                         storage.reset(cleaned);
@@ -842,8 +875,10 @@ export function lowerC(program: ConcreteProgram): TranslationUnit {
                                         );
                                         storage.put(arm.lens.view, replacement);
                                         const nested: Statement[] = [];
+                                        restoreStorage(arm.retained);
                                         arm.lens.finish(nested);
                                         normalize(arm.arm.restored, nested);
+                                        normalizeStorage(arm.index, nested);
                                         return { nested, state: storage.snapshot() };
                                     });
                                     storage.reset(current);

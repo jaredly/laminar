@@ -776,6 +776,15 @@ export function verifyConcreteProgram(p: ConcreteProgram): void {
                                 place: j.place,
                                 ownership: 'transfer-selected-storage',
                                 arms: j.arms.map((from) => adapter(from, j.result)),
+                                ...(j.restoration
+                                    ? {
+                                          restoration: {
+                                              ownership: 'retain-selected-storage',
+                                              order: ['restore-retained', 'cleanup', 'normalize'],
+                                              retained: j.arms.map(storage),
+                                          },
+                                      }
+                                    : {}),
                             })),
                         'Branch storage adapter changed',
                     );

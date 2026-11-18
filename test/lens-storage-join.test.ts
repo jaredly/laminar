@@ -27,25 +27,7 @@ for (const sample of lensStorageJoinSamples)
         verifyConcreteProgram(c);
         expect(() => emitC(c)).not.toThrow();
     });
-it('keeps deferred access to a divergent callable owner explicit', () => {
-    const source = `{let x = 1
- let v = 3
- let f = fn () v
- let y = 5
- {let focus = ~{match true {true -> {let old = f := fn () y
- @(x, {f()
- fn () ()})}; false -> x}}
- focus := 2}
- x}`;
-    const p = typedProgram(source);
-    expect(legacyReference(source)).toEqual(2);
-    expect(executeTypedProgram(p)).toEqual(2);
-    expect(() =>
-        compileConcreteProgram(p, wasm32Emscripten('test'), [
-            { unit: p.units.at(-1)!.id, arguments: [] },
-        ]),
-    ).toThrow('Deferred callable storage use requires a restoration adapter');
-});
+
 function concrete() {
     const p = typedProgram(lensStorageJoinSamples[0]!.source);
     return JSON.parse(

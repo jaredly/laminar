@@ -331,3 +331,35 @@ selections. Corruption tests independently protect storage and lens adapter reco
 and owner provenance. No callable focus endpoint, pointer cast, environment copy or
 new allocation convention is introduced. General callable focus restoration and
 deferred arm access to divergent callable owners remain open; phase 6 is incomplete.
+
+## Deferred consumption of selected callable storage
+
+Selected lens arms may now consume or dispose divergent owned callable/aggregate
+storage during deferred cleanup. Analysis marks the corresponding storage join
+`restoration: 'consume'`. Independent verification derives that mode from deferred
+slot accesses, cleanup actions and manual protected dependencies. Deferred
+acquisition/replacement of the divergent owner retains an explicit diagnostic;
+this slice does not infer new post-cleanup callable descriptors.
+
+The concrete restoration contract records `retain-selected-storage`, exact ordered
+original arm layouts and `restore-retained`, `cleanup`, `normalize` sequencing.
+The common callable may have no invocation slots when all calls occur in deferred
+arm code. Retaining the original typed storage preserves those original entries
+without inventing dispatch slots or casting code pointers. Independent concrete
+verification derives the retention layouts and ownership/order from verified
+analysis and rejects altered contracts.
+
+C setup retains each selected arm's logical storage before normalization. Staging
+and completion temporarily restore that retained storage for original-ABI cleanup,
+then normalize surviving contents through the existing forward adapter. Empty
+slots remain empty. Staged state retains its current raw contents through outer
+cleanup; returned contexts capture required original backing until completion.
+There is one affine environment owner; no environment allocation/copy or extra
+disposer is introduced. The printer marks these cases `retained-storage`.
+
+Eighteen shared cases cover both selections, deferred calls, tuple consumption,
+refill after cleanup, unused aliases, owned cleanup results, nested selections,
+returned backing, staged outer cleanup ordering and returned staged backing.
+Retention corruption tests cover original layouts, ordering, ownership and analysis
+mode. Deferred replacement and general callable focus restoration remain open;
+phase 6 is incomplete.

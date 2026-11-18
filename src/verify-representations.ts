@@ -449,7 +449,12 @@ export function verifyRepresentations(
         const usedValues = new Set<string>(),
             usedCalls = new Set<string>();
         edges.set(owner, new Set());
-        function deferredStorageUse(body: IRBlock, place: string, delayed = false): boolean {
+        function deferredStorageUse(
+            body: IRBlock,
+            place: string,
+            delayed = false,
+            writes = false,
+        ): boolean {
             const actionUses = (actions: IRBlock['cleanup'] | undefined) =>
                 actions?.some((a) =>
                     a.kind === 'release'
@@ -458,23 +463,27 @@ export function verifyRepresentations(
                                   l.id === a.loan &&
                                   (l.place === place || l.owners?.some((s) => s.place === place)),
                           )
-                        : a.slot.place === place,
+                        : a.slot.place === place && (!writes || a.kind !== 'drop-place'),
                 ) ?? false;
             const result = annotations.get(body.result)?.representation;
             if ((delayed || result?.kind === 'lens') && actionUses(body.cleanup)) return true;
             return body.instructions.some((i) => {
-                if (delayed && (i.op === 'move' || i.op === 'acquire') && i.slot.place === place)
+                if (
+                    delayed &&
+                    (i.op === 'acquire' || (!writes && i.op === 'move')) &&
+                    i.slot.place === place
+                )
                     return true;
                 if (i.op === 'manual')
                     return (
-                        i.holds.some((s) => s.place === place) ||
-                        deferredStorageUse(i.cleanup, place, true)
+                        (!writes && i.holds.some((s) => s.place === place)) ||
+                        deferredStorageUse(i.cleanup, place, true, writes)
                     );
-                if (i.op === 'scope') return deferredStorageUse(i.body, place, delayed);
+                if (i.op === 'scope') return deferredStorageUse(i.body, place, delayed, writes);
                 if (i.op === 'case')
                     return i.cases.some(
                         (arm) =>
-                            deferredStorageUse(arm.body, place, delayed) ||
+                            deferredStorageUse(arm.body, place, delayed, writes) ||
                             actionUses(arm.restored) ||
                             (delayed && actionUses(arm.setup)),
                     );
@@ -670,7 +679,8 @@ export function verifyRepresentations(
                                 states[0] ?? fail('Branch has no storage continuation')
                             ).places.get(place)!;
                             if (divergent.includes(place)) {
-                                if (
+                                const joined = joins!.find((j) => j.place === place)!;
+                                const uses = (writes = false) =>
                                     i.out.type.tag === 'flow' &&
                                     i.cases.some((arm) =>
                                         deferredStorageUse(
@@ -682,13 +692,19 @@ export function verifyRepresentations(
                                                 ],
                                             },
                                             place,
+                                            false,
+                                            writes,
                                         ),
-                                    )
-                                )
-                                    fail(
-                                        'Deferred callable storage use requires a restoration adapter',
                                     );
-                                const joined = joins!.find((j) => j.place === place)!;
+                                if (uses(true))
+                                    fail(
+                                        'Deferred callable storage replacement requires a restoration adapter',
+                                    );
+                                requireEqual(
+                                    joined.restoration,
+                                    uses() ? 'consume' : undefined,
+                                    'Selected storage restoration contract changed',
+                                );
                                 const arms = states.map((state) => state.places.get(place)!);
                                 requireEqual(
                                     joined.arms,

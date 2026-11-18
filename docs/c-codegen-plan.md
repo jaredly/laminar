@@ -11,8 +11,8 @@ coverage, not completion of every phase exit gate.
 
 The scoped lens extensions are complete as of `707521c`; see the
 [completion record and follow-up mapping](checker-completeness-handoff.md).
-Latest local verification: **1763 pass / 39 existing skips / 0 failures across
-41 files**, with default TypeScript and diff checks passing. The latest full execution run passed without retries. Remote CI was not run for
+Latest local verification: **1825 pass / 39 existing skips / 0 failures across
+42 files**, with default TypeScript and diff checks passing. The latest full execution run passed without retries. Remote CI was not run for
 these slices. See also [the implementation record](backend-progress.md),
 [backend contract](backend-contract.md), [typed IR API](typed-ir.md), and
 [C backend](c-backend.md). Each further slice should be independently reviewable
@@ -408,3 +408,13 @@ Current merged versions survive staging, completion and intervening replacements
 outer cleanup can use their common descriptor. General callable focus aliases,
 projections, parameters/results, manual cleanup and scattered focuses remain open.
 Phase 6 is incomplete.
+
+## Latest phase 6 boundary: deferred selected-owner consumption
+
+Selected lens cleanup now consumes/disposes divergent callable owners through
+retained original typed arm storage. Verified retention contracts preserve original
+invocation slots, including when the common descriptor has none. Staging and
+completion normalize surviving fields afterward and retain backing for returned
+contexts. Deferred replacement/acquisition of those owners still needs a descriptor
+transition adapter; callable focus aliases/projections, parameters/results, manual
+restoration and scattered focuses remain open. Phase 6 is incomplete.

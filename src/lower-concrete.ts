@@ -531,6 +531,24 @@ export function lowerConcreteProgram(
                                           place: j.place,
                                           ownership: 'transfer-selected-storage' as const,
                                           arms: j.arms.map((from) => valueAdapter(from, j.result)),
+                                          ...(j.restoration
+                                              ? {
+                                                    restoration: {
+                                                        ownership:
+                                                            'retain-selected-storage' as const,
+                                                        order: [
+                                                            'restore-retained',
+                                                            'cleanup',
+                                                            'normalize',
+                                                        ] as [
+                                                            'restore-retained',
+                                                            'cleanup',
+                                                            'normalize',
+                                                        ],
+                                                        retained: j.arms.map(layout),
+                                                    },
+                                                }
+                                              : {}),
                                       })),
                               }
                             : {}),
