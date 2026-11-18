@@ -131,6 +131,49 @@ cleanup while allowing intended scoped operations and type changes. Reuse manual
 staging and owned retention without weakening ordinary closure or raw-local
 escape checks. Carry supported forms through physical adapters afterward.
 
+### Active-path audit and executable contract
+
+`test/aslens.test.ts` now isolates the active `src/decompose.ts` / `src/eval.ts`
+path in eight deliberately unchecked execution regressions and one checked-boundary
+regression. These are preparatory coverage, not checker or backend acceptance.
+
+The execution regressions establish:
+
+- Setup evaluates once. The heap cell is allocated before consumer execution,
+  remains live during cleanup, and is released afterward.
+- The pattern binds by reference at restoration, after consumer execution. Its
+  shape and type describe the **final replacement**, not the initial value:
+  an initial number can be replaced with a tuple and destructured by a tuple
+  cleanup pattern.
+- Cleanup may consume the temporary without refill; the backing disposer deletes
+  the remaining cell, including an empty cell. Cleanup may also refill it, including
+  with a different type. This owned-temporary behavior must not be implemented as
+  an ordinary persistent alias that demands refill at its lifetime boundary.
+- Unused focuses restore once, and backing survives a returned lens until the
+  caller restores it.
+
+Existing fixtures corroborate consumption without refill:
+`src/systematic.test.lm`'s `makelens` and `test/flow.test.lm`'s `aside` / `useFile`.
+The latter consumes tuple components and restores a lexical lens parameter.
+Constructor patterns are outside this audit.
+
+The legacy evaluator is **not** an owned-disposal oracle: block cleanup ignores
+its result, and the `heap` disposer deletes its cell without recursively disposing
+its contents. Thus freeing the cell does not prove cleanup-result or residual-focus
+resource disposal. The typed implementation must explicitly dispose both owned
+results and residual temporary contents once, using retained/manual machinery.
+The audit tests intentionally make no disposal-count claim.
+
+Checker acceptance, retained `aslens` metadata, independent verification, detached
+typed execution, and C/Wasm adapters remain unimplemented. The checked-boundary test
+preserves the existing explicit diagnostic until that work lands. Audit verification: `bun test` reports **927 pass, 39 existing skips, 0 failures
+across 31 files** (nine new tests); native and Wasm corpus checks passed.
+`bunx tsc --noEmit` and `git diff --check` passed.
+
+The next edit should add ownership-negative regressions alongside inference/retained IR support;
+do not simply remove the unsupported diagnostic or reuse a borrowed alias's refill
+rule for the owned temporary.
+
 Suggested implementation sequence:
 
 1. Audit the active `aslens` decomposition and unchecked fixtures, then add focused
