@@ -1,6 +1,20 @@
 # Plan: typed lowering, representation specialization, and C/Wasm code generation
 
-Status: implementation started, 2026-11-17. The phase-0 contracts/acceptance corpus, phase-1 durable elaboration, and phase-2 generic typed IR/verifier/reference execution are implemented; phases 3–8 remain. C/Wasm emission is not implemented yet. See [the implementation record](backend-progress.md), [backend contract](backend-contract.md), and [typed IR API](typed-ir.md). Each phase should be independently reviewable and leave the existing checked and unchecked execution paths working.
+Status: phases 0–3 are implemented through the concrete-IR exit gate; phases 4–5
+execute the documented scalar/tuple native C and Emscripten/Node subset. Known
+captured closure invocation and environment disposal implement part of phase 6.
+Dynamic callable joins and callable focus storage remain open; phase 7 runtime
+and host integration and phase 8 optimization remain broader work. This is subset
+coverage, not completion of every phase exit gate.
+
+The scoped lens extensions are complete as of `707521c`; see the
+[completion record and follow-up mapping](checker-completeness-handoff.md).
+Latest local verification: **1136 pass / 39 existing skips / 0 failures across
+34 files**, with TypeScript and diff checks passing. Remote CI was not run for
+these slices. See also [the implementation record](backend-progress.md),
+[backend contract](backend-contract.md), [typed IR API](typed-ir.md), and
+[C backend](c-backend.md). Each further slice should be independently reviewable
+and preserve checked and unchecked execution paths.
 
 ## Outcome and scope
 
@@ -19,9 +33,15 @@ let b = 2
 
 Both forms must work when passed through generic functions, returned through lens functions, and used by higher-order functions. Specialization on representation must not change which source programs pass semantic checking.
 
-Full coverage means the currently checked language subset, not every syntax form in the parser. Manual cleanup lenses, `aslens`, lens cases, and constructor alias patterns currently lack complete semantic rules. They remain explicit unsupported cases until separately specified and checked. Do not expand source-language semantics incidentally while implementing the backend.
+Full coverage means the currently checked language subset, not every syntax form
+in the parser. Manual cleanup lenses, `aslens` (including constructor/literal
+cleanup patterns), lens cases, and borrowed constructor aliases now have checked
+restoration contracts, retained verification, and reference execution. Their
+documented physical subset executes through C/Wasm; remaining callable/nominal
+adapters stay explicit backend restrictions. Do not expand source-language
+semantics incidentally while implementing the backend.
 
-## Current starting point
+## Original starting point (historical)
 
 - `src/types.ts` separates solver types, flow endpoints, and rank-1 schemes from parsed annotations.
 - `src/infer.ts` records occurrence types and binding objects, but storage, availability, and borrow state are mutable analysis data. The exported binding table is `ReadonlyMap<object, object>`, rather than a durable compiler interface.
@@ -304,4 +324,13 @@ The defaults above make progress possible without additional up-front language d
 - Whether a direct Wasm emitter, memory64 support, or a Wasm GC representation is warranted after the C-to-Wasm path is reliable. None is required to preserve the initial source semantics.
 - Which currently unsupported semantic lens forms to implement after the checked subset has a working C backend.
 
-The recommended first implementation task is phase 0 followed by phase 1: freeze the contract and make the checker preserve the metadata. Starting with a C pretty-printer would leave the hardest storage and specialization questions implicit.
+Phases 0–5 are complete for the documented subset. Phase 6 is partially
+implemented: known captured closures work; dynamic callable joins and callable
+focus storage/replacement remain. Continue with those phase-6 adapters or
+phase-7 runtime/host integration,
+using the [scoped completion record](checker-completeness-handoff.md#separate-broader-work-and-c-codegen-plan-mapping)
+to distinguish completed restoration support from remaining backend work.
+Callable focus storage/replacement needs an explicit adapter slice spanning the
+phase-5 storage and phase-6 closure contracts; general closure storage in phase 6
+item 3 does not by itself establish focus replacement support. `A & B` remains
+separate language-design work outside this backend plan.

@@ -1,9 +1,21 @@
-# Remaining scoped-lens work
+# Scoped-lens completion record and backend handoff
 
-## Start here
+## Status: scoped work complete
 
-Continue in the `ts/` Git repository. Borrowed matching and constructor alias
-patterns now use same-constructor reconstruction. The user approved the contract:
+The scoped restoration work and the three follow-up slices are complete as of
+`707521c`: the computed-focus branch audit fix, known captured cleanup callbacks
+through C/Wasm, and constructor/literal `aslens` cleanup patterns. No explicitly
+scoped implementation task remains in this handoff. Use this document to preserve
+contracts and regression coverage; continue broader backend work through the
+[C codegen plan](c-codegen-plan.md), with the mapping below.
+
+The latest full verification is **1136 pass / 39 existing skips / 0 failures across
+34 files**, with 38 inline snapshots. TypeScript and diff checks pass. Native
+strict/optimized/sanitized C and Emscripten/Node execution cover the documented
+subset. Remote CI was not run for these slices.
+
+Borrowed matching and constructor alias patterns use same-constructor
+reconstruction. The user approved the contract:
 field sublenses exclusively borrow the whole owner; consumed fields must be refilled;
 restoration rebuilds the matched constructor from final fields. Whole-owner
 replacement is available after those sublenses end. See the completed slice below.
@@ -17,14 +29,14 @@ evaluation now pass checking, typed verification, and the shared C/Wasm corpus.
 
 This handoff is not a proof of checker or ownership-model completeness. Preserve
 established language decisions; do not infer new rules from rejection paths or
-physical backend limitations. Callable focus storage and dynamic callable joins remain separate backend work.
+physical backend limitations. Callable focus storage and dynamic callable joins
+remain separate backend work.
 
 ## Repository and verification baseline
 
-The earlier implementation baseline is **`f6e797c`**; the temporary-lens audit
-is committed as **`83d9003`**, and temporary-focus support as **`1ba743b`**.
-The borrowed-pattern implementation below extends those milestones.
-Inspect `git status` and `git log` when resuming, and preserve later user edits.
+The final implementation baseline is **`707521c`**. The earlier baseline was
+`f6e797c`; the milestone table records subsequent scoped work as well. Inspect
+`git status` and `git log` before future changes and preserve later user edits.
 
 | Commit | Milestone |
 | --- | --- |
@@ -40,16 +52,20 @@ Inspect `git status` and `git log` when resuming, and preserve later user edits.
 | `6aafda4` | Manual staging and retained contexts through native C and Wasm |
 | `ff39cdb` | Path-sensitive typed computed-owner revision guards |
 | `f6e797c` | Path-sensitive inference guards for RHS and callee/argument updates |
+| `83d9003` | Temporary-lens restoration audit |
+| `1ba743b` | Checked pattern-bound temporary focuses |
+| `44c8d8c` | Scoped borrowed constructor reconstruction |
+| `de392d0` | Computed-focus permissions across lens branches |
+| `ffa0395` | Known captured cleanup callbacks through C/Wasm |
+| `707521c` | Constructor/literal temporary cleanup patterns |
 
-Pre-aslens implementation verification: **918 pass, 39 existing skips, 0 failures
-across 30 files**. `bunx tsc --noEmit` and `git diff --check` passed. The shared
-C-supported corpus passes native strict C11 at `-O0`, `-O2`, and ASan/UBSan with
-stack-use-after-return detection, and Emscripten/Node at `-O0` and `-O2`.
-This includes **23 manual-restoration samples**, **24 computed-alias samples**,
-and **12 lens-branch samples**. This is tested subset coverage, not universal
-backend support. Remote CI was not run or requested as a prerequisite.
+Current shared execution coverage includes **23 manual-restoration samples**,
+**26 computed-alias samples**, **12 lens-branch samples**, **5 borrowed-pattern
+samples**, **21 temporary-focus samples**, and **9 captured-cleanup samples**.
+This is tested subset coverage, not universal backend support. Historical suite
+counts are recorded under verification below.
 
-Read before implementation:
+Read before extending these contracts:
 
 - `docs/type-inference.md` and the language-feedback update in
   `docs/type-inference-research.md`; earlier superseded recommendations are not
@@ -74,8 +90,9 @@ pointer path is `src/decompose.ts` and `src/eval.ts`, not `src/value-passing/`.
 | Constructor alias patterns | Implemented | Retained reconstruction | Tested | Nominal layouts remain explicit |
 | `aslens`: `lens pattern <- value` | Identifier/wildcard/tuple/constructor/literal patterns | Retained manual capability | Tested | Tested scalar/tuple subset |
 
-“Tested” is not universal backend coverage. Dynamic callable joins, and nominal/heap runtime data retain their existing later-phase
-restrictions. Semantic acceptance must remain independent of physical topology;
+“Tested” is not universal backend coverage. Dynamic callable joins and nominal/heap
+runtime data retain their existing later-phase restrictions. Semantic acceptance
+must remain independent of physical topology;
 use explicit backend diagnostics for missing adapters, without evaluator fallback.
 
 ## Preserve the established language decisions
@@ -150,7 +167,7 @@ Branch verification resolves cleanup holds against outer storage, excluding
 branch-local retained backing and normalizing lexical permits.
 
 Representation analysis, concrete contracts, and C/Wasm reuse the existing manual
-retained-context adapter. `test/backend/aslens-samples.ts` contains 17 shared
+retained-context adapter. `test/backend/aslens-samples.ts` contains 21 shared
 scalar/tuple cases, including final-type changes, returned backing, lexical refill,
 selected branches, wildcard disposal, nested cleanup order, unused/duplicated focuses,
 and owned cleanup results. Each runs through checked legacy and detached generic /
@@ -513,23 +530,31 @@ unused literal patterns through representation/concrete verification and native 
 Wasm execution. An unmatched literal cleanup also has native/Wasm trap coverage.
 The shared temporary-focus corpus now has 21 cases.
 
-## Separate broader work
+## Separate broader work and C codegen plan mapping
 
-- `A & B` remains a front-end/language-design gap: the README marks it unimplemented
-  and the AST lacks a form. Do not silently include parser/type-system design in a
-  scoped restoration fix.
-- Callable focus storage/replacement, dynamic callable joins, nominal/heap runtime
-  data, and host-callable root adapters remain separate backend milestones.
-  Existing explicit diagnostics must remain until their contracts and
-  implementations exist. List/variant support for borrowed matching may depend
-  on nominal/runtime adapters; semantic checking must not depend on that schedule.
+These are follow-up milestones, not unfinished scoped restoration tasks. The
+[codegen plan](c-codegen-plan.md) already schedules most of them:
+
+| Follow-up | Existing plan coverage | Remaining boundary |
+| --- | --- | --- |
+| Callable focus storage/replacement | Related phase 0 item 5 (stored-closure ownership), phase 5 (typed storage), and phase 6 item 3 (closure lifetime and aggregate storage) | Not explicitly itemized as a callable-focus adapter. Define representation analysis, storage/replacement, and restoration contracts before removing its diagnostic. |
+| Dynamic callable joins | Phase 6 items 4–6 and “Specialization and dynamic joins” | Normalize compatible closure representations or retain tagged dispatch, including branch-selected environments and exact call ABIs. Known captured invocation is implemented; this broader phase-6 exit gate remains open. |
+| Nominal/heap runtime data | Phase 7 items 1–4 | Implement lists, strings, registered constructors, owned move/drop/duplication, and runtime operations. Existing semantic/reference support does not supply physical runtime adapters. |
+| Host-callable root adapters | “WebAssembly target strategy,” phase 0 items 4 and 7, and phase 7 item 7 | Define callable entry adapters and deliberate host exports with ownership transfer/disposal. Borrowed lenses remain internal. |
+| `A & B` | Not scheduled as a backend feature | Separate parser/type-system and language-design work; the README marks it unimplemented and the AST lacks a form. |
+
+Preserve explicit backend diagnostics until corresponding contracts, independent
+verification, and physical execution exist. Semantic acceptance must remain
+independent of physical adapter availability. Further checker auditing is
+open-ended correctness work, not a remaining finite task or a proof obligation
+satisfied by this handoff.
 
 ## Completed machinery to preserve and regression locations
 
 - Computed loans distinguish an independent focus place from ordered protected
   owner references and permits. Direct aliases keep their original representation.
   See `test/computed-alias.test.ts` and
-  `test/backend/computed-alias-samples.ts` (24 shared execution samples).
+  `test/backend/computed-alias-samples.ts` (26 shared execution samples).
 - Branches retain setup/restored states and normalization edges. Concrete
   `lensJoin: { kind: 'selected', arms, result }` normalizes the focus to thin storage
   while preserving each arm's original topology. Independent verifiers derive and
@@ -555,6 +580,8 @@ on an unmatched literal cleanup. Constructor/list and string patterns have check
 legacy and detached generic/specialized typed execution coverage. The nominal
 physical-layout diagnostic remains explicit. `bunx tsc --noEmit` and
 `git diff --check` pass. No new skips; remote CI was not run.
+
+### Historical verification baselines
 
 After captured callback support, the full run reports **1108 pass / 39 existing
 skips / 0 failures across 33 files**, with 38 inline snapshots. All nine new shared
@@ -589,7 +616,9 @@ Historical baselines: 918 pass / 39 skips across 30 files before temporary lense
 927 pass / 39 skips across 31 files after the audit; 1001 pass / 39 skips across
 31 files after the temporary-focus implementation.
 
-For each slice:
+### Requirements for future slices
+
+For each new slice:
 
 1. Preserve accepted programs and ownership negatives. Add positive and negative
    regressions before broadening acceptance.
