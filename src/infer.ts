@@ -1071,6 +1071,9 @@ export class Inferencer {
         const record: (typeof this.builder.manuals)[number] = {
             node: this.builder.node(n),
             frontend: this.builder.node(n.frontend),
+            reconstruction: n.reconstructionPattern
+                ? this.builder.node(n.reconstructionPattern)
+                : undefined,
             cleanup: this.builder.node(
                 scoped && n.backend.type === 'fn' ? n.backend.body : n.backend,
             ),
@@ -1121,7 +1124,11 @@ export class Inferencer {
             read: frontend.read,
             empty: frontend.empty,
             targets,
-            provenance: [],
+            // Compiler-generated reconstruction preserves the original owner's
+            // escape restrictions; it is not an explicit owned-retention request.
+            provenance: n.reconstructionPattern
+                ? [this.lookup(env, n.reconstructionPattern.reconstructionOwner!.text, n.loc)]
+                : [],
             pending: frontend.pending,
             stage,
             put: (type) => stage(type)(),

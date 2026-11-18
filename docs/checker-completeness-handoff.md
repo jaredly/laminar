@@ -2,10 +2,11 @@
 
 ## Start here
 
-Continue in the `ts/` Git repository. Identifier/wildcard/tuple `aslens` temporary
-focuses are now implemented using retained manual staging. Borrowed matching and
-constructor alias patterns are the remaining scoped slice, and require a user
-decision about constructor reconstruction before implementation.
+Continue in the `ts/` Git repository. Borrowed matching and constructor alias
+patterns now use same-constructor reconstruction. The user approved the contract:
+field sublenses exclusively borrow the whole owner; consumed fields must be refilled;
+restoration rebuilds the matched constructor from final fields. Whole-owner
+replacement is available after those sublenses end. See the completed slice below.
 
 Manual restoration, computed/tuple aliases, lens-valued branches, and
 path-sensitive computed-owner invalidation are implemented for the documented
@@ -22,7 +23,8 @@ storage remain separate backend work.
 ## Repository and verification baseline
 
 The earlier implementation baseline is **`f6e797c`**; the temporary-lens audit
-is committed as **`83d9003`**. The implementation below extends that baseline.
+is committed as **`83d9003`**, and temporary-focus support as **`1ba743b`**.
+The borrowed-pattern implementation below extends those milestones.
 Inspect `git status` and `git log` when resuming, and preserve later user edits.
 
 | Commit | Milestone |
@@ -69,8 +71,8 @@ pointer path is `src/decompose.ts` and `src/eval.ts`, not `src/value-passing/`.
 | Computed/tuple persistent aliases | Implemented | Implemented | Tested | Tested scalar/tuple subset |
 | Branches producing lenses | Implemented | Implemented | Tested | Tested selected-branch adapters |
 | Manual `@(focus, cleanup)` | Implemented | Implemented | Tested | Tested scalar/tuple subset |
-| Matching a borrowed scrutinee | Unsupported | Not implemented | Unchecked machinery exists | Not implemented |
-| Constructor alias patterns | Unsupported | Not implemented | Unchecked machinery exists | Not implemented |
+| Matching a borrowed scrutinee | Implemented | Retained reconstruction | Tested | Tested scalar/tuple subset; nominal layouts remain explicit |
+| Constructor alias patterns | Implemented | Retained reconstruction | Tested | Nominal layouts remain explicit |
 | `aslens`: `lens pattern <- value` | Identifier/wildcard/tuple patterns | Retained manual capability | Tested | Tested scalar/tuple subset |
 
 “Tested” is not universal backend coverage. Captured closure invocation, dynamic
@@ -115,8 +117,8 @@ fn shifted(~x) ~{lens v <- x + 2
 
 This checks and returns `8` in checked legacy, JSON-detached typed execution,
 native C, and Wasm. Identifier, wildcard, and recursively nested tuple cleanup
-patterns are supported. Constructor reconstruction has not been decided or added;
-constructor and literal cleanup patterns retain an explicit
+patterns are supported. Constructor and literal temporary cleanup patterns remain separate from borrowed
+constructor aliases, and retain an explicit
 `unsupported-lens-pattern` diagnostic.
 
 The contract is:
@@ -167,55 +169,72 @@ interpreter, not inferred from heap-cell release. Existing unchecked fixture
 anchors remain `makelens` in `src/systematic.test.lm` and `aside` / `useFile` in
 `test/flow.test.lm`.
 
-General callable focus storage, captured callback invocation, nominal data adapters,
-and borrowed constructor reconstruction remain separate restrictions.
+General callable focus storage, captured callback invocation, and nominal data adapters
+remain separate restrictions.
 
-## 2. Remaining: borrowed matching and constructor alias patterns
+## Completed: borrowed matching and constructor aliases
 
-These are distinct from implemented branches that **produce** lenses. Verified
-current examples and diagnostics:
-
-```lm
-fn head(~xs) {match ~xs {[h, ...rest] -> h; [] -> 0}}
-```
-
-```text
-unsupported-lens-case
-Matching a lens requires scoped restoration checking
-```
+The user approved preserving every constructor explicitly matched by a borrowed
+pattern. Changing a leaf field, including replacing a tail with `[]`, is allowed;
+changing the whole matched owner while its field aliases live is not.
 
 ```lm
-{
-    let xs = [1]
-    {let [h, ...rest] = ~xs
-     h := 2}
-    xs
-}
+{let xs = [1, 2]
+ {let [h, ...rest] = ~xs
+  h := 3
+  rest := []}
+ xs}
 ```
 
-```text
-unsupported-lens-pattern
-Constructor aliases require restoration checking
-```
+This returns `[3]`. Reading or replacing `xs` inside the field scope is rejected;
+after that scope, `xs := []` is allowed. Consuming `h` or `rest` without refill is
+rejected. A type-changing reconstruction must satisfy the constructor signature:
+changing the head to a Boolean also requires a compatible tail.
 
-Entry points: `Inferencer.caseBody`, `lensCase`, and `pattern` in `src/infer.ts`;
-`makeLensCase`/`makeCase` and pattern paths in active `src/decompose.ts`.
+Borrowed ordinary and lens-valued matches are accepted, as are constructor-pattern
+lens parameters. Pattern branches retain their own final field types, original
+constructor identity, and restoration. Unmatched cases trap before the branch body;
+exhaustiveness policy is unchanged. A whole-value identifier pattern exposes a
+whole-value alias, while a constructor pattern exposes its field sublenses.
 
-**Unresolved language decision:** establish the reconstruction contract, including
-whether and how a constructor/tag may change and which constructor alias forms are
-valid. Ask the user about that decision before implementing it. Ordinary owned
-matching and arbitrary constructor expressions do not establish borrowed semantics.
-The AST deliberately does not make arbitrary constructor expressions into lenses.
+`src/normalize-borrowed.ts` expands these source forms hygienically before inference:
+exclusively borrow the scrutinee once; match an owned private copy of its contents;
+expose fields through scoped aliases over a retained manual lens; reconstruct the
+matched constructor into the borrowed owner at scope exit. Wildcard fields retain
+private storage, and literal fields reconstruct their matched values. The checked
+AST / elaboration source is this canonical core expansion. Caller-owned ASTs remain
+unchanged. Borrowed parameter patterns expand into the same core at function entry.
+Ordinary closure capture and alias refill rules remain in force.
 
-Then model branch-local borrow permits, field consumption/refill, surviving fields,
-whole-owner reconstruction, and restoration at every accepted branch exit. Join
-replacement types and availability. Retain reconstruction and selected cleanup in
-elaboration and typed IR, and independently reject incomplete reconstruction or
-lost permissions. Existing branch/manual ownership machinery should be reused.
+Elaboration retains selected-pattern/owner links and manual reconstruction node IDs.
+Typed IR retains a reconstruction-marked input pattern and a matching deferred
+`manual.reconstruction` contract. Independent verification ties that contract to an
+actual selected pattern, checks every constructor/tag, literal, field move and owner
+swap in the cleanup, and rejects missing contracts, tag/field substitutions, a
+changed target, lost permissions and removed cleanup. The existing ownership verifier
+also requires field refill and original-owner restoration. Generated reconstruction
+preserves the original owner's escape provenance, and cannot implicitly grant the
+owned-retention permission of an explicit manual lens. Raw local sublens returns
+remain rejected in both inference and independent typed verification. Concrete lowering retains
+that contract and independently checks correspondence; no evaluator fallback or
+solver closure is introduced.
 
-List/variant C representation may additionally require later nominal/runtime data
-support. Accept established semantic forms independently of that backend work.
-Ordinary unmatched-case trap behavior must remain unchanged.
+`test/borrowed-patterns.test.ts` covers checked legacy and JSON-detached generic and
+specialized typed execution, ownership negatives, unmatched traps, constructor-pattern
+parameters, elaboration corruption and typed/concrete reconstruction corruption.
+`src/eval.ts` now propagates nested list-tail updates through ancestor slices; nested
+constructor-pattern regression coverage exercises the previously detached update.
+Five shared scalar/tuple cases in `test/backend/borrowed-pattern-samples.ts` cover
+ordinary and returned borrowed tuple matches and selected literal branches through
+native/Wasm execution and serialized concrete verification.
+
+List/variant physical storage remains a separate backend restriction: checked list
+examples report `unsupported-layout: No storage definition for List` during physical
+lowering. This does not prevent semantic checking or detached reference execution.
+`aslens` constructor cleanup patterns remain outside its identifier/wildcard/tuple
+subset, and are not implicitly enabled by borrowed reconstruction. Single-arm C
+case joins now materialize changed storage versions outside the conditional; this
+applies to both ordinary matching and deferred selected-lens restoration.
 
 ## Completed: manual restoration through C/Wasm
 
@@ -441,13 +460,21 @@ and C logical cell/path storage enforce their corresponding retained contracts.
 
 ## Verification and reporting
 
-The final `aslens` implementation full run reports **1001 pass / 39 existing skips /
-0 failures across 31 files**. The focused temporary suite has **49 passing tests**.
-The shared corpus includes 17 temporary-focus cases, all passing native strict
-C11 at `-O0`, `-O2`, and ASan/UBSan, plus Emscripten/Node at `-O0` and `-O2`.
-`bunx tsc --noEmit` and `git diff --check` pass. No new skips were introduced;
-remote CI was not run. Historical implementation baseline: 918 pass / 39 skips
-across 30 files; audit-only baseline: 927 pass / 39 skips across 31 files.
+The final borrowed-pattern implementation full run reports **1058 pass / 39 existing
+skips / 0 failures across 32 files**. The focused borrowed-pattern suite has **47
+passing tests**, including constructor-pattern parameters, raw-local escape rejection
+and independent serialized reconstruction checks. No new skips were introduced.
+
+All five shared scalar/tuple borrowed-match cases pass native strict C11 at `-O0`,
+`-O2`, and ASan/UBSan, plus Emscripten/Node at `-O0` and `-O2`. The existing manual,
+temporary, computed-alias and selected-lens-branch corpus remains passing. Checked
+legacy and detached generic/specialized typed execution additionally cover the list
+examples; physical list lowering retains its explicit nominal-layout diagnostic.
+`bunx tsc --noEmit` and `git diff --check` pass. Remote CI was not run.
+
+Historical baselines: 918 pass / 39 skips across 30 files before temporary lenses;
+927 pass / 39 skips across 31 files after the audit; 1001 pass / 39 skips across
+31 files after the temporary-focus implementation.
 
 For each slice:
 

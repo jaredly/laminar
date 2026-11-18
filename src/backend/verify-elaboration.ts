@@ -124,6 +124,16 @@ export function verifyElaboration(e: Elaboration): void {
             parent = p.parent;
         }
     });
+    const snapshotNodes = new Map<string, Record<string, any>>();
+    const snapshot = (v: unknown): void => {
+        if (!v || typeof v !== 'object') return;
+        if ('nodeId' in v && typeof v.nodeId === 'string') {
+            if (snapshotNodes.has(v.nodeId)) return;
+            snapshotNodes.set(v.nodeId, v as Record<string, any>);
+        }
+        Object.values(v).forEach(snapshot);
+    };
+    snapshot(e.source);
     const manuals = e.manuals ?? [];
     unique(
         manuals.map((m) => m.node),
@@ -141,6 +151,18 @@ export function verifyElaboration(e: Elaboration): void {
         node(m.frontend);
         node(m.cleanup);
         const temporary = e.nodes.find((n) => n.id === m.node)!.kind === 'aslens';
+        const selected = snapshotNodes.get(m.node)?.reconstructionPattern?.nodeId;
+        if (selected !== m.reconstruction)
+            fail('Missing constructor reconstruction metadata', m.node);
+        if (m.reconstruction) {
+            node(m.reconstruction);
+            const pattern = snapshotNodes.get(m.reconstruction);
+            if (
+                !pattern?.reconstructionOwner ||
+                e.nodes.find((n) => n.id === m.reconstruction)?.type?.tag !== 'plain'
+            )
+                fail('Invalid constructor reconstruction pattern', m.node);
+        }
         if (
             (!temporary && e.nodes.find((n) => n.id === m.node)!.kind !== 'manual') ||
             e.nodes.find((n) => n.id === m.frontend)!.type?.tag !== (temporary ? 'plain' : 'flow')

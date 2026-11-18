@@ -72,9 +72,9 @@ diagnostics. Executing captured closure bodies remains phase 6.
 Implemented imports are numeric `+`, `-`, `*`, `/`, `==`, `>=`, `<=`, data `dup`,
 and logical `fst`. `dup` of a computed focus restores that focus after copying it.
 There is no evaluator fallback. Function roots with parameters need a future host
-adapter, and borrowed lenses cannot escape the test entry boundary. Existing
-checker restrictions still apply: matching borrowed scrutinees is unsupported,
-and raw owned-local lenses cannot escape through function returns. Explicit manual
+adapter, and borrowed lenses cannot escape the test entry boundary. Raw owned-local lenses cannot escape through function returns. Borrowed matching
+uses scoped reconstruction; its scalar/tuple subset is supported, while nominal
+list/variant data still requires physical storage adapters. Explicit manual
 restoration now supports the tested scalar/tuple subset on C/Wasm. Its lens
 adapter separates staging from completion: final contents reach the selected
 owner before cleanup reads them, and original restoration runs afterward.
@@ -138,3 +138,19 @@ The 17 shared samples in `test/backend/aslens-samples.ts` cover detached verific
 and execution plus native strict/optimized/sanitized C and Wasm at both optimization
 levels. Constructor cleanup patterns, nominal runtime data, and callable focus
 storage retain their explicit separate restrictions.
+
+## Borrowed-pattern reconstruction
+
+Borrowed matches and constructor aliases normalize to owned private pattern storage
+and retained manual field focuses. The selected IR pattern retains its reconstruction
+owner and identity; the deferred manual retains the corresponding pattern contract.
+Independent typed verification requires exactly one matching reconstruction, preserving
+constructor tags, literals, field identities and the whole-owner swap. Generic
+ownership checks still require field refill and protect the original owner. Concrete
+lowering retains this contract and verification checks it against semantic IR.
+
+The scalar/tuple borrowed-match cases in `test/backend/borrowed-pattern-samples.ts`
+execute through the existing C/Wasm manual adapter. List patterns execute in checked
+legacy and detached typed paths; physical list lowering retains the explicit
+`unsupported-layout: No storage definition for List` restriction. Captured invocation
+and callable storage restrictions are unchanged.

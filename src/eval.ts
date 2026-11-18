@@ -126,69 +126,47 @@ export const modat = <T, R>(
             return value;
         }
     }
-    const orig = value;
-
-    for (let i = 0; i < pointer.path.length - 1; i++) {
-        const at = pointer.path[i];
+    // Rebuild list tails on the way out. A tail projection uses slice(), so
+    // mutating a deeper field without propagation would update a detached copy.
+    const modify = (current: any, path: PPath): T => {
+        if (!path.length) throw new Error('Missing projection');
+        const [at, ...rest] = path;
+        const update = (child: any): any => {
+            if (!rest.length) return mod(child);
+            modify(child, rest);
+            return child;
+        };
         if (typeof at === 'number') {
-            value = value[at];
-        } else {
-            if (at[0] === 'cons' && Array.isArray(value)) {
-                value = at[1] === 0 ? value[0] : value.slice(1);
-                continue;
+            if (!Array.isArray(current)) throw new Error('value not tuple');
+            const before = current[at];
+            current[at] = update(before);
+            return before;
+        }
+        if (at[0] === 'cons' && Array.isArray(current)) {
+            const before = at[1] === 0 ? current[0] : current.slice(1);
+            const after = update(before);
+            if (at[1] === 0) current[0] = after;
+            else if (after === deleted) current.splice(1);
+            else {
+                if (!Array.isArray(after)) throw new Error('bad mod from tail');
+                current.splice(1, current.length - 1, ...after);
             }
-            if (!('type' in value) || value.type !== at[0]) {
-                throw new Error(
-                    `bad constructor ${at[0]} ${JSON.stringify(value)} ${Array.isArray(value)}`,
-                );
-            }
-            value = value.args[at[1]];
+            return before;
         }
-    }
-    const at = pointer.path[pointer.path.length - 1];
-    if (typeof at === 'number') {
-        if (!Array.isArray(value)) {
-            console.log(orig, pointer, value);
-            throw new Error(`value not tuple ${JSON.stringify(value)}`);
-        }
-        const result = value[at];
-        value[at] = mod(result);
-        return result;
-    } else {
-        if (at[0] === 'cons' && Array.isArray(value)) {
-            if (at[1] === 0) {
-                const result = value[0];
-                value[0] = mod(result);
-                return result;
-            } else {
-                const result = value.slice(1) as T;
-                const got = mod(result);
-                if (got === deleted) {
-                    value.splice(1);
-                    return result;
-                } else {
-                    if (!Array.isArray(got)) {
-                        console.log(result, got);
-                        throw new Error(`bad mod from tail`);
-                    }
-                    value.splice(1, value.length - 1, ...got);
-                    return result;
-                }
-            }
-        }
-        if (value === deleted) {
-            throw new Error(`value has been deleted. Cannot access ${at}`);
-        }
-        if (!value || !('type' in value) || value.type !== at[0]) {
-            console.log('Path', pointer, value, orig);
-            console.log(ctx.stack[0]);
-            console.log(ctx.scopes);
-            throw new LocError(loc, `bad constructor ${at[0]} ${JSON.stringify(value)}`);
-        }
-        const result = value.args[at[1]];
-        value.args[at[1]] = mod(result);
-        return result;
-    }
+        if (!current || current.type !== at[0]) throw new LocError(loc, `bad constructor ${at[0]}`);
+        const before = current.args[at[1]];
+        current.args[at[1]] = update(before);
+        return before;
+    };
+    // Return the old value at the final projection, rather than its ancestor.
+    let previous: T;
+    const originalMod = mod;
+    mod = (old: T) => {
+        previous = old;
+        return originalMod(old);
+    };
+    modify(value, pointer.path);
+    return previous!;
 };
 
 export const dupAt = (ctx: Ctx, pointer: Pointer, loc: Loc): any => {

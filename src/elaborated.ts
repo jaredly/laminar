@@ -1,3 +1,4 @@
+import { normalizeBorrowed } from './normalize-borrowed.ts';
 import type { Decl, Linear } from './ast.ts';
 import { type FlowTy, type Scheme, type Solver, type Ty } from './types.ts';
 
@@ -54,6 +55,7 @@ export type Elaboration = {
         frontend: NodeId;
         /** Owned backing for a pattern-bound temporary; absent for explicit manual lenses. */
         temporary?: BindingId;
+        reconstruction?: NodeId;
         cleanup: NodeId;
         scoped: boolean;
         dependencies: BindingId[];
@@ -136,6 +138,7 @@ export class ElaborationBuilder {
         frontend: NodeId;
         /** Owned backing for a pattern-bound temporary; absent for explicit manual lenses. */
         temporary?: BindingId;
+        reconstruction?: NodeId;
         cleanup: NodeId;
         scoped: boolean;
         dependencies: BindingId[];
@@ -192,7 +195,7 @@ export class ElaborationBuilder {
         return id;
     }
     prepare(ast: Linear, declaration?: Decl): { ast: Linear; declaration?: Decl } {
-        const copy = structuredClone({ ast, declaration });
+        const copy = structuredClone({ ast: normalizeBorrowed(ast), declaration });
         const visit = (value: unknown): void => {
             if (!value || typeof value !== 'object') return;
             if (Array.isArray(value)) {

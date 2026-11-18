@@ -25,7 +25,11 @@ export function decodeNumber(value: EncodedNumber): number {
               : -0;
 }
 export type SlotRef = { place: string; path: number[]; permit?: string };
-export type IRPattern = { type: SemanticType } & (
+export type IRPattern = {
+    type: SemanticType;
+    reconstructionOwner?: SlotRef;
+    reconstructionId?: string;
+} & (
     | { kind: 'bind'; slot: SlotRef }
     | { kind: 'drop' }
     | { kind: 'literal'; value: EncodedNumber | boolean | string }
@@ -58,7 +62,13 @@ export type Instruction =
     | (Output & { op: 'move'; slot: SlotRef })
     | (Output & { op: 'acquire'; slot: SlotRef })
     | (Output & { op: 'lens-tuple'; items: ValueId[] })
-    | (Output & { op: 'manual'; lens: ValueId; holds: SlotRef[]; cleanup: IRBlock })
+    | (Output & {
+          op: 'manual';
+          lens: ValueId;
+          holds: SlotRef[];
+          cleanup: IRBlock;
+          reconstruction?: IRPattern;
+      })
     | (Output & { op: 'swap'; lens: ValueId; value: ValueId })
     | (Output & { op: 'call'; callee: ValueId; args: ValueId[] })
     | (Output & { op: 'closure'; function: string; captures: { place: string; value: ValueId }[] })

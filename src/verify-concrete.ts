@@ -396,12 +396,14 @@ export function verifyConcreteProgram(p: ConcreteProgram): void {
                             origin: o.origin,
                             lens: o.lens,
                             holds: o.holds,
+                            reconstruction: o.reconstruction,
                             restoration: o.restoration,
                         },
                         {
                             origin: i.origin,
                             lens: i.lens,
                             holds: i.holds,
+                            reconstruction: i.reconstruction,
                             restoration: {
                                 kind: 'deferred',
                                 frontend: frontend.shape,

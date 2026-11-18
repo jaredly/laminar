@@ -7,6 +7,7 @@ import {
     irCon,
     irUnit,
     mapSemantic,
+    type Instruction,
     type TypedProgram,
     type IRUnit,
     type IRBlock,
@@ -30,7 +31,13 @@ type Cap =
           guards: { place: string; path: number[]; version: number }[];
       }
     | { kind: 'scope'; inner: Cap; cleanup: Cleanup[]; retire: string[] }
-    | { kind: 'manual'; inner: Cap; holds: SlotRef[]; cleanup: IRBlock }
+    | {
+          kind: 'manual';
+          inner: Cap;
+          holds: SlotRef[];
+          cleanup: IRBlock;
+          reconstructionOwner?: SlotRef;
+      }
     | {
           kind: 'choice';
           read: SemanticType;
@@ -178,6 +185,131 @@ export function verifyTypedProgram(program: TypedProgram): void {
         const source = (id: string) => {
             if (!origins.has(id)) fail('Missing source origin', id);
         };
+        // A reconstruction contract must correspond to an actual selected input
+        // pattern, and its deferred swap must rebuild that exact tag/field tree.
+        const reconstructionPatterns = new Map<string, IRPattern>();
+        const reconstructions: Extract<Instruction, { op: 'manual' }>[] = [];
+        const indexPattern = (p: IRPattern): void => {
+            if (p.reconstructionOwner || p.reconstructionId) {
+                if (
+                    !p.reconstructionOwner ||
+                    !p.reconstructionId ||
+                    reconstructionPatterns.has(p.reconstructionId)
+                )
+                    fail('Invalid reconstruction pattern identity');
+                source(p.reconstructionId!);
+                reconstructionPatterns.set(p.reconstructionId!, p);
+            }
+            if (p.kind === 'tuple' || p.kind === 'constructor') p.items.forEach(indexPattern);
+        };
+        const indexReconstruction = (b: IRBlock): void => {
+            for (const i of b.instructions) {
+                if (i.op === 'bind') indexPattern(i.pattern);
+                else if (i.op === 'scope') indexReconstruction(i.body);
+                else if (i.op === 'case')
+                    for (const c of i.cases) {
+                        indexPattern(c.pattern);
+                        indexReconstruction(c.body);
+                    }
+                else if (i.op === 'manual') {
+                    if (i.reconstruction) reconstructions.push(i);
+                    indexReconstruction(i.cleanup);
+                }
+            }
+        };
+        indexReconstruction(u.entry);
+        u.functions.forEach((f) => indexReconstruction(f.body));
+        const slotKey = (r: SlotRef) => JSON.stringify([r.place, r.path, r.permit ?? null]);
+        const patternKey = (p: IRPattern): string =>
+            JSON.stringify([
+                p.kind,
+                typeKey(p.type),
+                p.reconstructionId,
+                p.reconstructionOwner && slotKey(p.reconstructionOwner),
+                p.kind === 'bind'
+                    ? slotKey(p.slot)
+                    : p.kind === 'literal'
+                      ? p.value
+                      : p.kind === 'constructor'
+                        ? [
+                              p.name,
+                              p.items.map(patternKey),
+                              p.instance.definition,
+                              typeKey(p.instance.type),
+                              p.instance.arguments
+                                  .map((a) => [a.parameter, typeKey(a.type)])
+                                  .sort(),
+                          ]
+                        : p.kind === 'tuple'
+                          ? p.items.map(patternKey)
+                          : null,
+            ]);
+        const seenReconstruction = new Set<string>();
+        for (const m of reconstructions) {
+            const p = m.reconstruction!;
+            const original = p.reconstructionId && reconstructionPatterns.get(p.reconstructionId);
+            if (
+                !original ||
+                patternKey(original) !== patternKey(p) ||
+                seenReconstruction.has(p.reconstructionId!)
+            )
+                fail('Reconstruction does not match its selected pattern');
+            seenReconstruction.add(p.reconstructionId!);
+            const instructions = new Map(
+                m.cleanup.instructions.flatMap((i) => ('out' in i ? [[i.out.id, i] as const] : [])),
+            );
+            const used = new Set<string>();
+            const rebuild = (p: IRPattern, value: string): void => {
+                if (used.has(value)) fail('Reconstruction duplicates a field');
+                used.add(value);
+                const i = instructions.get(value);
+                if (!i) fail('Missing reconstruction value');
+                if (p.kind === 'bind') {
+                    if (i!.op !== 'move' || slotKey(i!.slot) !== slotKey(p.slot))
+                        fail('Reconstruction field changed');
+                } else if (p.kind === 'constructor' || p.kind === 'tuple') {
+                    if (
+                        (p.kind === 'constructor'
+                            ? i!.op !== 'construct' || i!.name !== p.name
+                            : i!.op !== 'tuple') ||
+                        !('items' in i!) ||
+                        i!.items.length !== p.items.length
+                    )
+                        fail('Reconstruction constructor or shape changed');
+                    p.items.forEach((child, n) =>
+                        rebuild(
+                            child,
+                            (i as Extract<Instruction, { op: 'tuple' | 'construct' }>).items[n],
+                        ),
+                    );
+                } else if (p.kind === 'literal') {
+                    if (typeof p.value === 'string') {
+                        if (i!.op !== 'string' || i!.head !== p.value || i!.parts.length)
+                            fail('Reconstruction literal changed');
+                    } else if (
+                        i!.op !== 'constant' ||
+                        JSON.stringify(i!.value) !== JSON.stringify(p.value)
+                    )
+                        fail('Reconstruction literal changed');
+                } else fail('Reconstruction discards an unmatched field');
+            };
+            const swap = instructions.get(m.cleanup.result);
+            if (!swap || swap.op !== 'swap') fail('Reconstruction does not restore its owner');
+            const target = instructions.get((swap as Extract<Instruction, { op: 'swap' }>).lens);
+            if (
+                !target ||
+                target.op !== 'acquire' ||
+                slotKey(target.slot) !== slotKey(p.reconstructionOwner!)
+            )
+                fail('Reconstruction restores a different owner');
+            used.add(swap!.out.id);
+            used.add(target!.out.id);
+            rebuild(p, (swap as Extract<Instruction, { op: 'swap' }>).value);
+            if (used.size !== m.cleanup.instructions.length || m.cleanup.cleanup.length)
+                fail('Unexpected reconstruction cleanup effects');
+        }
+        if (seenReconstruction.size !== reconstructionPatterns.size)
+            fail('Missing selected-pattern reconstruction');
         const fresh = (): State => ({
             locked: [],
             slots: new Map(),
@@ -894,6 +1026,7 @@ export function verifyTypedProgram(program: TypedProgram): void {
                             inner: cap(frontend),
                             holds: i.holds,
                             cleanup: i.cleanup,
+                            reconstructionOwner: i.reconstruction?.reconstructionOwner,
                         };
                         break;
                     }
@@ -1057,7 +1190,10 @@ export function verifyTypedProgram(program: TypedProgram): void {
                 const escapes = (state: State, c: Cap): boolean => {
                     if (c.kind === 'choice') return c.arms.some((a) => escapes(a.state, a.cap));
                     if (c.kind === 'scope') return escapes(state, c.inner);
-                    if (c.kind === 'manual') return false;
+                    if (c.kind === 'manual')
+                        return c.reconstructionOwner
+                            ? escapes(state, { kind: 'place', slot: c.reconstructionOwner })
+                            : false;
                     if (c.kind === 'tuple') return c.items.some((v) => escapes(state, v));
                     if (c.kind === 'call') return c.effects.some((e) => escapes(state, e.cap));
                     const loan = [...state.loans.entries()].find(

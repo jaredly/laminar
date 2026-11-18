@@ -5,6 +5,7 @@ import { afterAll } from 'bun:test';
 import { it, expect } from 'bun:test';
 import { spawnSync } from 'node:child_process';
 import { typedProgram } from '../backend/typed-program.ts';
+import { borrowedPatternSamples } from '../backend/borrowed-pattern-samples.ts';
 import { aslensSamples } from '../backend/aslens-samples.ts';
 import { manualRestorationSamples } from '../backend/manual-restoration-samples.ts';
 import { lensBranchSamples } from '../backend/lens-branch-samples.ts';
@@ -59,6 +60,7 @@ const samples = [
     ...phase5Samples,
     ...computedAliases,
     ...lensBranchSamples,
+    ...borrowedPatternSamples.map((s) => ({ ...s, name: `borrowed: ${s.name}` })),
     ...aslensSamples.map((s) => ({ ...s, name: `aslens: ${s.name}` })),
     ...manualRestorationSamples.map((s) => ({ ...s, name: `manual: ${s.name}` })),
     { name: 'lexical-alias', source: '{let x = 1\n {let y = ~x\n y := y + 1}\n x}', expected: 2 },

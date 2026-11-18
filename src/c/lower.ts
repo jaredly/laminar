@@ -434,11 +434,15 @@ export function lowerC(program: ConcreteProgram): TranslationUnit {
                                 }[],
                                 into: Statement[],
                             ) => {
-                                const join = (data: Data[]): Data => {
+                                // Even one selected arm is a C scope: changed versions must
+                                // be materialized outside it before later restoration uses them.
+                                const join = (data: Data[], previous?: Data): Data => {
                                     if (
                                         data.every(
                                             (d) => JSON.stringify(d) === JSON.stringify(data[0]),
-                                        )
+                                        ) &&
+                                        (arms.length > 1 ||
+                                            JSON.stringify(data[0]) === JSON.stringify(previous))
                                     )
                                         return data[0]!;
                                     const first = data[0]!;
@@ -464,11 +468,19 @@ export function lowerC(program: ConcreteProgram): TranslationUnit {
                                         return unsupported(
                                             'Branch owner storage requires an adapter',
                                         );
-                                    return parts[0].map((_, n) => join(parts.map((p) => p[n]!)));
+                                    return parts[0].map((_, n) =>
+                                        join(
+                                            parts.map((p) => p[n]!),
+                                            previous && storage.parts(previous)[n],
+                                        ),
+                                    );
                                 };
                                 before.forEach(
-                                    (_, cell) =>
-                                        (cell.data = join(arms.map((a) => a.state.get(cell)!))),
+                                    (previous, cell) =>
+                                        (cell.data = join(
+                                            arms.map((a) => a.state.get(cell)!),
+                                            previous,
+                                        )),
                                 );
                             };
                             const arms = i.cases.map((arm, n) => {
@@ -624,8 +636,13 @@ export function lowerC(program: ConcreteProgram): TranslationUnit {
                             return { nested, state };
                         });
                         storage.reset(before);
-                        const merge = (data: Data[]): Data => {
-                            if (data.every((d) => JSON.stringify(d) === JSON.stringify(data[0])))
+                        // A single arm can also produce branch-local storage versions.
+                        const merge = (data: Data[], previous?: Data): Data => {
+                            if (
+                                data.every((d) => JSON.stringify(d) === JSON.stringify(data[0])) &&
+                                (arms.length > 1 ||
+                                    JSON.stringify(data[0]) === JSON.stringify(previous))
+                            )
                                 return data[0]!;
                             const first = data[0]!;
                             if (
@@ -644,10 +661,19 @@ export function lowerC(program: ConcreteProgram): TranslationUnit {
                                 parts.some((p) => p.length !== parts[0]!.length)
                             )
                                 return unsupported('Storage version join requires an adapter');
-                            return parts[0].map((_, n) => merge(parts.map((p) => p[n]!)));
+                            return parts[0].map((_, n) =>
+                                merge(
+                                    parts.map((p) => p[n]!),
+                                    previous && storage.parts(previous)[n],
+                                ),
+                            );
                         };
                         before.forEach(
-                            (_, cell) => (cell.data = merge(arms.map((a) => a.state.get(cell)!))),
+                            (previous, cell) =>
+                                (cell.data = merge(
+                                    arms.map((a) => a.state.get(cell)!),
+                                    previous,
+                                )),
                         );
                         i.cases.forEach((arm, n) =>
                             body.push({

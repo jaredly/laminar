@@ -56,6 +56,7 @@ export type ConcreteInstruction =
           ConcreteOutput)
     | ({
           op: 'manual';
+          reconstruction?: IRPattern;
           origin: string;
           lens: string;
           holds: SlotRef[];

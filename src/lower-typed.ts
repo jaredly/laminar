@@ -114,6 +114,15 @@ export function lowerTypedUnit(e: Elaboration): IRUnit {
         cleanup: [],
     });
     const pattern = (p: Pat): IRPattern => {
+        const result = patternInner(p);
+        const owner = p.reconstructionOwner;
+        if (owner) {
+            result.reconstructionOwner = ref(binding(owner));
+            result.reconstructionId = id(p);
+        }
+        return result;
+    };
+    const patternInner = (p: Pat): IRPattern => {
         if (p.type === 'lens') return pattern(p.inner);
         const t = plainType(p);
         switch (p.type) {
@@ -448,6 +457,9 @@ export function lowerTypedUnit(e: Elaboration): IRUnit {
                         ref(e.bindings.find((v) => v.id === id)!),
                     ),
                     cleanup,
+                    ...(n.reconstructionPattern
+                        ? { reconstruction: pattern(n.reconstructionPattern) }
+                        : {}),
                 });
             }
             case 'case': {

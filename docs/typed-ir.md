@@ -154,3 +154,19 @@ The 17 shared samples in `test/backend/aslens-samples.ts` cover detached verific
 and execution plus native strict/optimized/sanitized C and Wasm at both optimization
 levels. Constructor cleanup patterns, nominal runtime data, and callable focus
 storage retain their explicit separate restrictions.
+
+## Borrowed-pattern reconstruction
+
+Borrowed matches and constructor aliases normalize to owned private pattern storage
+and retained manual field focuses. The selected IR pattern retains its reconstruction
+owner and identity; the deferred manual retains the corresponding pattern contract.
+Independent typed verification requires exactly one matching reconstruction, preserving
+constructor tags, literals, field identities and the whole-owner swap. Generic
+ownership checks still require field refill and protect the original owner. Concrete
+lowering retains this contract and verification checks it against semantic IR.
+
+The scalar/tuple borrowed-match cases in `test/backend/borrowed-pattern-samples.ts`
+execute through the existing C/Wasm manual adapter. List patterns execute in checked
+legacy and detached typed paths; physical list lowering retains the explicit
+`unsupported-layout: No storage definition for List` restriction. Captured invocation
+and callable storage restrictions are unchanged.

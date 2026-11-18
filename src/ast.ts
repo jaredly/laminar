@@ -2,7 +2,7 @@
 
 export type Id = { type: 'id'; text: string; loc: Loc };
 
-export type Pat =
+export type Pat = (
     | Id
     | { type: 'bool'; value: boolean; loc: Loc }
     | { type: 'number'; value: number; loc: Loc }
@@ -11,7 +11,10 @@ export type Pat =
     | { type: 'constructor'; name: string; args: Pat[]; loc: Loc }
     | { type: 'string'; text: string; loc: Loc }
     // | { type: 'list'; items: Pat[]; tail?: Pat; loc: Loc }
-    | { type: 'lens'; inner: Pat; loc: Loc };
+    | { type: 'lens'; inner: Pat; loc: Loc }
+) & {
+    /** Internal link from a selected owned pattern to its reconstruction target. */ reconstructionOwner?: Id;
+};
 
 export type Loc = number;
 
@@ -27,7 +30,7 @@ export type Decl = { type: 'decl'; name: Id; ann: Type; loc: number };
 
 export type Lens =
     | Id
-    | { type: 'manual'; frontend: Lens; backend: Linear; loc: Loc }
+    | { type: 'manual'; frontend: Lens; backend: Linear; loc: Loc; reconstructionPattern?: Pat }
     | { type: 'aslens'; pat: Pat; value: Linear; body: Linear; loc: Loc }
     | { type: 'let'; pat: Pat; value: Term; body: Lens; loc: Loc }
     | { type: 'apply'; fn: Linear; args: Term[]; loc: Loc }
