@@ -310,7 +310,13 @@ export function verifyConcreteProgram(p: ConcreteProgram): void {
     const index = (b: IRBlock, r: Pick<RepresentationVariant, 'values' | 'calls'>): void => {
         const values = new Map(r.values.map((v) => [v.value, v.representation])),
             calls = new Map(r.calls.map((c) => [c.value, c]));
-        r.values.forEach((v) => discover(v.representation));
+        r.values.forEach((v) => {
+            discover(v.representation);
+            v.storageJoins?.forEach((j) => {
+                j.arms.forEach(discover);
+                discover(j.result);
+            });
+        });
         const walk = (body: IRBlock): void => {
             for (const i of body.instructions) {
                 if (i.op === 'call') {
@@ -762,6 +768,17 @@ export function verifyConcreteProgram(p: ConcreteProgram): void {
                                       .shape,
                               }
                             : undefined;
+                    eq(
+                        o.storageJoins,
+                        r.values
+                            .find((v) => v.value === i.out.id)!
+                            .storageJoins?.map((j) => ({
+                                place: j.place,
+                                ownership: 'transfer-selected-storage',
+                                arms: j.arms.map((from) => adapter(from, j.result)),
+                            })),
+                        'Branch storage adapter changed',
+                    );
                     eq(o.lensJoin, join, 'Selected-branch restoration adapter changed');
                     eq(
                         o.aggregateJoin,

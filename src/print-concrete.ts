@@ -394,6 +394,14 @@ export function lconcrete(program: ConcreteProgram, options: ConcretePrintOption
                         'match',
                         value(i.value),
                         ...(i.aggregateJoin ? ['selected-aggregate'] : []),
+                        ...(i.storageJoins
+                            ? [
+                                  words(
+                                      'selected-storage',
+                                      tuple(i.storageJoins.map((j) => ref(j.place, 'place'))),
+                                  ),
+                              ]
+                            : []),
                         ...(i.callableJoin
                             ? [
                                   words(

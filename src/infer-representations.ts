@@ -34,7 +34,15 @@ export type RepresentationVariant = {
     captures: ValueRepresentation[];
     arguments: ValueRepresentation[];
     result: ValueRepresentation;
-    values: { value: string; representation: ValueRepresentation }[];
+    values: {
+        value: string;
+        representation: ValueRepresentation;
+        storageJoins?: {
+            place: string;
+            arms: ValueRepresentation[];
+            result: ValueRepresentation;
+        }[];
+    }[];
     calls: {
         value: string;
         target: string;
@@ -365,6 +373,9 @@ export function inferRepresentations(
                 continue;
             }
             let out: ValueRepresentation;
+            const storageJoins: NonNullable<
+                RepresentationVariant['values'][number]['storageJoins']
+            > = [];
             switch (i.op) {
                 case 'constant':
                 case 'string':
@@ -514,9 +525,16 @@ export function inferRepresentations(
                         const current = (
                             states[0] ?? fail('Branch has no storage continuation')
                         ).places.get(place)!;
-                        if (states.some((state) => !equal(current, state.places.get(place)!)))
-                            fail('Branch callable storage versions require an adapter');
-                        s.places.set(place, current);
+                        if (states.some((state) => !equal(current, state.places.get(place)!))) {
+                            if (i.out.type.tag === 'flow')
+                                return fail(
+                                    'Divergent storage in lens-valued branches requires a restoration adapter',
+                                );
+                            const arms = states.map((state) => state.places.get(place)!);
+                            const result = join(arms, true);
+                            storageJoins.push({ place, arms, result });
+                            s.places.set(place, result);
+                        } else s.places.set(place, current);
                     });
                     out =
                         i.out.type.tag === 'flow'
@@ -526,7 +544,11 @@ export function inferRepresentations(
                 }
             }
             s.values.set(i.out.id, out);
-            record.values.push({ value: i.out.id, representation: out });
+            record.values.push({
+                value: i.out.id,
+                representation: out,
+                ...(storageJoins.length ? { storageJoins } : {}),
+            });
         }
         const result = get(s, body.result);
         // Analyze retained regions independently after setup, without applying

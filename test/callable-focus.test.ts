@@ -58,13 +58,6 @@ it('keeps borrowed callable focuses explicit', () => {
         concrete('{let x = 3\n let f = fn () x\n let a = ~f\n let old = a := fn () 5\n old()}'),
     ).toThrow('Callable focuses require a direct whole-owned-local swap');
 });
-it('keeps branch callable storage versions explicit', () => {
-    expect(() =>
-        concrete(
-            '{let x = 3\n let f = fn () x\n match true {true -> {let old = f := fn () 5\n old()}; false -> 2}\n f()}',
-        ),
-    ).toThrow('Branch callable storage versions require an adapter');
-});
 it('independently rejects a forged convergent branch continuation', () => {
     const c = concrete(
         callableFocusSamples.find(

@@ -11,8 +11,8 @@ coverage, not completion of every phase exit gate.
 
 The scoped lens extensions are complete as of `707521c`; see the
 [completion record and follow-up mapping](checker-completeness-handoff.md).
-Latest local verification: **1618 pass / 39 existing skips / 0 failures across
-39 files**, with diff checks passing. TypeScript passes outside the subsequent
+Latest local verification: **1702 pass / 39 existing skips / 0 failures across
+40 files**, with diff checks passing. TypeScript passes outside the subsequent
 CLI addition; the default check reports TS18046 in `cli/c.ts:46` (see backend progress). The latest full execution run passed without retries. Remote CI was not run for
 these slices. See also [the implementation record](backend-progress.md),
 [backend contract](backend-contract.md), [typed IR API](typed-ir.md), and
@@ -390,3 +390,12 @@ call-result adapters share their physical value conversion contract and independ
 verification. Remaining work includes divergent branch storage versions and general
 callable focus restoration (aliases/projections, parameters/results, manual cleanup
 and scattered focuses). Phase 6 remains open; see backend progress for validation.
+
+## Latest phase 6 boundary: divergent owned branch storage
+
+Ordinary branches now normalize differing callable/aggregate storage versions
+using independently verified per-place adapters, preserving empty projections and
+selected environment ownership. Later moves, captures, calls and swaps use the
+common descriptor. General callable focus restoration remains open, including
+divergent storage changes inside lens-valued branches: those need a deferred
+restoration-aware merge and retain an explicit diagnostic. Phase 6 stays open.

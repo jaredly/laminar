@@ -1,3 +1,4 @@
+import { storageJoinSamples } from '../backend/storage-join-samples.ts';
 import { aggregateResultSamples } from '../backend/aggregate-result-samples.ts';
 import { aggregateJoinSamples } from '../backend/aggregate-join-samples.ts';
 import { callableFocusSamples } from '../backend/callable-focus-samples.ts';
@@ -87,6 +88,7 @@ const native =
           })
         : undefined;
 const samples = [
+    ...storageJoinSamples,
     ...aggregateResultSamples,
     ...aggregateJoinSamples,
     ...callableFocusSamples,

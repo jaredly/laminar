@@ -125,7 +125,13 @@ export function lowerConcreteProgram(
     function index(body: IRBlock, record: Pick<RepresentationVariant, 'values' | 'calls'>): void {
         const values = new Map(record.values.map((v) => [v.value, v.representation]));
         const calls = new Map(record.calls.map((c) => [c.value, c]));
-        record.values.forEach((v) => discover(v.representation));
+        record.values.forEach((v) => {
+            discover(v.representation);
+            v.storageJoins?.forEach((j) => {
+                j.arms.forEach(discover);
+                discover(j.result);
+            });
+        });
         const walk = (b: IRBlock) => {
             for (const i of b.instructions) {
                 if (i.op === 'call') {
@@ -517,6 +523,17 @@ export function lowerConcreteProgram(
                         ...i,
                         out,
                         cases: i.cases.map((c) => ({ ...c, body: lower(c.body) })),
+                        ...(record.values.find((v) => v.value === i.out.id)!.storageJoins
+                            ? {
+                                  storageJoins: record.values
+                                      .find((v) => v.value === i.out.id)!
+                                      .storageJoins!.map((j) => ({
+                                          place: j.place,
+                                          ownership: 'transfer-selected-storage' as const,
+                                          arms: j.arms.map((from) => valueAdapter(from, j.result)),
+                                      })),
+                              }
+                            : {}),
                         ...(values.get(i.out.id)!.kind === 'aggregate'
                             ? {
                                   aggregateJoin: {

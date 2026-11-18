@@ -405,7 +405,10 @@ export function verifyRepresentations(
         } else if (v.kind !== 'data') fail('Unsupported native callable result');
     }
     function verifyJoin(v: ValueRepresentation, results: ValueRepresentation[]): void {
-        if (results.every((r) => repKey(r) === repKey(v))) return;
+        if (results.length && results.every((r) => repKey(r) === repKey(results[0]!))) {
+            requireEqual(v, results[0], 'Uniform join representation changed');
+            return;
+        }
         if (v.kind === 'aggregate') {
             const members = results.map((r) =>
                 r.kind === 'aggregate' && r.items.length === v.items.length
@@ -466,6 +469,8 @@ export function verifyRepresentations(
                 if (usedValues.has(i.out.id)) fail('Repeated temporary annotation use');
                 usedValues.add(i.out.id);
                 fit(v, i.out.type);
+                if (i.op !== 'case' && annotations.get(i.out.id)!.storageJoins !== undefined)
+                    fail('Unexpected storage join annotation');
                 switch (i.op) {
                     case 'constant':
                     case 'string':
@@ -616,18 +621,37 @@ export function verifyRepresentations(
                             states.push(branch);
                             return result;
                         });
+                        const joins = annotations.get(i.out.id)!.storageJoins;
+                        const divergent = [...s.places.keys()].filter((place) =>
+                            states.some(
+                                (state) =>
+                                    !same(states[0]!.places.get(place)!, state.places.get(place)!),
+                            ),
+                        );
+                        requireEqual(
+                            joins?.map((j) => j.place),
+                            divergent.length ? divergent : undefined,
+                            'Branch storage join coverage changed',
+                        );
                         s.places.forEach((_, place) => {
                             const current = (
                                 states[0] ?? fail('Branch has no storage continuation')
                             ).places.get(place)!;
-                            states.forEach((branch) =>
+                            if (divergent.includes(place)) {
+                                if (i.out.type.tag === 'flow')
+                                    fail(
+                                        'Divergent storage in lens-valued branches requires a restoration adapter',
+                                    );
+                                const joined = joins!.find((j) => j.place === place)!;
+                                const arms = states.map((state) => state.places.get(place)!);
                                 requireEqual(
-                                    current,
-                                    branch.places.get(place),
-                                    'Branch callable storage versions require an adapter',
-                                ),
-                            );
-                            s.places.set(place, current);
+                                    joined.arms,
+                                    arms,
+                                    'Branch storage arm provenance changed',
+                                );
+                                verifyJoin(joined.result, arms);
+                                s.places.set(place, joined.result);
+                            } else s.places.set(place, current);
                         });
                         if (i.out.type.tag === 'flow') results.forEach(lens);
                         else verifyJoin(v, results);

@@ -867,6 +867,33 @@ export function lowerC(program: ConcreteProgram): TranslationUnit {
                                     `${name} = (${type(id)}){.environment=(${result}).environment, .dispose=(${result}).dispose${entries}};`,
                                 );
                             } else nested.push(`${name} = ${result};`);
+                            const adaptStorage = (a: ConcreteValueAdapter, data: Data): Data => {
+                                // Typed IR normalizes branch availability. Empty projections own no
+                                // environment and must never be reconstructed as initialized values.
+                                if (!Array.isArray(data) && data.layout === unit.id) return data;
+                                if (a.kind === 'move') return data;
+                                if (a.kind === 'aggregate')
+                                    return storage
+                                        .parts(data)
+                                        .map((child, n) => adaptStorage(a.items[n]!, child));
+                                return {
+                                    expression: declare(
+                                        a.to,
+                                        adaptValue(a, read(data, a.from)),
+                                        nested,
+                                    ),
+                                    layout: a.to,
+                                };
+                            };
+                            i.storageJoins?.forEach((join) => {
+                                const view =
+                                    places.get(join.place) ??
+                                    unsupported('Missing branch storage owner');
+                                storage.put(
+                                    view,
+                                    adaptStorage(join.arms[armIndex]!, storage.get(view)),
+                                );
+                            });
                             const state = storage.snapshot();
                             variables.length = outerVariables;
                             return { nested, state };

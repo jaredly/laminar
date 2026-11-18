@@ -278,3 +278,32 @@ callees with thin/scattered arguments and type-changing restoration.
 This removes the differing dynamic tuple-result restriction. Divergent branch
 storage versions and callable focus aliases/projections, call/return contracts,
 manual restoration and scattered focuses remain open. Phase 6 is incomplete.
+
+## Divergent owned storage versions in ordinary branches
+
+Ordinary value-producing branches may now leave owned locals with different
+callable or recursive aggregate descriptors. Analysis retains `storageJoins` on
+the case value annotation: each divergent place has ordered arm descriptors and
+a canonical common result. Independent verification derives divergent-place
+coverage and arm provenance from the bodies, checks the exact recursive union,
+and propagates the common descriptor to subsequent reads, captures and swaps.
+
+Concrete case `storageJoins` retain whole-place identities, exact per-arm recursive
+value adapters and `transfer-selected-storage` ownership. C lowering converts live
+contents of the selected arm before the existing typed storage merge. Empty
+storage/projections remain empty, including values consumed or normalized away
+by branch cleanup. No environment is copied, no extracted old value is disposed,
+and no stale aggregate addresses or incompatible invocation-pointer casts are used.
+Unused common descriptors are discovered even when no later invocation occurs.
+The printer marks these contracts `selected-storage`.
+
+Twenty-four shared samples cover both selections, unchanged arms, different capture
+layouts, nested aggregates, nested joins/replacement, unused and consumed contents,
+multiple owners, simultaneous callable results, captures/parameters and native/user
+lens callees with thin/scattered arguments. Corruption tests cover analysis place
+coverage, arm/result provenance, continuation reads, physical layouts, ownership
+and invocation entry mappings.
+
+Divergent storage inside lens-valued branches retains an explicit restoration-adapter
+diagnostic. Callable focus aliases/projections, parameters/results, manual cleanup
+and scattered focuses also remain open. Phase 6 is incomplete.

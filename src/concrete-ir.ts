@@ -113,6 +113,11 @@ export type ConcreteInstruction =
               setup?: Cleanup[];
               restored?: Cleanup[];
           }[];
+          storageJoins?: {
+              place: string;
+              ownership: 'transfer-selected-storage';
+              arms: ConcreteValueAdapter[];
+          }[];
           aggregateJoin?: { ownership: 'transfer-selected-result'; arms: ConcreteValueAdapter[] };
           lensJoin?: { kind: 'selected'; arms: string[]; result: string };
           callableJoin?: {

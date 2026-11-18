@@ -605,3 +605,46 @@ Commands: `bun test --path-ignore-patterns '**/c/execute.test.ts'`,
 `bunx tsc --noEmit -p /tmp/laminar-backend-tsconfig.json`, and `git diff --check`.
 General callable focus restoration and divergent branch storage versions remain
 open; phase 6 is incomplete.
+
+## Phase 6 slice: divergent owned branch storage versions
+
+Following `b92b9bd`, ordinary branches may now finish with differing owned callable
+or recursive aggregate descriptors. Case value annotations retain ordered
+`storageJoins` for divergent places, including each arm's descriptor and their
+canonical common descriptor. Analysis propagates the common descriptor outward.
+Independent verification derives place coverage and arm provenance from separately
+traversed branch states, verifies the exact recursive union and continuation reads,
+and rejects storage annotations on unrelated instructions. Uniform recursive joins
+must retain their original descriptor rather than inventing a redundant choice.
+
+Concrete cases retain exact recursive per-arm layouts/entry mappings and
+`transfer-selected-storage` ownership. Descriptor discovery includes unused storage
+joins. C lowering adapts each selected live place before the existing logical
+storage merge, preserving empty storage and partially consumed projections. No
+new allocation, environment copy, old-result disposal, incompatible code-pointer
+cast or retained aggregate address is introduced. Printing marks selected storage.
+
+Twenty-four shared samples cover both selections, unchanged arms, capture layout
+changes, nested aggregates/joins, repeated replacement, unused/consumed contents,
+capture/parameter transfer, multiple owners, simultaneous callable results and
+native/user lens callees with thin/scattered arguments. Twelve serialized corruption
+tests cover analysis and physical contracts; a restriction test retains the
+lens-valued-branch diagnostic. The previous broad branch restriction test is
+replaced by positive execution coverage.
+
+This slice handles ordinary value-producing branches. Divergent storage inside
+lens-valued branches still needs restoration-aware adapters. General callable
+focus aliases/projections, parameters/results, manual cleanup and scattered focuses
+remain open; phase 6 is incomplete. Subsequent commit `23d0aac` and its concurrent
+execution harness/build changes are preserved.
+
+Validation: **1,702 passes, 39 existing skips, zero failures across 40 files**:
+1,084 non-execution tests and 618 native/Wasm execution cases. The full concurrent
+harness passed strict C11, optimized native builds, supported native sanitizers and
+Emscripten/Node at both optimization levels without retries (170.94 seconds).
+`git diff --check` passes. The unrelated `cli/c.ts:46` default TypeScript error
+from `9f83b1a` remains; checking all files outside `cli/` passes via the temporary
+config documented in the previous slice. Remote CI was not run.
+Commands: `bun test --path-ignore-patterns '**/c/execute.test.ts'`,
+`bun test test/c/execute.test.ts`, `bunx tsc --noEmit`,
+`bunx tsc --noEmit -p /tmp/laminar-backend-tsconfig.json`, and `git diff --check`.
