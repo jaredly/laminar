@@ -404,5 +404,8 @@ nested direct manuals preserve completion order. Independent verification derive
 these boundaries and checks each transition's input provenance plus subsequent
 reads. Lens tuples also compose captured member handlers in source order,
 recursively through mixed/nested frontends and scope forwarding. This does not
-generalize effects through selected cases or returned calls; the corresponding
-restoration adapters remain open. Callable focus endpoint ABIs remain separate.
+generalize effects through selected cases; the corresponding restoration adapters
+remain open. Calls now apply caller-side argument completion effects after plain
+results and carry handlers on lens results until restoration. Forwarded results,
+native `dup`/`fst`, and dynamic dispatch use the same boundaries. This does not add
+callee-local effect summaries or callable focus endpoint ABIs.

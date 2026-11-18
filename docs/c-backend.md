@@ -467,5 +467,9 @@ existing versioned storage. Nested direct manuals and repeated releases preserve
 exact original and replacement ABIs. Scattered scalar/tuple frontends now compose
 member descriptor effects in the same source order as existing C completion,
 including nested tuples and outer manual wrappers. This does not add scattered
-callable focus endpoint ABIs. Selected divergent replacement and call/return effect
-propagation remain separate phase-6 work.
+callable focus endpoint ABIs. Caller-side argument cleanup effects now propagate
+after plain calls or at eventual lens-result completion, matching existing C
+adapters and retained argument backing. Direct, dynamic and native calls, scattered
+arguments, forwarded results and outer manual wrappers share that contract.
+Selected divergent replacement, callee-local effect summaries and general callable
+focus endpoint ABIs remain separate phase-6 work.

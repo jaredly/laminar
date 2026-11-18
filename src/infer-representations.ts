@@ -598,6 +598,15 @@ export function inferRepresentations(
                         arguments: args,
                         result: out,
                     });
+                    // Returned lenses retain argument backing and its completion;
+                    // plain calls complete argument adapters before continuation.
+                    const finishes = i.args.map((id) => s.finishes.get(id));
+                    if (i.out.type.tag === 'flow') {
+                        if (finishes.some(Boolean))
+                            s.finishes.set(i.out.id, (state, apply) =>
+                                finishes.forEach((finish) => finish?.(state, apply)),
+                            );
+                    } else finishes.forEach((finish) => finish?.(s, true));
                     break;
                 }
                 case 'scope': {

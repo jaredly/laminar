@@ -11,7 +11,7 @@ coverage, not completion of every phase exit gate.
 
 The scoped lens extensions are complete as of `707521c`; see the
 [completion record and follow-up mapping](checker-completeness-handoff.md).
-Latest local verification: **1929 pass / 39 existing skips / 0 failures across
+Latest local verification: **2005 pass / 39 existing skips / 0 failures across
 42 files**, with default TypeScript and diff checks passing. The latest full execution run passed without retries. Remote CI was not run for
 these slices. See also [the implementation record](backend-progress.md),
 [backend contract](backend-contract.md), [typed IR API](typed-ir.md), and
@@ -451,18 +451,19 @@ Include immediate swaps/discards and returned lenses. Then add exact post-cleanu
 normalization adapters for divergent selected replacement. The current replacement
 guard stays in place. Phase 6 remains incomplete.
 
-## Latest phase 6 slice: scattered manual release effects
+## Latest phase 6 slice: call argument completion effects
 
-Direct manual cleanup descriptor changes now reach continuation reads at lexical
-loan release and immediate swaps. Nested manual completion preserves outer-cleanup
-then frontend-completion order; handlers forwarded through scopes retain exact
-transition contracts. Lens tuples now compose member handlers in source order,
-including nested tuples and mixed ordinary/manual members. Independent verification
-checks post-release provenance.
+Direct and scattered manual cleanup descriptor changes reach continuation reads at
+lexical release, immediate swaps and plain-result call completion. Lens-result
+calls retain argument completion handlers until their result completes, including
+forwarded results and native `fst`; native `dup` completes immediately. Independent
+verification derives the same boundaries and rejects stale post-call provenance.
+Existing concrete transitions, typed ABIs and retained C argument backing remain
+the ownership/lifetime contracts.
 
-Next, model effects across selected branches and calls/returned contexts, then add
-exact selected post-cleanup normalization adapters. Callable focus endpoint ABIs
-(including scattered callable focuses) remain separate work: this slice completes
-scalar/tuple frontend lenses whose cleanup changes an independently owned callable.
-Do not relax the divergent deferred replacement guard using only these handlers.
-Phase 6 remains incomplete.
+Next, model effects across selected branches and add exact selected post-cleanup
+normalization adapters. Effects for escaping callee-local owners and general
+callable focus endpoint ABIs (including scattered callable focuses) remain separate
+work. This slice propagates caller-side cleanup of scalar/tuple lens arguments;
+it does not introduce general function effect summaries. Do not relax the divergent
+deferred replacement guard using only these handlers. Phase 6 remains incomplete.

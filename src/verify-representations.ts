@@ -870,6 +870,13 @@ export function verifyRepresentations(
                             if (call.targets !== undefined) fail('Native call has dynamic targets');
                             nativeCall(callee, call.target, args, v);
                         } else fail('Call operand is not callable');
+                        const finishes = i.args.map((id) => s.finishes.get(id));
+                        if (i.out.type.tag === 'flow') {
+                            if (finishes.some(Boolean))
+                                s.finishes.set(i.out.id, (state, apply) => {
+                                    for (const finish of finishes) finish?.(state, apply);
+                                });
+                        } else for (const finish of finishes) finish?.(s, true);
                         break;
                     }
                 }

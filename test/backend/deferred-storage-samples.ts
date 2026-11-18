@@ -320,4 +320,164 @@ export const deferredStorageSamples = (['true', 'false'] as const).flatMap((cond
  (f() + g(), x, y)}`,
         expected: [17, condition === 'true', 7],
     },
+    {
+        name: `deferred plain call continuation ${condition}`,
+        source: `fn read(~x) dup(~x)
+{let x = 1
+ let v = 3
+ let f = fn () v
+ let result = read(~{@(x, {let old = f := fn () 9
+ old()
+ fn () ()})})
+ (result, f(), x, ${condition})}`,
+        expected: [1, 9, 1, condition === 'true'],
+    },
+    {
+        name: `deferred returned call continuation ${condition}`,
+        source: `fn pass(~x) ~x
+{let x = 1
+ let v = 3
+ let f = fn () v
+ {let focus = ~{pass(~{@(x, {let old = f := fn () 9
+ old()
+ fn () ()})})}
+ focus := ${condition}}
+ (f(), x)}`,
+        expected: [9, condition === 'true'],
+    },
+    {
+        name: `deferred native dup continuation ${condition}`,
+        source: `{let x = 1
+ let v = 3
+ let f = fn () v
+ let result = dup(~{@(x, {let old = f := fn () 9
+ old()
+ fn () ()})})
+ (result, f(), x, ${condition})}`,
+        expected: [1, 9, 1, condition === 'true'],
+    },
+    {
+        name: `deferred native fst continuation ${condition}`,
+        source: `{let x = 1
+ let y = 2
+ let v = 3
+ let f = fn () v
+ {let focus = ~{fst(~(@(x, {let old = f := fn () 9
+ old()
+ fn () ()}), y))}
+ focus := ${condition}}
+ (f(), x, y)}`,
+        expected: [9, condition === 'true', 2],
+    },
+    {
+        name: `deferred plain scattered call continuation ${condition}`,
+        source: `fn read(~p) dup(~p)
+{let x = 1
+ let y = 2
+ let v = 3
+ let f = fn () v
+ let result = read(~(@(x, {let old = f := fn () 9
+ old()
+ fn () ()}), y))
+ (result, f(), x, y, ${condition})}`,
+        expected: [[1, 2], 9, 1, 2, condition === 'true'],
+    },
+    {
+        name: `deferred returned scattered call continuation ${condition}`,
+        source: `fn pass(~p) ~p
+{let x = 1
+ let y = 2
+ let v = 3
+ let f = fn () v
+ {let focus = ~{pass(~(@(x, {let old = f := fn () 9
+ old()
+ fn () ()}), y))}
+ focus := (${condition}, 7)}
+ (f(), x, y)}`,
+        expected: [9, condition === 'true', 7],
+    },
+    {
+        name: `deferred forwarded call continuation ${condition}`,
+        source: `fn pass(~x) ~x
+{let x = 1
+ let v = 3
+ let f = fn () v
+ {let focus = ~{pass(~{pass(~{@(x, {let old = f := fn () 9
+ old()
+ fn () ()})})})}
+ focus := ${condition}}
+ (f(), x)}`,
+        expected: [9, condition === 'true'],
+    },
+    {
+        name: `deferred unused returned call continuation ${condition}`,
+        source: `fn pass(~x) ~x
+{let x = 1
+ let v = 3
+ let f = fn () v
+ {let focus = ~{pass(~{@(x, {let old = f := fn () 9
+ old()
+ fn () ()})})}
+ ()}
+ (f(), x, ${condition})}`,
+        expected: [9, 1, condition === 'true'],
+    },
+    {
+        name: `deferred staged returned call continuation ${condition}`,
+        source: `fn pass(~x) ~x
+{let x = 1
+ let count = 0
+ let seen = 0
+ let v = 3
+ let f = fn () v
+ {let focus = ~{@({pass(~{@(x, {let old = f := fn () 9
+ seen := old()
+ fn () ()})})}, fn () {count := 10})}
+ focus := ${condition}}
+ (f(), seen, count, x)}`,
+        expected: [9, 3, 10, condition === 'true'],
+    },
+    {
+        name: `deferred dynamic plain call continuation ${condition}`,
+        source: `fn first(~x) dup(~x)
+fn second(~x) {dup(~x) + 1}
+{let x = 1
+ let v = 3
+ let f = fn () v
+ let call = match ${condition} {true -> first; false -> second}
+ let result = call(~{@(x, {let old = f := fn () 9
+ old()
+ fn () ()})})
+ (result, f(), x)}`,
+        expected: [condition === 'true' ? 1 : 2, 9, 1],
+    },
+    {
+        name: `deferred dynamic returned call continuation ${condition}`,
+        source: `fn first(~x) ~x
+fn second(~x) ~x
+{let x = 1
+ let v = 3
+ let f = fn () v
+ let call = match ${condition} {true -> first; false -> second}
+ {let focus = ~{call(~{@(x, {let old = f := fn () 9
+ old()
+ fn () ()})})}
+ focus := true}
+ (f(), x)}`,
+        expected: [9, true],
+    },
+    {
+        name: `deferred returned aggregate call continuation ${condition}`,
+        source: `fn pass(~x) ~x
+{let x = 1
+ let v = 3
+ let packed = (fn () v, 4)
+ {let focus = ~{pass(~{@(x, {let (old, n) = packed := (fn () 9, 6)
+ old() + n
+ fn () ()})})}
+ focus := ${condition}}
+ let (f, n) = packed
+ (f() + n, x)}`,
+        expected: [15, condition === 'true'],
+    },
 ]);

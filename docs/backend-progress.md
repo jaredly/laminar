@@ -848,3 +848,34 @@ Validation: **1,929 pass / 39 existing skips / 0 failures across 42 files**:
 native, supported sanitizer, and Emscripten/Node execution at both optimization
 levels passed without retries (278.16 seconds). `bunx tsc --noEmit` and
 `git diff --check` pass. Remote CI was not run.
+
+## Call argument completion effects
+
+Representation inference now completes caller-side lens argument descriptor effects
+in argument order after a plain-result call. A lens-result call instead captures
+the argument handlers on its result; release, swap, outer manual completion or
+further forwarding triggers them at eventual result completion. Independent
+serialized verification derives these boundaries separately. This matches existing
+C argument adapters, including native `dup`/`fst`, dynamic callable dispatch,
+scattered backing and returned contexts. No runtime storage, allocation, affine
+ownership or code-pointer ABI change was needed.
+
+Twenty-four shared cases cover direct/native/dynamic calls, thin/scattered lens
+arguments, callable/aggregate replacement, forwarded returned focuses, unused
+returned aliases, and returned calls underneath outer manual cleanup. Four
+corruption tests reject stale callable/aggregate continuation provenance after
+plain, returned and forwarded calls. Initial plain/returned regressions failed
+before the fix. Source checker restrictions on cleanup access to unrestored
+computed owners remain unchanged.
+
+This propagates caller-side argument completion effects, not arbitrary callee-local
+storage effects or function effect summaries. Selected cleanup effects and exact
+post-cleanup selected adapters, escaping callee-local storage, and callable focus
+endpoint ABIs remain open. The divergent selected deferred replacement guard is
+unchanged; phase 6 remains incomplete.
+
+Validation: **2,005 pass / 39 existing skips / 0 failures across 42 files**:
+1,211 non-execution tests and 794 native/Wasm cases. Full strict C11, optimized
+native, supported sanitizer, and Emscripten/Node execution at both optimization
+levels passed without retries (312.01 seconds). `bunx tsc --noEmit` and
+`git diff --check` pass. Remote CI was not run.
