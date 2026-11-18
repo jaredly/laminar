@@ -124,25 +124,29 @@ for (const wasm of [false, true]) {
             },
             60000,
         );
-    (available ? it : it.skip)(
-        `${wasm ? 'Wasm' : 'native'}: unmatched case traps`,
-        async () => {
-            const p = typedProgram('match 1 {2 -> 3}');
-            const c = compileConcreteProgram(
-                p,
-                wasm ? wasm32Emscripten(emcc.stdout.trim()) : native!,
-                [{ unit: p.units.at(-1)!.id, arguments: [] }],
-            );
-            try {
-                await buildAndRun(emitC(c), { compiler: wasm ? 'emcc' : 'clang', wasm });
-                throw Error('Expected runtime trap');
-            } catch (error) {
-                expect((error as { code?: string }).code).toBe('c-runtime');
-                const directory = String(error).match(/Artifacts: (.+)/)![1]!;
-                // Expected trap artifacts have been checked; real regressions remain retained.
-                await rm(directory, { recursive: true });
-            }
-        },
-        60000,
-    );
+    for (const [name, source] of [
+        ['unmatched case', 'match 1 {2 -> 3}'],
+        ['unmatched temporary cleanup', '{let f = ~{lens 4 <- 1\n ()}\n f := 3}'],
+    ])
+        (available ? it : it.skip)(
+            `${wasm ? 'Wasm' : 'native'}: ${name} traps`,
+            async () => {
+                const p = typedProgram(source!);
+                const c = compileConcreteProgram(
+                    p,
+                    wasm ? wasm32Emscripten(emcc.stdout.trim()) : native!,
+                    [{ unit: p.units.at(-1)!.id, arguments: [] }],
+                );
+                try {
+                    await buildAndRun(emitC(c), { compiler: wasm ? 'emcc' : 'clang', wasm });
+                    throw Error('Expected runtime trap');
+                } catch (error) {
+                    expect((error as { code?: string }).code).toBe('c-runtime');
+                    const directory = String(error).match(/Artifacts: (.+)/)![1]!;
+                    // Expected trap artifacts have been checked; real regressions remain retained.
+                    await rm(directory, { recursive: true });
+                }
+            },
+            60000,
+        );
 }

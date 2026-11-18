@@ -505,6 +505,13 @@ export const lensToRvalue = (
             const tid = ctx.counter.current++;
             const rid = ctx.counter.current++;
             const sub = subScope(ctx);
+            const refutable = (p: Pat): boolean =>
+                p.type === 'constructor' ||
+                p.type === 'number' ||
+                p.type === 'bool' ||
+                p.type === 'string' ||
+                (p.type === 'tuple' && p.items.some(refutable));
+            const matched = refutable(lin.pat) ? patToPatd(sub, lin.pat, false) : undefined;
             // START HERE: the VALUE of the LET needs to be
             // wrapped in a `heap()`, otherwise all will be lost
             return {
@@ -542,23 +549,41 @@ export const lensToRvalue = (
                 result: inner({ type: 'idd', id: tid, text: 't', loc: lin.loc }, [
                     {
                         type: 'block',
-                        block: [
-                            {
-                                type: 'let',
-                                pat: {
-                                    type: 'ref',
-                                    inner: patToPatd(sub, lin.pat, true),
-                                    loc: lin.loc,
-                                },
-                                loc: lin.loc,
-                                value: {
-                                    type: 'ref',
-                                    inner: { type: 'idd', id: tid, text: 't', loc: lin.loc },
-                                    loc: lin.loc,
-                                },
-                            },
-                        ],
-                        result: linearToExpr(sub, lin.body),
+                        block: matched
+                            ? []
+                            : [
+                                  {
+                                      type: 'let',
+                                      pat: {
+                                          type: 'ref',
+                                          inner: patToPatd(sub, lin.pat, true),
+                                          loc: lin.loc,
+                                      },
+                                      loc: lin.loc,
+                                      value: {
+                                          type: 'ref',
+                                          inner: { type: 'idd', id: tid, text: 't', loc: lin.loc },
+                                          loc: lin.loc,
+                                      },
+                                  },
+                              ],
+                        result: matched
+                            ? {
+                                  type: 'case',
+                                  loc: lin.loc,
+                                  value: {
+                                      type: 'deref',
+                                      loc: lin.loc,
+                                      inner: { type: 'idd', id: tid, text: 't', loc: lin.loc },
+                                  },
+                                  cases: [
+                                      {
+                                          pat: { type: 'deref', loc: lin.loc, inner: matched },
+                                          body: linearToExpr(sub, lin.body),
+                                      },
+                                  ],
+                              }
+                            : linearToExpr(sub, lin.body),
                         cleanup: [
                             {
                                 type: 'apply',

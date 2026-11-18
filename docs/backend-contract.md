@@ -67,5 +67,6 @@ retains these storage cells and scopes explicitly; no inference closure or sourc
 AST is needed after serialization. Concrete manual contracts independently retain
 cleanup ordering, dependencies, shapes, and lifetime obligations. C/Wasm adapters
 stage scalar/tuple focuses before cleanup and retain returned state using the
-existing context machinery. Captured callback invocation and callable focus
-storage remain explicit backend restrictions; no evaluator fallback is used.
+existing context machinery. Known captured callbacks execute through typed
+environments in the tested subset; callable focus storage remains an explicit
+backend restriction. No evaluator fallback is used.

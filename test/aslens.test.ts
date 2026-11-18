@@ -179,11 +179,6 @@ for (const [source, code, message] of [
         'Closure cannot borrow outer binding x',
     ],
     ['fn raw() ~{let v = 1\n v}', 'escaping-lens', 'Returned lens must refer to a lens parameter'],
-    [
-        'fn bad() ~{lens [h, ...t] <- [1]\n h}',
-        'unsupported-lens-pattern',
-        'Temporary lens cleanup supports identifier, wildcard, and tuple patterns',
-    ],
     ['fn bad() ~{lens (v, v) <- (1, 2)\n v}', 'duplicate-pattern', 'Duplicate pattern name v'],
 ] as const)
     it(`aslens rejects ${code}: ${source}`, () => {

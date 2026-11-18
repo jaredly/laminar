@@ -72,7 +72,7 @@ pointer path is `src/decompose.ts` and `src/eval.ts`, not `src/value-passing/`.
 | Manual `@(focus, cleanup)` | Implemented | Implemented | Tested | Tested scalar/tuple subset |
 | Matching a borrowed scrutinee | Implemented | Retained reconstruction | Tested | Tested scalar/tuple subset; nominal layouts remain explicit |
 | Constructor alias patterns | Implemented | Retained reconstruction | Tested | Nominal layouts remain explicit |
-| `aslens`: `lens pattern <- value` | Identifier/wildcard/tuple patterns | Retained manual capability | Tested | Tested scalar/tuple subset |
+| `aslens`: `lens pattern <- value` | Identifier/wildcard/tuple/constructor/literal patterns | Retained manual capability | Tested | Tested scalar/tuple subset |
 
 “Tested” is not universal backend coverage. Dynamic callable joins, and nominal/heap runtime data retain their existing later-phase
 restrictions. Semantic acceptance must remain independent of physical topology;
@@ -115,9 +115,9 @@ fn shifted(~x) ~{lens v <- x + 2
 
 This checks and returns `8` in checked legacy, JSON-detached typed execution,
 native C, and Wasm. Identifier, wildcard, and recursively nested tuple cleanup
-patterns are supported. Constructor and literal temporary cleanup patterns remain separate from borrowed
-constructor aliases, and retain an explicit
-`unsupported-lens-pattern` diagnostic.
+patterns are supported. Constructor and literal cleanup patterns are now supported
+as described in the extension below; their bindings own final contents rather
+than reconstructing a borrowed constructor.
 
 The contract is:
 
@@ -229,8 +229,8 @@ native/Wasm execution and serialized concrete verification.
 List/variant physical storage remains a separate backend restriction: checked list
 examples report `unsupported-layout: No storage definition for List` during physical
 lowering. This does not prevent semantic checking or detached reference execution.
-`aslens` constructor cleanup patterns remain outside its identifier/wildcard/tuple
-subset, and are not implicitly enabled by borrowed reconstruction. Single-arm C
+`aslens` constructor cleanup patterns have their own owned final-content matching
+path; borrowed reconstruction does not supply their semantics. Single-arm C
 case joins now materialize changed storage versions outside the conditional; this
 applies to both ordinary matching and deferred selected-lens restoration.
 
@@ -487,6 +487,32 @@ This is support for known callable provenance and supported physical capture
 layouts. Dynamic callable joins, callable focus storage/replacement, nominal data,
 and host-callable adapters remain separate work.
 
+## Completed: constructor and literal temporary cleanup patterns
+
+`aslens` now checks constructor and literal cleanup patterns, including nested
+patterns. Pattern types describe final replacement contents, independently of the
+initial backing type. Cleanup fields own their contents and may be consumed
+without refill or same-constructor reconstruction. Borrowed lexical owners retain
+their ordinary refill obligations; ordinary closure capture rules are unchanged.
+
+Refutable cleanup patterns lower to an existing single-arm typed `case` after the
+final backing contents are moved into the cleanup region. The arm retains owned
+pattern-local disposal. Failure traps before the cleanup body; pattern matching
+runs at restoration, after consumer execution, rather than during setup. The
+legacy compiler uses the corresponding owned case while retaining backing through
+successful cleanup and enclosing release. Identifier/wildcard/irrefutable tuple
+lowering remains unchanged. No new instruction or evaluator fallback is used.
+
+`test/aslens-patterns.test.ts` covers list/constructor and string patterns through
+checked legacy and detached generic/specialized typed execution, final-type
+changes, lexical refill, ownership/type negatives, unmatched patterns, failure
+before cleanup effects, detached elaboration, and corrupted cleanup-local disposal.
+List physical lowering still reports `No storage definition for List`.
+Four new shared scalar/tuple samples cover numeric, Boolean, nested literal, and
+unused literal patterns through representation/concrete verification and native /
+Wasm execution. An unmatched literal cleanup also has native/Wasm trap coverage.
+The shared temporary-focus corpus now has 21 cases.
+
 ## Separate broader work
 
 - `A & B` remains a front-end/language-design gap: the README marks it unimplemented
@@ -519,6 +545,16 @@ and host-callable adapters remain separate work.
   the tested C/Wasm subset; capture moves and refill obligations remain explicit.
 
 ## Verification and reporting
+
+After constructor/literal temporary cleanup support, the full run reports
+**1136 pass / 39 existing skips / 0 failures across 34 files**, with 38 inline
+snapshots. The focused temporary suites have **67 passing tests**. All 21 shared
+scalar/tuple temporary samples pass strict native C11 at `-O0`, `-O2`, and
+ASan/UBSan, plus Emscripten/Node at `-O0` and `-O2`; native/Wasm additionally trap
+on an unmatched literal cleanup. Constructor/list and string patterns have checked
+legacy and detached generic/specialized typed execution coverage. The nominal
+physical-layout diagnostic remains explicit. `bunx tsc --noEmit` and
+`git diff --check` pass. No new skips; remote CI was not run.
 
 After captured callback support, the full run reports **1108 pass / 39 existing
 skips / 0 failures across 33 files**, with 38 inline snapshots. All nine new shared

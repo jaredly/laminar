@@ -409,14 +409,29 @@ export function lowerTypedUnit(e: Elaboration): IRUnit {
                 const cleanup = block(n.body);
                 const final = emit(cleanup, n.pat, { op: 'move', slot: ref(backing) });
                 const p = pattern(n.pat);
-                cleanup.instructions.push({
-                    op: 'bind',
-                    origin: id(n.pat),
-                    value: final.id,
-                    pattern: p,
-                });
-                cleanup.result = linear(n.body, cleanup).id;
-                cleanup.cleanup.push(...drops(p));
+                const refutable = (p: IRPattern): boolean =>
+                    p.kind === 'literal' ||
+                    p.kind === 'constructor' ||
+                    (p.kind === 'tuple' && p.items.some(refutable));
+                if (refutable(p)) {
+                    const matched = block(n.body);
+                    matched.result = linear(n.body, matched).id;
+                    matched.cleanup.push(...drops(p));
+                    cleanup.result = emit(cleanup, n.body, {
+                        op: 'case',
+                        value: final.id,
+                        cases: [{ pattern: p, body: matched }],
+                    }).id;
+                } else {
+                    cleanup.instructions.push({
+                        op: 'bind',
+                        origin: id(n.pat),
+                        value: final.id,
+                        pattern: p,
+                    });
+                    cleanup.result = linear(n.body, cleanup).id;
+                    cleanup.cleanup.push(...drops(p));
+                }
                 nested.result = emit(nested, n, {
                     op: 'manual',
                     lens: frontend.id,

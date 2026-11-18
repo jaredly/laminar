@@ -85,4 +85,24 @@ export const aslensSamples = [
         source: '{let f = ~{lens v <- 1\n fn () v}\n f := true}',
         expected: 1,
     },
+    {
+        name: 'numeric final pattern',
+        source: '{let seen = 0\n {let f = ~{lens 4 <- 1\n seen := true}\n f := 4}\n seen}',
+        expected: true,
+    },
+    {
+        name: 'boolean final pattern',
+        source: '{let f = ~{lens true <- 1\n ()}\n f := true}',
+        expected: 1,
+    },
+    {
+        name: 'nested literal final pattern',
+        source: '{let seen = 0\n {let f = ~{lens (true, (4, v)) <- 1\n seen := v}\n f := (true, (4, false))}\n seen}',
+        expected: false,
+    },
+    {
+        name: 'unused literal temporary',
+        source: '{let count = 0\n {let _ = ~{lens 4 <- 4\n count := count + 1}\n ()}\n count}',
+        expected: 1,
+    },
 ];

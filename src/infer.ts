@@ -989,16 +989,6 @@ export class Inferencer {
         };
     }
     private aslens(n: Lens & { type: 'aslens' }, env: Env): View {
-        const supported = (p: Pat): boolean =>
-            p.type === 'id' ||
-            p.type === 'drop' ||
-            (p.type === 'tuple' && p.items.every(supported));
-        if (!supported(n.pat))
-            this.error(
-                'unsupported-lens-pattern',
-                n.pat.loc,
-                'Temporary lens cleanup supports identifier, wildcard, and tuple patterns',
-            );
         const read = this.linear(n.value, env);
         const temporary = this.freshBinding(read);
         this.declare(temporary, '$temporary', n, 'local');

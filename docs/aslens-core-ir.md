@@ -73,7 +73,8 @@ Required behavior:
    may observe a computed owner before that owner's required restoration.
 
 The existing identifier, wildcard, and tuple cleanup-pattern scope is sufficient
-for this change. Constructor-pattern source support is a separate feature.
+for this change. Constructor-pattern source support was separate from this proposal; the current
+checker now supports constructor/literal cleanup via a retained single-arm case.
 
 ## Lowering existing manual forms
 
