@@ -355,6 +355,11 @@ export function inferRepresentations(
         }
         return projectValue(state.places.get(target.place)!, target.path);
     }
+    function enclosingTarget(target: FocusTarget, state: State): boolean {
+        if ('inner' in target) return enclosingTarget(target.inner, state);
+        if ('items' in target) return target.items.every((child) => enclosingTarget(child, state));
+        return state.places.has(target.place);
+    }
     function targetFor(state: State, id: string): FocusTarget | undefined {
         const existing = state.focusTargets.get(id);
         if (existing) return existing;
@@ -924,6 +929,13 @@ export function inferRepresentations(
                         s.focusOwners.set(i.out.id, owner);
                     }
                     s.places.forEach((_, place) => s.places.set(place, nested.places.get(place)!));
+                    const target = nested.focusTargets.get(i.body.result);
+                    if (target && enclosingTarget(target, s)) s.focusTargets.set(i.out.id, target);
+                    else if (out.kind === 'focus-tuple' || out.kind === 'focus-manual')
+                        return fail('Escaping scattered focus requires retained local backing');
+                    const dataOwner = nested.dataOwners.get(i.body.result);
+                    if (dataOwner && s.places.has(dataOwner.place))
+                        s.dataOwners.set(i.out.id, dataOwner);
                     const finish = nested.finishes.get(i.body.result);
                     if (finish) {
                         // Escaping completion may still need descriptors for locals
@@ -1083,20 +1095,33 @@ export function inferRepresentations(
             });
         }
         const result = get(s, body.result);
-        if (result.kind === 'focus-tuple' || result.kind === 'focus-manual')
+        if (
+            (result.kind === 'focus-tuple' || result.kind === 'focus-manual') &&
+            !allowLocalFocusResult
+        )
             return fail('Scattered callable focus forwarding requires a completion contract');
         if (result.kind === 'local-focus' && !allowLocalFocusResult)
             return fail('Callable focus results require an explicit return ABI');
         // A plain block releases its lexical loans before its caller continues.
         // Lens results defer those releases; analyze remaining regions without
         // applying their effects to setup state.
-        if (result.kind !== 'lens' && result.kind !== 'local-focus')
+        if (
+            result.kind !== 'lens' &&
+            result.kind !== 'local-focus' &&
+            result.kind !== 'focus-tuple' &&
+            result.kind !== 'focus-manual'
+        )
             for (const action of body.cleanup)
                 if (action.kind === 'release') {
                     const value = s.loanFinishes.get(action.loan);
                     if (value) s.finishes.get(value)?.(s, true);
                 }
-        if (result.kind === 'lens' || result.kind === 'local-focus') {
+        if (
+            result.kind === 'lens' ||
+            result.kind === 'local-focus' ||
+            result.kind === 'focus-tuple' ||
+            result.kind === 'focus-manual'
+        ) {
             const finish = s.finishes.get(body.result);
             const releases = body.cleanup.flatMap((action) => {
                 if (action.kind !== 'release') return [];

@@ -677,3 +677,18 @@ Three shared samples and a forged-mode corruption case pass. Validation: 1397
 non-execution passes / 39 existing skips; 6 focused native/Wasm passes; TypeScript
 and diff checks pass. Forwarded/persistent scattered focuses and general callable
 lens call/return ABIs remain open. Phase 6 is incomplete.
+
+
+## Phase 6: lexical scattered focus forwarding
+
+Lexical scope results now retain recursive scattered target identities when every
+leaf belongs to enclosing logical storage. Forwarded data-only subtrees retain
+their targets for later mixed composition. Callable tuple/manual completion defers
+lexical releases until after frontend completion, preserving installed and cleanup
+endpoint descriptors. Independent verification checks scope descriptor agreement
+and derives target coverage; private backing escape and callable function-result
+ABIs retain explicit restrictions. C already forwards these logical views.
+Three shared forwarding cases and one corruption case pass. Validation: 1401
+non-execution passes / 39 existing skips; 6 focused native/Wasm passes; TypeScript
+and diff checks pass. Persistent scattered aliases and general callable lens ABIs
+remain open. Phase 6 is incomplete.

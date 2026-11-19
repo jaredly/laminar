@@ -613,4 +613,36 @@ export const callableFocusSamples = [
  (old(), before, seen, f(), n)}`,
         expected: [3, 4, 7, 9, true],
     },
+    {
+        name: 'scattered callable forwarded mixed focus',
+        source: `{let f = fn () 3
+ let x = 4
+ let y = 5
+ let (old, (a, b)) = {let marker = ()
+ (f, {let other = ()
+ (x, y)})} := (fn () 7, (true, ()))
+ (old(), a, b, f(), x, y)}`,
+        expected: [3, 4, 5, 7, true, null],
+    },
+    {
+        name: 'scattered callable forwarded manual completion',
+        source: `{let f = fn () 3
+ let n = 4
+ let seen = 0
+ let (old, before) = {let marker = ()
+ @((f, n), {let installed = f := fn () 9
+ seen := installed()
+ fn () ()})} := (fn () 7, true)
+ (old(), before, seen, f(), n)}`,
+        expected: [3, 4, 7, 9, true],
+    },
+    {
+        name: 'scattered callable forwarded lexical releases',
+        source: `{let f = fn () 3
+ let n = 4
+ let (old, before) = {let a = ~f
+ (a, n)} := (fn () 7, true)
+ (old(), before, f(), n)}`,
+        expected: [3, 4, 7, true],
+    },
 ];

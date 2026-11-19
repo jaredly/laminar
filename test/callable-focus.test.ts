@@ -283,3 +283,15 @@ it('rejects forged scattered manual restoration mode', () => {
     expect(() => verifyConcreteProgram(c)).toThrow('Manual restoration contract changed');
     expect(() => emitC(c)).toThrow('Manual restoration contract changed');
 });
+it('checks forwarded scattered endpoint agreement', () => {
+    const c = concrete(
+        callableFocusSamples.find(
+            (s) => s.name === 'scattered callable forwarded lexical releases',
+        )!.source,
+    );
+    const focus = c.analysis.entries[0].values
+        .filter((v: any) => v.representation.kind === 'focus-tuple')
+        .at(-1).representation;
+    focus.replacement.items[0] = structuredClone(focus.read.items[0]);
+    expect(() => verifyConcreteProgram(c)).toThrow('Scope result representation mismatch');
+});
