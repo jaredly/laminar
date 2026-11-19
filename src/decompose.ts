@@ -456,38 +456,70 @@ export const lensToRvalue = (
         case 'apply': {
             const tid = ctx.counter.current++;
             const rid = ctx.counter.current++;
-            return collapseIffe({
-                type: 'block',
-                block: [
-                    {
-                        type: 'let',
-                        pat: {
-                            type: 'tuple',
-                            items: [
-                                {
-                                    type: 'ref',
-                                    inner: { type: 'idd', id: tid, text: 't', loc: lin.loc },
-                                    loc: lin.loc,
-                                },
-                                { type: 'idd', id: rid, text: 'r', loc: lin.loc },
-                            ],
+            const apply = (args: () => Expr[], cleanup: Expr[]): Expr =>
+                collapseIffe({
+                    type: 'block',
+                    block: [
+                        {
+                            type: 'let',
+                            pat: {
+                                type: 'tuple',
+                                items: [
+                                    {
+                                        type: 'ref',
+                                        inner: { type: 'idd', id: tid, text: 't', loc: lin.loc },
+                                        loc: lin.loc,
+                                    },
+                                    { type: 'idd', id: rid, text: 'r', loc: lin.loc },
+                                ],
+                                loc: lin.loc,
+                            },
                             loc: lin.loc,
+                            value: {
+                                type: 'apply',
+                                loc: lin.loc,
+                                fn: linearToExpr(ctx, lin.fn),
+                                args: args(),
+                            },
                         },
-                        loc: lin.loc,
-                        value: linearToExpr(ctx, lin),
-                    },
-                ],
-                loc: lin.loc,
-                result: inner({ type: 'idd', id: tid, text: 't', loc: lin.loc }, [
-                    {
-                        type: 'apply',
-                        fn: { type: 'idd', id: rid, loc: lin.loc, text: 'r' },
-                        loc: lin.loc,
-                        args: [],
-                    },
-                ]),
-                cleanup: [],
-            });
+                    ],
+                    loc: lin.loc,
+                    result: inner({ type: 'idd', id: tid, text: 't', loc: lin.loc }, [
+                        {
+                            type: 'apply',
+                            fn: { type: 'idd', id: rid, loc: lin.loc, text: 'r' },
+                            loc: lin.loc,
+                            args: [],
+                        },
+                        ...cleanup,
+                    ]),
+                    cleanup: [],
+                });
+            const last = lin.args.at(-1);
+            // The returned lens must complete before its argument backing is
+            // restored or released. Ordinary expression calls complete immediately.
+            if (last?.type === 'lens')
+                return lensToRvalue(ctx, last.lens, (value, cleanup) =>
+                    apply(
+                        () =>
+                            lin.args.map((arg, i) => {
+                                if (i === lin.args.length - 1) return eref(value);
+                                if (arg.type === 'lens')
+                                    throw new Error('lens only allowed in final position');
+                                return linearToExpr(ctx, arg);
+                            }),
+                        cleanup,
+                    ),
+                );
+            return apply(
+                () =>
+                    lin.args.map((arg) => {
+                        if (arg.type === 'lens')
+                            throw new Error('lens only allowed in final position');
+                        return linearToExpr(ctx, arg);
+                    }),
+                [],
+            );
         }
         case 'tuple': {
             let next = (i: number, items: Ref[], cleanup: Expr[]): Expr => {

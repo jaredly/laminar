@@ -845,3 +845,24 @@ run reports 1437 passes / 39 existing skips / 1 source-identity snapshot failure
 TypeScript reports errors in cli/c.ts and src/eval-typed.ts introduced with the
 concurrent game changes. Those changes are preserved. No full execution run or
 remote CI is claimed for this follow-up. Phase 6 remains incomplete.
+
+
+## Legacy returned-lens cleanup order correction
+
+Legacy `lensToRvalue` call decomposition now retains final lens-argument cleanup
+until returned-lens completion. It emits the callee's returned cleanup before the
+argument cleanup, rather than using ordinary expression-call lowering that cleaned
+the argument during setup. Callee/ordinary-argument lowering and runtime evaluation
+order are preserved. This fixes both projected `aslens` backing lifetime and manual
+`@` callable replacement ordering; the legacy results now agree with typed execution
+for the reduced regressions. The prior legacy/typed ordering discrepancy is resolved
+for these cases. The C callable manual-argument restriction remains in place pending
+separate representation/restoration verification; this fix does not relax that guard.
+
+Three checked regressions failed before the fix and pass afterward. A fourth raw
+unchecked-decomposition regression verifies projected cleanup and heap release.
+TypeScript and diff checks pass. Broad non-execution validation reports 1442 passes,
+39 existing skips and the existing source-identity snapshot failure; no full native/
+Wasm run or remote CI is claimed for this legacy-only correction. Phase 6 remains
+incomplete. Concurrent evaluator, systematic fixture and developer-log work is
+preserved.
