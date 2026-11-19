@@ -546,4 +546,36 @@ export const callableFocusSamples = [
  9}`,
         expected: 9,
     },
+    {
+        name: 'scattered callable recursive mixed swap',
+        source: `{let f = fn () 3
+ let n = 4
+ let g = fn () 5
+ let b = true
+ let ((a, old), (c, flag)) = ((f, n), (g, b)) := ((fn () 7, false), (fn () 8, 9))
+ (a(), old, c(), flag, f(), n, g(), b)}`,
+        expected: [3, 4, 5, true, 7, false, 8, 9],
+    },
+    {
+        name: 'scattered callable recursive data subtree',
+        source: `{let f = fn () 3
+ let x = 4
+ let y = 5
+ let (a, (b, c)) = (f, (x, y)) := (fn () 7, (true, ()))
+ (a(), b, c, f(), x, y)}`,
+        expected: [3, 4, 5, 7, true, null],
+    },
+    {
+        name: 'scattered callable recursive projected owners',
+        source: `{let p = (fn () 3, 4)
+ let q = (5, fn () 6)
+ {let (a, b) = ~p
+ let (c, d) = ~q
+ let ((f, n), (m, g)) = ((a, c), (b, d)) := ((fn () 7, true), (false, fn () 8))
+ (f(), n, m, g())}
+ let (f, b) = p
+ let (c, g) = q
+ (f(), b, c, g())}`,
+        expected: [7, false, true, 8],
+    },
 ];

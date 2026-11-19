@@ -260,3 +260,15 @@ it('rejects forged scattered callable physical fields', () => {
     layout.fields[0].kind = 'pointer';
     expect(() => verifyConcreteProgram(c)).toThrow('Incorrect concrete storage fields');
 });
+it('rejects erased nested scattered endpoint reads', () => {
+    const c = concrete(
+        callableFocusSamples.find((s) => s.name === 'scattered callable recursive mixed swap')!
+            .source,
+    );
+    const focuses = c.analysis.entries[0].values.filter(
+        (v: any) => v.representation.kind === 'focus-tuple',
+    );
+    focuses.at(-1).representation.read = structuredClone(focuses[0].representation.read);
+    expect(() => verifyConcreteProgram(c)).toThrow();
+    expect(() => emitC(c)).toThrow();
+});

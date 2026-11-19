@@ -335,7 +335,7 @@ export function verifyRepresentations(
     }
     type FocusTarget =
         | { value: ValueRepresentation; place: string; path: number[] }
-        | { value: Extract<ValueRepresentation, { kind: 'focus-tuple' }>; items: FocusTarget[] };
+        | { value: ValueRepresentation; items: FocusTarget[] };
     type State = {
         values: Map<string, ValueRepresentation>;
         places: Map<string, ValueRepresentation>;
@@ -343,6 +343,7 @@ export function verifyRepresentations(
         focusOwners: Map<string, { place: string; path: number[] }>;
         focusWrites: Map<string, SemanticType>;
         focusTargets: Map<string, FocusTarget>;
+        dataOwners: Map<string, { place: string; path: number[] }>;
         finishes: Map<string, (state: State, apply: boolean) => void>;
         loanFinishes: Map<string, string>;
     };
@@ -353,6 +354,7 @@ export function verifyRepresentations(
         focusOwners: new Map(),
         focusWrites: new Map(),
         focusTargets: new Map(),
+        dataOwners: new Map(),
         finishes: new Map(),
         loanFinishes: new Map(),
     });
@@ -363,6 +365,7 @@ export function verifyRepresentations(
         focusOwners: new Map(s.focusOwners),
         focusWrites: new Map(s.focusWrites),
         focusTargets: new Map(s.focusTargets),
+        dataOwners: new Map(s.dataOwners),
         finishes: new Map(s.finishes),
         loanFinishes: new Map(s.loanFinishes),
     });
@@ -461,13 +464,27 @@ export function verifyRepresentations(
             };
         return { kind: 'aggregate', items };
     }
+    function focusEndpoint(value: ValueRepresentation, replacement = false): ValueRepresentation {
+        if (value.kind === 'local-focus' || value.kind === 'focus-tuple')
+            return replacement ? value.replacement : value.read;
+        if (value.kind !== 'lens') return fail('Missing scattered focus endpoint');
+        const r = shape(value.shape);
+        return { kind: 'data', layout: replacement ? r.replacement : r.read };
+    }
+    function targetFor(state: State, id: string): FocusTarget | undefined {
+        const existing = state.focusTargets.get(id);
+        if (existing) return existing;
+        const owner = state.focusOwners.get(id) ?? state.dataOwners.get(id);
+        return owner && { value: get(state, id), ...owner };
+    }
     function writeTarget(target: FocusTarget, value: ValueRepresentation, state: State): void {
         if ('items' in target) {
-            requireEqual(
-                target.value.replacement,
-                value,
-                'Scattered focus replacement provenance changed',
-            );
+            if (target.value.kind === 'focus-tuple')
+                requireEqual(
+                    target.value.replacement,
+                    value,
+                    'Scattered focus replacement provenance changed',
+                );
             target.items.forEach((child, i) => writeTarget(child, projectValue(value, [i]), state));
         } else {
             if (target.value.kind === 'local-focus')
@@ -836,6 +853,11 @@ export function verifyRepresentations(
                                 place: i.slot.place,
                                 path: [...i.slot.path],
                             });
+                        if (!s.lenses.has(i.slot.place) && s.places.has(i.slot.place))
+                            s.dataOwners.set(i.out.id, {
+                                place: i.slot.place,
+                                path: [...i.slot.path],
+                            });
                         const incoming = s.lenses.get(i.slot.place),
                             actual = lens(v);
                         if (incoming) topology(projectedShape(incoming, i.slot.path), actual);
@@ -903,24 +925,14 @@ export function verifyRepresentations(
                     case 'lens-tuple': {
                         const members = i.items.map((id) => get(s, id));
                         if (v.kind === 'focus-tuple') {
-                            if (!members.every((v) => v.kind === 'local-focus'))
-                                return fail(
-                                    'Nested or mixed callable focus tuples require recursive targets',
-                                );
+                            if (members.every((v) => v.kind === 'lens'))
+                                return fail('Noncanonical data focus tuple');
                             requireEqual(v.items, members, 'Callable focus tuple children changed');
                             requireEqual(
                                 v.read,
-                                tupleValue(members.map((v) => v.read)),
+                                tupleValue(members.map((v) => focusEndpoint(v))),
                                 'Callable focus tuple read changed',
                             );
-                            s.focusTargets.set(i.out.id, {
-                                value: v,
-                                items: i.items.map((id, n) => ({
-                                    value: members[n]!,
-                                    ...(s.focusOwners.get(id) ??
-                                        fail('Scattered callable focus lacks a logical owner')),
-                                })),
-                            });
                         } else {
                             const actual = lens(v);
                             if (actual.kind !== 'tuple')
@@ -931,6 +943,11 @@ export function verifyRepresentations(
                                 'Lens tuple children changed',
                             );
                         }
+                        const targets = i.items.map((id) => targetFor(s, id));
+                        if (targets.every((t) => t !== undefined))
+                            s.focusTargets.set(i.out.id, { value: v, items: targets });
+                        else if (v.kind === 'focus-tuple')
+                            return fail('Scattered callable focus lacks a logical owner');
                         const finishes = i.items.map((id) => s.finishes.get(id));
                         if (finishes.some(Boolean))
                             s.finishes.set(i.out.id, (state, apply) => {

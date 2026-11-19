@@ -646,3 +646,18 @@ unused environments, child ordering and physical fields. Validation: 1389
 non-execution passes / 39 existing skips; 6 focused native/Wasm passes; TypeScript
 and diff checks pass. Nested/mixed tuples, manual wrappers, forwarding and
 persistent scattered aliases remain separate work. Phase 6 is incomplete.
+
+
+## Phase 6: recursive mixed scattered swaps
+
+Scattered callable endpoint tuples now compose nested/mixed data and callable
+members. Recursive logical targets retain exact owned place/projection identity;
+scalar-only subtrees remain semantic lenses while callable-bearing nodes retain
+`focus-tuple` contracts. All owners receive ordered replacements before member
+completion. Independent verification checks recursive read provenance, child order
+and each installed representation; C continues using logical cell/path views.
+Three shared cases cover mixed nesting, scalar-only subtrees and projected owners,
+with nested read corruption coverage. Validation: 1393 non-execution passes / 39
+existing skips; 6 focused native/Wasm passes; TypeScript and diff checks pass.
+Manual wrappers, forwarding/persistence and general callable lens ABIs remain open.
+Phase 6 is incomplete.
