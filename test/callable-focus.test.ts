@@ -272,3 +272,14 @@ it('rejects erased nested scattered endpoint reads', () => {
     expect(() => verifyConcreteProgram(c)).toThrow();
     expect(() => emitC(c)).toThrow();
 });
+it('rejects forged scattered manual restoration mode', () => {
+    const c = concrete(
+        callableFocusSamples.find(
+            (s) => s.name === 'scattered callable manual wrapper replacement',
+        )!.source,
+    );
+    const m = c.code.map((code: any) => firstManual(code.body)).find(Boolean);
+    m.restoration.kind = 'local-focus';
+    expect(() => verifyConcreteProgram(c)).toThrow('Manual restoration contract changed');
+    expect(() => emitC(c)).toThrow('Manual restoration contract changed');
+});

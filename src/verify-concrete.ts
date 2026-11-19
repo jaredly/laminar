@@ -163,6 +163,19 @@ export function verifyConcreteProgram(p: ConcreteProgram): void {
             );
             return id;
         }
+        if (v.kind === 'focus-manual') {
+            const frontend = storage(v.frontend),
+                replacement = storage(v.replacement),
+                restore = aid([replacement], unitLayout);
+            abi(restore);
+            const id = lid(['focus-manual', frontend, storage(v.read), replacement]);
+            concreteFields(id, 'record', [
+                { name: 'frontend', kind: 'value', layout: frontend },
+                { name: 'restore', kind: 'code', abi: restore },
+                { name: 'context', kind: 'pointer' },
+            ]);
+            return id;
+        }
         if (v.kind === 'focus-tuple') {
             const items = v.items.map(storage),
                 restore = aid([storage(v.replacement)], unitLayout);
@@ -256,7 +269,8 @@ export function verifyConcreteProgram(p: ConcreteProgram): void {
     const descriptors = new Map<string, ValueRepresentation>();
     function discover(v: ValueRepresentation): void {
         if (v.kind === 'aggregate' || v.kind === 'focus-tuple') v.items.forEach(discover);
-        if (v.kind === 'local-focus' || v.kind === 'focus-tuple') {
+        if (v.kind === 'focus-manual') discover(v.frontend);
+        if (v.kind === 'local-focus' || v.kind === 'focus-tuple' || v.kind === 'focus-manual') {
             discover(v.read);
             discover(v.replacement);
         }
@@ -731,7 +745,10 @@ export function verifyConcreteProgram(p: ConcreteProgram): void {
                     if (
                         !(
                             (frontend.kind === 'lens' && result.kind === 'lens') ||
-                            (frontend.kind === 'local-focus' && result.kind === 'local-focus')
+                            (frontend.kind === 'local-focus' && result.kind === 'local-focus') ||
+                            ((frontend.kind === 'focus-tuple' ||
+                                frontend.kind === 'focus-manual') &&
+                                result.kind === 'focus-manual')
                         )
                     )
                         return fail('Manual restoration lacks lens shapes');
@@ -749,7 +766,12 @@ export function verifyConcreteProgram(p: ConcreteProgram): void {
                             holds: i.holds,
                             reconstruction: i.reconstruction,
                             restoration: {
-                                kind: frontend.kind === 'local-focus' ? 'local-focus' : 'deferred',
+                                kind:
+                                    result.kind === 'focus-manual'
+                                        ? 'scattered-focus'
+                                        : frontend.kind === 'local-focus'
+                                          ? 'local-focus'
+                                          : 'deferred',
                                 frontend:
                                     frontend.kind === 'lens' ? frontend.shape : storage(frontend),
                                 result: result.kind === 'lens' ? result.shape : storage(result),

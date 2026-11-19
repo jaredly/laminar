@@ -682,3 +682,19 @@ with nested read corruption coverage. Validation: 1393 non-execution passes / 39
 existing skips; 6 focused native/Wasm passes; TypeScript and diff checks pass.
 Manual wrappers, forwarding/persistence and general callable lens ABIs remain open.
 Phase 6 is incomplete.
+
+
+## Phase 6: scattered manual cleanup contracts
+
+Manual wrappers of scattered callable focuses use `focus-manual` descriptors,
+retaining their own read/installed replacement independently of a recursive
+frontend descriptor. Their physical record retains the frontend endpoint record,
+an exact installed-replacement restoration entry and context; manual restoration
+uses `scattered-focus` mode with exact frontend/result physical layouts. Independent
+verification derives these records and checks installed provenance before cleanup,
+then final frontend provenance after cleanup. Nested wrappers and manual members
+preserve source completion order without changing C storage or ownership.
+Three shared samples and a forged-mode corruption case pass. Validation: 1397
+non-execution passes / 39 existing skips; 6 focused native/Wasm passes; TypeScript
+and diff checks pass. Forwarded/persistent scattered focuses and general callable
+lens call/return ABIs remain open. Phase 6 is incomplete.

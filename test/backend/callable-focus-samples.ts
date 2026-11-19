@@ -578,4 +578,39 @@ export const callableFocusSamples = [
  (f(), b, c, g())}`,
         expected: [7, false, true, 8],
     },
+    {
+        name: 'scattered callable manual wrapper replacement',
+        source: `{let f = fn () 3
+ let n = 4
+ let seen = 0
+ let (old, before) = @((f, n), {let installed = f := fn () 9
+ seen := installed()
+ fn () ()}) := (fn () 7, true)
+ (old(), before, seen, f(), n)}`,
+        expected: [3, 4, 7, 9, true],
+    },
+    {
+        name: 'scattered callable manual nested wrappers',
+        source: `{let f = fn () 3
+ let n = 4
+ let seen = 0
+ let (old, before) = @(@((f, n), {let installed = f := fn () 9
+ seen := seen * 10 + installed()
+ fn () ()}), {let installed = f := fn () 8
+ seen := installed()
+ fn () ()}) := (fn () 7, true)
+ (old(), before, seen, f(), n)}`,
+        expected: [3, 4, 78, 9, true],
+    },
+    {
+        name: 'scattered callable manual member completion',
+        source: `{let f = fn () 3
+ let n = 4
+ let seen = 0
+ let (old, before) = (@(f, {let installed = f := fn () 9
+ seen := installed()
+ fn () ()}), @(n, fn () ())) := (fn () 7, true)
+ (old(), before, seen, f(), n)}`,
+        expected: [3, 4, 7, 9, true],
+    },
 ];

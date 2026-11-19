@@ -67,6 +67,13 @@ export function verifyRepresentations(
                     kind: v.kind,
                     items: v.items.map((c) => JSON.parse(repKey(c))),
                 });
+            case 'focus-manual':
+                return JSON.stringify({
+                    kind: v.kind,
+                    read: JSON.parse(repKey(v.read)),
+                    replacement: JSON.parse(repKey(v.replacement)),
+                    frontend: JSON.parse(repKey(v.frontend)),
+                });
             case 'focus-tuple':
                 if (!Array.isArray(v.items)) return fail('Missing callable focus tuple children');
                 return JSON.stringify({
@@ -239,6 +246,11 @@ export function verifyRepresentations(
     function fit(v: ValueRepresentation, t: SemanticFlow): void {
         if (!v || typeof v !== 'object') return fail('Missing value representation');
         if (t.tag === 'flow') {
+            if (v.kind === 'focus-manual') {
+                fit(v.read, irPlain(t.read));
+                fit(v.replacement, irPlain(t.write));
+                return;
+            }
             if (v.kind === 'focus-tuple') {
                 if (
                     t.read.tag !== 'tuple' ||
@@ -334,6 +346,7 @@ export function verifyRepresentations(
         return s;
     }
     type FocusTarget =
+        | { value: Extract<ValueRepresentation, { kind: 'focus-manual' }>; inner: FocusTarget }
         | { value: ValueRepresentation; place: string; path: number[] }
         | { value: ValueRepresentation; items: FocusTarget[] };
     type State = {
@@ -465,11 +478,30 @@ export function verifyRepresentations(
         return { kind: 'aggregate', items };
     }
     function focusEndpoint(value: ValueRepresentation, replacement = false): ValueRepresentation {
-        if (value.kind === 'local-focus' || value.kind === 'focus-tuple')
+        if (
+            value.kind === 'local-focus' ||
+            value.kind === 'focus-tuple' ||
+            value.kind === 'focus-manual'
+        )
             return replacement ? value.replacement : value.read;
         if (value.kind !== 'lens') return fail('Missing scattered focus endpoint');
         const r = shape(value.shape);
         return { kind: 'data', layout: replacement ? r.replacement : r.read };
+    }
+    function readTarget(
+        target: FocusTarget,
+        state: State,
+        expected: SemanticType,
+    ): ValueRepresentation {
+        if (!containsCallable(expected)) return { kind: 'data', layout: layoutId(expected) };
+        if ('inner' in target) return readTarget(target.inner, state, expected);
+        if ('items' in target) {
+            if (expected.tag !== 'tuple') return fail('Scattered focus semantic topology changed');
+            return tupleValue(
+                target.items.map((child, i) => readTarget(child, state, expected.items[i]!)),
+            );
+        }
+        return projectValue(state.places.get(target.place)!, target.path);
     }
     function targetFor(state: State, id: string): FocusTarget | undefined {
         const existing = state.focusTargets.get(id);
@@ -477,17 +509,32 @@ export function verifyRepresentations(
         const owner = state.focusOwners.get(id) ?? state.dataOwners.get(id);
         return owner && { value: get(state, id), ...owner };
     }
-    function writeTarget(target: FocusTarget, value: ValueRepresentation, state: State): void {
-        if ('items' in target) {
-            if (target.value.kind === 'focus-tuple')
+    function writeTarget(
+        target: FocusTarget,
+        value: ValueRepresentation,
+        state: State,
+        verifyEndpoints = true,
+    ): void {
+        if ('inner' in target) {
+            if (verifyEndpoints)
+                requireEqual(
+                    target.value.replacement,
+                    value,
+                    'Scattered manual replacement provenance changed',
+                );
+            writeTarget(target.inner, value, state, false);
+        } else if ('items' in target) {
+            if (verifyEndpoints && target.value.kind === 'focus-tuple')
                 requireEqual(
                     target.value.replacement,
                     value,
                     'Scattered focus replacement provenance changed',
                 );
-            target.items.forEach((child, i) => writeTarget(child, projectValue(value, [i]), state));
+            target.items.forEach((child, i) =>
+                writeTarget(child, projectValue(value, [i]), state, verifyEndpoints),
+            );
         } else {
-            if (target.value.kind === 'local-focus')
+            if (verifyEndpoints && target.value.kind === 'local-focus')
                 requireEqual(
                     target.value.replacement,
                     value,
@@ -707,7 +754,7 @@ export function verifyRepresentations(
                         break;
                     case 'swap': {
                         const focus = get(s, i.lens);
-                        if (focus.kind === 'focus-tuple') {
+                        if (focus.kind === 'focus-tuple' || focus.kind === 'focus-manual') {
                             requireEqual(v, focus.read, 'Scattered focus read provenance changed');
                             writeTarget(
                                 s.focusTargets.get(i.lens) ??
@@ -867,7 +914,22 @@ export function verifyRepresentations(
                     case 'manual': {
                         const frontend = get(s, i.lens);
                         const owner = s.focusOwners.get(i.lens);
-                        if (frontend.kind === 'local-focus') {
+                        const target = s.focusTargets.get(i.lens);
+                        if (frontend.kind === 'focus-tuple' || frontend.kind === 'focus-manual') {
+                            if (v.kind !== 'focus-manual' || !target)
+                                return fail('Scattered manual lacks logical targets');
+                            requireEqual(
+                                v.frontend,
+                                frontend,
+                                'Scattered manual frontend provenance changed',
+                            );
+                            requireEqual(
+                                v.read,
+                                frontend.read,
+                                'Scattered manual read provenance changed',
+                            );
+                            s.focusTargets.set(i.out.id, { value: v, inner: target });
+                        } else if (frontend.kind === 'local-focus') {
                             if (v.kind !== 'local-focus' || !owner)
                                 return fail('Manual callable focus lacks a logical owner');
                             requireEqual(
@@ -879,11 +941,21 @@ export function verifyRepresentations(
                         } else topology(lens(frontend), lens(v));
                         if (i.out.type.tag !== 'flow') return fail('Manual produced data');
                         const write = i.out.type.write;
+                        const frontendWrite = s.focusWrites.get(i.lens);
+                        const dataOwner = s.dataOwners.get(i.lens);
+                        if (dataOwner) s.dataOwners.set(i.out.id, dataOwner);
                         const frontendFinish = s.finishes.get(i.lens);
                         let analyzed = false;
                         const finish = (state: State, apply: boolean) => {
-                            if (!apply && v.kind === 'local-focus') return;
+                            if (!apply && (v.kind === 'local-focus' || v.kind === 'focus-manual'))
+                                return;
                             const annotation = annotations.get(i.out.id)!;
+                            if (apply && v.kind === 'focus-manual')
+                                requireEqual(
+                                    v.replacement,
+                                    readTarget(target!, state, write),
+                                    'Scattered manual replacement provenance changed',
+                                );
                             if (apply && v.kind === 'local-focus')
                                 requireEqual(
                                     v.replacement,
@@ -915,6 +987,12 @@ export function verifyRepresentations(
                                     );
                                     state.places.set(place, after);
                                 });
+                                if (frontend.kind === 'focus-tuple')
+                                    writeTarget(
+                                        target!,
+                                        readTarget(target!, state, frontendWrite!),
+                                        state,
+                                    );
                                 frontendFinish?.(state, true);
                             }
                         };
@@ -1282,12 +1360,17 @@ export function verifyRepresentations(
                         break;
                     }
                 }
-                if (v.kind === 'local-focus' && i.out.type.tag === 'flow')
+                if (
+                    (v.kind === 'local-focus' ||
+                        v.kind === 'focus-tuple' ||
+                        v.kind === 'focus-manual') &&
+                    i.out.type.tag === 'flow'
+                )
                     s.focusWrites.set(i.out.id, i.out.type.write);
                 s.values.set(i.out.id, v);
             }
             const result = get(s, b.result);
-            if (result.kind === 'focus-tuple')
+            if (result.kind === 'focus-tuple' || result.kind === 'focus-manual')
                 return fail('Scattered callable focus forwarding requires a completion contract');
             if (result.kind === 'local-focus' && !allowLocalFocusResult)
                 return fail('Callable focus results require an explicit return ABI');

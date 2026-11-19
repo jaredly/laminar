@@ -370,7 +370,7 @@ export function lconcrete(program: ConcreteProgram, options: ConcretePrintOption
                     expression = words(
                         'manual',
                         value(i.lens),
-                        ...(i.restoration.kind === 'local-focus'
+                        ...(i.restoration.kind !== 'deferred'
                             ? [
                                   words(
                                       'callable-endpoints',

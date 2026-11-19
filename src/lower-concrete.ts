@@ -79,7 +79,8 @@ export function lowerConcreteProgram(
         return g;
     };
     function discover(v: ValueRepresentation): void {
-        if (v.kind === 'local-focus' || v.kind === 'focus-tuple') {
+        if (v.kind === 'focus-manual') discover(v.frontend);
+        if (v.kind === 'local-focus' || v.kind === 'focus-tuple' || v.kind === 'focus-manual') {
             discover(v.read);
             discover(v.replacement);
         }
@@ -212,6 +213,16 @@ export function lowerConcreteProgram(
                 'record',
                 items.map((id, i) => ({ name: `item${i}`, kind: 'value', layout: id })),
             );
+        }
+        if (v.kind === 'focus-manual') {
+            const frontend = layout(v.frontend),
+                replacement = layout(v.replacement),
+                restore = table.abi([replacement], unitLayout);
+            return table.record(['focus-manual', frontend, layout(v.read), replacement], 'record', [
+                { name: 'frontend', kind: 'value', layout: frontend },
+                { name: 'restore', kind: 'code', abi: restore },
+                { name: 'context', kind: 'pointer' },
+            ]);
         }
         if (v.kind === 'focus-tuple') {
             const items = v.items.map(layout),
@@ -526,7 +537,10 @@ export function lowerConcreteProgram(
                     if (
                         !(
                             (frontend.kind === 'lens' && result.kind === 'lens') ||
-                            (frontend.kind === 'local-focus' && result.kind === 'local-focus')
+                            (frontend.kind === 'local-focus' && result.kind === 'local-focus') ||
+                            ((frontend.kind === 'focus-tuple' ||
+                                frontend.kind === 'focus-manual') &&
+                                result.kind === 'focus-manual')
                         )
                     )
                         return fail('Manual restoration requires lens representations');
@@ -535,7 +549,12 @@ export function lowerConcreteProgram(
                         out,
                         cleanup: lower(i.cleanup),
                         restoration: {
-                            kind: frontend.kind === 'local-focus' ? 'local-focus' : 'deferred',
+                            kind:
+                                result.kind === 'focus-manual'
+                                    ? 'scattered-focus'
+                                    : frontend.kind === 'local-focus'
+                                      ? 'local-focus'
+                                      : 'deferred',
                             frontend: frontend.kind === 'lens' ? frontend.shape : layout(frontend),
                             result: result.kind === 'lens' ? result.shape : layout(result),
                             order: ['stage', 'cleanup', 'dispose-result', 'restore', 'release'],

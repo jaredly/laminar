@@ -95,7 +95,7 @@ export type ConcreteInstruction =
           holds: SlotRef[];
           cleanup: ConcreteBlock;
           restoration: {
-              kind: 'deferred' | 'local-focus';
+              kind: 'deferred' | 'local-focus' | 'scattered-focus';
               frontend: string;
               result: string;
               order: ['stage', 'cleanup', 'dispose-result', 'restore', 'release'];
