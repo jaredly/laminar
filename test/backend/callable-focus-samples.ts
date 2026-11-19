@@ -707,4 +707,29 @@ export const callableFocusSamples = [
  9}`,
         expected: 9,
     },
+    {
+        name: 'callable fst owned replacement',
+        source: `{let v = 3
+ let p = (fn () v, 4)
+ let old = fst(~p) := fn () 7
+ let (f, n) = p
+ (old(), f(), n)}`,
+        expected: [3, 7, 4],
+    },
+    {
+        name: 'callable fst owned extraction',
+        source: `{let p = (fn () 3, 4)
+ let old = fst(~p) := true
+ (old(), p)}`,
+        expected: [3, [true, 4]],
+    },
+    {
+        name: 'callable fst owned unused',
+        source: `{let v = 3
+ let p = (fn () v, 4)
+ let w = 7
+ let old = fst(~p) := fn () w
+ 9}`,
+        expected: 9,
+    },
 ];

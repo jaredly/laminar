@@ -326,3 +326,18 @@ it('keeps scattered callable alias owners exclusive', () => {
         typedProgram('{let f = fn () 3\n let n = 4\n let (a, b) = ~(f, n)\n f()\n a := fn () 7}'),
     ).toThrow('Binding is exclusively borrowed until its aliases leave scope');
 });
+it('rejects forged callable fst projected read provenance', () => {
+    const c = concrete(
+        callableFocusSamples.find((s) => s.name === 'callable fst owned replacement')!.source,
+    );
+    const focuses = c.analysis.entries[0].values.filter(
+        (v: any) => v.representation.kind === 'local-focus',
+    );
+    focuses.at(-1).representation.read = structuredClone(
+        focuses[0].representation.replacement.items[0],
+    );
+    c.analysis.entries[0].calls.find((call: any) => call.value === focuses.at(-1).value).result =
+        structuredClone(focuses.at(-1).representation);
+    expect(() => verifyConcreteProgram(c)).toThrow('Callable fst read provenance changed');
+    expect(() => emitC(c)).toThrow('Callable fst read provenance changed');
+});

@@ -397,6 +397,12 @@ export function inferRepresentations(
         type: SemanticFlow,
     ): ValueRepresentation => {
         if (type.tag === 'plain') return data(type.value);
+        if (name === 'native/fst' && args[0]?.kind === 'local-focus') {
+            if (!containsCallable(type.read) && !containsCallable(type.write))
+                return fail('Data projection of callable storage requires an endpoint adapter');
+            const read = projectValue(args[0].read, [0]);
+            return { kind: 'local-focus', read, replacement: read };
+        }
         if (name === 'native/fst' && args[0])
             return {
                 kind: 'lens',
@@ -658,6 +664,17 @@ export function inferRepresentations(
                                 (use) => use.op === 'swap' && use.lens === i.out.id,
                             ).length !== 1 &&
                                 borrows(i.out.id, body).length !== 1 &&
+                                !body.instructions.some(
+                                    (use) =>
+                                        use.op === 'call' &&
+                                        use.args.includes(i.out.id) &&
+                                        body.instructions.some(
+                                            (callee) =>
+                                                callee.op === 'global' &&
+                                                callee.out.id === use.callee &&
+                                                callee.instance.definition === 'native/fst',
+                                        ),
+                                ) &&
                                 !body.instructions.some(
                                     (use) =>
                                         use.op === 'lens-tuple' && use.items.includes(i.out.id),
@@ -927,6 +944,27 @@ export function inferRepresentations(
                     });
                     // Returned lenses retain argument backing and its completion;
                     // plain calls complete argument adapters before continuation.
+                    if (
+                        callee.kind === 'native' &&
+                        callee.definition === 'native/fst' &&
+                        args[0]?.kind === 'local-focus'
+                    ) {
+                        const parent = args[0],
+                            owner = s.focusOwners.get(i.args[0]!);
+                        const write = s.focusWrites.get(i.args[0]!);
+                        if (!owner || !write || s.finishes.has(i.args[0]!))
+                            return fail('Callable fst completion requires a direct owned frontend');
+                        s.focusOwners.set(i.out.id, {
+                            place: owner.place,
+                            path: [...owner.path, 0],
+                        });
+                        s.finishes.set(i.out.id, (state, apply) => {
+                            if (apply)
+                                parent.replacement = containsCallable(write)
+                                    ? projectValue(state.places.get(owner.place)!, owner.path)
+                                    : data(write);
+                        });
+                    }
                     const finishes = i.args.map((id) => s.finishes.get(id));
                     if (i.out.type.tag === 'flow') {
                         if (finishes.some(Boolean))

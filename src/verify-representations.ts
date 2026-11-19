@@ -589,6 +589,15 @@ export function verifyRepresentations(
         v: ValueRepresentation,
     ): void {
         if (target !== callee.definition) fail('Wrong native call target');
+        if (callee.definition === 'native/fst' && args[0]?.kind === 'local-focus') {
+            if (v.kind !== 'local-focus') return fail('Callable fst lost endpoint provenance');
+            requireEqual(
+                v.read,
+                projectValue(args[0].read, [0]),
+                'Callable fst read provenance changed',
+            );
+            return;
+        }
         if (v.kind === 'lens') {
             if (callee.definition !== 'native/fst' || !args[0])
                 fail('Missing native returned-lens contract');
@@ -856,6 +865,17 @@ export function verifyRepresentations(
                                     (use) => use.op === 'swap' && use.lens === i.out.id,
                                 ).length !== 1 &&
                                     borrowedLoans(i.out.id, b).length !== 1 &&
+                                    !b.instructions.some(
+                                        (use) =>
+                                            use.op === 'call' &&
+                                            use.args.includes(i.out.id) &&
+                                            b.instructions.some(
+                                                (callee) =>
+                                                    callee.op === 'global' &&
+                                                    callee.out.id === use.callee &&
+                                                    callee.instance.definition === 'native/fst',
+                                            ),
+                                    ) &&
                                     !b.instructions.some(
                                         (use) =>
                                             use.op === 'lens-tuple' && use.items.includes(i.out.id),
@@ -1384,6 +1404,36 @@ export function verifyRepresentations(
                             if (call.targets !== undefined) fail('Native call has dynamic targets');
                             nativeCall(callee, call.target, args, v);
                         } else fail('Call operand is not callable');
+                        if (
+                            callee.kind === 'native' &&
+                            callee.definition === 'native/fst' &&
+                            args[0]?.kind === 'local-focus'
+                        ) {
+                            const parent = args[0],
+                                owner = s.focusOwners.get(i.args[0]!);
+                            const write = s.focusWrites.get(i.args[0]!);
+                            if (!owner || !write || s.finishes.has(i.args[0]!))
+                                return fail(
+                                    'Callable fst completion requires a direct owned frontend',
+                                );
+                            s.focusOwners.set(i.out.id, {
+                                place: owner.place,
+                                path: [...owner.path, 0],
+                            });
+                            s.finishes.set(i.out.id, (state, apply) => {
+                                if (apply)
+                                    requireEqual(
+                                        parent.replacement,
+                                        containsCallable(write)
+                                            ? projectValue(
+                                                  state.places.get(owner.place)!,
+                                                  owner.path,
+                                              )
+                                            : { kind: 'data', layout: layoutId(write) },
+                                        'Callable fst parent replacement provenance changed',
+                                    );
+                            });
+                        }
                         const finishes = i.args.map((id) => s.finishes.get(id));
                         if (i.out.type.tag === 'flow') {
                             if (finishes.some(Boolean))

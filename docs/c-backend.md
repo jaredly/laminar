@@ -704,3 +704,15 @@ disposal are preserved. Five shared samples include consume/refill, manual clean
 and unused environments. No C lowering or build scheduler change is required.
 Callable lens parameter/result ABIs, selected callable lens results and escaping
 private callable backing remain open; phase 6 is incomplete.
+
+
+## Phase 6: owned callable projection through native fst
+
+Direct native `fst` calls on whole owned callable aggregates now retain the
+projected read/installed replacement as explicit local-focus endpoints. Completion
+reconstructs and independently checks the parent replacement descriptor through
+its logical owner/path. Original sibling provenance and callable ABIs are retained;
+C already projects the logical view. Non-direct completion and scattered inputs
+remain separate boundaries. Three shared samples and a serialized read corruption
+case pass. Validation: 1413 non-execution passes / 39 existing skips; 6 focused
+native/Wasm cases; TypeScript and diff checks pass. Phase 6 remains incomplete.
