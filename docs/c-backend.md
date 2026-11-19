@@ -506,3 +506,10 @@ and final disposal. Forwarding, unused aliases, aggregates, staged cleanup, owne
 cleanup results and late private captures share that lifetime path. This completes
 the modeled returned-local restoration boundary, not general callable focus ABIs
 or phase 6.
+
+Selected arms may return local aliases of scalar/tuple manual lenses, including
+nested/scattered frontends and divergent callable-owner cleanup effects. Source
+protection metadata retains underlying owners separately from owned-retention
+escape provenance. Analysis retains block releases after frontend completion,
+matching existing C cleanup order; no C storage/ABI change was required. Aliases
+whose focus contents themselves require callable endpoint ABIs remain separate.

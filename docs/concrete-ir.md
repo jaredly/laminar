@@ -450,3 +450,10 @@ verification completes the returned handler before validating mandatory post-cle
 coverage. This supports callee-local replacement inside returned contexts without
 applying restoration effects to setup descriptors or changing the result ABI.
 Unmodeled completion routes still fail required-contract checks.
+
+Selected arm-local aliases preserve exclusive owners independently of manual escape
+provenance. Immutable loan `owners` retain the actual outer storage; the existing
+independent typed-IR comparison rejects missing/forged protections before concrete
+verification or emission. Lens block completion retains lexical releases after its
+frontend completion, so cleanup descriptor effects survive returned aliases. This
+reuses existing concrete original/final adapters and returned backing contracts.

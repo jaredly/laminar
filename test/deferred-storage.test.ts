@@ -1,3 +1,4 @@
+import { verifyTypedProgram } from '../src/verify-ir.ts';
 import { printConcreteProgram } from '../src/print-concrete.ts';
 import { specializeProgram } from '../src/specialize.ts';
 import { expect, it } from 'bun:test';
@@ -474,4 +475,26 @@ it('retains original invocation slots in returned local restoration', () => {
     expect(selectedCase(c).cleanupJoins).toHaveLength(1);
     verifyConcreteProgram(c);
     expect(() => emitC(c)).not.toThrow();
+});
+const armLocalAliasSource = () =>
+    deferredStorageSamples.find((s) => s.name === 'selected arm local alias true')!.source;
+for (const use of ['let stolen = f', 'dup(~x)'])
+    it(`protects original owners while selected alias remains live: ${use}`, () => {
+        const source = armLocalAliasSource().replace(' focus := true}', ` ${use}\n focus := true}`);
+        expect(() => typedProgram(source)).toThrow('exclusively borrowed');
+    });
+for (const mutation of ['missing', 'forged'] as const)
+    it(`independently rejects selected alias protection ${mutation}`, () => {
+        const p = JSON.parse(JSON.stringify(typedProgram(armLocalAliasSource())));
+        const loan = p.units.at(-1).loans.at(-1);
+        expect(loan.owners).toHaveLength(2);
+        if (mutation === 'missing') loan.owners.pop();
+        else loan.owners[0].place = 'unknown-place';
+        expect(() => verifyTypedProgram(p)).toThrow('Computed loan owner protection mismatch');
+    });
+it('rejects missing selected alias owner protection before C emission', () => {
+    const c = concrete(armLocalAliasSource());
+    c.semantic.program.units.at(-1).loans.at(-1).owners.pop();
+    expect(() => verifyConcreteProgram(c)).toThrow('Computed loan owner protection mismatch');
+    expect(() => emitC(c)).toThrow('Computed loan owner protection mismatch');
 });

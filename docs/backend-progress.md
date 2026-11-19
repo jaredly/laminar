@@ -1022,3 +1022,39 @@ Validation: **2,221 pass / 39 existing skips / 0 failures across 42 files**:
 native, supported sanitizer, and Emscripten/Node execution at both optimization
 levels passed without retries (339.63 seconds). `bunx tsc --noEmit` and
 `git diff --check` pass. Remote CI was not run.
+
+## Selected arm-local alias handoff
+
+Investigation reproduced a checker-accepted arm-local alias failing the independent
+typed-IR `Computed loan owner protection mismatch` check. Manual lens escape
+provenance can intentionally be empty to permit explicit owned backing retention.
+Computed alias roots previously reused that list when selected branches derived
+exclusive protection, losing the actual underlying owners. Computed roots now
+retain a separate `protectedOwners` list from the view targets. Branch-local
+protection follows that list; escape checks still follow the original provenance.
+The independent typed-IR owner verifier is unchanged.
+
+Lens block results also retain their lexical release handlers in representation
+inference and independent verification. Completion runs the frontend handler, then
+those releases, matching existing C block restoration. This preserves manual cleanup
+descriptor effects when a selected arm returns an alias rather than the direct
+manual lens. Existing original/final storage adapters and context backing apply.
+
+Twelve shared cases cover both selections, direct/nested/unused aliases, divergent
+setup/replacement, scattered frontends and returned callee-local restoration.
+Five new safety tests reject access to protected callable/scalar owners while the
+selected alias is live, reject forged/missing serialized protection, and reject
+corruption before C emission. The initial two regressions failed before the fix;
+24 focused native/Wasm cases pass.
+
+This closes the covered arm-local alias handoff boundary. It does not add callable
+focus endpoint ABIs: direct aliases/projections of callable contents, callable
+focus parameters/results, manual callable focuses and scattered callable focuses
+remain open. Phase 6 remains incomplete.
+
+Validation: **2,262 pass / 39 existing skips / 0 failures across 42 files**:
+1,320 non-execution tests and 942 native/Wasm cases. Full strict C11, optimized
+native, supported sanitizer, and Emscripten/Node execution at both optimization
+levels passed without retries (259.45 seconds). The focused native/Wasm run also
+passed (24 cases). `bunx tsc --noEmit` and `git diff --check` pass.
+Remote CI was not run.

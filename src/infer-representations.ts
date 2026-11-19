@@ -782,6 +782,20 @@ export function inferRepresentations(
                     const value = s.loanFinishes.get(action.loan);
                     if (value) s.finishes.get(value)?.(s, true);
                 }
+        if (result.kind === 'lens') {
+            const finish = s.finishes.get(body.result);
+            const releases = body.cleanup.flatMap((action) => {
+                if (action.kind !== 'release') return [];
+                const value = s.loanFinishes.get(action.loan);
+                const release = value && s.finishes.get(value);
+                return release ? [release] : [];
+            });
+            if (releases.length)
+                s.finishes.set(body.result, (state, apply) => {
+                    finish?.(state, apply);
+                    releases.forEach((release) => release(state, apply));
+                });
+        }
         for (const cleanup of deferred.reverse()) s.finishes.get(cleanup.value)!(s, false);
         return result;
     }

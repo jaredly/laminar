@@ -962,4 +962,117 @@ fn select(flag, first, second, ~x) ~{let f = first
  (old, x)}`,
         expected: [1, true],
     },
+    {
+        name: `selected arm local alias ${condition}`,
+        source: `fn replacement() 9
+{let x = 1
+ let v = 3
+ let f = fn () v
+ {let focus = ~{match ${condition} {
+ true -> {let inner = ~{@(x, {let old = f := replacement
+ old()
+ fn () ()})}
+ inner};
+ false -> {let inner = ~{@(x, {let old = f := replacement
+ old()
+ fn () ()})}
+ inner}}}
+ focus := true}
+ (f(), x)}`,
+        expected: [9, true],
+    },
+    {
+        name: `selected arm local alias divergent ${condition}`,
+        source: `{let x = 1
+ let v = 3
+ let f = fn () v
+ let y = 5
+ {let focus = ~{match ${condition} {
+ true -> {let old = f := fn () y
+ {let inner = ~{@(x, {let old = f := fn () 9
+ old()
+ fn () ()})}
+ inner}}; false -> x}}
+ focus := true}
+ (f(), x)}`,
+        expected: [condition === 'true' ? 9 : 3, true],
+    },
+    {
+        name: `selected arm local alias unused ${condition}`,
+        source: `fn replacement() 9
+{let x = 1
+ let v = 3
+ let f = fn () v
+ {let focus = ~{match ${condition} {
+ true -> {let inner = ~{@(x, {let old = f := replacement
+ old()
+ fn () ()})}
+ inner};
+ false -> {let inner = ~{@(x, {let old = f := replacement
+ old()
+ fn () ()})}
+ inner}}}
+ ()}
+ (f(), x)}`,
+        expected: [9, 1],
+    },
+    {
+        name: `selected arm local alias nested ${condition}`,
+        source: `fn replacement() 9
+{let x = 1
+ let v = 3
+ let f = fn () v
+ {let focus = ~{match ${condition} {
+ true -> {let inner = ~{@(x, {let old = f := replacement
+ old()
+ fn () ()})}
+ {let forwarded = ~inner
+ forwarded}};
+ false -> {let inner = ~{@(x, {let old = f := replacement
+ old()
+ fn () ()})}
+ inner}}}
+ focus := true}
+ (f(), x)}`,
+        expected: [9, true],
+    },
+    {
+        name: `selected arm local alias scattered ${condition}`,
+        source: `fn replacement() 9
+{let x = 1
+ let y = 2
+ let v = 3
+ let f = fn () v
+ {let focus = ~{match ${condition} {
+ true -> {let inner = ~(@(x, {let old = f := replacement
+ old()
+ fn () ()}), y)
+ inner};
+ false -> {let inner = ~(@(x, {let old = f := replacement
+ old()
+ fn () ()}), y)
+ inner}}}
+ focus := (true, 7)}
+ (f(), x, y)}`,
+        expected: [9, true, 7],
+    },
+    {
+        name: `selected arm local alias returned ${condition}`,
+        source: `fn replacement() 9
+fn select(flag, first, ~x) ~{let f = first
+ match flag {
+ true -> {let inner = ~{@(x, {let old = f := replacement
+ old()
+ fn () ()})}
+ inner};
+ false -> {let inner = ~{@(x, {let old = f := replacement
+ old()
+ fn () ()})}
+ inner}}}
+{let a = 3
+ let x = 1
+ let old = select(${condition}, fn () a, ~x) := true
+ (old, x)}`,
+        expected: [1, true],
+    },
 ]);

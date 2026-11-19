@@ -11,7 +11,7 @@ coverage, not completion of every phase exit gate.
 
 The scoped lens extensions are complete as of `707521c`; see the
 [completion record and follow-up mapping](checker-completeness-handoff.md).
-Latest local verification: **2221 pass / 39 existing skips / 0 failures across
+Latest local verification: **2262 pass / 39 existing skips / 0 failures across
 42 files**, with default TypeScript and diff checks passing. The latest full execution run passed without retries. Remote CI was not run for
 these slices. See also [the implementation record](backend-progress.md),
 [backend contract](backend-contract.md), [typed IR API](typed-ir.md), and
@@ -451,20 +451,18 @@ Include immediate swaps/discards and returned lenses. Then add exact post-cleanu
 normalization adapters for divergent selected replacement. The current replacement
 guard stays in place. Phase 6 remains incomplete.
 
-## Latest phase 6 slice: returned callee-local restoration completed
+## Latest phase 6 slice: selected arm-local alias handoff
 
-Selected deferred replacement now supports private callee-local owners retained by
-a returned lens. Scope completion captures private descriptor state and overlays
-current enclosing versions at release. Function return derives completion contracts
-on a clone, preserving setup descriptors for the returned ABI. Independent
-verification derives the same private completion and validates required original
-retention and post-cleanup adapters before emission. Existing C returned-context
-backing handles physical retention/disposal through restoration.
+Arm-local aliases returned from selected scalar/tuple lenses now retain their
+underlying exclusive protections and deferred release effects. Manual escape
+provenance remains separate from protected storage owners: explicit owned backing
+retention must not erase protections on outer storage. The existing independent
+typed-IR owner check remains unchanged. Representation analysis/verifier attach
+lexical release handlers to lens block results in frontend-completion then release
+order, matching C restoration.
 
-This closes the uncompleted callee-local replacement boundary for modeled handlers,
-including forwarded results, aggregates, convergent joins, unused aliases, staged
-cleanup, owned cleanup results and late private captures. Routes without a modeled
-completion handler still diagnose. Arm-local returned-alias protection and general
-callable focus endpoint ABIs (aliases/projections, parameters/results, manual and
-scattered callable focuses) remain open. Phase 6 remains incomplete; the returned
-restoration work is not the phase-6 exit gate.
+This closes the known `Computed loan owner protection mismatch` boundary for the
+covered selected aliases, including nested, scattered, divergent and returned
+cases. General callable focus endpoint ABIs (direct callable aliases/projections,
+parameters/results, manual and scattered callable focuses) remain separate work.
+Phase 6 remains incomplete.

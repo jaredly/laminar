@@ -36,6 +36,8 @@ type Borrow = { path: number[]; parent?: Borrow; id: string };
 type Root = {
     /** Provenance retained while this computed focus owns deferred restoration. */
     owners?: Binding[];
+    // Exclusive protection is independent of permission to retain owned backing.
+    protectedOwners?: Binding[];
     place?: string;
     type: Ty;
     empty: number[][];
@@ -786,6 +788,7 @@ export class Inferencer {
         const read = view.read;
         const focus = this.freshBinding(read);
         focus.root.owners = view.provenance ?? view.targets;
+        focus.root.protectedOwners = view.targets;
         focus.root.empty = view.empty?.map((p) => [...p]) ?? [];
         const loan: Borrow = { path: [], id: this.builder.borrow() };
         const protections = view.targets.map((target) => {
@@ -1223,7 +1226,8 @@ export class Inferencer {
         const external = (b: Binding): Binding[] => {
             // Existing computed focuses are outer storage with their own permits.
             // Only branch-local backing needs tracing to its retained owners.
-            if (!roots.includes(b.root)) return b.root.owners?.flatMap(external) ?? [];
+            if (!roots.includes(b.root))
+                return (b.root.protectedOwners ?? b.root.owners)?.flatMap(external) ?? [];
             let permit = b.permit;
             const active = initial[roots.indexOf(b.root)].borrows;
             while (permit && !active.has(permit)) permit = permit.parent;
