@@ -95,7 +95,7 @@ export function lowerConcreteProgram(
         if (g.descriptor.kind !== 'native' || c.target !== 'native/fst' || c.result.kind !== 'lens')
             return undefined;
         const argument = c.arguments[0]!;
-        if (argument.kind !== 'lens') return fail('Missing native lens argument');
+        if (argument.kind !== 'lens') return undefined;
         const shape = shapes.get(argument.shape)!;
         if (shape.kind === 'tuple') return { kind: 'lens', shape: shape.items[0]! };
         const read = dataLayouts.get(shape.read)!.type,

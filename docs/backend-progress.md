@@ -1325,3 +1325,22 @@ identity and untouched siblings. Three samples and a corruption case pass.
 Validation: 1417 non-execution passes / 39 existing skips; 6 focused native/Wasm
 cases; TypeScript and diff checks pass. Manual/persistent completion and general
 callable lens ABIs remain open. Phase 6 is incomplete.
+
+
+## Phase 6: native fst completion composition
+
+Native callable projections now compose nested projection handlers, persistent
+result aliases and manual wrappers around the returned projection. Data fields
+of callable-bearing aggregates also project through exact semantic endpoints.
+Projection completion reconstructs parent descriptors before enclosing argument
+completion; independent verification checks each original parent ABI and final
+provenance. Concrete direct-native contracts no longer assume every data result
+has a semantic-lens argument. Four shared samples and a corruption case pass.
+Validation: 1424 non-execution passes / 39 existing skips; 8 focused native/Wasm
+cases; TypeScript and diff checks pass.
+
+Callable manual arguments to `fst` remain explicitly rejected: investigation
+found legacy and typed evaluators disagree about their argument cleanup order.
+Two boundary cases retain `Callable fst argument cleanup ordering requires an
+explicit adapter`. This slice does not choose a new source semantics or enable
+that ambiguous route. General callable lens ABIs remain open. Phase 6 is incomplete.

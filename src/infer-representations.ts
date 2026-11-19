@@ -108,6 +108,7 @@ type State = {
     lenses: Map<string, LensRepId>;
     focusOwners: Map<string, { place: string; path: number[] }>;
     focusWrites: Map<string, SemanticType>;
+    nativeProjections: Set<string>;
     focusTargets: Map<string, FocusTarget>;
     dataOwners: Map<string, { place: string; path: number[] }>;
     finishes: Map<string, (state: State, apply: boolean) => void>;
@@ -174,6 +175,7 @@ export function inferRepresentations(
         lenses: new Map(),
         focusOwners: new Map(),
         focusWrites: new Map(),
+        nativeProjections: new Set(),
         focusTargets: new Map(),
         dataOwners: new Map(),
         finishes: new Map(),
@@ -185,6 +187,7 @@ export function inferRepresentations(
         lenses: new Map(s.lenses),
         focusOwners: new Map(s.focusOwners),
         focusWrites: new Map(s.focusWrites),
+        nativeProjections: new Set(s.nativeProjections),
         focusTargets: new Map(s.focusTargets),
         dataOwners: new Map(s.dataOwners),
         finishes: new Map(s.finishes),
@@ -399,9 +402,11 @@ export function inferRepresentations(
         if (type.tag === 'plain') return data(type.value);
         if (name === 'native/fst' && args[0]?.kind === 'focus-tuple')
             return args[0].items[0] ?? fail('Missing fst focus child');
+        if (name === 'native/fst' && args[0]?.kind === 'focus-manual')
+            return fail('Callable fst argument cleanup ordering requires an explicit adapter');
         if (name === 'native/fst' && args[0]?.kind === 'local-focus') {
             if (!containsCallable(type.read) && !containsCallable(type.write))
-                return fail('Data projection of callable storage requires an endpoint adapter');
+                return { kind: 'lens', shape: reps.thin(type.read, type.write) };
             const read = projectValue(args[0].read, [0]);
             return { kind: 'local-focus', read, replacement: read };
         }
@@ -929,6 +934,16 @@ export function inferRepresentations(
                 case 'call': {
                     const callee = get(s, i.callee),
                         args = i.args.map((id) => get(s, id));
+                    if (
+                        callee.kind === 'native' &&
+                        callee.definition === 'native/fst' &&
+                        args[0]?.kind !== 'lens' &&
+                        s.finishes.has(i.args[0]!) &&
+                        !s.nativeProjections.has(i.args[0]!)
+                    )
+                        return fail(
+                            'Callable fst argument cleanup ordering requires an explicit adapter',
+                        );
                     const called =
                         callee.kind === 'native'
                             ? {
@@ -954,7 +969,7 @@ export function inferRepresentations(
                         const parent = args[0],
                             owner = s.focusOwners.get(i.args[0]!);
                         const write = s.focusWrites.get(i.args[0]!);
-                        if (!owner || !write || s.finishes.has(i.args[0]!))
+                        if (!owner || !write)
                             return fail('Callable fst completion requires a direct owned frontend');
                         s.focusOwners.set(i.out.id, {
                             place: owner.place,
@@ -974,7 +989,7 @@ export function inferRepresentations(
                     ) {
                         const target = s.focusTargets.get(i.args[0]!),
                             write = s.focusWrites.get(i.args[0]!);
-                        if (!target || !('items' in target) || !write || s.finishes.has(i.args[0]!))
+                        if (!target || !('items' in target) || !write)
                             return fail(
                                 'Callable fst completion requires a direct scattered frontend',
                             );
@@ -989,12 +1004,15 @@ export function inferRepresentations(
                             if (apply) writeTarget(target, readTarget(target, state, write), state);
                         });
                     }
+                    const projectionFinish = s.finishes.get(i.out.id);
+                    if (projectionFinish) s.nativeProjections.add(i.out.id);
                     const finishes = i.args.map((id) => s.finishes.get(id));
                     if (i.out.type.tag === 'flow') {
-                        if (finishes.some(Boolean))
-                            s.finishes.set(i.out.id, (state, apply) =>
-                                finishes.forEach((finish) => finish?.(state, apply)),
-                            );
+                        if (projectionFinish || finishes.some(Boolean))
+                            s.finishes.set(i.out.id, (state, apply) => {
+                                projectionFinish?.(state, apply);
+                                finishes.forEach((finish) => finish?.(state, apply));
+                            });
                     } else finishes.forEach((finish) => finish?.(s, true));
                     break;
                 }

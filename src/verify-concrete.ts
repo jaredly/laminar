@@ -293,7 +293,7 @@ export function verifyConcreteProgram(p: ConcreteProgram): void {
         )
             return undefined;
         const arg = contract.arguments[0]!;
-        if (arg.kind !== 'lens') return fail('Native fst requires a lens');
+        if (arg.kind !== 'lens') return undefined;
         const parent = shapes.get(arg.shape)!;
         if (parent.kind === 'tuple') return { kind: 'lens', shape: parent.items[0]! };
         const read = semanticLayouts.get(parent.read)!.type,

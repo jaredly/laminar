@@ -351,3 +351,30 @@ it('rejects forged scattered fst selected child', () => {
     call.result = structuredClone(value.representation);
     expect(() => verifyConcreteProgram(c)).toThrow('Scattered fst child provenance changed');
 });
+it('checks nested fst parent restoration provenance independently', () => {
+    const c = concrete(
+        callableFocusSamples.find((s) => s.name === 'callable fst completion nested calls')!.source,
+    );
+    const root = c.analysis.entries[0].values.find(
+        (v: any) => v.representation.kind === 'local-focus',
+    ).representation;
+    root.replacement = structuredClone(root.read);
+    c.analysis.entries[0].calls.find((call: any) => call.target === 'native/fst').arguments[0] =
+        structuredClone(root);
+    expect(() => verifyConcreteProgram(c)).toThrow(
+        'Callable fst parent replacement provenance changed',
+    );
+    expect(() => emitC(c)).toThrow('Callable fst parent replacement provenance changed');
+});
+for (const source of [
+    '{let p = (fn () 3, 4)\n let old = fst(~{@(p, fn () ())}) := fn () 7\n old()}',
+    '{let f = fn () 3\n let n = 4\n let old = fst(~{@((f, n), fn () ())}) := fn () 7\n old()}',
+])
+    it('keeps callable fst argument cleanup ordering explicit', () => {
+        const p = typedProgram(source);
+        expect(() =>
+            compileConcreteProgram(p, wasm32Emscripten('test'), [
+                { unit: p.units.at(-1)!.id, arguments: [] },
+            ]),
+        ).toThrow('Callable fst argument cleanup ordering requires an explicit adapter');
+    });

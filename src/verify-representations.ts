@@ -355,6 +355,7 @@ export function verifyRepresentations(
         lenses: Map<string, LensRep>;
         focusOwners: Map<string, { place: string; path: number[] }>;
         focusWrites: Map<string, SemanticType>;
+        nativeProjections: Set<string>;
         focusTargets: Map<string, FocusTarget>;
         dataOwners: Map<string, { place: string; path: number[] }>;
         finishes: Map<string, (state: State, apply: boolean) => void>;
@@ -366,6 +367,7 @@ export function verifyRepresentations(
         lenses: new Map(),
         focusOwners: new Map(),
         focusWrites: new Map(),
+        nativeProjections: new Set(),
         focusTargets: new Map(),
         dataOwners: new Map(),
         finishes: new Map(),
@@ -377,6 +379,7 @@ export function verifyRepresentations(
         lenses: new Map(s.lenses),
         focusOwners: new Map(s.focusOwners),
         focusWrites: new Map(s.focusWrites),
+        nativeProjections: new Set(s.nativeProjections),
         focusTargets: new Map(s.focusTargets),
         dataOwners: new Map(s.dataOwners),
         finishes: new Map(s.finishes),
@@ -593,13 +596,19 @@ export function verifyRepresentations(
             requireEqual(v, args[0].items[0], 'Scattered fst child provenance changed');
             return;
         }
+        if (callee.definition === 'native/fst' && args[0]?.kind === 'focus-manual')
+            return fail('Callable fst argument cleanup ordering requires an explicit adapter');
         if (callee.definition === 'native/fst' && args[0]?.kind === 'local-focus') {
-            if (v.kind !== 'local-focus') return fail('Callable fst lost endpoint provenance');
-            requireEqual(
-                v.read,
-                projectValue(args[0].read, [0]),
-                'Callable fst read provenance changed',
-            );
+            const read = projectValue(args[0].read, [0]);
+            if (v.kind === 'local-focus')
+                requireEqual(v.read, read, 'Callable fst read provenance changed');
+            else if (v.kind === 'lens' && read.kind === 'data')
+                requireEqual(
+                    shape(v.shape).read,
+                    read.layout,
+                    'Callable fst data read provenance changed',
+                );
+            else return fail('Callable fst lost endpoint provenance');
             return;
         }
         if (v.kind === 'lens') {
@@ -1406,6 +1415,15 @@ export function verifyRepresentations(
                                 );
                         } else if (callee.kind === 'native') {
                             if (call.targets !== undefined) fail('Native call has dynamic targets');
+                            if (
+                                callee.definition === 'native/fst' &&
+                                args[0]?.kind !== 'lens' &&
+                                s.finishes.has(i.args[0]!) &&
+                                !s.nativeProjections.has(i.args[0]!)
+                            )
+                                return fail(
+                                    'Callable fst argument cleanup ordering requires an explicit adapter',
+                                );
                             nativeCall(callee, call.target, args, v);
                         } else fail('Call operand is not callable');
                         if (
@@ -1416,7 +1434,7 @@ export function verifyRepresentations(
                             const parent = args[0],
                                 owner = s.focusOwners.get(i.args[0]!);
                             const write = s.focusWrites.get(i.args[0]!);
-                            if (!owner || !write || s.finishes.has(i.args[0]!))
+                            if (!owner || !write)
                                 return fail(
                                     'Callable fst completion requires a direct owned frontend',
                                 );
@@ -1445,12 +1463,7 @@ export function verifyRepresentations(
                         ) {
                             const target = s.focusTargets.get(i.args[0]!),
                                 write = s.focusWrites.get(i.args[0]!);
-                            if (
-                                !target ||
-                                !('items' in target) ||
-                                !write ||
-                                s.finishes.has(i.args[0]!)
-                            )
+                            if (!target || !('items' in target) || !write)
                                 return fail(
                                     'Callable fst completion requires a direct scattered frontend',
                                 );
@@ -1466,10 +1479,13 @@ export function verifyRepresentations(
                                     writeTarget(target, readTarget(target, state, write), state);
                             });
                         }
+                        const projectionFinish = s.finishes.get(i.out.id);
+                        if (projectionFinish) s.nativeProjections.add(i.out.id);
                         const finishes = i.args.map((id) => s.finishes.get(id));
                         if (i.out.type.tag === 'flow') {
-                            if (finishes.some(Boolean))
+                            if (projectionFinish || finishes.some(Boolean))
                                 s.finishes.set(i.out.id, (state, apply) => {
+                                    projectionFinish?.(state, apply);
                                     for (const finish of finishes) finish?.(state, apply);
                                 });
                         } else for (const finish of finishes) finish?.(s, true);

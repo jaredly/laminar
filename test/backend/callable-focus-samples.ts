@@ -760,4 +760,40 @@ export const callableFocusSamples = [
  (f(), b, n)}`,
         expected: [7, 4, 5],
     },
+    {
+        name: 'callable fst completion persistent result',
+        source: `{let p = (fn () 3, 4)
+ {let a = ~{fst(~p)}
+ let old = a := fn () 7
+ old()}
+ let (f, n) = p
+ (f(), n)}`,
+        expected: [7, 4],
+    },
+    {
+        name: 'callable fst completion nested calls',
+        source: `{let p = ((fn () 3, 4), 5)
+ let old = fst(~fst(~p)) := fn () 7
+ let ((f, n), z) = p
+ (old(), f(), n, z)}`,
+        expected: [3, 7, 4, 5],
+    },
+    {
+        name: 'callable fst completion data focus',
+        source: `{let p = (3, fn () 4)
+ let old = fst(~p) := true
+ let (b, f) = p
+ (old, b, f())}`,
+        expected: [3, true, 4],
+    },
+    {
+        name: 'callable fst completion manual result',
+        source: `{let p = (fn () 3, 4)
+ let seen = 0
+ let old = @(fst(~p), {seen := 9
+ fn () ()}) := fn () 7
+ let (f, n) = p
+ (old(), seen, f(), n)}`,
+        expected: [3, 9, 7, 4],
+    },
 ];
