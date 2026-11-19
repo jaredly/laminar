@@ -12,7 +12,7 @@
     "self": "bun src/make.ts src/self.cst src/self-lexer.ts ./grammar-lexer.ts ./grammar-lexer.ts && oxfmt src/self-lexer.ts",
     "laminar-parser": "bun src/make.ts src/laminar.cst src/laminar-parser.ts ./ast.ts ./grammar-lexer.ts && oxfmt src/laminar-parser.ts",
     "irp": "bun parser-generator/make.ts src/ir.cst src/ir-parser.ts ./expr.ts ../parser-generator/grammar-lexer.ts && oxfmt src/ir-parser.ts",
-    "c": "bun cli/c.ts"
+    "r": "bun cli/run.ts"
   },
   "dependencies": {
     "oxfmt": "^0.73.0",

@@ -1,11 +1,19 @@
 import { readFileSync } from 'fs';
 import { typedProgram } from '../test/backend/typed-program.ts';
-import { locLines } from '../src/lexer.ts';
+import { locLines, readFile, readLines } from '../src/lexer.ts';
 import { executeTypedProgram } from '../src/eval-typed.ts';
 import { TypedProgram } from '../src/typed-ir.ts';
+import { checkFile } from '../src/check.ts';
+import { grammar } from '../src/laminar-parser.ts';
+import { File } from '../src/ast.ts';
 
 const [_, __, name] = process.argv;
 const source = readFileSync(name, 'utf-8');
+
+const file = grammar.parse<File>('File', readFile(source).node);
+if (file.type === 'failure') throw new Error('parse fail');
+checkFile(file.value);
+console.log('Checked ok');
 
 console.time('Type');
 let p: TypedProgram;
