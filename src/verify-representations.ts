@@ -238,6 +238,11 @@ export function verifyRepresentations(
                 fit(v.replacement, irPlain(t.write));
                 return;
             }
+            // Semantic lens shapes only describe data storage. Do not let a
+            // detached annotation select that path for a callable endpoint,
+            // bypassing the independently checked local-focus provenance.
+            if (containsCallable(t.read) || containsCallable(t.write))
+                return fail('Callable lens endpoints require explicit focus provenance');
             if (v.kind !== 'lens') return fail('Lens contract has a non-lens representation');
             const s = shape(v.shape);
             typeEqual(layout(s.read).type, t.read);

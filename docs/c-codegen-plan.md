@@ -11,7 +11,7 @@ coverage, not completion of every phase exit gate.
 
 The scoped lens extensions are complete as of `707521c`; see the
 [completion record and follow-up mapping](checker-completeness-handoff.md).
-Latest local verification: **2262 pass / 39 existing skips / 0 failures across
+Latest local verification: **2268 pass / 39 existing skips / 0 failures across
 42 files**, with default TypeScript and diff checks passing. The latest full execution run passed without retries. Remote CI was not run for
 these slices. See also [the implementation record](backend-progress.md),
 [backend contract](backend-contract.md), [typed IR API](typed-ir.md), and
@@ -466,3 +466,31 @@ covered selected aliases, including nested, scattered, divergent and returned
 cases. General callable focus endpoint ABIs (direct callable aliases/projections,
 parameters/results, manual and scattered callable focuses) remain separate work.
 Phase 6 remains incomplete.
+
+
+## Callable endpoint verification boundary
+
+The independent representation verifier now requires explicit `local-focus`
+provenance for every flow with a callable endpoint, including recursive tuple
+endpoints and callable/data transitions, before consulting semantic lens shapes.
+Previously malformed detached annotations reached incidental shape lookup/type
+errors; they now receive `Callable lens endpoints require explicit focus provenance`.
+This is verification hardening, not new executable callable alias support.
+
+Four serialized corruption cases erase the endpoint contract and check rejection
+through both concrete verification and C emission. Two checker-accepted boundary
+cases cover unused persistent callable aliases and aggregate-with-callable aliases;
+these retain the direct whole-owned-local swap diagnostic. Persistent alias
+analysis still stores semantic lens shapes and needs explicit logical-owner
+tracking, independent endpoint descriptors, and restoration/update propagation
+before that acquisition guard can be relaxed. Projections, callable focus call and
+return ABIs, manual/scattered endpoints, and unsupported completion routes remain
+open. Phase 6 is incomplete. C emission/storage and the concurrent execution build
+scheduler are unchanged.
+
+Validation for callable endpoint verification hardening: **2268 pass / 39 existing
+skips / 0 failures across 42 files** (1326 non-execution tests and 942 native/Wasm
+execution cases). Full execution passed in 366.66 seconds without retries,
+including strict/optimized native builds, supported sanitizers, and both
+Emscripten/Node optimization levels. TypeScript and diff checks passed. Remote CI
+was not run.

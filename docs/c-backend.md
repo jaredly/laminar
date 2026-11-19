@@ -513,3 +513,24 @@ protection metadata retains underlying owners separately from owned-retention
 escape provenance. Analysis retains block releases after frontend completion,
 matching existing C cleanup order; no C storage/ABI change was required. Aliases
 whose focus contents themselves require callable endpoint ABIs remain separate.
+
+
+## Callable endpoint verification boundary
+
+The independent representation verifier now requires explicit `local-focus`
+provenance for every flow with a callable endpoint, including recursive tuple
+endpoints and callable/data transitions, before consulting semantic lens shapes.
+Previously malformed detached annotations reached incidental shape lookup/type
+errors; they now receive `Callable lens endpoints require explicit focus provenance`.
+This is verification hardening, not new executable callable alias support.
+
+Four serialized corruption cases erase the endpoint contract and check rejection
+through both concrete verification and C emission. Two checker-accepted boundary
+cases cover unused persistent callable aliases and aggregate-with-callable aliases;
+these retain the direct whole-owned-local swap diagnostic. Persistent alias
+analysis still stores semantic lens shapes and needs explicit logical-owner
+tracking, independent endpoint descriptors, and restoration/update propagation
+before that acquisition guard can be relaxed. Projections, callable focus call and
+return ABIs, manual/scattered endpoints, and unsupported completion routes remain
+open. Phase 6 is incomplete. C emission/storage and the concurrent execution build
+scheduler are unchanged.

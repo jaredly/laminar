@@ -73,3 +73,37 @@ it('independently rejects a forged convergent branch continuation', () => {
     expect(() => verifyConcreteProgram(c)).toThrow();
     expect(() => emitC(c)).toThrow();
 });
+
+for (const source of [
+    callableFocusSamples[0]!.source,
+    callableFocusSamples.find((s) => s.name === 'callable focus aggregate replacement')!.source,
+    callableFocusSamples.find((s) => s.name === 'callable focus insertion from data')!.source,
+    callableFocusSamples.find((s) => s.name === 'callable focus extraction to data')!.source,
+])
+    it('rejects erased callable endpoint provenance before consulting a semantic shape', () => {
+        const c = concrete(source);
+        const annotation = c.analysis.entries[0].values.find(
+            (v: any) => v.representation.kind === 'local-focus',
+        );
+        annotation.representation = { kind: 'lens', shape: 'erased-callable-endpoints' };
+        expect(() => verifyConcreteProgram(c)).toThrow(
+            'Callable lens endpoints require explicit focus provenance',
+        );
+        expect(() => emitC(c)).toThrow('Callable lens endpoints require explicit focus provenance');
+    });
+
+for (const [name, source] of [
+    ['unused persistent callable alias', '{let x = 3\n let f = fn () x\n {let a = ~f\n ()}\n f()}'],
+    [
+        'aggregate persistent alias',
+        '{let x = 3\n let p = (fn () x, 4)\n let a = ~p\n let old = a := (fn () 5, true)\n let (f, n) = old\n (f(), n)}',
+    ],
+])
+    it(`keeps ${name} behind the endpoint restoration boundary`, () => {
+        const p = typedProgram(source);
+        expect(() =>
+            compileConcreteProgram(p, wasm32Emscripten('test'), [
+                { unit: p.units.at(-1)!.id, arguments: [] },
+            ]),
+        ).toThrow('Callable focuses require a direct whole-owned-local swap');
+    });
