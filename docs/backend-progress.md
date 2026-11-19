@@ -1483,3 +1483,42 @@ cases (strict and optimized native, supported sanitizers, both Emscripten/Node
 optimization levels) in 301.89 seconds without retries. TypeScript checks pass.
 Remote CI was not run. Execution tests in `test/c/execute.test.ts` are now opt-in
 with `LAMINAR_EXEC=1`.
+
+
+## Phase 6: recursive and branch-selected callable focus callees
+
+Recursive callees taking callable focuses now specialize through a least fixed point
+over their parameter contracts and result. A recursive call whose setup inputs
+(captures, data arguments and focus reads, excluding replacements) match an
+enclosing call reuses that call's hypothesis. The seeding pass treats a plain-valued
+branch arm reaching the unsolved recursive call as divergent, so the seed is the
+base-case contract; later passes answer the recursive call with the current
+hypothesis until contract and result are stable (at most 16 iterations). Discarded
+passes roll back the variants and pending demands they interned, and the final
+recursive call entries name the solved variant itself. Recursion that changes setup
+inputs (for example thin to scattered, or a different read after a setup swap)
+starts a nested fixed point, bounded to four per function in one call chain.
+Unconditional recursion is diagnosed as lacking a base case.
+
+Independent verification needs no fixed point: it checks the self-call against the
+variant's declared argument contract and result, and each body against its own
+completion. A forged recursive contract changes the canonical variant key.
+
+Branch-selected (`callable-choice`) callees may receive callable focuses when every
+alternative reaches the same parameter contract. Each alternative is specialized
+independently; matching contracts let the existing dispatch wrapper, argument
+checks and C dispatch helper apply unchanged, with one caller write-back.
+
+Six new shared samples (28 total) cover recursive exchange, scattered descent,
+recursive data results, changing recursive inputs, and dispatch to top-level and
+capturing-closure alternatives. Tests also check the precise seeded contract.
+
+Remaining explicit boundaries: alternatives with differing parameter contracts
+(`Branch-selected callable focus callees require a common parameter contract`; this
+needs an argument-adapting dispatch wrapper in concrete IR and C), branch-selected
+or dispatched callable lens results, which also gate recursive lens results, and
+native `fst` over callable results or manual arguments. Phase 6 remains incomplete.
+
+Validation: 1518 non-execution passes with only the existing source-identity
+snapshot failure; the full `LAMINAR_EXEC=1` execution file passed 1162 native/Wasm
+cases in 309.62 seconds without retries. TypeScript checks pass. Remote CI was not run.

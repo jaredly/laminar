@@ -118,4 +118,34 @@ fn finish(~x) ~{@(x, {let installed = x := fn () 9
         source: '{let k = fn () 2\n let first = fn (~(x, y)) ~{@(x, fn () {let i = k()\n ()})}\n let p = (fn () 3, 4)\n let old = first(~p) := fn () 7\n let (f, n) = p\n (old(), f(), n)}',
         expected: [3, 7, 4],
     },
+    {
+        name: 'demand callable recursive exchange',
+        source: 'fn ex(k, new, ~x) {match k {0 -> x := new\n j -> ex(j - 1, new, ~x)}}\n{let f = fn () 3\n let old = ex(2, fn () 7, ~f)\n (old(), f())}',
+        expected: [3, 7],
+    },
+    {
+        name: 'demand callable recursive scattered descent',
+        source: 'fn ex(k, new, ~(x, y)) {match k {0 -> x := new\n j -> ex(j - 1, new, ~(x, y))}}\n{let p = (fn () 3, 4)\n let old = ex(3, fn () 7, ~p)\n let (f, n) = p\n (old(), f(), n)}',
+        expected: [3, 7, 4],
+    },
+    {
+        name: 'demand callable recursive data result',
+        source: 'fn ex(k, new, ~x) {match k {0 -> {let o = x := new\n 1}\n j -> 1 + ex(j - 1, new, ~x)}}\n{let f = fn () 3\n let n = ex(2, fn () 7, ~f)\n (n, f())}',
+        expected: [3, 7],
+    },
+    {
+        name: 'demand callable recursive changing input',
+        source: 'fn ex(k, ~x) {match k {0 -> x := fn () 1\n j -> {let o = x := fn () 9\n ex(j - 1, ~x)}}}\n{let f = fn () 3\n let old = ex(2, ~f)\n (old(), f())}',
+        expected: [9, 1],
+    },
+    {
+        name: 'demand callable dispatch common contract',
+        source: 'fn ex1(new, ~x) {x := new}\nfn ex2(new, ~x) {x := new}\n{let f = fn () 3\n let e = match true {true -> ex1\n false -> ex2}\n let old = e(fn () 7, ~f)\n (old(), f())}',
+        expected: [3, 7],
+    },
+    {
+        name: 'demand callable dispatch closure alternative',
+        source: 'fn ex1(new, ~x) {x := new}\n{let f = fn () 3\n let k = 5\n let e = match false {true -> ex1\n false -> fn (new, ~x) {let z = k\n x := new}}\n let old = e(fn () 7, ~f)\n (old(), f())}',
+        expected: [3, 7],
+    },
 ];

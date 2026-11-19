@@ -1458,6 +1458,7 @@ export function verifyRepresentations(
                             ) &&
                             !(
                                 callee.kind === 'callable' ||
+                                callee.kind === 'callable-choice' ||
                                 (callee.kind === 'native' &&
                                     callee.definition === 'native/fst' &&
                                     args.length === 1)
@@ -1622,14 +1623,24 @@ export function verifyRepresentations(
                             });
                         }
                         if (
-                            callee.kind === 'callable' &&
+                            (callee.kind === 'callable' ||
+                                (callee.kind === 'callable-choice' && args.some(isFocus))) &&
                             (args.some(isFocus) ||
                                 (i.out.type.tag === 'flow' &&
                                     (containsCallable(i.out.type.read) ||
                                         containsCallable(i.out.type.write))))
                         ) {
+                            // Dispatch alternatives were checked to share these arguments.
                             const variant =
-                                variants.get(call.target) ?? fail('Missing demanded variant');
+                                variants.get(
+                                    callee.kind === 'callable'
+                                        ? call.target
+                                        : (call.targets?.[0] ?? ''),
+                                ) ?? fail('Missing demanded variant');
+                            if (callee.kind === 'callable-choice' && isFocus(v))
+                                return fail(
+                                    'Branch-selected callable lens results require a dispatch completion adapter',
+                                );
                             const targets = i.args.map((id, n) =>
                                 isFocus(args[n]!) ? targetFor(s, id) : undefined,
                             );

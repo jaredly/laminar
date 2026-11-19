@@ -74,6 +74,27 @@ it('rejects demands that disagree with the installed replacement', () => {
     expect(() => verifyConcreteProgram(c)).toThrow('Callable result demand changed');
     expect(() => emitC(c)).toThrow('Callable result demand changed');
 });
+it('solves recursive callable contracts as a least fixed point', () => {
+    const c = concrete(
+        demandSamples.find((s) => s.name === 'demand callable recursive exchange')!.source,
+    );
+    const [variant] = c.analysis.variants.filter((v: any) =>
+        v.calls.some((call: any) => call.target === v.id),
+    );
+    // The seed excludes the recursive arm, so the contract is only the installed closure.
+    expect(variant.arguments[2].replacement.kind).toBe('callable');
+    expect(variant.arguments[2].replacement).toEqual(variant.arguments[1]);
+});
+it('rejects forged recursive callable contracts', () => {
+    const c = concrete(
+        demandSamples.find((s) => s.name === 'demand callable recursive exchange')!.source,
+    );
+    const variant = c.analysis.variants.find((v: any) =>
+        v.calls.some((call: any) => call.target === v.id),
+    );
+    variant.arguments[2].replacement = structuredClone(variant.arguments[2].read);
+    expect(() => verifyConcreteProgram(c)).toThrow('Noncanonical variant key or name');
+});
 it('specializes alias demands joined across branches', () => {
     const { call } = demandOf('demand callable joined alias replacement');
     expect(call.demand.replacement.kind).toBe('callable-choice');
@@ -91,14 +112,14 @@ it('routes callee-private result backing through the residual context', () => {
 });
 for (const [name, source, message] of [
     [
-        'recursive',
-        'fn ex(k, new, ~x) {match k {0 -> x := new\n j -> ex(j - 1, new, ~x)}}\n{let f = fn () 3\n let old = ex(2, fn () 7, ~f)\n (old(), f())}',
-        'Recursive callable endpoint demands require a fixed-point constraint',
+        'recursive branch-selected lens result',
+        'fn walk(k, ~x) ~{match k {0 -> x\n j -> walk(j - 1, ~x)}}\n{let f = fn () 3\n let old = walk(2, ~f) := fn () 7\n (old(), f())}',
+        'Callable focuses require a direct whole-owned-local swap',
     ],
     [
-        'branch-selected',
-        'fn ex1(new, ~x) {x := new}\nfn ex2(new, ~x) {x := new}\n{let f = fn () 3\n let e = match true {true -> ex1\n false -> ex2}\n let old = e(fn () 7, ~f)\n (old(), f())}',
-        'Callable focus calls require verified native fst provenance',
+        'branch-selected differing contracts',
+        'fn ex1(new, ~x) {x := new}\nfn ex2(new, ~x) {let o = x := fn () 9\n new}\n{let f = fn () 3\n let e = match true {true -> ex1\n false -> ex2}\n let old = e(fn () 7, ~f)\n (old(), f())}',
+        'Branch-selected callable focus callees require a common parameter contract',
     ],
 ])
     it(`keeps ${name} callable focus callees explicit`, () => {
