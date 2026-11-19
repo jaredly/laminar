@@ -524,7 +524,9 @@ export function lowerC(program: ConcreteProgram): TranslationUnit {
                         ?.loans.find((l) => l.id === i.loan);
                     if (!loan) unsupported('Missing loan');
                     const lens = lenses.get(i.lens)!;
-                    places.set(loan!.place, lens.view);
+                    // Direct subloans retain absolute paths into the original owner.
+                    // Only computed lenses introduce a new backing place.
+                    if (loan!.owners) places.set(loan!.place, lens.view);
                     loans.set(i.loan, lens);
                     continue;
                 }

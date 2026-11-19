@@ -219,4 +219,77 @@ export const callableFocusSamples = [
  (f(), b)}`,
         expected: [7, true],
     },
+    {
+        name: 'projected callable loan nested replacement',
+        source: `{let v = 3
+ let p = ((fn () v, true), 4)
+ {let ((a, b), c) = ~p
+ {let d = ~a
+ let old = d := fn () 7
+ old()}}
+ let ((f, b), n) = p
+ (f(), b, n)}`,
+        expected: [7, true, 4],
+    },
+    {
+        name: 'projected callable loan unused',
+        source: `{let v = 3
+ let p = (fn () v, 4)
+ {let (a, b) = ~p
+ {let d = ~a
+ ()}}
+ let (f, n) = p
+ (f(), n)}`,
+        expected: [3, 4],
+    },
+    {
+        name: 'projected callable loan consume refill and sibling',
+        source: `{let v = 3
+ let p = (fn () v, 4)
+ {let (a, b) = ~p
+ {let d = ~a
+ let old = d
+ d := fn () 7
+ old()}
+ b := true}
+ let (f, b) = p
+ (f(), b)}`,
+        expected: [7, true],
+    },
+    {
+        name: 'projected callable loan extraction',
+        source: `{let v = 3
+ let p = (fn () v, 4)
+ {let (a, b) = ~p
+ {let d = ~a
+ let old = d := true
+ old()}}
+ p}`,
+        expected: [true, 4],
+    },
+    {
+        name: 'projected callable loan repeated subloans',
+        source: `{let v = 3
+ let p = (fn () v, 4)
+ {let (a, b) = ~p
+ {let d = ~a
+ let old = d := fn () 7
+ old()}
+ {let e = ~a
+ let old = e := fn () 9
+ old()}}
+ let (f, n) = p
+ (f(), n)}`,
+        expected: [9, 4],
+    },
+    {
+        name: 'projected callable loan scalar backing regression',
+        source: `{let p = (1, 2)
+ {let (a, b) = ~p
+ {let c = ~a
+ c := 7}
+ b := 9}
+ p}`,
+        expected: [7, 9],
+    },
 ];

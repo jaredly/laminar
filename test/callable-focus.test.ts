@@ -150,3 +150,17 @@ it('rejects projected callable read provenance from the whole owner', () => {
     expect(() => verifyConcreteProgram(c)).toThrow();
     expect(() => emitC(c)).toThrow();
 });
+it('checks projected subloan final provenance independently', () => {
+    const c = concrete(
+        callableFocusSamples.find((s) => s.name === 'projected callable loan nested replacement')!
+            .source,
+    );
+    const focus = c.analysis.entries[0].values.filter(
+        (v: any) => v.representation.kind === 'local-focus',
+    )[1].representation;
+    focus.replacement = structuredClone(focus.read);
+    expect(() => verifyConcreteProgram(c)).toThrow(
+        'Callable alias final replacement provenance changed',
+    );
+    expect(() => emitC(c)).toThrow('Callable alias final replacement provenance changed');
+});

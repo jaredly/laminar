@@ -564,10 +564,11 @@ export function verifyRepresentations(
                     if (focus.kind === 'local-focus') {
                         if (
                             loan.owners ||
-                            loan.path.length ||
+                            JSON.stringify(s.focusOwners.get(i.lens)?.path) !==
+                                JSON.stringify(loan.path) ||
                             s.focusOwners.get(i.lens)?.place !== loan.place
                         )
-                            return fail('Callable aliases require a direct whole-owned-local loan');
+                            return fail('Callable aliases require a direct owned-local loan');
                     } else if (loan.owners) s.lenses.set(loan.place, lens(focus));
                     s.loanFinishes.set(i.loan, i.lens);
                     continue;
@@ -682,11 +683,10 @@ export function verifyRepresentations(
                                 if (
                                     loan.owners ||
                                     loan.place !== i.slot.place ||
-                                    loan.path.length ||
-                                    i.slot.path.length
+                                    JSON.stringify(loan.path) !== JSON.stringify(i.slot.path)
                                 )
                                     return fail(
-                                        'Callable aliases require a direct whole-owned-local loan',
+                                        'Callable aliases require a direct owned-local loan',
                                     );
                                 const write = i.out.type.write;
                                 s.finishes.set(i.out.id, (state, apply) => {
@@ -694,8 +694,11 @@ export function verifyRepresentations(
                                         requireEqual(
                                             v.replacement,
                                             containsCallable(write)
-                                                ? (state.places.get(i.slot.place) ??
-                                                      fail('Missing callable alias owner'))
+                                                ? projectValue(
+                                                      state.places.get(i.slot.place) ??
+                                                          fail('Missing callable alias owner'),
+                                                      i.slot.path,
+                                                  )
                                                 : { kind: 'data', layout: layoutId(write) },
                                             'Callable alias final replacement provenance changed',
                                         );

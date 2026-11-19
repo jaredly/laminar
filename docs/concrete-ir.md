@@ -512,3 +512,19 @@ rejects whole-owner provenance substituted for a projected read.
 Validation: full non-execution suite, 12 focused native/Wasm cases, TypeScript and
 diff checks passed. General projected subloans, computed/manual/scattered callable
 endpoints and callable focus call/return ABIs remain open. Phase 6 is incomplete.
+
+
+## Phase 6: projected persistent callable loans
+
+Direct persistent subloans now check exact owner/projection identity and derive
+final replacement provenance from the current projected contents at release.
+Nested and repeated subloans preserve sibling storage. C keeps the original root
+mapping for direct loans; only computed lenses install a private backing place,
+avoiding double projection. Six shared samples include nested/unused loans,
+consume/refill, extraction, repeated loans and a scalar backing regression.
+Serialized corruption coverage independently rejects altered final provenance.
+
+Validation: 1355 non-execution passes / 39 existing skips / zero failures; all
+12 focused native/Wasm cases, TypeScript and diff checks pass. Manual/computed and
+scattered callable endpoints and callable parameter/result ABIs remain open.
+Phase 6 is incomplete.
