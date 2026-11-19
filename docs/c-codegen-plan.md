@@ -996,3 +996,7 @@ corruption test checks that forged parent replacements are rejected.
 Remaining explicit boundaries: dispatch alternatives with differing parameter
 contracts, and branch-selected or dispatched callable lens results. Phase 6
 remains incomplete.
+
+Validation: 1525 non-execution passes with only the existing source-identity
+snapshot failure; the full `LAMINAR_EXEC=1` execution file passed 1178 native/Wasm
+cases in 311.28 seconds without retries. TypeScript checks pass. Remote CI was not run.
