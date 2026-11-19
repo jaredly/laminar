@@ -496,3 +496,19 @@ ABI; C direct aliases use logical views without materializing those records.
 Deferred scalar-lens completion reuses the existing release handlers. Projections,
 computed/manual/scattered callable endpoints and callable focus parameters/results
 remain unsupported adapter work. Phase 6 remains incomplete.
+
+
+## Phase 6: projected callable swaps
+
+Direct swaps through tuple aliases now retain a logical owner plus projection
+path. Read provenance is projected from current storage; replacement reconstructs
+the enclosing descriptor recursively and canonicalizes data-only tuples. Scalar
+sibling updates also update that descriptor. Independent serialized verification
+derives the same endpoints and reconstruction; physical C views retain cell/path
+identity and require no C lowering change. Six shared samples cover nested paths,
+callable/data transitions, sibling layout changes and disposal; corruption coverage
+rejects whole-owner provenance substituted for a projected read.
+
+Validation: full non-execution suite, 12 focused native/Wasm cases, TypeScript and
+diff checks passed. General projected subloans, computed/manual/scattered callable
+endpoints and callable focus call/return ABIs remain open. Phase 6 is incomplete.

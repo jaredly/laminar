@@ -90,7 +90,7 @@ type State = {
     values: Map<string, ValueRepresentation>;
     places: Map<string, ValueRepresentation>;
     lenses: Map<string, LensRepId>;
-    focusOwners: Map<string, string>;
+    focusOwners: Map<string, { place: string; path: number[] }>;
     finishes: Map<string, (state: State, apply: boolean) => void>;
     loanFinishes: Map<string, string>;
 };
@@ -263,6 +263,35 @@ export function inferRepresentations(
         }
         return data(type);
     };
+    function replaceValue(
+        v: ValueRepresentation,
+        path: number[],
+        replacement: ValueRepresentation,
+    ): ValueRepresentation {
+        if (!path.length) return replacement;
+        const members =
+            v.kind === 'aggregate'
+                ? [...v.items]
+                : v.kind === 'data' && layouts.get(v.layout).type.tag === 'tuple'
+                  ? (layouts.get(v.layout).type as SemanticType & { tag: 'tuple' }).items.map(data)
+                  : fail('Invalid focus owner projection');
+        const index = path[0]!;
+        members[index] = replaceValue(
+            members[index] ?? fail('Invalid focus owner projection'),
+            path.slice(1),
+            replacement,
+        );
+        return members.every((m) => m.kind === 'data')
+            ? data({
+                  tag: 'tuple',
+                  items: members.map(
+                      (m) =>
+                          layouts.get((m as Extract<ValueRepresentation, { kind: 'data' }>).layout)
+                              .type,
+                  ),
+              })
+            : { kind: 'aggregate', items: members };
+    }
     const bind = (p: IRPattern, v: ValueRepresentation, s: State): void => {
         if (p.kind === 'bind') s.places.set(p.slot.place, v);
         else if (p.kind === 'tuple')
@@ -449,7 +478,11 @@ export function inferRepresentations(
                 const loan = unit.loans.find((l) => l.id === i.loan)!;
                 const focus = get(s, i.lens);
                 if (focus.kind === 'local-focus') {
-                    if (loan.owners || loan.path.length || s.focusOwners.get(i.lens) !== loan.place)
+                    if (
+                        loan.owners ||
+                        loan.path.length ||
+                        s.focusOwners.get(i.lens)?.place !== loan.place
+                    )
                         return fail('Callable aliases require a direct whole-owned-local loan');
                 } else if (loan.owners) s.lenses.set(loan.place, shape(focus));
                 s.loanFinishes.set(i.loan, i.lens);
@@ -489,7 +522,6 @@ export function inferRepresentations(
                     if (i.out.type.tag !== 'flow') return fail('Acquire produced data');
                     if (containsCallable(i.out.type.read) || containsCallable(i.out.type.write)) {
                         if (
-                            i.slot.path.length ||
                             s.lenses.has(i.slot.place) ||
                             (body.instructions.filter(
                                 (use) => use.op === 'swap' && use.lens === i.out.id,
@@ -497,7 +529,8 @@ export function inferRepresentations(
                                 borrows(i.out.id, body).length !== 1)
                         )
                             return fail('Callable focuses require a direct whole-owned-local swap');
-                        const stored = s.places.get(i.slot.place);
+                        const owner = s.places.get(i.slot.place);
+                        const stored = owner && projectValue(owner, i.slot.path);
                         const read = containsCallable(i.out.type.read)
                             ? (stored ?? fail('Callable focus lacks owned provenance'))
                             : data(i.out.type.read);
@@ -505,11 +538,19 @@ export function inferRepresentations(
                         // lexical release for a direct persistent alias. Neither route
                         // materializes a pointer into a superseded storage version.
                         out = { kind: 'local-focus', read, replacement: read };
-                        s.focusOwners.set(i.out.id, i.slot.place);
+                        s.focusOwners.set(i.out.id, {
+                            place: i.slot.place,
+                            path: [...i.slot.path],
+                        });
                         const borrowed = borrows(i.out.id, body);
                         if (borrowed.length) {
                             const loan = unit.loans.find((l) => l.id === borrowed[0])!;
-                            if (loan.owners || loan.place !== i.slot.place || loan.path.length)
+                            if (
+                                loan.owners ||
+                                loan.place !== i.slot.place ||
+                                loan.path.length ||
+                                i.slot.path.length
+                            )
                                 return fail(
                                     'Callable aliases require a direct whole-owned-local loan',
                                 );
@@ -525,6 +566,15 @@ export function inferRepresentations(
                         }
                         break;
                     }
+                    if (
+                        i.slot.path.length &&
+                        !s.lenses.has(i.slot.place) &&
+                        s.places.has(i.slot.place)
+                    )
+                        s.focusOwners.set(i.out.id, {
+                            place: i.slot.place,
+                            path: [...i.slot.path],
+                        });
                     let base = s.lenses.get(i.slot.place);
                     if (base) for (const index of i.slot.path) base = reps.project(base, index);
                     out = {
@@ -590,11 +640,29 @@ export function inferRepresentations(
                     if (focus.kind === 'local-focus') {
                         focus.replacement = get(s, i.value);
                         out = focus.read;
+                        const owner =
+                            s.focusOwners.get(i.lens) ?? fail('Nonlocal callable focus swap');
                         s.places.set(
-                            s.focusOwners.get(i.lens) ?? fail('Nonlocal callable focus swap'),
-                            focus.replacement,
+                            owner.place,
+                            replaceValue(
+                                s.places.get(owner.place) ?? fail('Missing callable focus owner'),
+                                owner.path,
+                                focus.replacement,
+                            ),
                         );
-                    } else out = data(i.out.type.value);
+                    } else {
+                        out = data(i.out.type.value);
+                        const owner = s.focusOwners.get(i.lens);
+                        if (owner)
+                            s.places.set(
+                                owner.place,
+                                replaceValue(
+                                    s.places.get(owner.place)!,
+                                    owner.path,
+                                    get(s, i.value),
+                                ),
+                            );
+                    }
                     s.finishes.get(i.lens)?.(s, true);
                     break;
                 }

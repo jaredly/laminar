@@ -121,10 +121,6 @@ it('independently checks the owner continuation after alias release', () => {
 
 for (const [name, source] of [
     [
-        'projected alias',
-        '{let x = 3\n let p = (fn () x, 4)\n let (a, b) = ~p\n let old = a := fn () 5\n old()}',
-    ],
-    [
         'manual endpoint',
         '{let x = 3\n let f = fn () x\n let a = ~{@(f, fn () ())}\n let old = a := fn () 5\n old()}',
     ],
@@ -141,4 +137,16 @@ it('keeps persistent aliases exclusive over callable owners', () => {
     expect(() =>
         typedProgram('{let x = 3\n let f = fn () x\n let a = ~f\n f()\n a := fn () 5}'),
     ).toThrow('Binding is exclusively borrowed until its aliases leave scope');
+});
+it('rejects projected callable read provenance from the whole owner', () => {
+    const c = concrete(
+        callableFocusSamples.find((s) => s.name === 'projected callable swap preserves sibling')!
+            .source,
+    );
+    const focuses = c.analysis.entries[0].values.filter(
+        (v: any) => v.representation.kind === 'local-focus',
+    );
+    focuses[1].representation.read = structuredClone(focuses[0].representation.read);
+    expect(() => verifyConcreteProgram(c)).toThrow();
+    expect(() => emitC(c)).toThrow();
 });

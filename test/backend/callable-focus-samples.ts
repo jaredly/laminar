@@ -155,4 +155,68 @@ export const callableFocusSamples = [
  f()}`,
         expected: 7,
     },
+    {
+        name: 'projected callable swap preserves sibling',
+        source: `{let v = 3
+ let p = (fn () v, 4)
+ {let (a, b) = ~p
+ let old = a := fn () 7
+ old()}
+ let (f, n) = p
+ (f(), n)}`,
+        expected: [7, 4],
+    },
+    {
+        name: 'projected callable swap nested owner',
+        source: `{let v = 3
+ let p = ((fn () v, true), 4)
+ {let ((a, b), c) = ~p
+ let old = a := fn () 7
+ old()}
+ let ((f, b), n) = p
+ (f(), b, n)}`,
+        expected: [7, true, 4],
+    },
+    {
+        name: 'projected callable swap extraction to data',
+        source: `{let v = 3
+ let p = (fn () v, 4)
+ {let (a, b) = ~p
+ let old = a := true
+ old()}
+ p}`,
+        expected: [true, 4],
+    },
+    {
+        name: 'projected callable swap insertion from data',
+        source: `{let p = (true, 4)
+ {let (a, b) = ~p
+ a := fn () 7}
+ let (f, n) = p
+ (f(), n)}`,
+        expected: [7, 4],
+    },
+    {
+        name: 'projected callable swap unused environments',
+        source: `{let v = 3
+ let p = (fn () v, 4)
+ {let (a, b) = ~p
+ let w = 7
+ let old = a := fn () w
+ ()}
+ 9}`,
+        expected: 9,
+    },
+    {
+        name: 'projected callable swap changes sibling layout',
+        source: `{let v = 3
+ let p = (fn () v, 4)
+ {let (a, b) = ~p
+ b := true
+ let old = a := fn () 7
+ old()}
+ let (f, b) = p
+ (f(), b)}`,
+        expected: [7, true],
+    },
 ];
