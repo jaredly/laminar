@@ -91,6 +91,7 @@ type State = {
     places: Map<string, ValueRepresentation>;
     lenses: Map<string, LensRepId>;
     focusOwners: Map<string, { place: string; path: number[] }>;
+    focusWrites: Map<string, SemanticType>;
     finishes: Map<string, (state: State, apply: boolean) => void>;
     loanFinishes: Map<string, string>;
 };
@@ -154,6 +155,7 @@ export function inferRepresentations(
         places: new Map(),
         lenses: new Map(),
         focusOwners: new Map(),
+        focusWrites: new Map(),
         finishes: new Map(),
         loanFinishes: new Map(),
     });
@@ -162,6 +164,7 @@ export function inferRepresentations(
         places: new Map(s.places),
         lenses: new Map(s.lenses),
         focusOwners: new Map(s.focusOwners),
+        focusWrites: new Map(s.focusWrites),
         finishes: new Map(s.finishes),
         loanFinishes: new Map(s.loanFinishes),
     });
@@ -479,11 +482,34 @@ export function inferRepresentations(
                 const loan = unit.loans.find((l) => l.id === i.loan)!;
                 const focus = get(s, i.lens);
                 if (focus.kind === 'local-focus') {
-                    if (
-                        loan.owners ||
-                        JSON.stringify(s.focusOwners.get(i.lens)?.path) !==
-                            JSON.stringify(loan.path) ||
-                        s.focusOwners.get(i.lens)?.place !== loan.place
+                    const owner = s.focusOwners.get(i.lens);
+                    if (loan.owners) {
+                        const write = s.focusWrites.get(i.lens);
+                        if (!owner || !write)
+                            return fail('Computed callable alias lacks a logical frontend');
+                        s.places.set(loan.place, focus.read);
+                        const complete = s.finishes.get(i.lens);
+                        s.finishes.set(i.lens, (state, apply) => {
+                            if (!apply) return;
+                            const replacement = containsCallable(write)
+                                ? (state.places.get(loan.place) ??
+                                  fail('Missing computed callable alias backing'))
+                                : data(write);
+                            focus.replacement = replacement;
+                            state.places.set(
+                                owner.place,
+                                replaceValue(
+                                    state.places.get(owner.place)!,
+                                    owner.path,
+                                    replacement,
+                                ),
+                            );
+                            complete?.(state, true);
+                        });
+                    } else if (
+                        !owner ||
+                        JSON.stringify(owner.path) !== JSON.stringify(loan.path) ||
+                        owner.place !== loan.place
                     )
                         return fail('Callable aliases require a direct owned-local loan');
                 } else if (loan.owners) s.lenses.set(loan.place, shape(focus));
@@ -909,6 +935,8 @@ export function inferRepresentations(
                     break;
                 }
             }
+            if (out.kind === 'local-focus' && i.out.type.tag === 'flow')
+                s.focusWrites.set(i.out.id, i.out.type.write);
             s.values.set(i.out.id, out);
             record.values.push({
                 value: i.out.id,

@@ -615,3 +615,17 @@ forwarded endpoint descriptors; a boundary test protects private backing escape.
 All 12 focused native/Wasm cases, the full non-execution suite, TypeScript and diff
 checks pass. Persistent computed manual aliases and general callable focus ABIs
 remain open. Phase 6 is incomplete.
+
+
+## Persistent manual callable aliases
+
+Manual callable/aggregate focuses backed by enclosing logical storage now support
+persistent computed aliases. Representation analysis and independent verification
+retain private alias contents and propagate the final descriptor to the protected
+frontend at release, before manual cleanup. C reuses computed-loan logical views
+and existing stage/finish callbacks, preserving installed and post-cleanup callable
+ABIs and affine environment ownership. Nine shared cases cover nested/projected
+manuals, unused aliases, replacement/disposal, data extraction and cleanup
+consumption. There is no C lowering or concurrent scheduler change. General
+scattered/selected callable lenses, escaping private callable backing and callable
+focus parameter/result ABIs remain open; phase 6 is incomplete.

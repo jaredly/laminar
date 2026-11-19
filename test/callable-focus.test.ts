@@ -119,20 +119,6 @@ it('independently checks the owner continuation after alias release', () => {
     expect(() => verifyConcreteProgram(c)).toThrow('Moved callable provenance changed');
 });
 
-for (const [name, source] of [
-    [
-        'manual endpoint',
-        '{let x = 3\n let f = fn () x\n let a = ~{@(f, fn () ())}\n let old = a := fn () 5\n old()}',
-    ],
-])
-    it(`keeps the callable ${name} adapter explicit`, () => {
-        const p = typedProgram(source);
-        expect(() =>
-            compileConcreteProgram(p, wasm32Emscripten('test'), [
-                { unit: p.units.at(-1)!.id, arguments: [] },
-            ]),
-        ).toThrow('Callable aliases require a direct owned-local loan');
-    });
 it('keeps persistent aliases exclusive over callable owners', () => {
     expect(() =>
         typedProgram('{let x = 3\n let f = fn () x\n let a = ~f\n f()\n a := fn () 5}'),
@@ -216,4 +202,42 @@ it('keeps escaping private callable backing explicit', () => {
             { unit: p.units.at(-1)!.id, arguments: [] },
         ]),
     ).toThrow('Escaping callable focus requires retained local backing');
+});
+it('independently checks computed callable alias completion', () => {
+    const c = concrete(
+        callableFocusSamples.find((s) => s.name === 'computed callable alias cleanup replacement')!
+            .source,
+    );
+    const values = c.analysis.entries[0].values;
+    const erase = (b: any) => {
+        for (const i of b.instructions) {
+            if (i.op === 'manual' || i.op === 'scope') {
+                const v = values.find((v: any) => v.value === i.out.id)?.representation;
+                if (v?.kind === 'local-focus') v.replacement = structuredClone(v.read);
+            }
+            if (i.op === 'scope') erase(i.body);
+        }
+    };
+    c.code.forEach((code: any) => erase(code.body));
+    expect(() => verifyConcreteProgram(c)).toThrow(
+        'Computed callable alias replacement provenance changed',
+    );
+    expect(() => emitC(c)).toThrow('Computed callable alias replacement provenance changed');
+});
+it('keeps computed callable aliases exclusive over frontend owners', () => {
+    expect(() =>
+        typedProgram(
+            '{let v = 3\n let f = fn () v\n let a = ~{@(f, fn () ())}\n f()\n a := fn () 7}',
+        ),
+    ).toThrow('Binding is exclusively borrowed until its aliases leave scope');
+});
+it('rejects forged computed callable owner protection', () => {
+    const c = concrete(
+        callableFocusSamples.find((s) => s.name === 'computed callable alias manual replacement')!
+            .source,
+    );
+    const loan = c.semantic.program.units.flatMap((u: any) => u.loans).find((l: any) => l.owners);
+    loan.owners = [];
+    expect(() => verifyConcreteProgram(c)).toThrow('Computed loan owner protection mismatch');
+    expect(() => emitC(c)).toThrow('Computed loan owner protection mismatch');
 });

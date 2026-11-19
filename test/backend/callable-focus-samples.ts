@@ -418,4 +418,102 @@ export const callableFocusSamples = [
  9}`,
         expected: 9,
     },
+    {
+        name: 'computed callable alias manual replacement',
+        source: `{let v = 3
+ let f = fn () v
+ {let a = ~{@(f, fn () ())}
+ let old = a := fn () 7
+ old()}
+ f()}`,
+        expected: 7,
+    },
+    {
+        name: 'computed callable alias unused',
+        source: `{let v = 3
+ let f = fn () v
+ {let a = ~{@(f, fn () ())}
+ ()}
+ f()}`,
+        expected: 3,
+    },
+    {
+        name: 'computed callable alias cleanup replacement',
+        source: `{let v = 3
+ let f = fn () v
+ let seen = 0
+ {let a = ~{@(f, {let installed = f := fn () 9
+ seen := installed()
+ fn () ()})}
+ let old = a := fn () 7
+ old()}
+ (seen, f())}`,
+        expected: [7, 9],
+    },
+    {
+        name: 'computed callable alias nested manual order',
+        source: `{let v = 3
+ let f = fn () v
+ let seen = 0
+ {let a = ~{@(@(f, {let installed = f := fn () 9
+ seen := seen * 10 + installed()
+ fn () ()}), {let installed = f := fn () 8
+ seen := installed()
+ fn () ()})}
+ let old = a := fn () 7
+ old()}
+ (seen, f())}`,
+        expected: [78, 9],
+    },
+    {
+        name: 'computed callable alias aggregate projected contents',
+        source: `{let v = 3
+ let p = (fn () v, 4)
+ {let (a, b) = ~{@(p, fn () ())}
+ {let c = ~a
+ let old = c := fn () 7
+ old()}
+ b := true}
+ let (f, b) = p
+ (f(), b)}`,
+        expected: [7, true],
+    },
+    {
+        name: 'computed callable alias projected frontend',
+        source: `{let v = 3
+ let p = (fn () v, 4)
+ {let (a, b) = ~p
+ {let c = ~{@(a, fn () ())}
+ let old = c := fn () 7
+ old()}}
+ let (f, n) = p
+ (f(), n)}`,
+        expected: [7, 4],
+    },
+    {
+        name: 'computed callable alias extraction to data',
+        source: `{let v = 3
+ let f = fn () v
+ {let a = ~{@(f, fn () ())}
+ let old = a := true
+ old()}
+ f}`,
+        expected: true,
+    },
+    {
+        name: 'computed callable alias unused environments',
+        source: `{let v = 3
+ let f = fn () v
+ let w = 7
+ {let a = ~{@(f, fn () ())}
+ let old = a := fn () w
+ ()}
+ 9}`,
+        expected: 9,
+    },
+    {
+        name: 'computed callable alias cleanup consumes installed value',
+        source: '{let x = 1\n {let f = ~{@(x, fn () {x()})}\n f := fn () 2}\n ()}',
+        expected: null,
+    },
 ];

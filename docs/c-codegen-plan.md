@@ -5,13 +5,13 @@ execute the documented scalar/tuple native C and Emscripten/Node subset. Typed
 indirect closure invocation and environment disposal implement part of phase 6.
 Compatible user-defined/native intrinsic joins and differing callable results
 execute, including differing lens-result shapes and recursive callable tuple results. Owned callable tuples and recursive callable tuple branch-result joins execute through concrete recursive storage; callable
-general focus storage/restoration remains open; direct callable swaps, persistent whole/projected aliases and immediate manual callable swaps execute. Phase 7 runtime and host integration and phase 8 optimization remain broader
+general focus storage/restoration remains open; direct callable swaps, persistent whole/projected/manual aliases, lexical forwarding and immediate manual callable swaps execute. Phase 7 runtime and host integration and phase 8 optimization remain broader
 work. This is subset
 coverage, not completion of every phase exit gate.
 
 The scoped lens extensions are complete as of `707521c`; see the
 [completion record and follow-up mapping](checker-completeness-handoff.md).
-Latest local verification: **2370 pass / 39 existing skips / 0 failures across
+Latest local verification: **2418 pass / 39 existing skips / 0 failures across
 42 files**, with default TypeScript and diff checks passing. The latest full execution run passed without retries. Remote CI was not run for
 these slices. See also [the implementation record](backend-progress.md),
 [backend contract](backend-contract.md), [typed IR API](typed-ir.md), and
@@ -615,3 +615,38 @@ forwarded endpoint descriptors; a boundary test protects private backing escape.
 All 12 focused native/Wasm cases, the full non-execution suite, TypeScript and diff
 checks pass. Persistent computed manual aliases and general callable focus ABIs
 remain open. Phase 6 is incomplete.
+
+
+## Phase 6: persistent manual callable aliases
+
+Persistent aliases of callable/aggregate manual focuses now execute when their
+frontend is backed by enclosing logical storage. Representation state retains
+semantic write endpoints alongside logical owner/path identities. Computed loans
+initialize a private descriptor from the frontend read while the original owner
+remains protected. At release, inference derives the final alias replacement,
+restores that descriptor into the frontend owner, then applies retained manual
+cleanup and lexical release handlers in order. Independent verification derives
+and checks the final replacement before applying the same completion boundary.
+The typed-IR owner verifier and escape/protection distinction are unchanged.
+
+Nine shared cases cover replacement, unused aliases/environments, nested manual
+ordering, projected aggregate contents and frontends, extraction to data, and
+cleanup consuming the installed callable. Serialized corruption tests protect
+completion descriptors and exact owner protections; a source safety case rejects
+frontend owner access while the alias is live. Existing C computed-loan views and
+manual restoration implement the physical behavior without new environment copies,
+allocations or code-pointer casts. The concurrent execution scheduler is unchanged.
+
+Remaining work includes scattered callable endpoints, selected callable lens
+results, retained private callable backing that escapes a scope, general callable
+focus parameter/result ABIs and unsupported completion routes. Phase 6 remains
+incomplete.
+
+Validation for lexical callable-focus forwarding and persistent manual aliases:
+**2418 pass / 39 existing skips / zero failures across 42 files** (1384
+non-execution tests and 1034 native/Wasm cases). Full strict C11, optimized native,
+supported sanitizers and both Emscripten/Node optimization levels passed without
+retries in 392.67 seconds. Focused execution passed 12 forwarding cases and 16
+initial manual-alias cases; the additional consumption regression passed in the
+full run. TypeScript and diff checks pass. Remote CI was not run. Phase 6 remains
+incomplete.

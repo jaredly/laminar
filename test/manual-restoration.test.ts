@@ -208,17 +208,6 @@ for (const corruption of ['temporary', 'call', 'provenance'] as const)
         );
     });
 
-it('keeps computed persistent callable aliases explicit at the representation boundary', () => {
-    const p = typedProgram('{let x = 1\n {let f = ~{@(x, fn () {x()})}\n f := fn () 2}\n ()}');
-    expect(executeTypedProgram(JSON.parse(JSON.stringify(p)))).toBe(null);
-    const source = specializeProgram(p, wasm32Emscripten('test'), [
-        { unit: p.units.at(-1)!.id, arguments: [] },
-    ]);
-    expect(() => inferRepresentations(source)).toThrow(
-        'Callable aliases require a direct owned-local loan',
-    );
-});
-
 function concreteManual(p: import('../src/concrete-ir.ts').ConcreteProgram) {
     const visit = (
         b: import('../src/concrete-ir.ts').ConcreteBlock,

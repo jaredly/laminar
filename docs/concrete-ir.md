@@ -562,3 +562,18 @@ forwarded endpoint descriptors; a boundary test protects private backing escape.
 All 12 focused native/Wasm cases, the full non-execution suite, TypeScript and diff
 checks pass. Persistent computed manual aliases and general callable focus ABIs
 remain open. Phase 6 is incomplete.
+
+
+## Persistent manual callable alias completion
+
+Computed loans may now borrow a forwarded `local-focus` backed by enclosing
+logical storage. Analysis retains a private current descriptor for the loan place
+and derives its final replacement at release. The release endpoint is independently
+checked, transferred into the original frontend owner/path, and completed through
+its existing physical manual endpoint contract. Semantic write types are retained
+internally to distinguish callable/aggregate replacements from data-only final
+storage. They are independently derived from semantic outputs, not serialized
+claims. Loan owner protections continue to be checked by the unchanged typed-IR
+verifier. No new physical record or C pointer convention is required. Scattered
+callable endpoints, selected callable lens results, escaping private backing and
+general callable focus call/return contracts remain separate work.

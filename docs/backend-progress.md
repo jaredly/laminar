@@ -1189,3 +1189,30 @@ forwarded endpoint descriptors; a boundary test protects private backing escape.
 All 12 focused native/Wasm cases, the full non-execution suite, TypeScript and diff
 checks pass. Persistent computed manual aliases and general callable focus ABIs
 remain open. Phase 6 is incomplete.
+
+
+## Persistent manual callable aliases
+
+Computed manual aliases now retain private read/current descriptors independently
+of their protected frontend owner. Release verifies the final replacement, updates
+the frontend descriptor through its logical projection, and runs existing manual
+completion afterward. Scope forwarding supplies the enclosing owner identity;
+semantic write endpoint metadata preserves callable/data transitions. Existing C
+views and cleanup machinery execute this route without storage/ownership changes.
+The independent typed owner verifier remains unchanged.
+
+Nine shared samples and three safety/corruption tests cover cleanup replacement,
+nested order, unused environments, aggregate projections, data extraction and
+consumption of the installed callable. The former manual-alias rejection case is
+now a shared execution regression. General scattered callable endpoints, selected
+callable lens results, escaping private callable backing and callable focus
+parameter/result ABIs remain open. Phase 6 is incomplete.
+
+Validation for lexical callable-focus forwarding and persistent manual aliases:
+**2418 pass / 39 existing skips / zero failures across 42 files** (1384
+non-execution tests and 1034 native/Wasm cases). Full strict C11, optimized native,
+supported sanitizers and both Emscripten/Node optimization levels passed without
+retries in 392.67 seconds. Focused execution passed 12 forwarding cases and 16
+initial manual-alias cases; the additional consumption regression passed in the
+full run. TypeScript and diff checks pass. Remote CI was not run. Phase 6 remains
+incomplete.
