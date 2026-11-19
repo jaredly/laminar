@@ -516,4 +516,34 @@ export const callableFocusSamples = [
         source: '{let x = 1\n {let f = ~{@(x, fn () {x()})}\n f := fn () 2}\n ()}',
         expected: null,
     },
+    {
+        name: 'scattered callable flat swap',
+        source: `{let v = 3
+ let f = fn () v
+ let w = 4
+ let g = fn () w
+ let (a, b) = (f, g) := (fn () 7, fn () 8)
+ (a(), b(), f(), g())}`,
+        expected: [3, 4, 7, 8],
+    },
+    {
+        name: 'scattered callable flat data extraction',
+        source: `{let f = fn () 3
+ let g = fn () 4
+ let (a, b) = (f, g) := (true, 9)
+ (a(), b(), f, g)}`,
+        expected: [3, 4, true, 9],
+    },
+    {
+        name: 'scattered callable flat unused environments',
+        source: `{let v = 3
+ let f = fn () v
+ let w = 4
+ let g = fn () w
+ let x = 7
+ let y = 8
+ let old = (f, g) := (fn () x, fn () y)
+ 9}`,
+        expected: 9,
+    },
 ];

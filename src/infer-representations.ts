@@ -20,6 +20,12 @@ export type ValueRepresentation =
     | { kind: 'aggregate'; items: ValueRepresentation[] }
     | { kind: 'lens'; shape: LensRepId }
     | { kind: 'local-focus'; read: ValueRepresentation; replacement: ValueRepresentation }
+    | {
+          kind: 'focus-tuple';
+          read: ValueRepresentation;
+          replacement: ValueRepresentation;
+          items: ValueRepresentation[];
+      }
     | { kind: 'callable'; unit: string; function: string; captures: ValueRepresentation[] }
     | { kind: 'native'; definition: string }
     | {
@@ -86,12 +92,16 @@ export type RepresentationAnalysis = {
     shapes: readonly LensRep[];
     backings: readonly Backing[];
 };
+type FocusTarget =
+    | { value: ValueRepresentation; place: string; path: number[] }
+    | { value: Extract<ValueRepresentation, { kind: 'focus-tuple' }>; items: FocusTarget[] };
 type State = {
     values: Map<string, ValueRepresentation>;
     places: Map<string, ValueRepresentation>;
     lenses: Map<string, LensRepId>;
     focusOwners: Map<string, { place: string; path: number[] }>;
     focusWrites: Map<string, SemanticType>;
+    focusTargets: Map<string, FocusTarget>;
     finishes: Map<string, (state: State, apply: boolean) => void>;
     loanFinishes: Map<string, string>;
 };
@@ -156,6 +166,7 @@ export function inferRepresentations(
         lenses: new Map(),
         focusOwners: new Map(),
         focusWrites: new Map(),
+        focusTargets: new Map(),
         finishes: new Map(),
         loanFinishes: new Map(),
     });
@@ -165,6 +176,7 @@ export function inferRepresentations(
         lenses: new Map(s.lenses),
         focusOwners: new Map(s.focusOwners),
         focusWrites: new Map(s.focusWrites),
+        focusTargets: new Map(s.focusTargets),
         finishes: new Map(s.finishes),
         loanFinishes: new Map(s.loanFinishes),
     });
@@ -294,6 +306,30 @@ export function inferRepresentations(
                   ),
               })
             : { kind: 'aggregate', items: members };
+    }
+    function tupleValue(items: ValueRepresentation[]): ValueRepresentation {
+        return items.every((v) => v.kind === 'data')
+            ? data({
+                  tag: 'tuple',
+                  items: items.map(
+                      (v) =>
+                          layouts.get((v as Extract<ValueRepresentation, { kind: 'data' }>).layout)
+                              .type,
+                  ),
+              })
+            : { kind: 'aggregate', items };
+    }
+    function writeTarget(target: FocusTarget, value: ValueRepresentation, state: State): void {
+        if ('items' in target) {
+            target.value.replacement = value;
+            target.items.forEach((child, i) => writeTarget(child, projectValue(value, [i]), state));
+        } else {
+            if (target.value.kind === 'local-focus') target.value.replacement = value;
+            state.places.set(
+                target.place,
+                replaceValue(state.places.get(target.place)!, target.path, value),
+            );
+        }
     }
     const bind = (p: IRPattern, v: ValueRepresentation, s: State): void => {
         if (p.kind === 'bind') s.places.set(p.slot.place, v);
@@ -555,6 +591,10 @@ export function inferRepresentations(
                                 (use) => use.op === 'swap' && use.lens === i.out.id,
                             ).length !== 1 &&
                                 borrows(i.out.id, body).length !== 1 &&
+                                !body.instructions.some(
+                                    (use) =>
+                                        use.op === 'lens-tuple' && use.items.includes(i.out.id),
+                                ) &&
                                 !(allowLocalFocusResult && body.result === i.out.id) &&
                                 !body.instructions.some(
                                     (use) => use.op === 'manual' && use.lens === i.out.id,
@@ -682,10 +722,25 @@ export function inferRepresentations(
                     break;
                 }
                 case 'lens-tuple': {
-                    out = {
-                        kind: 'lens',
-                        shape: reps.tuple(i.items.map((id) => shape(get(s, id)))),
-                    };
+                    const members = i.items.map((id) => get(s, id));
+                    if (members.some((v) => v.kind !== 'lens')) {
+                        if (!members.every((v) => v.kind === 'local-focus'))
+                            return fail(
+                                'Nested or mixed callable focus tuples require recursive targets',
+                            );
+                        const read = tupleValue(members.map((v) => v.read));
+                        out = { kind: 'focus-tuple', read, replacement: read, items: members };
+                        const target: FocusTarget = {
+                            value: out,
+                            items: i.items.map((id, n) => {
+                                const owner =
+                                    s.focusOwners.get(id) ??
+                                    fail('Scattered callable focus lacks a logical owner');
+                                return { value: members[n]!, ...owner };
+                            }),
+                        };
+                        s.focusTargets.set(i.out.id, target);
+                    } else out = { kind: 'lens', shape: reps.tuple(members.map(shape)) };
                     // Capture member handlers before forwarding this value through
                     // scopes; their local IDs need not exist in the release state.
                     const finishes = i.items.map((id) => s.finishes.get(id));
@@ -698,7 +753,14 @@ export function inferRepresentations(
                 case 'swap': {
                     if (i.out.type.tag !== 'plain') return fail('Swap produced a lens');
                     const focus = get(s, i.lens);
-                    if (focus.kind === 'local-focus') {
+                    if (focus.kind === 'focus-tuple') {
+                        out = focus.read;
+                        writeTarget(
+                            s.focusTargets.get(i.lens) ?? fail('Missing scattered focus targets'),
+                            get(s, i.value),
+                            s,
+                        );
+                    } else if (focus.kind === 'local-focus') {
                         focus.replacement = get(s, i.value);
                         out = focus.read;
                         const owner =
@@ -945,6 +1007,8 @@ export function inferRepresentations(
             });
         }
         const result = get(s, body.result);
+        if (result.kind === 'focus-tuple')
+            return fail('Scattered callable focus forwarding requires a completion contract');
         if (result.kind === 'local-focus' && !allowLocalFocusResult)
             return fail('Callable focus results require an explicit return ABI');
         // A plain block releases its lexical loans before its caller continues.

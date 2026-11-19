@@ -163,6 +163,18 @@ export function verifyConcreteProgram(p: ConcreteProgram): void {
             );
             return id;
         }
+        if (v.kind === 'focus-tuple') {
+            const items = v.items.map(storage),
+                restore = aid([storage(v.replacement)], unitLayout);
+            abi(restore);
+            const id = lid(['focus-tuple', items, storage(v.read), storage(v.replacement)]);
+            concreteFields(id, 'record', [
+                ...items.map((layout, i) => ({ name: `item${i}`, kind: 'value' as const, layout })),
+                { name: 'restore', kind: 'code', abi: restore },
+                { name: 'context', kind: 'pointer' },
+            ]);
+            return id;
+        }
         if (v.kind === 'local-focus') {
             const read = storage(v.read),
                 replacement = storage(v.replacement);
@@ -243,8 +255,8 @@ export function verifyConcreteProgram(p: ConcreteProgram): void {
     >();
     const descriptors = new Map<string, ValueRepresentation>();
     function discover(v: ValueRepresentation): void {
-        if (v.kind === 'aggregate') v.items.forEach(discover);
-        if (v.kind === 'local-focus') {
+        if (v.kind === 'aggregate' || v.kind === 'focus-tuple') v.items.forEach(discover);
+        if (v.kind === 'local-focus' || v.kind === 'focus-tuple') {
             discover(v.read);
             discover(v.replacement);
         }

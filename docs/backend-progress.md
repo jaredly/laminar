@@ -1216,3 +1216,20 @@ retries in 392.67 seconds. Focused execution passed 12 forwarding cases and 16
 initial manual-alias cases; the additional consumption regression passed in the
 full run. TypeScript and diff checks pass. Remote CI was not run. Phase 6 remains
 incomplete.
+
+
+## Phase 6: flat scattered callable swaps
+
+Flat scattered callable swaps now use an explicit `focus-tuple` representation:
+ordered child endpoint descriptors plus independent aggregate read/replacement
+representations. Physical records retain each child endpoint layout, an exactly
+typed replacement restoration entry and context. Independent analysis/concrete
+verification checks child provenance, endpoint representations and physical fields.
+Logical target identities update all selected owners before member completion;
+existing C lens tuples move extracted environments once without new casts.
+
+Three shared samples and two corruption cases cover replacement, data extraction,
+unused environments, child ordering and physical fields. Validation: 1389
+non-execution passes / 39 existing skips; 6 focused native/Wasm passes; TypeScript
+and diff checks pass. Nested/mixed tuples, manual wrappers, forwarding and
+persistent scattered aliases remain separate work. Phase 6 is incomplete.

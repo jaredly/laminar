@@ -629,3 +629,20 @@ manuals, unused aliases, replacement/disposal, data extraction and cleanup
 consumption. There is no C lowering or concurrent scheduler change. General
 scattered/selected callable lenses, escaping private callable backing and callable
 focus parameter/result ABIs remain open; phase 6 is incomplete.
+
+
+## Phase 6: flat scattered callable swaps
+
+Flat scattered callable swaps now use an explicit `focus-tuple` representation:
+ordered child endpoint descriptors plus independent aggregate read/replacement
+representations. Physical records retain each child endpoint layout, an exactly
+typed replacement restoration entry and context. Independent analysis/concrete
+verification checks child provenance, endpoint representations and physical fields.
+Logical target identities update all selected owners before member completion;
+existing C lens tuples move extracted environments once without new casts.
+
+Three shared samples and two corruption cases cover replacement, data extraction,
+unused environments, child ordering and physical fields. Validation: 1389
+non-execution passes / 39 existing skips; 6 focused native/Wasm passes; TypeScript
+and diff checks pass. Nested/mixed tuples, manual wrappers, forwarding and
+persistent scattered aliases remain separate work. Phase 6 is incomplete.

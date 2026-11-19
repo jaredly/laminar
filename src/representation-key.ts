@@ -9,6 +9,13 @@ export function representationKey(v: ValueRepresentation): string {
                 kind: v.kind,
                 items: v.items.map((c) => JSON.parse(representationKey(c))),
             });
+        case 'focus-tuple':
+            return JSON.stringify({
+                kind: v.kind,
+                read: JSON.parse(representationKey(v.read)),
+                replacement: JSON.parse(representationKey(v.replacement)),
+                items: v.items.map((v) => JSON.parse(representationKey(v))),
+            });
         case 'local-focus':
             return JSON.stringify({
                 kind: v.kind,

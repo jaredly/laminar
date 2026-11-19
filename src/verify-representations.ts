@@ -67,6 +67,14 @@ export function verifyRepresentations(
                     kind: v.kind,
                     items: v.items.map((c) => JSON.parse(repKey(c))),
                 });
+            case 'focus-tuple':
+                if (!Array.isArray(v.items)) return fail('Missing callable focus tuple children');
+                return JSON.stringify({
+                    kind: v.kind,
+                    read: JSON.parse(repKey(v.read)),
+                    replacement: JSON.parse(repKey(v.replacement)),
+                    items: v.items.map((v) => JSON.parse(repKey(v))),
+                });
             case 'local-focus':
                 return JSON.stringify({
                     kind: v.kind,
@@ -231,6 +239,24 @@ export function verifyRepresentations(
     function fit(v: ValueRepresentation, t: SemanticFlow): void {
         if (!v || typeof v !== 'object') return fail('Missing value representation');
         if (t.tag === 'flow') {
+            if (v.kind === 'focus-tuple') {
+                if (
+                    t.read.tag !== 'tuple' ||
+                    t.write.tag !== 'tuple' ||
+                    !Array.isArray(v.items) ||
+                    v.items.length !== t.read.items.length ||
+                    v.items.length !== t.write.items.length
+                )
+                    return fail('Callable focus tuple semantic shape changed');
+                fit(v.read, irPlain(t.read));
+                fit(v.replacement, irPlain(t.write));
+                const reads = t.read.items,
+                    writes = t.write.items;
+                v.items.forEach((child, i) =>
+                    fit(child, { tag: 'flow', read: reads[i]!, write: writes[i]! }),
+                );
+                return;
+            }
             if (v.kind === 'local-focus') {
                 if (!containsCallable(t.read) && !containsCallable(t.write))
                     return fail('Noncanonical local callable focus');
@@ -307,12 +333,16 @@ export function verifyRepresentations(
             if (s.kind === 'tuple') s = shape(s.items[index] ?? fail('Invalid lens projection'));
         return s;
     }
+    type FocusTarget =
+        | { value: ValueRepresentation; place: string; path: number[] }
+        | { value: Extract<ValueRepresentation, { kind: 'focus-tuple' }>; items: FocusTarget[] };
     type State = {
         values: Map<string, ValueRepresentation>;
         places: Map<string, ValueRepresentation>;
         lenses: Map<string, LensRep>;
         focusOwners: Map<string, { place: string; path: number[] }>;
         focusWrites: Map<string, SemanticType>;
+        focusTargets: Map<string, FocusTarget>;
         finishes: Map<string, (state: State, apply: boolean) => void>;
         loanFinishes: Map<string, string>;
     };
@@ -322,6 +352,7 @@ export function verifyRepresentations(
         lenses: new Map(),
         focusOwners: new Map(),
         focusWrites: new Map(),
+        focusTargets: new Map(),
         finishes: new Map(),
         loanFinishes: new Map(),
     });
@@ -331,6 +362,7 @@ export function verifyRepresentations(
         lenses: new Map(s.lenses),
         focusOwners: new Map(s.focusOwners),
         focusWrites: new Map(s.focusWrites),
+        focusTargets: new Map(s.focusTargets),
         finishes: new Map(s.finishes),
         loanFinishes: new Map(s.loanFinishes),
     });
@@ -413,6 +445,42 @@ export function verifyRepresentations(
                 }),
             };
         return { kind: 'aggregate', items: members };
+    }
+    function tupleValue(items: ValueRepresentation[]): ValueRepresentation {
+        if (items.every((v) => v.kind === 'data'))
+            return {
+                kind: 'data',
+                layout: layoutId({
+                    tag: 'tuple',
+                    items: items.map(
+                        (v) =>
+                            layout((v as Extract<ValueRepresentation, { kind: 'data' }>).layout)
+                                .type,
+                    ),
+                }),
+            };
+        return { kind: 'aggregate', items };
+    }
+    function writeTarget(target: FocusTarget, value: ValueRepresentation, state: State): void {
+        if ('items' in target) {
+            requireEqual(
+                target.value.replacement,
+                value,
+                'Scattered focus replacement provenance changed',
+            );
+            target.items.forEach((child, i) => writeTarget(child, projectValue(value, [i]), state));
+        } else {
+            if (target.value.kind === 'local-focus')
+                requireEqual(
+                    target.value.replacement,
+                    value,
+                    'Scattered child replacement provenance changed',
+                );
+            state.places.set(
+                target.place,
+                replaceValue(state.places.get(target.place)!, target.path, value),
+            );
+        }
     }
     function bind(p: IRPattern, v: ValueRepresentation, s: State): void {
         if (p.kind === 'constructor') checkConstructor(p.name, p.instance);
@@ -622,7 +690,15 @@ export function verifyRepresentations(
                         break;
                     case 'swap': {
                         const focus = get(s, i.lens);
-                        if (focus.kind === 'local-focus') {
+                        if (focus.kind === 'focus-tuple') {
+                            requireEqual(v, focus.read, 'Scattered focus read provenance changed');
+                            writeTarget(
+                                s.focusTargets.get(i.lens) ??
+                                    fail('Missing scattered focus targets'),
+                                get(s, i.value),
+                                s,
+                            );
+                        } else if (focus.kind === 'local-focus') {
                             requireEqual(v, focus.read, 'Callable swap old provenance changed');
                             requireEqual(
                                 get(s, i.value),
@@ -690,6 +766,10 @@ export function verifyRepresentations(
                                     (use) => use.op === 'swap' && use.lens === i.out.id,
                                 ).length !== 1 &&
                                     borrowedLoans(i.out.id, b).length !== 1 &&
+                                    !b.instructions.some(
+                                        (use) =>
+                                            use.op === 'lens-tuple' && use.items.includes(i.out.id),
+                                    ) &&
                                     !(allowLocalFocusResult && b.result === i.out.id) &&
                                     !b.instructions.some(
                                         (use) => use.op === 'manual' && use.lens === i.out.id,
@@ -821,13 +901,36 @@ export function verifyRepresentations(
                         break;
                     }
                     case 'lens-tuple': {
-                        const actual = lens(v);
-                        if (actual.kind !== 'tuple') return fail('Lens tuple lost its topology');
-                        requireEqual(
-                            actual.items,
-                            i.items.map((id) => lens(get(s, id)).id),
-                            'Lens tuple children changed',
-                        );
+                        const members = i.items.map((id) => get(s, id));
+                        if (v.kind === 'focus-tuple') {
+                            if (!members.every((v) => v.kind === 'local-focus'))
+                                return fail(
+                                    'Nested or mixed callable focus tuples require recursive targets',
+                                );
+                            requireEqual(v.items, members, 'Callable focus tuple children changed');
+                            requireEqual(
+                                v.read,
+                                tupleValue(members.map((v) => v.read)),
+                                'Callable focus tuple read changed',
+                            );
+                            s.focusTargets.set(i.out.id, {
+                                value: v,
+                                items: i.items.map((id, n) => ({
+                                    value: members[n]!,
+                                    ...(s.focusOwners.get(id) ??
+                                        fail('Scattered callable focus lacks a logical owner')),
+                                })),
+                            });
+                        } else {
+                            const actual = lens(v);
+                            if (actual.kind !== 'tuple')
+                                return fail('Lens tuple lost its topology');
+                            requireEqual(
+                                actual.items,
+                                i.items.map((id) => lens(get(s, id)).id),
+                                'Lens tuple children changed',
+                            );
+                        }
                         const finishes = i.items.map((id) => s.finishes.get(id));
                         if (finishes.some(Boolean))
                             s.finishes.set(i.out.id, (state, apply) => {
@@ -1167,6 +1270,8 @@ export function verifyRepresentations(
                 s.values.set(i.out.id, v);
             }
             const result = get(s, b.result);
+            if (result.kind === 'focus-tuple')
+                return fail('Scattered callable focus forwarding requires a completion contract');
             if (result.kind === 'local-focus' && !allowLocalFocusResult)
                 return fail('Callable focus results require an explicit return ABI');
             if (result.kind !== 'lens' && result.kind !== 'local-focus')

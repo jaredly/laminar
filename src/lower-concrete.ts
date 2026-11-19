@@ -79,11 +79,11 @@ export function lowerConcreteProgram(
         return g;
     };
     function discover(v: ValueRepresentation): void {
-        if (v.kind === 'local-focus') {
+        if (v.kind === 'local-focus' || v.kind === 'focus-tuple') {
             discover(v.read);
             discover(v.replacement);
         }
-        if (v.kind === 'aggregate') v.items.forEach(discover);
+        if (v.kind === 'aggregate' || v.kind === 'focus-tuple') v.items.forEach(discover);
         if (v.kind === 'callable' || v.kind === 'native' || v.kind === 'callable-choice') group(v);
     }
     const contractKey = (c: Contract): string =>
@@ -211,6 +211,23 @@ export function lowerConcreteProgram(
                 ['aggregate', items],
                 'record',
                 items.map((id, i) => ({ name: `item${i}`, kind: 'value', layout: id })),
+            );
+        }
+        if (v.kind === 'focus-tuple') {
+            const items = v.items.map(layout),
+                restore = table.abi([layout(v.replacement)], unitLayout);
+            return table.record(
+                ['focus-tuple', items, layout(v.read), layout(v.replacement)],
+                'record',
+                [
+                    ...items.map((id, i) => ({
+                        name: `item${i}`,
+                        kind: 'value' as const,
+                        layout: id,
+                    })),
+                    { name: 'restore', kind: 'code', abi: restore },
+                    { name: 'context', kind: 'pointer' },
+                ],
             );
         }
         if (v.kind === 'local-focus') {

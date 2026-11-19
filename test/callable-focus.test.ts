@@ -241,3 +241,22 @@ it('rejects forged computed callable owner protection', () => {
     expect(() => verifyConcreteProgram(c)).toThrow('Computed loan owner protection mismatch');
     expect(() => emitC(c)).toThrow('Computed loan owner protection mismatch');
 });
+it('rejects reordered scattered callable endpoints', () => {
+    const c = concrete(
+        callableFocusSamples.find((s) => s.name === 'scattered callable flat swap')!.source,
+    );
+    const focus = c.analysis.entries[0].values.find(
+        (v: any) => v.representation.kind === 'focus-tuple',
+    ).representation;
+    focus.items.reverse();
+    expect(() => verifyConcreteProgram(c)).toThrow('Callable focus tuple children changed');
+    expect(() => emitC(c)).toThrow('Callable focus tuple children changed');
+});
+it('rejects forged scattered callable physical fields', () => {
+    const c = concrete(
+        callableFocusSamples.find((s) => s.name === 'scattered callable flat swap')!.source,
+    );
+    const layout = c.layouts.find((v: any) => JSON.parse(v.key)[2] === 'focus-tuple');
+    layout.fields[0].kind = 'pointer';
+    expect(() => verifyConcreteProgram(c)).toThrow('Incorrect concrete storage fields');
+});
