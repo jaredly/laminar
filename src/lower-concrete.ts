@@ -416,7 +416,8 @@ export function lowerConcreteProgram(
         g.building = true;
         const captures = g.descriptor.kind === 'callable' ? g.descriptor.captures : [];
         const environment = table.record(
-            ['environment', g.key, captures.map(layout)],
+            // Environments are keyed by capture layouts, like callable storage.
+            ['environment', captures.map(layout)],
             'record',
             captures.map((v, i) => ({ name: `capture${i}`, kind: 'value', layout: layout(v) })),
         );
@@ -445,20 +446,16 @@ export function lowerConcreteProgram(
             const w = wrapper(g, c, environment);
             return { wrapper: w.id, abi: w.abi, field: `invoke${index}` };
         });
+        // Physical storage is structural: callables with the same ordered entry ABIs
+        // share one record, and the environment stays an erased pointer (bodies and
+        // disposers already receive `void *`). Representation identity remains in the
+        // analysis and callable descriptor, so specialization is unaffected.
         const fields: ConcreteField[] = [
-            {
-                name: 'environment',
-                kind: 'pointer',
-                ...(g.descriptor.kind === 'callable-choice' ? {} : { layout: environment }),
-            },
+            { name: 'environment', kind: 'pointer' },
             { name: 'dispose', kind: 'code', abi: disposeABI },
             ...entries.map((e) => ({ name: e.field, kind: 'code' as const, abi: e.abi })),
         ];
-        const physical = table.record(
-            ['callable', g.key, contracts.map(contractKey), environment, entries.map((e) => e.abi)],
-            'record',
-            fields,
-        );
+        const physical = table.record(['callable', entries.map((e) => e.abi)], 'record', fields);
         g.record = {
             id: concreteName('callable', JSON.stringify([g.key, physical])),
             descriptor: g.descriptor,

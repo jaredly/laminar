@@ -248,20 +248,20 @@ it('prints complete manual staging around a selected branch', () => {
       #include <math.h>
       #include <stdint.h>
       typedef struct L0 L0;
-      typedef struct L1 L1;
-      typedef _Bool L2;
+      typedef _Bool L1;
+      typedef struct L2 L2;
       typedef struct L3 L3;
       typedef double L4;
       typedef struct L5 L5;
       typedef struct L6 L6;
-      typedef L1 (*A0)(void *, L4);
+      typedef L0 (*A0)(void *, L4);
       typedef L4 (*A1)(void *, L4, L4);
-      typedef L1 (*A2)(void *);
+      typedef L0 (*A2)(void *);
       typedef L4 (*A3)(void *);
       struct L0 { unsigned char inhabitant; };
-      struct L1 { unsigned char inhabitant; };
-      struct L3 { L1 *read; L4 *replacement; A0 restore; void *context; };
-      struct L5 { L0 *environment; A2 dispose; A1 invoke0; };
+      struct L2 { unsigned char inhabitant; };
+      struct L3 { L0 *read; L4 *replacement; A0 restore; void *context; };
+      struct L5 { void *environment; A2 dispose; A1 invoke0; };
       struct L6 { L4 *read; A0 restore; void *context; };
       static size_t live_contexts = 0;
       void *allocate_context(size_t size);
@@ -272,7 +272,7 @@ it('prints complete manual staging around a selected branch', () => {
           (void)environment;
           L4 v0 = 1;
           (void)v0;
-          L2 v2 = 1;
+          L1 v2 = 1;
           (void)v2;
           int v4 = 0;
           (void)v4;
@@ -306,7 +306,7 @@ it('prints complete manual staging around a selected branch', () => {
           (void)v16;
           L4 v17 = (v15 + v16);
           (void)v17;
-          L1 v18 = (L1){0};
+          L0 v18 = (L0){0};
           (void)v18;
           if (v4 == 0) {
           }

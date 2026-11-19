@@ -361,7 +361,7 @@ for (const mutation of [
         if (mutation === 'place') join.place = 'unknown-place';
         if (mutation === 'ownership') join.ownership = 'copy';
         if (mutation === 'order') join.order.reverse();
-        if (mutation === 'layout') join.arms[0].to = join.arms[0].from;
+        if (mutation === 'layout') join.arms[0].to = 'forged-layout';
         if (mutation === 'arms') join.arms.reverse();
         if (mutation === 'entries') join.arms[0].entries = [];
         expect(() => verifyConcreteProgram(c)).toThrow('Cleanup storage adapter changed');

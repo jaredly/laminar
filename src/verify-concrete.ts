@@ -466,7 +466,7 @@ export function verifyConcreteProgram(p: ConcreteProgram): void {
             caps = c.descriptor.kind === 'callable' ? c.descriptor.captures : [];
         if (c.id !== concreteName('callable', JSON.stringify([k, c.layout])))
             fail('Noncanonical callable ID');
-        if (c.environment !== lid(['environment', k, caps.map(storage)]))
+        if (c.environment !== lid(['environment', caps.map(storage)]))
             fail('Incorrect environment identity');
         concreteFields(
             c.environment,
@@ -683,20 +683,10 @@ export function verifyConcreteProgram(p: ConcreteProgram): void {
                     fail('Native wrapper contract mismatch');
             } else fail('Invocation uses a disposer');
         });
-        const expectedLayout = lid([
-            'callable',
-            k,
-            expectedContracts.map(contractKey),
-            c.environment,
-            c.entries.map((e) => e.abi),
-        ]);
+        const expectedLayout = lid(['callable', c.entries.map((e) => e.abi)]);
         if (c.layout !== expectedLayout) fail('Callable layout identity mismatch');
         concreteFields(c.layout, 'record', [
-            {
-                name: 'environment',
-                kind: 'pointer',
-                ...(c.descriptor.kind === 'callable-choice' ? {} : { layout: c.environment }),
-            },
+            { name: 'environment', kind: 'pointer' },
             { name: 'dispose', kind: 'code', abi: dispose.abi },
             ...c.entries.map((e) => ({ name: e.field, kind: 'code' as const, abi: e.abi })),
         ]);

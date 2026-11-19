@@ -65,6 +65,11 @@ capture-free values (with a null environment and disposer). Calls use the verifi
 callable entry field and environment; there are no incompatible code-pointer casts
 or static code-symbol rewrites at invocation. Native intrinsics retain their
 explicit storage lowering contracts.
+Callable storage records are structural: values whose ordered entry ABIs match
+share one record, with an erased `void *` environment pointer, and environment
+records are keyed by their capture layouts. Code identity and captures stay in the
+representation analysis, so specialization and direct dispatch are unaffected, and
+joins whose arms already share the record and entry fields lower to plain moves.
 Captured callable values use concrete typed heap environments. Invocation copies
 captures into owned locals and releases the environment before executing the body;
 returned restoration contexts retain any locals needed later. Generated disposers

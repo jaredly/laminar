@@ -23,8 +23,13 @@ export function lowerC(program: ConcreteProgram): TranslationUnit {
     const codes = new Map(program.code.map((c, i) => [c.id, `fn${i}`]));
     const abiNames = new Map(program.abis.map((a, i) => [a.id, `A${i}`]));
     const type = (id: string) => names.get(id)!;
+    // Structural callable layouts make many joins identities: same record, same fields.
+    const identityEntries = (entries: { source: string; target: string }[]) =>
+        entries.every((e) => e.source === e.target);
     const adaptValue = (a: ConcreteValueAdapter, expression: string): string => {
         if (a.kind === 'move') return expression;
+        if (a.kind === 'callable' && a.from === a.to && identityEntries(a.entries))
+            return expression;
         if (a.kind === 'aggregate')
             return `(${type(a.to)}){${a.items.map((child, n) => `.item${n}=${adaptValue(child, `(${expression}).item${n}`)}`).join(', ')}}`;
         const entries = a.entries
@@ -934,6 +939,14 @@ export function lowerC(program: ConcreteProgram): TranslationUnit {
                                 nested.push(
                                     `${name} = ${adaptValue(i.aggregateJoin.arms[armIndex]!, result)};`,
                                 );
+                            else if (
+                                i.callableJoin &&
+                                program.callables.find(
+                                    (c) => c.id === i.callableJoin!.arms[armIndex]!.callable,
+                                )?.layout === id &&
+                                identityEntries(i.callableJoin.arms[armIndex]!.entries)
+                            )
+                                nested.push(`${name} = ${result};`);
                             else if (i.callableJoin) {
                                 const adapter = i.callableJoin.arms[armIndex]!;
                                 const entries = adapter.entries

@@ -101,27 +101,25 @@ typedef struct L3 L3;
 typedef double L4;
 typedef struct L5 L5;
 typedef struct L6 L6;
-typedef struct L7 L7;
-typedef L2 (*A0)(void *, L4);
+typedef L1 (*A0)(void *, L4);
 typedef L4 (*A1)(void *, L4, L4);
-typedef L2 (*A2)(void *);
+typedef L1 (*A2)(void *);
 typedef L4 (*A3)(void *);
-typedef L2 (*A4)(void *, L6);
-struct L0 { L7 *environment; A2 dispose; A4 invoke0; };
+typedef L1 (*A4)(void *, L6);
+struct L0 { void *environment; A2 dispose; A4 invoke0; };
 struct L1 { unsigned char inhabitant; };
 struct L2 { unsigned char inhabitant; };
-struct L3 { L2 *read; L4 *replacement; A0 restore; void *context; };
-struct L5 { L1 *environment; A2 dispose; A1 invoke0; };
+struct L3 { L1 *read; L4 *replacement; A0 restore; void *context; };
+struct L5 { void *environment; A2 dispose; A1 invoke0; };
 struct L6 { L4 *read; A0 restore; void *context; };
-struct L7 { unsigned char inhabitant; };
 static size_t live_contexts = 0;
 void *allocate_context(size_t size);
 void release_context(void *context);
-L2 fn0(void *environment, L6 arg0);
+L1 fn0(void *environment, L6 arg0);
 L4 fn1(void *environment);
 typedef struct { L4 read0; } Backing0;
 void print_number(double x);
-L2 fn0(void *environment, L6 arg0) {
+L1 fn0(void *environment, L6 arg0) {
     (void)environment;
     (void)arg0;
     L4 v2 = *(arg0).read;
@@ -130,7 +128,7 @@ L2 fn0(void *environment, L6 arg0) {
     (void)v3;
     L4 v4 = (v2 + v3);
     (void)v4;
-    L2 v5 = (L2){0};
+    L1 v5 = (L1){0};
     (void)v5;
     *(arg0).read = v4;
     return v5;
@@ -146,7 +144,7 @@ L4 fn1(void *environment) {
     back0.read0 = v0;
     L6 v5 = (L6){.read=&back0.read0};
     (void)v5;
-    L2 v4 = (v3).invoke0((v3).environment, v5);
+    L1 v4 = (v3).invoke0((v3).environment, v5);
     (void)v4;
     L4 v6 = *(v5).read;
     (void)v6;
@@ -210,57 +208,55 @@ it('prints complete scattered-update C', () => {
 typedef struct L0 L0;
 typedef struct L1 L1;
 typedef struct L2 L2;
-typedef struct L3 L3;
+typedef double L3;
 typedef struct L4 L4;
-typedef double L5;
+typedef struct L5 L5;
 typedef struct L6 L6;
 typedef struct L7 L7;
 typedef struct L8 L8;
-typedef struct L9 L9;
-typedef L4 (*A0)(void *, L5);
-typedef L5 (*A1)(void *, L5, L5);
-typedef L6 (*A2)(void *);
-typedef L4 (*A3)(void *, L6);
-typedef L4 (*A4)(void *);
-typedef L4 (*A5)(void *, L1);
-struct L0 { L5 *read; A0 restore; void *context; };
+typedef L2 (*A0)(void *, L3);
+typedef L3 (*A1)(void *, L3, L3);
+typedef L4 (*A2)(void *);
+typedef L2 (*A3)(void *, L4);
+typedef L2 (*A4)(void *);
+typedef L2 (*A5)(void *, L1);
+struct L0 { L3 *read; A0 restore; void *context; };
 struct L1 { L0 item0; L0 item1; A3 restore; void *context; };
-struct L2 { L8 *environment; A4 dispose; A5 invoke0; };
-struct L3 { unsigned char inhabitant; };
-struct L4 { unsigned char inhabitant; };
-struct L6 { L5 item0; L5 item1; };
-struct L7 { L4 *read; L5 *replacement; A0 restore; void *context; };
-struct L8 { unsigned char inhabitant; };
-struct L9 { L3 *environment; A4 dispose; A1 invoke0; };
+struct L2 { unsigned char inhabitant; };
+struct L4 { L3 item0; L3 item1; };
+struct L5 { unsigned char inhabitant; };
+struct L6 { L2 *read; L3 *replacement; A0 restore; void *context; };
+struct L7 { void *environment; A4 dispose; A1 invoke0; };
+struct L8 { void *environment; A4 dispose; A5 invoke0; };
 static size_t live_contexts = 0;
 void *allocate_context(size_t size);
 void release_context(void *context);
-L4 fn0(void *environment, L1 arg0);
-L6 fn1(void *environment);
-typedef struct { L5 read0; L5 read1; } Backing0;
+L2 fn0(void *environment, L1 arg0);
+L4 fn1(void *environment);
+typedef struct { L3 read0; L3 read1; } Backing0;
 void print_number(double x);
-L4 fn0(void *environment, L1 arg0) {
+L2 fn0(void *environment, L1 arg0) {
     (void)environment;
     (void)arg0;
-    L5 v2 = *((arg0).item0).read;
+    L3 v2 = *((arg0).item0).read;
     (void)v2;
-    L5 v3 = 1;
+    L3 v3 = 1;
     (void)v3;
-    L5 v4 = (v2 + v3);
+    L3 v4 = (v2 + v3);
     (void)v4;
-    L4 v5 = (L4){0};
+    L2 v5 = (L2){0};
     (void)v5;
     *((arg0).item0).read = v4;
     *((arg0).item1).read = *((arg0).item1).read;
     return v5;
 }
-L6 fn1(void *environment) {
+L4 fn1(void *environment) {
     (void)environment;
-    L5 v0 = 1;
+    L3 v0 = 1;
     (void)v0;
-    L5 v2 = 2;
+    L3 v2 = 2;
     (void)v2;
-    L2 v7 = (L2){.environment=NULL, .invoke0=fn0};
+    L8 v7 = (L8){.environment=NULL, .invoke0=fn0};
     (void)v7;
     Backing0 back0 = {0};
     (void)back0;
@@ -268,22 +264,22 @@ L6 fn1(void *environment) {
     back0.read1 = v2;
     L1 v9 = (L1){.item0=(L0){.read=&back0.read0}, .item1=(L0){.read=&back0.read1}};
     (void)v9;
-    L4 v8 = (v7).invoke0((v7).environment, v9);
+    L2 v8 = (v7).invoke0((v7).environment, v9);
     (void)v8;
-    L6 v10 = (L6){*((v9).item0).read, *((v9).item1).read};
+    L4 v10 = (L4){*((v9).item0).read, *((v9).item1).read};
     (void)v10;
     (void)back0;
-    L5 v12 = (v10).item0;
+    L3 v12 = (v10).item0;
     (void)v12;
-    L5 v13 = (v10).item1;
+    L3 v13 = (v10).item1;
     (void)v13;
-    L6 v14 = (L6){v12, v13};
+    L4 v14 = (L4){v12, v13};
     (void)v14;
-    L6 v11 = v14;
+    L4 v11 = v14;
     (void)v11;
-    L6 v3 = v11;
+    L4 v3 = v11;
     (void)v3;
-    L6 v1 = v3;
+    L4 v1 = v3;
     (void)v1;
     return v1;
 }
@@ -317,7 +313,7 @@ void print_number(double x) {
     }
 }
 int main(void) {
-    L6 result0 = fn1(NULL);
+    L4 result0 = fn1(NULL);
     (void)result0;
     putchar(91);
     print_number((result0).item0);
@@ -346,34 +342,34 @@ typedef struct L0 L0;
 typedef struct L1 L1;
 typedef struct L2 L2;
 typedef struct L3 L3;
-typedef struct L4 L4;
-typedef double L5;
-typedef struct L6 L6;
-typedef _Bool L7;
+typedef double L4;
+typedef struct L5 L5;
+typedef _Bool L6;
+typedef struct L7 L7;
 typedef struct L8 L8;
 typedef struct L9 L9;
-typedef L4 (*A0)(void *, L8);
-typedef L4 (*A1)(void *, L6);
+typedef L3 (*A0)(void *, L8);
+typedef L3 (*A1)(void *, L5);
 typedef L8 (*A2)(void *);
-typedef L4 (*A3)(void *);
+typedef L3 (*A3)(void *);
 typedef L2 (*A4)(void *, L2);
-typedef L4 (*A5)(void *, L7);
-struct L0 { L5 *read; L7 *replacement; A5 restore; void *context; };
-struct L1 { L5 *read; L6 *replacement; A1 restore; void *context; };
+typedef L3 (*A5)(void *, L6);
+struct L0 { L4 *read; L6 *replacement; A5 restore; void *context; };
+struct L1 { L4 *read; L5 *replacement; A1 restore; void *context; };
 struct L2 { L0 item0; L1 item1; A0 restore; void *context; };
 struct L3 { unsigned char inhabitant; };
-struct L4 { unsigned char inhabitant; };
-struct L6 { L5 item0; L5 item1; };
-struct L8 { L7 item0; L6 item1; };
-struct L9 { L3 *environment; A3 dispose; A4 invoke0; };
+struct L5 { L4 item0; L4 item1; };
+struct L7 { unsigned char inhabitant; };
+struct L8 { L6 item0; L5 item1; };
+struct L9 { void *environment; A3 dispose; A4 invoke0; };
 static size_t live_contexts = 0;
 void *allocate_context(size_t size);
 void release_context(void *context);
 L2 fn0(void *environment, L2 arg0);
 L8 fn1(void *environment);
-typedef struct { L2 arg0; L5 focus_0; L7 focus_0out; L5 focus_1; L6 focus_1out; } Restore0;
-L4 restore0(void *opaque, L8 replacement);
-typedef struct { L5 read0; L7 write0; L5 read2; L6 write2; } Backing1;
+typedef struct { L2 arg0; L4 focus_0; L6 focus_0out; L4 focus_1; L5 focus_1out; } Restore0;
+L3 restore0(void *opaque, L8 replacement);
+typedef struct { L4 read0; L6 write0; L4 read2; L5 write2; } Backing1;
 void print_number(double x);
 L2 fn0(void *environment, L2 arg0) {
     (void)environment;
@@ -392,9 +388,9 @@ L2 fn0(void *environment, L2 arg0) {
 }
 L8 fn1(void *environment) {
     (void)environment;
-    L5 v0 = 1;
+    L4 v0 = 1;
     (void)v0;
-    L5 v2 = 2;
+    L4 v2 = 2;
     (void)v2;
     L9 v7 = (L9){.environment=NULL, .invoke0=fn0};
     (void)v7;
@@ -404,24 +400,24 @@ L8 fn1(void *environment) {
         abort();
     }
     back1->read0 = v0;
-    back1->write0 = (L7){0};
+    back1->write0 = (L6){0};
     back1->read2 = v2;
-    back1->write2 = (L6){0};
+    back1->write2 = (L5){0};
     L2 v9 = (L2){.item0=(L0){.read=&back1->read0, .replacement=&back1->write0}, .item1=(L1){.read=&back1->read2, .replacement=&back1->write2}};
     (void)v9;
     L2 v8 = (v7).invoke0((v7).environment, v9);
     (void)v8;
-    L7 v10 = 1;
+    L6 v10 = 1;
     (void)v10;
-    L5 v11 = 3;
+    L4 v11 = 3;
     (void)v11;
-    L5 v12 = 4;
+    L4 v12 = 4;
     (void)v12;
-    L6 v13 = (L6){v11, v12};
+    L5 v13 = (L5){v11, v12};
     (void)v13;
     L8 v14 = (L8){v10, v13};
     (void)v14;
-    L6 v15 = (L6){*((v8).item0).read, *((v8).item1).read};
+    L5 v15 = (L5){*((v8).item0).read, *((v8).item1).read};
     (void)v15;
     L8 v16 = (L8){(v14).item0, (v14).item1};
     (void)v16;
@@ -436,9 +432,9 @@ L8 fn1(void *environment) {
     (void)v17;
     (void)back1;
     release_context(back1);
-    L7 v19 = (v17).item0;
+    L6 v19 = (v17).item0;
     (void)v19;
-    L6 v20 = (v17).item1;
+    L5 v20 = (v17).item1;
     (void)v20;
     L8 v21 = (L8){v19, v20};
     (void)v21;
@@ -450,13 +446,13 @@ L8 fn1(void *environment) {
     (void)v1;
     return v1;
 }
-L4 restore0(void *opaque, L8 replacement) {
+L3 restore0(void *opaque, L8 replacement) {
     Restore0 *ctx = opaque;
     (void)replacement;
     *((ctx->arg0).item0).replacement = (replacement).item0;
     *((ctx->arg0).item1).replacement = (replacement).item1;
     release_context(ctx);
-    return (L4){0};
+    return (L3){0};
 }
 void *allocate_context(size_t size) {
     void *context = malloc(size);
@@ -523,26 +519,26 @@ typedef struct L5 L5;
 typedef struct L6 L6;
 typedef struct L7 L7;
 typedef struct L8 L8;
-typedef L4 (*A0)(void *, L2);
+typedef L3 (*A0)(void *, L2);
 typedef L2 (*A1)(void *);
-typedef L4 (*A2)(void *);
+typedef L3 (*A2)(void *);
 typedef L7 (*A3)(void *, L8);
-typedef L4 (*A4)(void *, L0);
+typedef L3 (*A4)(void *, L0);
 struct L2 { L0 item0; L1 item1; };
 struct L3 { unsigned char inhabitant; };
-struct L4 { unsigned char inhabitant; };
-struct L5 { L1 item0; L1 item1; };
-struct L6 { L3 *environment; A2 dispose; A3 invoke0; };
+struct L4 { L1 item0; L1 item1; };
+struct L5 { void *environment; A2 dispose; A3 invoke0; };
+struct L6 { unsigned char inhabitant; };
 struct L7 { L1 *read; L0 *replacement; A4 restore; void *context; };
-struct L8 { L5 *read; L2 *replacement; A0 restore; void *context; };
+struct L8 { L4 *read; L2 *replacement; A0 restore; void *context; };
 static size_t live_contexts = 0;
 void *allocate_context(size_t size);
 void release_context(void *context);
 L7 fn0(void *environment, L8 arg0);
 L2 fn1(void *environment);
 typedef struct { L8 arg0; L1 focus; L0 focusout; } Restore0;
-L4 restore0(void *opaque, L0 replacement);
-typedef struct { L5 read0; L2 write0; } Backing1;
+L3 restore0(void *opaque, L0 replacement);
+typedef struct { L4 read0; L2 write0; } Backing1;
 void print_number(double x);
 L7 fn0(void *environment, L8 arg0) {
     (void)environment;
@@ -564,9 +560,9 @@ L2 fn1(void *environment) {
     (void)v0;
     L1 v1 = 2;
     (void)v1;
-    L5 v2 = (L5){v0, v1};
+    L4 v2 = (L4){v0, v1};
     (void)v2;
-    L6 v5 = (L6){.environment=NULL, .invoke0=fn0};
+    L5 v5 = (L5){.environment=NULL, .invoke0=fn0};
     (void)v5;
     Backing1 *back1 = allocate_context(sizeof *back1);
     (void)back1;
@@ -603,12 +599,12 @@ L2 fn1(void *environment) {
     (void)v3;
     return v3;
 }
-L4 restore0(void *opaque, L0 replacement) {
+L3 restore0(void *opaque, L0 replacement) {
     Restore0 *ctx = opaque;
     (void)replacement;
     *(ctx->arg0).replacement = (L2){replacement, (*(ctx->arg0).read).item1};
     release_context(ctx);
-    return (L4){0};
+    return (L3){0};
 }
 void *allocate_context(size_t size) {
     void *context = malloc(size);

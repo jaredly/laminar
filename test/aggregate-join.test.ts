@@ -64,8 +64,8 @@ for (const mutation of [
         const callable = root.items[0].items[0];
         if (mutation === 'missing') delete instruction.aggregateJoin;
         if (mutation === 'ownership') join.ownership = 'copy';
-        if (mutation === 'source') root.from = root.to;
-        if (mutation === 'destination') callable.to = callable.from;
+        if (mutation === 'source') root.from = 'forged-layout';
+        if (mutation === 'destination') callable.to = 'forged-layout';
         if (mutation === 'order') root.items.reverse();
         if (mutation === 'callable') callable.callable = 'forged';
         if (mutation === 'entry') callable.entries[0].source = 'forged';

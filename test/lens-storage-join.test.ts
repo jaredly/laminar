@@ -58,7 +58,7 @@ for (const mutation of ['storage', 'lens', 'ownership', 'layout', 'arms', 'entry
         if (mutation === 'storage') delete i.storageJoins;
         if (mutation === 'lens') delete i.lensJoin;
         if (mutation === 'ownership') join.ownership = 'copy';
-        if (mutation === 'layout') join.arms[0].to = join.arms[0].from;
+        if (mutation === 'layout') join.arms[0].to = 'forged-layout';
         if (mutation === 'arms') join.arms.reverse();
         if (mutation === 'entry') join.arms[0].entries[0].source = 'forged';
         expect(() => verifyConcreteProgram(c)).toThrow(

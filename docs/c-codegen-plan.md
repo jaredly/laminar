@@ -1000,3 +1000,36 @@ remains incomplete.
 Validation: 1525 non-execution passes with only the existing source-identity
 snapshot failure; the full `LAMINAR_EXEC=1` execution file passed 1178 native/Wasm
 cases in 311.28 seconds without retries. TypeScript checks pass. Remote CI was not run.
+
+
+## Structural callable storage layouts
+
+Physical callable records were interned per representation, keyed by code identity
+and captures, with the environment pointer typed by that callable's own environment
+record. Two capture-free closures with the same signature, such as `fn () 7` and
+`fn () 9`, therefore had distinct but identical C structs, differing only in the
+pointee type of an empty environment, and every join repacked fields between them.
+
+Callable records are now keyed by their ordered entry ABIs, the environment field is
+an erased pointer (code bodies and disposers already received `void *`), and
+environment records are keyed by capture layouts. Callable descriptors, wrappers,
+disposers and entry tables are unchanged, as is representation identity, which
+still drives specialization, result representations and dispatch. The concrete
+verifier derives the same structural identities. C emits a plain move for callable
+adapters and joins whose source and target share a record and map every entry to the
+same field.
+
+This narrows the planned dispatch argument adapter: alternatives with differing
+parameter contracts need a physical conversion only when their entry tables
+differ, not merely when their representations differ.
+
+Layout-forgery tests that copied one adapter endpoint onto the other now use an
+explicitly forged layout, because those endpoints can legitimately coincide.
+Printed concrete IR and C expectations were regenerated; their only changes are
+erased environment pointers, merged records and renumbering.
+
+Validation: 1525 non-execution passes with only the existing source-identity
+snapshot failure; the full `LAMINAR_EXEC=1` execution file passed 1178 native/Wasm
+cases (strict and optimized native, supported sanitizers, both Emscripten/Node
+optimization levels) in 310.17 seconds without retries. TypeScript checks pass.
+Remote CI was not run.

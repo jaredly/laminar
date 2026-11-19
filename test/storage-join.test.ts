@@ -67,8 +67,8 @@ for (const mutation of [
         if (mutation === 'missing') delete instruction.storageJoins;
         if (mutation === 'place') j.place = 'forged';
         if (mutation === 'ownership') j.ownership = 'copy';
-        if (mutation === 'source-layout') a.from = a.to;
-        if (mutation === 'target-layout') a.to = a.from;
+        if (mutation === 'source-layout') a.from = 'forged-layout';
+        if (mutation === 'target-layout') a.to = 'forged-layout';
         if (mutation === 'entry') a.entries[0].source = 'forged';
         if (mutation === 'arms') j.arms.reverse();
         expect(() => verifyConcreteProgram(c)).toThrow('Branch storage adapter changed');

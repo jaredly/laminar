@@ -53,8 +53,8 @@ for (const mutation of [
         const callable = w.adapter.items[0].items[0];
         if (mutation === 'source') w.source = w.id;
         if (mutation === 'ownership') w.ownership = 'copy-result';
-        if (mutation === 'read-layout') w.adapter.from = w.adapter.to;
-        if (mutation === 'result-layout') callable.to = callable.from;
+        if (mutation === 'read-layout') w.adapter.from = 'forged-layout';
+        if (mutation === 'result-layout') callable.to = 'forged-layout';
         if (mutation === 'member-order') w.adapter.items.reverse();
         if (mutation === 'callable') callable.callable = 'forged';
         if (mutation === 'entry') callable.entries[0].source = 'forged';
