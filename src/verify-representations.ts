@@ -789,6 +789,8 @@ export function verifyRepresentations(
                 if (usedValues.has(i.out.id)) fail('Repeated temporary annotation use');
                 usedValues.add(i.out.id);
                 fit(v, i.out.type);
+                if (i.op !== 'scope' && annotations.get(i.out.id)!.retainedStorage !== undefined)
+                    fail('Unexpected retained scope storage annotation');
                 if (i.op !== 'manual' && annotations.get(i.out.id)!.cleanupStorage !== undefined)
                     fail('Unexpected cleanup storage annotation');
                 if (i.op !== 'case' && annotations.get(i.out.id)!.cleanupJoins !== undefined)
@@ -1128,6 +1130,9 @@ export function verifyRepresentations(
                         );
                         break;
                     case 'scope': {
+                        const retainedStorage: NonNullable<
+                            RepresentationVariant['values'][number]['retainedStorage']
+                        > = [];
                         const nested = clone(s);
                         requireEqual(
                             v,
@@ -1139,10 +1144,15 @@ export function verifyRepresentations(
                         );
                         if (v.kind === 'local-focus') {
                             const owner = nested.focusOwners.get(i.body.result);
-                            if (!owner || !s.places.has(owner.place))
-                                return fail(
-                                    'Escaping callable focus requires retained local backing',
-                                );
+                            if (!owner)
+                                return fail('Escaping callable focus lacks a logical owner');
+                            if (!s.places.has(owner.place)) {
+                                const representation =
+                                    nested.places.get(owner.place) ??
+                                    fail('Missing retained callable backing');
+                                retainedStorage.push({ place: owner.place, representation });
+                                s.places.set(owner.place, representation);
+                            }
                             s.focusOwners.set(i.out.id, owner);
                         }
                         const target = nested.focusTargets.get(i.body.result);
@@ -1153,6 +1163,11 @@ export function verifyRepresentations(
                         const dataOwner = nested.dataOwners.get(i.body.result);
                         if (dataOwner && s.places.has(dataOwner.place))
                             s.dataOwners.set(i.out.id, dataOwner);
+                        requireEqual(
+                            annotations.get(i.out.id)!.retainedStorage,
+                            retainedStorage.length ? retainedStorage : undefined,
+                            'Retained scope storage provenance changed',
+                        );
                         const finish = nested.finishes.get(i.body.result);
                         if (finish) {
                             const retained = clone(nested);

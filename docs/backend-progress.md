@@ -1344,3 +1344,20 @@ found legacy and typed evaluators disagree about their argument cleanup order.
 Two boundary cases retain `Callable fst argument cleanup ordering requires an
 explicit adapter`. This slice does not choose a new source semantics or enable
 that ambiguous route. General callable lens ABIs remain open. Phase 6 is incomplete.
+
+
+## Phase 6: retained lexical callable backing
+
+Whole/projected callable focuses may now outlive their defining lexical block
+within the same function. Analysis scope annotations retain exact `retainedStorage`
+place/setup-descriptor records; independent verification derives private-owner
+coverage and provenance. Concrete scope records retain exact physical layouts and
+`retain-through-completion` ownership. Verification rejects missing/forged records;
+printing exposes `retain-storage`. Existing C scope completion keeps the logical
+cell alive through restoration and disposes its current version afterward; no
+function-return ABI or new heap convention is introduced. Untouched aggregate
+siblings retain their original layouts and affine disposal.
+Three shared samples and three corruption cases pass. Validation: 1429
+non-execution passes / 39 existing skips; 6 focused native/Wasm cases; TypeScript
+and diff checks pass. Scattered private backing and general callable focus
+call/return ABIs remain separate work. Phase 6 is incomplete.

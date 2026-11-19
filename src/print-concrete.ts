@@ -410,7 +410,27 @@ export function lconcrete(program: ConcreteProgram, options: ConcretePrintOption
                     );
                     break;
                 case 'scope':
-                    expression = words('scope', block(i.body));
+                    expression = words(
+                        'scope',
+                        ...(i.retainedStorage
+                            ? [
+                                  words(
+                                      'retain-storage',
+                                      tuple(
+                                          i.retainedStorage.map((t) =>
+                                              words(
+                                                  ref(t.place, 'place'),
+                                                  ':',
+                                                  name(t.layout),
+                                                  t.ownership,
+                                              ),
+                                          ),
+                                      ),
+                                  ),
+                              ]
+                            : []),
+                        block(i.body),
+                    );
                     break;
                 case 'case': {
                     const topology = (id: string): Node => {

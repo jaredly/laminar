@@ -49,6 +49,7 @@ export type RepresentationVariant = {
     values: {
         value: string;
         representation: ValueRepresentation;
+        retainedStorage?: { place: string; representation: ValueRepresentation }[];
         cleanupStorage?: {
             place: string;
             before: ValueRepresentation;
@@ -636,6 +637,9 @@ export function inferRepresentations(
             const storageJoins: NonNullable<
                 RepresentationVariant['values'][number]['storageJoins']
             > = [];
+            const retainedStorage: NonNullable<
+                RepresentationVariant['values'][number]['retainedStorage']
+            > = [];
             switch (i.op) {
                 case 'constant':
                 case 'string':
@@ -1021,8 +1025,14 @@ export function inferRepresentations(
                     out = block(unit, i.body, nested, record, chain, true);
                     if (out.kind === 'local-focus') {
                         const owner = nested.focusOwners.get(i.body.result);
-                        if (!owner || !s.places.has(owner.place))
-                            return fail('Escaping callable focus requires retained local backing');
+                        if (!owner) return fail('Escaping callable focus lacks a logical owner');
+                        if (!s.places.has(owner.place)) {
+                            const representation =
+                                nested.places.get(owner.place) ??
+                                fail('Missing retained callable backing');
+                            retainedStorage.push({ place: owner.place, representation });
+                            s.places.set(owner.place, representation);
+                        }
                         s.focusOwners.set(i.out.id, owner);
                     }
                     s.places.forEach((_, place) => s.places.set(place, nested.places.get(place)!));
@@ -1189,6 +1199,7 @@ export function inferRepresentations(
                 value: i.out.id,
                 representation: out,
                 ...(storageJoins.length ? { storageJoins } : {}),
+                ...(retainedStorage.length ? { retainedStorage } : {}),
             });
         }
         const result = get(s, body.result);

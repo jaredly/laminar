@@ -193,16 +193,6 @@ it('independently checks forwarded callable endpoint agreement', () => {
     expect(() => verifyConcreteProgram(c)).toThrow('Scope result representation mismatch');
     expect(() => emitC(c)).toThrow('Scope result representation mismatch');
 });
-it('keeps escaping private callable backing explicit', () => {
-    const p = typedProgram(
-        'fn make() {fn () 3}\n{let old = {let f = make()\n f} := fn () 7\n old()}',
-    );
-    expect(() =>
-        compileConcreteProgram(p, wasm32Emscripten('test'), [
-            { unit: p.units.at(-1)!.id, arguments: [] },
-        ]),
-    ).toThrow('Escaping callable focus requires retained local backing');
-});
 it('independently checks computed callable alias completion', () => {
     const c = concrete(
         callableFocusSamples.find((s) => s.name === 'computed callable alias cleanup replacement')!
@@ -377,4 +367,35 @@ for (const source of [
                 { unit: p.units.at(-1)!.id, arguments: [] },
             ]),
         ).toThrow('Callable fst argument cleanup ordering requires an explicit adapter');
+    });
+function firstRetainedScope(b: any): any {
+    for (const i of b.instructions) {
+        if (i.op === 'scope') {
+            if (i.retainedStorage) return i;
+            const nested = firstRetainedScope(i.body);
+            if (nested) return nested;
+        }
+    }
+}
+it('rejects missing retained callable scope descriptors', () => {
+    const c = concrete(
+        callableFocusSamples.find((s) => s.name === 'private callable backing whole scope')!.source,
+    );
+    const annotation = c.analysis.entries
+        .flatMap((e: any) => e.values)
+        .find((v: any) => v.retainedStorage);
+    delete annotation.retainedStorage;
+    expect(() => verifyConcreteProgram(c)).toThrow('Retained scope storage provenance changed');
+    expect(() => emitC(c)).toThrow('Retained scope storage provenance changed');
+});
+for (const field of ['layout', 'ownership'])
+    it(`rejects forged retained callable backing ${field}`, () => {
+        const c = concrete(
+            callableFocusSamples.find((s) => s.name === 'private callable backing whole scope')!
+                .source,
+        );
+        const scope = c.code.map((code: any) => firstRetainedScope(code.body)).find(Boolean);
+        scope.retainedStorage[0][field] = 'forged-retention';
+        expect(() => verifyConcreteProgram(c)).toThrow('Retained scope storage contract changed');
+        expect(() => emitC(c)).toThrow('Retained scope storage contract changed');
     });

@@ -796,4 +796,28 @@ export const callableFocusSamples = [
  (old(), seen, f(), n)}`,
         expected: [3, 9, 7, 4],
     },
+    {
+        name: 'private callable backing whole scope',
+        source: 'fn make() {fn () 3}\n{let w = 7\n let old = {let f = make()\n f} := fn () w\n old()}',
+        expected: 3,
+    },
+    {
+        name: 'private callable backing projected scope',
+        source: `fn make() {(fn () 3, 4)}
+{let old = {let p = make()
+ fst(~p)} := fn () 7
+ old()}`,
+        expected: 3,
+    },
+    {
+        name: 'private callable backing manual cleanup',
+        source: `fn make() {fn () 3}
+{let seen = 0
+ let old = {let f = make()
+ @(f, {let installed = f := fn () 9
+ seen := installed()
+ fn () ()})} := fn () 7
+ (old(), seen)}`,
+        expected: [3, 7],
+    },
 ];

@@ -132,6 +132,7 @@ export function lowerConcreteProgram(
                 j.arms.forEach(discover);
                 discover(j.result);
             });
+            v.retainedStorage?.forEach((t) => discover(t.representation));
             v.storageJoins?.forEach((j) => {
                 j.arms.forEach(discover);
                 discover(j.result);
@@ -574,7 +575,23 @@ export function lowerConcreteProgram(
                         },
                     };
                 }
-                if (i.op === 'scope') return { ...i, out, body: lower(i.body) };
+                if (i.op === 'scope')
+                    return {
+                        ...i,
+                        out,
+                        body: lower(i.body),
+                        ...(record.values.find((v) => v.value === i.out.id)!.retainedStorage
+                            ? {
+                                  retainedStorage: record.values
+                                      .find((v) => v.value === i.out.id)!
+                                      .retainedStorage!.map((t) => ({
+                                          place: t.place,
+                                          layout: layout(t.representation),
+                                          ownership: 'retain-through-completion' as const,
+                                      })),
+                              }
+                            : {}),
+                    };
                 if (i.op === 'case')
                     return {
                         ...i,

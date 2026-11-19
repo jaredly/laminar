@@ -342,6 +342,7 @@ export function verifyConcreteProgram(p: ConcreteProgram): void {
                 j.arms.forEach(discover);
                 discover(j.result);
             });
+            v.retainedStorage?.forEach((t) => discover(t.representation));
             v.storageJoins?.forEach((j) => {
                 j.arms.forEach(discover);
                 discover(j.result);
@@ -798,6 +799,17 @@ export function verifyConcreteProgram(p: ConcreteProgram): void {
                 } else if (i.op === 'scope') {
                     if (o.op !== 'scope') return fail('Scope operation changed');
                     eq(o.origin, i.origin, 'Scope origin changed');
+                    eq(
+                        o.retainedStorage,
+                        r.values
+                            .find((v) => v.value === i.out.id)!
+                            .retainedStorage?.map((t) => ({
+                                place: t.place,
+                                layout: storage(t.representation),
+                                ownership: 'retain-through-completion',
+                            })),
+                        'Retained scope storage contract changed',
+                    );
                     walk(i.body, o.body);
                 } else if (i.op === 'case') {
                     if (o.op !== 'case') return fail('Case operation changed');

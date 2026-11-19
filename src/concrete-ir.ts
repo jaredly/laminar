@@ -108,7 +108,16 @@ export type ConcreteInstruction =
               }[];
           };
       } & ConcreteOutput)
-    | ({ op: 'scope'; origin: string; body: ConcreteBlock } & ConcreteOutput)
+    | ({
+          op: 'scope';
+          origin: string;
+          body: ConcreteBlock;
+          retainedStorage?: {
+              place: string;
+              layout: string;
+              ownership: 'retain-through-completion';
+          }[];
+      } & ConcreteOutput)
     | ({
           op: 'case';
           origin: string;
