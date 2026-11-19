@@ -7,6 +7,7 @@ import { buildAndRun } from '../src/c/build.ts';
 import { emitC } from '../src/c/emit.ts';
 import { constructorTypes } from '../src/builtins.ts';
 import { locLines } from '../src/lexer.ts';
+import { executeTypedProgram } from '../src/eval-typed.ts';
 
 const [_, __, name] = process.argv;
 const source = readFileSync(name, 'utf-8');
@@ -36,6 +37,7 @@ const native = targetConfig({
 // constructors.set('Some', solver.generalize(fn([plain(a)], plain(option)), []));
 // constructors.set('None', solver.generalize(fn([], plain(option)), []));
 
+console.time('Type');
 let p;
 try {
     p = typedProgram(source!);
@@ -46,7 +48,12 @@ try {
     console.log(pos((err as { loc: number }).loc));
     process.exit(1);
 }
+console.timeEnd('Type');
 console.time('Compile');
+
+const result = executeTypedProgram(p);
+console.log(result);
+process.exit(0);
 
 const variable = { tag: 'variable' as const, id: 'T', rigid: false };
 const c = compileConcreteProgram(

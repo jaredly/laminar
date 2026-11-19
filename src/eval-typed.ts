@@ -13,6 +13,7 @@ import type {
     Instruction,
 } from './typed-ir.ts';
 import { verifyTypedProgram } from './verify-ir.ts';
+import createPrompt from 'prompt-sync';
 
 const EMPTY = Symbol('empty-place');
 type Variant = { kind: 'variant'; name: string; items: Data[] };
@@ -355,6 +356,14 @@ export function executeTypedProgram(
                     return Math.round(number(0));
                 case 'dup':
                     return copy(owned(lens(args[0]).peek()));
+                case 'getInput': {
+                    const p = createPrompt();
+                    return p(data(args[0]));
+                }
+                case 'print': {
+                    console.log(data(args[0]));
+                    return [];
+                }
                 case 'fst': {
                     const parent = lens(args[0]);
                     // The call boundary owns argument completion. A native

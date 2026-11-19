@@ -1,4 +1,4 @@
-
+// how to guess my number
 fn nextGuess(direction, ~(min, max, lastGuess)) {
     round(
         match direction {
@@ -8,37 +8,32 @@ fn nextGuess(direction, ~(min, max, lastGuess)) {
     )
 }
 
-fn print(something) 0
-fn getInput(input) 0
-fn setInput(items) 0
-fn logs() 0
-
 fn handleResponse(response, ~state) {
     match response {
-        1 -> {
+        "higher" -> {
             let next = nextGuess(1, ~state)
             let (min, _, last) = ~state
             min := last
             last := next
             false
         }
-        0 -> {
+        "lower" -> {
             let next = nextGuess(0, ~state)
             let (_, max, last) = ~state
             max := last
             last := next
             false
         }
-        2 -> true
+        "match" -> true
         _ -> {
-            print(0)
+            print("I'm sorry, I didn't understand that. Please say 'higher', 'lower', or 'match'")
             false
         }
     }
 }
 
 fn step(steps, ~(min, max, lastGuess)) {
-    let input = getInput(dup(~lastGuess))
+    let input = getInput("My guess is ${!lastGuess} (higher/lower/match): ")
     let next = handleResponse(input, ~(min, max, lastGuess))
     match (next) {
         true -> steps
@@ -51,16 +46,9 @@ fn game() {
     let steps = step(0, ~state)
     (state, steps)
 }
-//
-// {
-//     // setInput([1, 1, -1, -1, 0])
-//     (game(), logs())
-// }
+
 {
-    let v = (0, 100, 50)
-    // step(0, ~v)
-    let input = getInput(10)
-    // input
-    let next = handleResponse(input, ~v)
-    next
+    game()
 }
+
+// ir-> block{let _ = setInput(["higher", "higher", "lower", "lower", "match"])}{(game(), logs())}{}

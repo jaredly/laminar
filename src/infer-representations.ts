@@ -680,17 +680,9 @@ export function inferRepresentations(
                                 (use) => use.op === 'swap' && use.lens === i.out.id,
                             ).length !== 1 &&
                                 borrows(i.out.id, body).length !== 1 &&
-                                !body.instructions.some(
-                                    (use) =>
-                                        use.op === 'call' &&
-                                        use.args.includes(i.out.id) &&
-                                        body.instructions.some(
-                                            (callee) =>
-                                                callee.op === 'global' &&
-                                                callee.out.id === use.callee &&
-                                                callee.instance.definition === 'native/fst',
-                                        ),
-                                ) &&
+                                body.instructions.filter(
+                                    (use) => use.op === 'call' && use.args.includes(i.out.id),
+                                ).length !== 1 &&
                                 !body.instructions.some(
                                     (use) =>
                                         use.op === 'lens-tuple' && use.items.includes(i.out.id),
@@ -943,6 +935,22 @@ export function inferRepresentations(
                 case 'call': {
                     const callee = get(s, i.callee),
                         args = i.args.map((id) => get(s, id));
+                    // Callable endpoints may cross this call only when verified
+                    // callee provenance identifies the direct native projection.
+                    if (
+                        args.some(
+                            (arg) =>
+                                arg.kind === 'local-focus' ||
+                                arg.kind === 'focus-tuple' ||
+                                arg.kind === 'focus-manual',
+                        ) &&
+                        !(
+                            callee.kind === 'native' &&
+                            callee.definition === 'native/fst' &&
+                            args.length === 1
+                        )
+                    )
+                        return fail('Callable focus calls require verified native fst provenance');
                     if (
                         callee.kind === 'native' &&
                         callee.definition === 'native/fst' &&

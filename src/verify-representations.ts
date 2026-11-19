@@ -885,17 +885,9 @@ export function verifyRepresentations(
                                     (use) => use.op === 'swap' && use.lens === i.out.id,
                                 ).length !== 1 &&
                                     borrowedLoans(i.out.id, b).length !== 1 &&
-                                    !b.instructions.some(
-                                        (use) =>
-                                            use.op === 'call' &&
-                                            use.args.includes(i.out.id) &&
-                                            b.instructions.some(
-                                                (callee) =>
-                                                    callee.op === 'global' &&
-                                                    callee.out.id === use.callee &&
-                                                    callee.instance.definition === 'native/fst',
-                                            ),
-                                    ) &&
+                                    b.instructions.filter(
+                                        (use) => use.op === 'call' && use.args.includes(i.out.id),
+                                    ).length !== 1 &&
                                     !b.instructions.some(
                                         (use) =>
                                             use.op === 'lens-tuple' && use.items.includes(i.out.id),
@@ -1354,6 +1346,24 @@ export function verifyRepresentations(
                         usedCalls.add(i.out.id);
                         const callee = get(s, i.callee),
                             args = i.args.map((id) => get(s, id));
+                        // Callable endpoints may cross this call only when verified
+                        // callee provenance identifies the direct native projection.
+                        if (
+                            args.some(
+                                (arg) =>
+                                    arg.kind === 'local-focus' ||
+                                    arg.kind === 'focus-tuple' ||
+                                    arg.kind === 'focus-manual',
+                            ) &&
+                            !(
+                                callee.kind === 'native' &&
+                                callee.definition === 'native/fst' &&
+                                args.length === 1
+                            )
+                        )
+                            return fail(
+                                'Callable focus calls require verified native fst provenance',
+                            );
                         requireEqual(call.arguments, args, 'Call argument representations changed');
                         requireEqual(call.result, v, 'Call result annotation mismatch');
                         if (callee.kind === 'callable' || callee.kind === 'callable-choice') {

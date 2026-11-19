@@ -4,8 +4,12 @@ import type { Decl, FileItem } from '../../src/ast.ts';
 import { Checker } from '../../src/check.ts';
 import { lowerTypedProgram } from '../../src/lower-typed.ts';
 import type { Elaboration } from '../../src/elaborated.ts';
-export function typedProgram(source: string) {
-    const checker = new Checker(),
+import { TypeEnvironment } from '../../src/infer.ts';
+export function typedProgram(
+    source: string,
+    opts?: { environment?: TypeEnvironment; constructors?: TypeEnvironment },
+) {
+    const checker = new Checker(opts?.environment, opts?.constructors),
         elaborations: Elaboration[] = [];
     let declaration: Decl | undefined;
     for (const node of readLines(source).nodes) {

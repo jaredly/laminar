@@ -6,7 +6,8 @@ export function builtinTypes(): Map<string, Scheme> {
         result = new Map<string, Scheme>();
     const add = (name: string, type: Ty) => result.set(name, s.generalize(type, []));
     const number = con('Number'),
-        bool = con('Bool');
+        bool = con('Bool'),
+        string = con('String');
     for (const name of ['+', '-', '*', '/'])
         add(name, fn([plain(number), plain(number)], plain(number)));
     for (const name of ['==', '>=', '<='])
@@ -18,7 +19,9 @@ export function builtinTypes(): Map<string, Scheme> {
         replacement = s.fresh();
     add('fst', fn([flow(tuple(a, b), tuple(replacement, b))], flow(a, replacement)));
     add('dup', fn([flow(a, a)], plain(a)));
-    add('charList', fn([plain(con('String'))], plain(con('List', con('String')))));
+    add('charList', fn([plain(string)], plain(con('List', string))));
+    add('getInput', fn([plain(string)], plain(string)));
+    add('print', fn([plain(string)], plain(tuple())));
     // Remaining fixture builtins need a runtime calling-convention/resource audit.
     // Missing signatures are errors, never implicit `any`.
     return result;
