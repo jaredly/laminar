@@ -1,4 +1,46 @@
 
+Feedback:
+
+from systematic, line 557: 2 definitely shouldn't need to be put on the heap. Why are we doing that?
+
+```lm
+{
+    let x = 1
+    let y = 2
+    {
+        let z = ~(
+            match 2 {
+                1 -> x
+                2 -> y
+            }
+        )
+        y := 4
+    }
+    (x, y)
+}
+
+(1, 4)
+
+ir-> block{
+    let *x0 = 1;
+    let *y1 = 2;
+    let *_2 = block{
+        let (&t4, r5) = block{let (&case-focus6, case-finish7) = heap(2)}{
+            (
+                match &case-focus6 {
+                    &1 -> (&x0, case-finish7)
+                    &2 -> (&y1, case-finish7)
+                }
+            )
+        }{};
+        let &z3 = &t4
+    }{swap(&y1, 4)}{r5()}
+}{(*x0, *y1)}{}
+```
+
+
+---
+
 So, what if I ... want to be able to make a little cli.
 
 ---
