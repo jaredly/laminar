@@ -41,7 +41,7 @@ export function program(source: string) {
         if (item.type === 'fn' && item.name) checker.publish(checked);
         declaration = undefined;
     }
-    return lowerTypedProgram(elaborations);
+    return lowerTypedProgram(elaborations, checker.imports);
 }
 
 for (const sample of backendCorpus)

@@ -53,6 +53,17 @@ export class Checker {
     get constructorDefinitions(): TypeEnvironment {
         return structuredClone(this.constructors);
     }
+    /** Typed-IR imports: the natives this checker started with, plus every constructor. */
+    get imports(): IRScheme[] {
+        return [
+            ...[...this.environment]
+                .filter(([name]) => this.definitionIds.get(name) === `native/${name}`)
+                .map(([name, scheme]) => importScheme(`native/${name}`, scheme)),
+            ...[...this.constructors].map(([name, scheme]) =>
+                importScheme(`constructor/${name}`, scheme),
+            ),
+        ];
+    }
     get typeDefinitions(): TypeDefinitions {
         return structuredClone(this.types);
     }
@@ -175,16 +186,10 @@ export function checkTypedFile(
     unitId = 'unit',
 ): { program: TypedProgram; definitions: TypeEnvironment } {
     const { checker, expressions } = checkItems(file, environment, constructors, unitId);
-    const imports = [
-        ...[...environment].map(([name, scheme]) => importScheme(`native/${name}`, scheme)),
-        ...[...checker.constructorDefinitions].map(([name, scheme]) =>
-            importScheme(`constructor/${name}`, scheme),
-        ),
-    ];
     return {
         program: lowerTypedProgram(
             expressions.map((e) => e.elaboration),
-            imports,
+            checker.imports,
         ),
         definitions: checker.definitions,
     };

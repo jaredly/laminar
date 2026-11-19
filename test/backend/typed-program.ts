@@ -29,5 +29,5 @@ export function typedProgram(
         if (item.type === 'fn' && item.name) checker.publish(checked);
         declaration = undefined;
     }
-    return lowerTypedProgram(elaborations);
+    return lowerTypedProgram(elaborations, checker.imports);
 }
