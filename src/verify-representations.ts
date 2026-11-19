@@ -355,6 +355,7 @@ export function verifyRepresentations(
         lenses: Map<string, LensRep>;
         focusOwners: Map<string, { place: string; path: number[] }>;
         focusWrites: Map<string, SemanticType>;
+        callResults: Map<string, FocusTarget>;
         nativeProjections: Set<string>;
         focusTargets: Map<string, FocusTarget>;
         dataOwners: Map<string, { place: string; path: number[] }>;
@@ -367,6 +368,7 @@ export function verifyRepresentations(
         lenses: new Map(),
         focusOwners: new Map(),
         focusWrites: new Map(),
+        callResults: new Map(),
         nativeProjections: new Set(),
         focusTargets: new Map(),
         dataOwners: new Map(),
@@ -379,6 +381,7 @@ export function verifyRepresentations(
         lenses: new Map(s.lenses),
         focusOwners: new Map(s.focusOwners),
         focusWrites: new Map(s.focusWrites),
+        callResults: new Map(s.callResults),
         nativeProjections: new Set(s.nativeProjections),
         focusTargets: new Map(s.focusTargets),
         dataOwners: new Map(s.dataOwners),
@@ -517,7 +520,7 @@ export function verifyRepresentations(
         return state.places.has(target.place);
     }
     function targetFor(state: State, id: string): FocusTarget | undefined {
-        const existing = state.focusTargets.get(id);
+        const existing = state.callResults.get(id) ?? state.focusTargets.get(id);
         if (existing) return existing;
         const owner = state.focusOwners.get(id) ?? state.dataOwners.get(id);
         return owner && { value: get(state, id), ...owner };
@@ -654,6 +657,75 @@ export function verifyRepresentations(
             );
         } else results.forEach((r) => requireEqual(v, r, 'Branch needs a representation adapter'));
     }
+    const isFocus = (
+        v: ValueRepresentation,
+    ): v is Extract<
+        ValueRepresentation,
+        { kind: 'local-focus' | 'focus-tuple' | 'focus-manual' }
+    > => v.kind === 'local-focus' || v.kind === 'focus-tuple' || v.kind === 'focus-manual';
+    function projectedTarget(target: FocusTarget, path: number[]): FocusTarget {
+        if (!path.length) return target;
+        if ('inner' in target)
+            return fail('Manual callable parameter demands require a completion adapter');
+        if ('items' in target)
+            return projectedTarget(
+                target.items[path[0]!] ?? fail('Invalid demanded projection'),
+                path.slice(1),
+            );
+        return { ...target, path: [...target.path, ...path] };
+    }
+    function targetLeaves(target: FocusTarget): { place: string; path: number[] }[] {
+        if ('inner' in target) return targetLeaves(target.inner);
+        if ('items' in target) return target.items.flatMap(targetLeaves);
+        return [target];
+    }
+    function resultRoute(
+        variant: RepresentationVariant,
+        active = new Set<string>(),
+    ): { argument: number; path: number[] } {
+        if (active.has(variant.id)) return fail('Recursive callable result route');
+        active = new Set(active).add(variant.id);
+        const fn = fnFor(variant.unit, variant.function),
+            instructions = new Map<string, IRBlock['instructions'][number]>();
+        const scan = (b: IRBlock) => {
+            for (const i of b.instructions) {
+                if ('out' in i) instructions.set(i.out.id, i);
+                if (i.op === 'scope') scan(i.body);
+            }
+        };
+        scan(fn.body);
+        const route = (id: string): { argument: number; path: number[] } => {
+            const i = instructions.get(id) ?? fail('Unavailable callable result route');
+            if (i.op === 'scope') return route(i.body.result);
+            if (i.op === 'manual') return route(i.lens);
+            if (i.op === 'acquire') {
+                const argument = fn.parameters.findIndex((p) => p.lensPlace === i.slot.place);
+                if (argument < 0)
+                    return fail(
+                        'Private callable result backing requires a retained return contract',
+                    );
+                return { argument, path: i.slot.path };
+            }
+            if (i.op === 'call') {
+                const call =
+                    variant.calls.find((c) => c.value === i.out.id) ??
+                    fail('Missing result forwarding call');
+                const callee = variant.values.find((v) => v.value === i.callee)?.representation;
+                const inner =
+                    callee?.kind === 'native' && callee.definition === 'native/fst'
+                        ? { argument: 0, path: [0] }
+                        : resultRoute(
+                              variants.get(call.target) ??
+                                  fail('Invalid callable forwarding target'),
+                              active,
+                          );
+                const outer = route(i.args[inner.argument]!);
+                return { argument: outer.argument, path: [...outer.path, ...inner.path] };
+            }
+            return fail('Callable result requires a verified parameter projection');
+        };
+        return route(fn.body.result);
+    }
     const edges = new Map<string, Set<string>>();
     function verifyBody(
         unit: IRUnit,
@@ -661,6 +733,8 @@ export function verifyRepresentations(
         record: Pick<RepresentationVariant, 'values' | 'calls'>,
         state: State,
         owner: string,
+        resultDemand?: ValueRepresentation,
+        parameters?: { place: string; representation: ValueRepresentation; type: SemanticFlow }[],
     ): ValueRepresentation {
         const annotations = unique(record.values, (v) => v.value, 'value annotation');
         const calls = unique(record.calls, (c) => c.value, 'call annotation');
@@ -709,7 +783,12 @@ export function verifyRepresentations(
                 return false;
             });
         }
-        function block(b: IRBlock, s: State, allowLocalFocusResult = false): ValueRepresentation {
+        function block(
+            b: IRBlock,
+            s: State,
+            allowLocalFocusResult = false,
+            blockDemand?: ValueRepresentation,
+        ): ValueRepresentation {
             const deferred: { value: string; body: IRBlock }[] = [];
             function borrowedLoans(value: string, body: IRBlock): string[] {
                 const loans: string[] = [];
@@ -824,17 +903,20 @@ export function verifyRepresentations(
                                 focus.replacement,
                                 'Callable swap replacement provenance changed',
                             );
-                            const owner =
-                                s.focusOwners.get(i.lens) ?? fail('Nonlocal callable focus swap');
-                            s.places.set(
-                                owner.place,
-                                replaceValue(
-                                    s.places.get(owner.place) ??
-                                        fail('Missing callable focus owner'),
-                                    owner.path,
-                                    focus.replacement,
-                                ),
-                            );
+                            const callTarget = s.callResults.get(i.lens);
+                            const owner = s.focusOwners.get(i.lens);
+                            if (callTarget) writeTarget(callTarget, focus.replacement, s, false);
+                            else if (!owner) return fail('Nonlocal callable focus swap');
+                            if (owner)
+                                s.places.set(
+                                    owner.place,
+                                    replaceValue(
+                                        s.places.get(owner.place) ??
+                                            fail('Missing callable focus owner'),
+                                        owner.path,
+                                        focus.replacement,
+                                    ),
+                                );
                         } else {
                             if (v.kind !== 'data') fail('Swap lacks callable focus provenance');
                             const owner = s.focusOwners.get(i.lens);
@@ -1133,13 +1215,20 @@ export function verifyRepresentations(
                         const nested = clone(s);
                         requireEqual(
                             v,
-                            block(i.body, nested, true),
+                            block(
+                                i.body,
+                                nested,
+                                true,
+                                b.result === i.out.id ? blockDemand : undefined,
+                            ),
                             'Scope result representation mismatch',
                         );
                         s.places.forEach((_, place) =>
                             s.places.set(place, nested.places.get(place)!),
                         );
-                        if (v.kind === 'local-focus') {
+                        const callTarget = nested.callResults.get(i.body.result);
+                        if (callTarget) s.callResults.set(i.out.id, callTarget);
+                        if (v.kind === 'local-focus' && !callTarget) {
                             const owner = nested.focusOwners.get(i.body.result);
                             if (!owner)
                                 return fail('Escaping callable focus lacks a logical owner');
@@ -1356,9 +1445,10 @@ export function verifyRepresentations(
                                     arg.kind === 'focus-manual',
                             ) &&
                             !(
-                                callee.kind === 'native' &&
-                                callee.definition === 'native/fst' &&
-                                args.length === 1
+                                callee.kind === 'callable' ||
+                                (callee.kind === 'native' &&
+                                    callee.definition === 'native/fst' &&
+                                    args.length === 1)
                             )
                         )
                             return fail(
@@ -1519,8 +1609,56 @@ export function verifyRepresentations(
                                     writeTarget(target, readTarget(target, state, write), state);
                             });
                         }
+                        if (callee.kind === 'callable' && args.some(isFocus)) {
+                            const variant =
+                                variants.get(call.target) ?? fail('Missing demanded variant');
+                            const targets = i.args.map((id, n) =>
+                                isFocus(args[n]!) ? targetFor(s, id) : undefined,
+                            );
+                            if (isFocus(v)) {
+                                if (!call.demand)
+                                    return fail('Missing callable result replacement demand');
+                                requireEqual(
+                                    variant.resultDemand,
+                                    call.demand.replacement,
+                                    'Callable result demand changed',
+                                );
+                                const route = resultRoute(variant);
+                                s.callResults.set(
+                                    i.out.id,
+                                    projectedTarget(
+                                        targets[route.argument] ??
+                                            fail('Demanded call lacks argument backing'),
+                                        route.path,
+                                    ),
+                                );
+                            } else if (call.demand || variant.resultDemand)
+                                return fail('Unexpected callable result demand');
+                            s.finishes.set(i.out.id, (current, apply) => {
+                                if (apply)
+                                    targets.forEach((target, n) => {
+                                        if (target)
+                                            writeTarget(
+                                                target,
+                                                (
+                                                    variant.arguments[n] as Extract<
+                                                        ValueRepresentation,
+                                                        { kind: 'local-focus' }
+                                                    >
+                                                ).replacement,
+                                                current,
+                                            );
+                                    });
+                            });
+                            if (i.out.type.tag === 'plain') s.finishes.get(i.out.id)!(s, true);
+                        } else if (call.demand) return fail('Unexpected callable result demand');
                         const projectionFinish = s.finishes.get(i.out.id);
-                        if (projectionFinish) s.nativeProjections.add(i.out.id);
+                        if (
+                            projectionFinish &&
+                            callee.kind === 'native' &&
+                            callee.definition === 'native/fst'
+                        )
+                            s.nativeProjections.add(i.out.id);
                         const finishes = i.args.map((id) => s.finishes.get(id));
                         if (i.out.type.tag === 'flow') {
                             if (projectionFinish || finishes.some(Boolean))
@@ -1541,6 +1679,36 @@ export function verifyRepresentations(
                     s.focusWrites.set(i.out.id, i.out.type.write);
                 s.values.set(i.out.id, v);
             }
+            for (const instruction of b.instructions)
+                if (instruction.op === 'call') {
+                    const demand = calls.get(instruction.out.id)?.demand;
+                    if (demand) {
+                        if (demand.value) {
+                            if (
+                                !b.instructions.some(
+                                    (i) =>
+                                        i.op === 'swap' &&
+                                        i.lens === instruction.out.id &&
+                                        i.value === demand.value,
+                                )
+                            )
+                                return fail('Callable replacement demand source changed');
+                            requireEqual(
+                                demand.replacement,
+                                get(s, demand.value),
+                                'Callable replacement demand provenance changed',
+                            );
+                        } else {
+                            if (b.result !== instruction.out.id || !blockDemand)
+                                return fail('Unbound forwarded replacement demand');
+                            requireEqual(
+                                demand.replacement,
+                                blockDemand,
+                                'Forwarded replacement demand changed',
+                            );
+                        }
+                    }
+                }
             const result = get(s, b.result);
             if (
                 (result.kind === 'focus-tuple' || result.kind === 'focus-manual') &&
@@ -1582,7 +1750,42 @@ export function verifyRepresentations(
             for (const cleanup of deferred.reverse()) s.finishes.get(cleanup.value)!(s, false);
             return result;
         }
-        const result = block(body, state);
+        const result = block(body, state, !!parameters?.length, resultDemand);
+        if (isFocus(result) && parameters?.length) {
+            if (!resultDemand) return fail('Callable lens result requires a replacement demand');
+            const target =
+                targetFor(state, body.result) ?? fail('Demanded result lacks logical backing');
+            const leaves = targetLeaves(target);
+            if (leaves.length !== 1 || !parameters.some((p) => p.place === leaves[0]!.place))
+                return fail('Callable result requires a verified parameter projection');
+            parameters.forEach((p) =>
+                requireEqual(
+                    state.places.get(p.place),
+                    (p.representation as Extract<ValueRepresentation, { kind: 'local-focus' }>)
+                        .read,
+                    'Demanded lens setup effects require explicit storage contracts',
+                ),
+            );
+            requireEqual(
+                result.replacement,
+                resultDemand,
+                'Callable result replacement endpoint changed',
+            );
+            writeTarget(target, resultDemand, state, false);
+            state.finishes.get(body.result)?.(state, true);
+        }
+        parameters?.forEach((p) => {
+            if (!isFocus(p.representation) || p.type.tag !== 'flow')
+                return fail('Invalid demanded parameter');
+            const replacement = containsCallable(p.type.write)
+                ? state.places.get(p.place)!
+                : { kind: 'data' as const, layout: layoutId(p.type.write) };
+            requireEqual(
+                p.representation.replacement,
+                replacement,
+                'Callable parameter completion provenance changed',
+            );
+        });
         if (result.kind === 'lens') state.finishes.get(body.result)?.(clone(state), true);
         for (const annotation of annotations.values()) {
             if (annotation.cleanupJoins !== undefined && !checkedCleanupJoins.has(annotation.value))
@@ -1613,6 +1816,7 @@ export function verifyRepresentations(
             JSON.stringify([unit.id, fn.id]),
             v.captures.map(repKey),
             v.arguments.map(repKey),
+            ...(v.resultDemand ? [repKey(v.resultDemand)] : []),
         ]);
         if (
             v.key !== expectedKey ||
@@ -1625,7 +1829,11 @@ export function verifyRepresentations(
         v.arguments.forEach((a, i) => {
             fit(a, fn.type.args[i]!);
             const p = fn.parameters[i]!;
-            if (p.lensPlace) state.lenses.set(p.lensPlace, lens(a));
+            if (p.lensPlace && isFocus(a)) {
+                if (a.kind === 'focus-manual')
+                    return fail('Manual callable parameter demands require a completion adapter');
+                state.places.set(p.lensPlace, a.read);
+            } else if (p.lensPlace) state.lenses.set(p.lensPlace, lens(a));
             else bind(p.pattern, a, state);
         });
         v.captures.forEach((c, i) => {
@@ -1635,7 +1843,25 @@ export function verifyRepresentations(
         fit(v.result, fn.type.result);
         requireEqual(
             v.result,
-            verifyBody(unit, fn.body, v, state, v.id),
+            verifyBody(
+                unit,
+                fn.body,
+                v,
+                state,
+                v.id,
+                v.resultDemand,
+                fn.parameters.flatMap((p, i) =>
+                    p.lensPlace && isFocus(v.arguments[i]!)
+                        ? [
+                              {
+                                  place: p.lensPlace,
+                                  representation: v.arguments[i]!,
+                                  type: fn.type.args[i]!,
+                              },
+                          ]
+                        : [],
+                ),
+            ),
             'Variant result differs from its body',
         );
     }

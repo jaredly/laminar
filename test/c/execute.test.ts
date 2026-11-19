@@ -1,3 +1,4 @@
+import { demandSamples } from '../backend/demand-samples.ts';
 import { deferredStorageSamples } from '../backend/deferred-storage-samples.ts';
 import { lensStorageJoinSamples } from '../backend/lens-storage-join-samples.ts';
 import { storageJoinSamples } from '../backend/storage-join-samples.ts';
@@ -90,6 +91,7 @@ const native =
           })
         : undefined;
 const samples = [
+    ...demandSamples,
     ...deferredStorageSamples,
     ...lensStorageJoinSamples,
     ...storageJoinSamples,
