@@ -356,18 +356,6 @@ it('checks nested fst parent restoration provenance independently', () => {
     );
     expect(() => emitC(c)).toThrow('Callable fst parent replacement provenance changed');
 });
-for (const source of [
-    '{let p = (fn () 3, 4)\n let old = fst(~{@(p, fn () ())}) := fn () 7\n old()}',
-    '{let f = fn () 3\n let n = 4\n let old = fst(~{@((f, n), fn () ())}) := fn () 7\n old()}',
-])
-    it('keeps callable fst argument cleanup ordering explicit', () => {
-        const p = typedProgram(source);
-        expect(() =>
-            compileConcreteProgram(p, wasm32Emscripten('test'), [
-                { unit: p.units.at(-1)!.id, arguments: [] },
-            ]),
-        ).toThrow('Callable fst argument cleanup ordering requires an explicit adapter');
-    });
 function firstRetainedScope(b: any): any {
     for (const i of b.instructions) {
         if (i.op === 'scope') {
@@ -429,4 +417,16 @@ it('rejects reordered private scattered physical backing', () => {
         .find(Boolean)
         .retainedStorage.reverse();
     expect(() => verifyConcreteProgram(c)).toThrow('Retained scope storage contract changed');
+});
+it('rejects forged parent replacement through a returned callable fst frontend', () => {
+    const c = concrete(
+        callableFocusSamples.find((s) => s.name === 'callable fst over returned callable lens')!
+            .source,
+    );
+    const call = c.analysis.entries[0].calls.find((call: any) => call.demand);
+    expect(call.demand.consumer).toBeString();
+    const parent = c.analysis.entries[0].values.find((v: any) => v.value === call.value);
+    parent.representation.replacement = structuredClone(parent.representation.read);
+    expect(() => verifyConcreteProgram(c)).toThrow('Call result annotation mismatch');
+    expect(() => emitC(c)).toThrow('Call result annotation mismatch');
 });

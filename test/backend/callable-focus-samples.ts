@@ -866,4 +866,44 @@ export const callableFocusSamples = [
         source: 'fn pass(f) {f}\n{let first = pass(fst)\n let f = fn () 3\n let n = 4\n let old = first(~(f, n)) := fn () 7\n (old(), f(), n)}',
         expected: [3, 7, 4],
     },
+    {
+        name: 'callable fst over manual frontend',
+        source: '{let p = (fn () 3, 4)\n let old = fst(~{@(p, fn () ())}) := fn () 7\n let (f, n) = p\n (old(), f(), n)}',
+        expected: [3, 7, 4],
+    },
+    {
+        name: 'callable fst cleanup observes projected replacement',
+        source: '{let p = (fn () 3, 4)\n let seen = 0\n let old = fst(~{@(p, {let (g, k) = p := (fn () 9, 5)\n seen := g() + k\n fn () ()})}) := fn () 7\n let (f, n) = p\n (old(), seen, f(), n)}',
+        expected: [3, 11, 9, 5],
+    },
+    {
+        name: 'callable fst over scattered manual frontend',
+        source: '{let f = fn () 3\n let n = 4\n let old = fst(~{@((f, n), fn () ())}) := fn () 7\n (old(), f(), n)}',
+        expected: [3, 7, 4],
+    },
+    {
+        name: 'callable fst scattered manual cleanup',
+        source: '{let f = fn () 3\n let n = 4\n let seen = 0\n let old = fst(~{@((f, n), {let installed = f := fn () 9\n seen := installed()\n fn () ()})}) := fn () 7\n (old(), seen, f(), n)}',
+        expected: [3, 7, 9, 4],
+    },
+    {
+        name: 'callable fst over returned callable lens',
+        source: 'fn first(~(x, y)) ~x\n{let p = ((fn () 3, 1), 4)\n let old = fst(~first(~p)) := fn () 7\n let ((f, m), n) = p\n (old(), f(), m, n)}',
+        expected: [3, 7, 1, 4],
+    },
+    {
+        name: 'callable fst data sibling of returned lens',
+        source: 'fn first(~(x, y)) ~x\n{let p = ((1, fn () 3), 4)\n let old = fst(~first(~p)) := 9\n let ((a, f), n) = p\n (old, a, f(), n)}',
+        expected: [1, 9, 3, 4],
+    },
+    {
+        name: 'callable fst alias of returned lens',
+        source: 'fn first(~(x, y)) ~x\n{let p = ((fn () 3, 1), 4)\n {let l = ~fst(~first(~p))\n let o = l := fn () 7\n ()}\n let ((f, m), n) = p\n (f(), m, n)}',
+        expected: [7, 1, 4],
+    },
+    {
+        name: 'callable fst over private returned backing',
+        source: 'fn temp(~log) ~{lens v <- (fn () 1, 2)\n {let (g, n) = v\n let o = log := g\n ()}}\n{let log = fn () 0\n let old = fst(~temp(~log)) := fn () 8\n (old(), log())}',
+        expected: [1, 8],
+    },
 ];

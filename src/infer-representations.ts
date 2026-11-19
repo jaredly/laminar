@@ -424,10 +424,15 @@ export function inferRepresentations(
         type: SemanticFlow,
     ): ValueRepresentation => {
         if (type.tag === 'plain') return data(type.value);
-        if (name === 'native/fst' && args[0]?.kind === 'focus-tuple')
-            return args[0].items[0] ?? fail('Missing fst focus child');
-        if (name === 'native/fst' && args[0]?.kind === 'focus-manual')
-            return fail('Callable fst argument cleanup ordering requires an explicit adapter');
+        if (
+            name === 'native/fst' &&
+            (args[0]?.kind === 'focus-tuple' || args[0]?.kind === 'focus-manual')
+        ) {
+            const child = scatteredTuple(args[0]).items[0] ?? fail('Missing fst focus child');
+            // Manual cleanup later rewrites its frontend children to their post-cleanup
+            // descriptors, so the projection keeps its own replacement endpoint.
+            return args[0].kind === 'focus-manual' ? structuredClone(child) : child;
+        }
         if (name === 'native/fst' && args[0]?.kind === 'local-focus') {
             if (!containsCallable(type.read) && !containsCallable(type.write))
                 return { kind: 'lens', shape: reps.thin(type.read, type.write) };
@@ -441,6 +446,34 @@ export function inferRepresentations(
             };
         return fail(`No returned-lens representation contract for ${name}`);
     };
+    /** The parent replacement after `fst` completes over a frontend without a local owner. */
+    const fstParentReplacement = (
+        read: ValueRepresentation,
+        write: SemanticType,
+        projection: ValueRepresentation,
+        type: SemanticFlow,
+    ): ValueRepresentation =>
+        !containsCallable(write)
+            ? data(write)
+            : replaceValue(
+                  read,
+                  [0],
+                  projection.kind === 'local-focus'
+                      ? projection.replacement
+                      : type.tag === 'flow'
+                        ? data(type.write)
+                        : fail('Callable fst projection lacks a flow type'),
+              );
+    /** A scattered focus beneath any manual wrappers; `fst` projects its first child
+     * while the wrappers' cleanup runs after projection completion. */
+    const scatteredTuple = (
+        v: ValueRepresentation,
+    ): Extract<ValueRepresentation, { kind: 'focus-tuple' }> =>
+        v.kind === 'focus-manual'
+            ? scatteredTuple(v.frontend)
+            : v.kind === 'focus-tuple'
+              ? v
+              : fail('Expected a scattered callable focus');
     const isFocus = (
         v: ValueRepresentation,
     ): v is Extract<
@@ -1279,16 +1312,6 @@ export function inferRepresentations(
                         )
                     )
                         return fail('Callable focus calls require verified native fst provenance');
-                    if (
-                        callee.kind === 'native' &&
-                        callee.definition === 'native/fst' &&
-                        args[0]?.kind !== 'lens' &&
-                        s.finishes.has(i.args[0]!) &&
-                        !s.nativeProjections.has(i.args[0]!)
-                    )
-                        return fail(
-                            'Callable fst argument cleanup ordering requires an explicit adapter',
-                        );
                     if (callee.kind === 'callable-choice' && args.some(isFocus)) {
                         // Each alternative is specialized independently; they share one
                         // caller backing, so every option must reach the same contract.
@@ -1454,31 +1477,56 @@ export function inferRepresentations(
                         const parent = args[0],
                             owner = s.focusOwners.get(i.args[0]!);
                         const write = s.focusWrites.get(i.args[0]!);
-                        if (!owner || !write)
+                        const callTarget = s.callResults.get(i.args[0]!);
+                        const privateResult = s.privateCallResults.has(i.args[0]!);
+                        if ((!owner && !callTarget && !privateResult) || !write)
                             return fail('Callable fst completion requires a direct owned frontend');
-                        s.focusOwners.set(i.out.id, {
-                            place: owner.place,
-                            path: [...owner.path, 0],
-                        });
-                        s.finishes.set(i.out.id, (state, apply) => {
-                            if (apply)
-                                parent.replacement = containsCallable(write)
-                                    ? projectValue(state.places.get(owner.place)!, owner.path)
-                                    : data(write);
-                        });
+                        if (owner) {
+                            s.focusOwners.set(i.out.id, {
+                                place: owner.place,
+                                path: [...owner.path, 0],
+                            });
+                            s.finishes.set(i.out.id, (state, apply) => {
+                                if (apply)
+                                    parent.replacement = containsCallable(write)
+                                        ? projectValue(state.places.get(owner.place)!, owner.path)
+                                        : data(write);
+                            });
+                        } else {
+                            // A returned-lens frontend completes after this projection
+                            // (argument cleanup follows projection completion); it reads
+                            // the rebuilt parent replacement as its demand. The sibling
+                            // is exclusively borrowed, so it retains its setup read.
+                            if (callTarget)
+                                s.callResults.set(i.out.id, projectedTarget(callTarget, [0]));
+                            else s.privateCallResults.add(i.out.id);
+                            const projection = out,
+                                type = i.out.type;
+                            s.finishes.set(i.out.id, (_state, apply) => {
+                                if (apply)
+                                    parent.replacement = fstParentReplacement(
+                                        parent.read,
+                                        write,
+                                        projection,
+                                        type,
+                                    );
+                            });
+                        }
                     }
                     if (
                         callee.kind === 'native' &&
                         callee.definition === 'native/fst' &&
-                        args[0]?.kind === 'focus-tuple'
+                        (args[0]?.kind === 'focus-tuple' || args[0]?.kind === 'focus-manual')
                     ) {
                         const target = s.focusTargets.get(i.args[0]!),
                             write = s.focusWrites.get(i.args[0]!);
-                        if (!target || !('items' in target) || !write)
+                        let tuple = target;
+                        while (tuple && 'inner' in tuple) tuple = tuple.inner;
+                        if (!target || !tuple || !('items' in tuple) || !write)
                             return fail(
                                 'Callable fst completion requires a direct scattered frontend',
                             );
-                        const child = target.items[0] ?? fail('Missing fst logical child');
+                        const child = tuple.items[0] ?? fail('Missing fst logical child');
                         if ('place' in child)
                             s.focusOwners.set(i.out.id, {
                                 place: child.place,

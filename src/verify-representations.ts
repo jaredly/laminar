@@ -604,12 +604,25 @@ export function verifyRepresentations(
         v: ValueRepresentation,
     ): void {
         if (target !== callee.definition) fail('Wrong native call target');
-        if (callee.definition === 'native/fst' && args[0]?.kind === 'focus-tuple') {
-            requireEqual(v, args[0].items[0], 'Scattered fst child provenance changed');
+        if (
+            callee.definition === 'native/fst' &&
+            (args[0]?.kind === 'focus-tuple' || args[0]?.kind === 'focus-manual')
+        ) {
+            let tuple: ValueRepresentation = args[0];
+            while (tuple.kind === 'focus-manual') tuple = tuple.frontend;
+            if (tuple.kind !== 'focus-tuple') return fail('Expected a scattered callable focus');
+            const child = tuple.items[0] ?? fail('Missing fst focus child');
+            // Under manual cleanup the frontend child ends with its post-cleanup
+            // descriptor; the projection's own replacement is checked at its swap.
+            if (args[0].kind === 'focus-manual' && isFocus(v) && isFocus(child))
+                requireEqual(
+                    [v.kind, v.read],
+                    [child.kind, child.read],
+                    'Scattered fst child provenance changed',
+                );
+            else requireEqual(v, child, 'Scattered fst child provenance changed');
             return;
         }
-        if (callee.definition === 'native/fst' && args[0]?.kind === 'focus-manual')
-            return fail('Callable fst argument cleanup ordering requires an explicit adapter');
         if (callee.definition === 'native/fst' && args[0]?.kind === 'local-focus') {
             const read = projectValue(args[0].read, [0]);
             if (v.kind === 'local-focus')
@@ -1558,15 +1571,6 @@ export function verifyRepresentations(
                                 );
                         } else if (callee.kind === 'native') {
                             if (call.targets !== undefined) fail('Native call has dynamic targets');
-                            if (
-                                callee.definition === 'native/fst' &&
-                                args[0]?.kind !== 'lens' &&
-                                s.finishes.has(i.args[0]!) &&
-                                !s.nativeProjections.has(i.args[0]!)
-                            )
-                                return fail(
-                                    'Callable fst argument cleanup ordering requires an explicit adapter',
-                                );
                             nativeCall(callee, call.target, args, v);
                         } else fail('Call operand is not callable');
                         if (
@@ -1577,40 +1581,70 @@ export function verifyRepresentations(
                             const parent = args[0],
                                 owner = s.focusOwners.get(i.args[0]!);
                             const write = s.focusWrites.get(i.args[0]!);
-                            if (!owner || !write)
+                            const callTarget = s.callResults.get(i.args[0]!);
+                            const privateResult = s.privateCallResults.has(i.args[0]!);
+                            if ((!owner && !callTarget && !privateResult) || !write)
                                 return fail(
                                     'Callable fst completion requires a direct owned frontend',
                                 );
-                            s.focusOwners.set(i.out.id, {
-                                place: owner.place,
-                                path: [...owner.path, 0],
-                            });
-                            s.finishes.set(i.out.id, (state, apply) => {
-                                if (apply)
+                            if (owner) {
+                                s.focusOwners.set(i.out.id, {
+                                    place: owner.place,
+                                    path: [...owner.path, 0],
+                                });
+                                s.finishes.set(i.out.id, (state, apply) => {
+                                    if (apply)
+                                        requireEqual(
+                                            parent.replacement,
+                                            containsCallable(write)
+                                                ? projectValue(
+                                                      state.places.get(owner.place)!,
+                                                      owner.path,
+                                                  )
+                                                : { kind: 'data', layout: layoutId(write) },
+                                            'Callable fst parent replacement provenance changed',
+                                        );
+                                });
+                            } else {
+                                if (callTarget)
+                                    s.callResults.set(i.out.id, projectedTarget(callTarget, [0]));
+                                else s.privateCallResults.add(i.out.id);
+                                const type = i.out.type;
+                                s.finishes.set(i.out.id, (_state, apply) => {
+                                    if (!apply) return;
+                                    const component =
+                                        v.kind === 'local-focus'
+                                            ? v.replacement
+                                            : type.tag === 'flow'
+                                              ? {
+                                                    kind: 'data' as const,
+                                                    layout: layoutId(type.write),
+                                                }
+                                              : fail('Callable fst projection lacks a flow type');
                                     requireEqual(
                                         parent.replacement,
                                         containsCallable(write)
-                                            ? projectValue(
-                                                  state.places.get(owner.place)!,
-                                                  owner.path,
-                                              )
+                                            ? replaceValue(parent.read, [0], component)
                                             : { kind: 'data', layout: layoutId(write) },
                                         'Callable fst parent replacement provenance changed',
                                     );
-                            });
+                                });
+                            }
                         }
                         if (
                             callee.kind === 'native' &&
                             callee.definition === 'native/fst' &&
-                            args[0]?.kind === 'focus-tuple'
+                            (args[0]?.kind === 'focus-tuple' || args[0]?.kind === 'focus-manual')
                         ) {
                             const target = s.focusTargets.get(i.args[0]!),
                                 write = s.focusWrites.get(i.args[0]!);
-                            if (!target || !('items' in target) || !write)
+                            let tuple = target;
+                            while (tuple && 'inner' in tuple) tuple = tuple.inner;
+                            if (!target || !tuple || !('items' in tuple) || !write)
                                 return fail(
                                     'Callable fst completion requires a direct scattered frontend',
                                 );
-                            const child = target.items[0] ?? fail('Missing fst logical child');
+                            const child = tuple.items[0] ?? fail('Missing fst logical child');
                             if ('place' in child)
                                 s.focusOwners.set(i.out.id, {
                                     place: child.place,

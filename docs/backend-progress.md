@@ -1522,3 +1522,35 @@ native `fst` over callable results or manual arguments. Phase 6 remains incomple
 Validation: 1518 non-execution passes with only the existing source-identity
 snapshot failure; the full `LAMINAR_EXEC=1` execution file passed 1162 native/Wasm
 cases in 309.62 seconds without retries. TypeScript checks pass. Remote CI was not run.
+
+
+## Phase 6: callable fst over manual and returned-lens frontends
+
+The `Callable fst argument cleanup ordering requires an explicit adapter` guard is
+removed. It existed because the legacy and typed evaluators disagreed on whether a
+lens argument's cleanup ran before returned-lens completion; `47ddf1b` aligned
+legacy decomposition with the typed order (projection completion, then argument
+cleanup), and representation analysis already composes finishes in that order.
+
+Native `fst` now accepts every callable focus frontend:
+
+- Manual frontends over local storage keep their existing owner/path projection;
+  cleanup observes the projected replacement.
+- Scattered manual frontends project the first child beneath any wrappers. The
+  projection keeps its own replacement endpoint, because manual completion later
+  rewrites the frontend's children to post-cleanup descriptors; verification
+  compares the child's read endpoint and checks the replacement at its swap.
+- Returned-lens frontends project the routed `callResults` target, or remain
+  callee-private. On completion the parent replacement is rebuilt from its setup
+  read with the projected component (siblings are exclusively borrowed), and the
+  parent's lazy demand completion consumes it. Verification derives the same
+  reconstruction independently.
+
+Eight shared samples cover local and scattered manual frontends, with and without
+observing cleanup, returned callable lenses, data siblings, persistent aliases and
+callee-private backing. The two former guard tests are now execution samples; a
+corruption test checks that forged parent replacements are rejected.
+
+Remaining explicit boundaries: dispatch alternatives with differing parameter
+contracts, and branch-selected or dispatched callable lens results. Phase 6
+remains incomplete.
