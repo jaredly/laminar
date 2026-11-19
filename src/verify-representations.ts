@@ -311,6 +311,7 @@ export function verifyRepresentations(
         values: Map<string, ValueRepresentation>;
         places: Map<string, ValueRepresentation>;
         lenses: Map<string, LensRep>;
+        focusOwners: Map<string, string>;
         finishes: Map<string, (state: State, apply: boolean) => void>;
         loanFinishes: Map<string, string>;
     };
@@ -318,6 +319,7 @@ export function verifyRepresentations(
         values: new Map(),
         places: new Map(),
         lenses: new Map(),
+        focusOwners: new Map(),
         finishes: new Map(),
         loanFinishes: new Map(),
     });
@@ -325,6 +327,7 @@ export function verifyRepresentations(
         values: new Map(s.values),
         places: new Map(s.places),
         lenses: new Map(s.lenses),
+        focusOwners: new Map(s.focusOwners),
         finishes: new Map(s.finishes),
         loanFinishes: new Map(s.loanFinishes),
     });
@@ -508,7 +511,14 @@ export function verifyRepresentations(
         }
         function block(b: IRBlock, s: State): ValueRepresentation {
             const deferred: { value: string; body: IRBlock }[] = [];
-            const localFocusPlaces = new Map<string, string>();
+            function borrowedLoans(value: string, body: IRBlock): string[] {
+                const loans: string[] = [];
+                for (const use of body.instructions) {
+                    if (use.op === 'borrow' && use.lens === value) loans.push(use.loan);
+                    if (use.op === 'scope') loans.push(...borrowedLoans(value, use.body));
+                }
+                return loans;
+            }
 
             for (const i of b.instructions) {
                 if (i.op === 'bind') {
@@ -517,7 +527,15 @@ export function verifyRepresentations(
                 }
                 if (i.op === 'borrow') {
                     const loan = unit.loans.find((l) => l.id === i.loan)!;
-                    if (loan.owners) s.lenses.set(loan.place, lens(get(s, i.lens)));
+                    const focus = get(s, i.lens);
+                    if (focus.kind === 'local-focus') {
+                        if (
+                            loan.owners ||
+                            loan.path.length ||
+                            s.focusOwners.get(i.lens) !== loan.place
+                        )
+                            return fail('Callable aliases require a direct whole-owned-local loan');
+                    } else if (loan.owners) s.lenses.set(loan.place, lens(focus));
                     s.loanFinishes.set(i.loan, i.lens);
                     continue;
                 }
@@ -548,8 +566,7 @@ export function verifyRepresentations(
                                 'Callable swap replacement provenance changed',
                             );
                             s.places.set(
-                                localFocusPlaces.get(i.lens) ??
-                                    fail('Nonlocal callable focus swap'),
+                                s.focusOwners.get(i.lens) ?? fail('Nonlocal callable focus swap'),
                                 focus.replacement,
                             );
                         } else if (v.kind !== 'data') fail('Swap lacks callable focus provenance');
@@ -587,10 +604,10 @@ export function verifyRepresentations(
                                 i.out.type.tag !== 'flow' ||
                                 i.slot.path.length ||
                                 s.lenses.has(i.slot.place) ||
-                                unit.loans.some((l) => l.place === i.slot.place) ||
-                                b.instructions.filter(
+                                (b.instructions.filter(
                                     (use) => use.op === 'swap' && use.lens === i.out.id,
-                                ).length !== 1
+                                ).length !== 1 &&
+                                    borrowedLoans(i.out.id, b).length !== 1)
                             )
                                 return fail(
                                     'Callable focuses require a direct whole-owned-local swap',
@@ -603,7 +620,27 @@ export function verifyRepresentations(
                                     : { kind: 'data', layout: layoutId(i.out.type.read) },
                                 'Callable focus read provenance changed',
                             );
-                            localFocusPlaces.set(i.out.id, i.slot.place);
+                            s.focusOwners.set(i.out.id, i.slot.place);
+                            const borrowed = borrowedLoans(i.out.id, b);
+                            if (borrowed.length) {
+                                const loan = unit.loans.find((l) => l.id === borrowed[0])!;
+                                if (loan.owners || loan.place !== i.slot.place || loan.path.length)
+                                    return fail(
+                                        'Callable aliases require a direct whole-owned-local loan',
+                                    );
+                                const write = i.out.type.write;
+                                s.finishes.set(i.out.id, (state, apply) => {
+                                    if (apply)
+                                        requireEqual(
+                                            v.replacement,
+                                            containsCallable(write)
+                                                ? (state.places.get(i.slot.place) ??
+                                                      fail('Missing callable alias owner'))
+                                                : { kind: 'data', layout: layoutId(write) },
+                                            'Callable alias final replacement provenance changed',
+                                        );
+                                });
+                            }
                             break;
                         }
                         const incoming = s.lenses.get(i.slot.place),

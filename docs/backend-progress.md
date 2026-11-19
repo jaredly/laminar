@@ -1086,3 +1086,31 @@ execution cases). Full execution passed in 366.66 seconds without retries,
 including strict/optimized native builds, supported sanitizers, and both
 Emscripten/Node optimization levels. TypeScript and diff checks passed. Remote CI
 was not run.
+
+
+## Direct persistent callable aliases
+
+Whole-local direct aliases now retain explicit logical-owner identity in
+representation state across lexical scopes. Their initial `local-focus` read
+comes from current storage and their final replacement comes from release-time
+storage; each intervening callable swap independently updates the original owner.
+The serialized verifier independently derives/checks those identities, reads,
+ordered RHS descriptors, release endpoints and owner continuation. Computed lenses
+with private backing still use their existing representation restrictions.
+
+Thirteen shared cases exercise nested/unused loans, repeated updates, consume/refill,
+callable/data changes, aggregate contents, branch joins, deferred scalar completion,
+unused environment disposal and ordinary returned callable values. Three corruption
+cases check release replacement, swap read and continuation provenance; explicit
+projected/manual endpoint restrictions and callable owner exclusivity remain tested.
+C cell-based views already provide the required storage version behavior; no C
+lowering or concurrent scheduler changes were needed. Callable focus projections,
+computed/manual/scattered endpoints and call/return ABIs remain open. Phase 6 is
+incomplete.
+
+Validation for direct persistent callable aliases: **2310 pass / 39 existing skips /
+0 failures across 42 files** (1342 non-execution tests; 968 native/Wasm cases).
+Full strict C11, optimized native, supported sanitizers and both Emscripten/Node
+optimization levels passed without retries in 359.77 seconds. The final focused
+alias execution run passed all 26 cases. TypeScript and diff checks pass. Remote
+CI was not run.

@@ -90,6 +90,7 @@ type State = {
     values: Map<string, ValueRepresentation>;
     places: Map<string, ValueRepresentation>;
     lenses: Map<string, LensRepId>;
+    focusOwners: Map<string, string>;
     finishes: Map<string, (state: State, apply: boolean) => void>;
     loanFinishes: Map<string, string>;
 };
@@ -152,6 +153,7 @@ export function inferRepresentations(
         values: new Map(),
         places: new Map(),
         lenses: new Map(),
+        focusOwners: new Map(),
         finishes: new Map(),
         loanFinishes: new Map(),
     });
@@ -159,6 +161,7 @@ export function inferRepresentations(
         values: new Map(s.values),
         places: new Map(s.places),
         lenses: new Map(s.lenses),
+        focusOwners: new Map(s.focusOwners),
         finishes: new Map(s.finishes),
         loanFinishes: new Map(s.loanFinishes),
     });
@@ -384,7 +387,17 @@ export function inferRepresentations(
         // restoration-time types verified by typed IR, rather than setup types.
         // Callable dependencies retain their protected lexical provenance.
         const deferred: { value: string; body: IRBlock }[] = [];
-        const localFocusPlaces = new Map<string, string>();
+        // Direct aliases keep the same logical place, even across lexical scopes.
+        // Computed lenses instead have private backing and remain a separate ABI.
+        function borrows(value: string, b: IRBlock): string[] {
+            return b.instructions.flatMap((use) =>
+                use.op === 'borrow' && use.lens === value
+                    ? [use.loan]
+                    : use.op === 'scope'
+                      ? borrows(value, use.body)
+                      : [],
+            );
+        }
 
         function deferredStorageUse(
             body: IRBlock,
@@ -434,7 +447,11 @@ export function inferRepresentations(
             }
             if (i.op === 'borrow') {
                 const loan = unit.loans.find((l) => l.id === i.loan)!;
-                if (loan.owners) s.lenses.set(loan.place, shape(get(s, i.lens)));
+                const focus = get(s, i.lens);
+                if (focus.kind === 'local-focus') {
+                    if (loan.owners || loan.path.length || s.focusOwners.get(i.lens) !== loan.place)
+                        return fail('Callable aliases require a direct whole-owned-local loan');
+                } else if (loan.owners) s.lenses.set(loan.place, shape(focus));
                 s.loanFinishes.set(i.loan, i.lens);
                 continue;
             }
@@ -474,20 +491,38 @@ export function inferRepresentations(
                         if (
                             i.slot.path.length ||
                             s.lenses.has(i.slot.place) ||
-                            unit.loans.some((l) => l.place === i.slot.place) ||
-                            body.instructions.filter(
+                            (body.instructions.filter(
                                 (use) => use.op === 'swap' && use.lens === i.out.id,
-                            ).length !== 1
+                            ).length !== 1 &&
+                                borrows(i.out.id, body).length !== 1)
                         )
                             return fail('Callable focuses require a direct whole-owned-local swap');
                         const stored = s.places.get(i.slot.place);
                         const read = containsCallable(i.out.type.read)
                             ? (stored ?? fail('Callable focus lacks owned provenance'))
                             : data(i.out.type.read);
-                        // The only consumer is the direct swap below. Resolve replacement
-                        // provenance after its ordered RHS has been analyzed.
+                        // Resolve replacement provenance at the ordered swap, or at
+                        // lexical release for a direct persistent alias. Neither route
+                        // materializes a pointer into a superseded storage version.
                         out = { kind: 'local-focus', read, replacement: read };
-                        localFocusPlaces.set(i.out.id, i.slot.place);
+                        s.focusOwners.set(i.out.id, i.slot.place);
+                        const borrowed = borrows(i.out.id, body);
+                        if (borrowed.length) {
+                            const loan = unit.loans.find((l) => l.id === borrowed[0])!;
+                            if (loan.owners || loan.place !== i.slot.place || loan.path.length)
+                                return fail(
+                                    'Callable aliases require a direct whole-owned-local loan',
+                                );
+                            const focus = out;
+                            const write = i.out.type.write;
+                            s.finishes.set(i.out.id, (state, apply) => {
+                                if (apply)
+                                    focus.replacement = containsCallable(write)
+                                        ? (state.places.get(i.slot.place) ??
+                                          fail('Missing callable alias owner'))
+                                        : data(write);
+                            });
+                        }
                         break;
                     }
                     let base = s.lenses.get(i.slot.place);
@@ -556,7 +591,7 @@ export function inferRepresentations(
                         focus.replacement = get(s, i.value);
                         out = focus.read;
                         s.places.set(
-                            localFocusPlaces.get(i.lens) ?? fail('Nonlocal callable focus swap'),
+                            s.focusOwners.get(i.lens) ?? fail('Nonlocal callable focus swap'),
                             focus.replacement,
                         );
                     } else out = data(i.out.type.value);

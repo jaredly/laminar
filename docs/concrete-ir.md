@@ -478,3 +478,21 @@ before that acquisition guard can be relaxed. Projections, callable focus call a
 return ABIs, manual/scattered endpoints, and unsupported completion routes remain
 open. Phase 6 is incomplete. C emission/storage and the concurrent execution build
 scheduler are unchanged.
+
+
+## Direct persistent alias endpoint contracts
+
+`local-focus` now also describes a direct whole-local persistent alias acquisition.
+Its `read` is the original owner descriptor and its `replacement` is the final
+release-time descriptor, independently checked against verified whole-place loan
+identity and current logical storage. Each swap through the alias has a separate
+`local-focus` contract for its own read and ordered replacement. Representation
+state tracks acquisition-to-owner identity across lexical clones without embedding
+local addresses or places in representation keys. Direct loans retain their
+original place and permit; computed lens backing remains separate.
+
+Physical endpoint records retain the existing exact typed pointers and restoration
+ABI; C direct aliases use logical views without materializing those records.
+Deferred scalar-lens completion reuses the existing release handlers. Projections,
+computed/manual/scattered callable endpoints and callable focus parameters/results
+remain unsupported adapter work. Phase 6 remains incomplete.

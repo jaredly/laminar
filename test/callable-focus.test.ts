@@ -53,11 +53,6 @@ it('rejects a forged local focus physical pointer', () => {
     expect(() => verifyConcreteProgram(c)).toThrow('Incorrect concrete storage fields');
     expect(() => emitC(c)).toThrow('Incorrect concrete storage fields');
 });
-it('keeps borrowed callable focuses explicit', () => {
-    expect(() =>
-        concrete('{let x = 3\n let f = fn () x\n let a = ~f\n let old = a := fn () 5\n old()}'),
-    ).toThrow('Callable focuses require a direct whole-owned-local swap');
-});
 it('independently rejects a forged convergent branch continuation', () => {
     const c = concrete(
         callableFocusSamples.find(
@@ -92,14 +87,49 @@ for (const source of [
         expect(() => emitC(c)).toThrow('Callable lens endpoints require explicit focus provenance');
     });
 
+const aliasSource = callableFocusSamples.find(
+    (s) => s.name === 'callable alias replacement and owner continuation',
+)!.source;
+it('independently checks the final persistent alias replacement at release', () => {
+    const c = concrete(aliasSource);
+    const focus = c.analysis.entries[0].values.find(
+        (v: any) => v.representation.kind === 'local-focus',
+    ).representation;
+    focus.replacement = structuredClone(focus.read);
+    expect(() => verifyConcreteProgram(c)).toThrow(
+        'Callable alias final replacement provenance changed',
+    );
+    expect(() => emitC(c)).toThrow('Callable alias final replacement provenance changed');
+});
+it('independently checks an alias swap against the current owner', () => {
+    const c = concrete(aliasSource);
+    const focuses = c.analysis.entries[0].values.filter(
+        (v: any) => v.representation.kind === 'local-focus',
+    );
+    focuses[1].representation.read = structuredClone(focuses[0].representation.replacement);
+    expect(() => verifyConcreteProgram(c)).toThrow('Callable focus read provenance changed');
+});
+it('independently checks the owner continuation after alias release', () => {
+    const c = concrete(aliasSource);
+    const values = c.analysis.entries[0].values;
+    const initial = values.find((v: any) => v.representation.kind === 'local-focus').representation
+        .read;
+    values.filter((v: any) => v.representation.kind === 'callable').at(-1).representation =
+        structuredClone(initial);
+    expect(() => verifyConcreteProgram(c)).toThrow('Moved callable provenance changed');
+});
+
 for (const [name, source] of [
-    ['unused persistent callable alias', '{let x = 3\n let f = fn () x\n {let a = ~f\n ()}\n f()}'],
     [
-        'aggregate persistent alias',
-        '{let x = 3\n let p = (fn () x, 4)\n let a = ~p\n let old = a := (fn () 5, true)\n let (f, n) = old\n (f(), n)}',
+        'projected alias',
+        '{let x = 3\n let p = (fn () x, 4)\n let (a, b) = ~p\n let old = a := fn () 5\n old()}',
+    ],
+    [
+        'manual endpoint',
+        '{let x = 3\n let f = fn () x\n let a = ~{@(f, fn () ())}\n let old = a := fn () 5\n old()}',
     ],
 ])
-    it(`keeps ${name} behind the endpoint restoration boundary`, () => {
+    it(`keeps the callable ${name} adapter explicit`, () => {
         const p = typedProgram(source);
         expect(() =>
             compileConcreteProgram(p, wasm32Emscripten('test'), [
@@ -107,3 +137,8 @@ for (const [name, source] of [
             ]),
         ).toThrow('Callable focuses require a direct whole-owned-local swap');
     });
+it('keeps persistent aliases exclusive over callable owners', () => {
+    expect(() =>
+        typedProgram('{let x = 3\n let f = fn () x\n let a = ~f\n f()\n a := fn () 5}'),
+    ).toThrow('Binding is exclusively borrowed until its aliases leave scope');
+});

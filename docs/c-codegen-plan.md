@@ -5,13 +5,13 @@ execute the documented scalar/tuple native C and Emscripten/Node subset. Typed
 indirect closure invocation and environment disposal implement part of phase 6.
 Compatible user-defined/native intrinsic joins and differing callable results
 execute, including differing lens-result shapes and recursive callable tuple results. Owned callable tuples and recursive callable tuple branch-result joins execute through concrete recursive storage; callable
-general focus storage/restoration remains open; direct whole-owned-local callable swaps execute. Phase 7 runtime and host integration and phase 8 optimization remain broader
+general focus storage/restoration remains open; direct whole-owned-local callable swaps and persistent aliases execute. Phase 7 runtime and host integration and phase 8 optimization remain broader
 work. This is subset
 coverage, not completion of every phase exit gate.
 
 The scoped lens extensions are complete as of `707521c`; see the
 [completion record and follow-up mapping](checker-completeness-handoff.md).
-Latest local verification: **2268 pass / 39 existing skips / 0 failures across
+Latest local verification: **2310 pass / 39 existing skips / 0 failures across
 42 files**, with default TypeScript and diff checks passing. The latest full execution run passed without retries. Remote CI was not run for
 these slices. See also [the implementation record](backend-progress.md),
 [backend contract](backend-contract.md), [typed IR API](typed-ir.md), and
@@ -494,3 +494,42 @@ execution cases). Full execution passed in 366.66 seconds without retries,
 including strict/optimized native builds, supported sanitizers, and both
 Emscripten/Node optimization levels. TypeScript and diff checks passed. Remote CI
 was not run.
+
+
+## Latest phase 6 slice: direct persistent callable aliases
+
+Direct whole-local persistent aliases (`let a = ~f`) now execute for callable and
+recursive aggregate-with-callable contents. The typed IR uses the original place
+plus a loan permit for these aliases; it does not allocate a computed lens owner.
+Representation state explicitly retains acquisition-to-logical-owner identities
+across lexical clones. Acquisition permits one direct same-block swap or one
+whole-place direct loan through lexical scopes. Computed/manual frontends and
+projected acquisitions retain their restrictions.
+
+The `local-focus` read descriptor comes from the current logical owner; direct
+swaps retain independent ordered RHS descriptors and update that owner. An alias
+acquisition instead derives its final replacement descriptor at loan release,
+including deferred scalar-lens completion. Independent serialized verification
+checks the loan's exact whole owner, the initial read, every swap and the final
+replacement, then checks subsequent owner reads. Semantic lens shapes cannot
+substitute for these explicit callable endpoints.
+
+Thirteen shared samples cover nested loans, repeated replacement, consume/refill,
+callable/data transitions, recursive aggregate replacement, divergent branches,
+unused loans/environments, deferred scalar completion and returned ordinary
+callable values. Corruption coverage rejects changed final replacement, swap read
+and owner continuation descriptors. Safety/boundary coverage preserves exclusive
+owner protection and explicit projected/manual callable endpoint diagnostics.
+Existing C logical views keep cell/path identity across version changes; this
+slice changes no C storage, environment allocation/disposal or build scheduling.
+
+Next: projected callable focuses; computed/manual and scattered callable endpoints;
+callable focus parameter/result ABIs; unmodeled deferred completion routes. A direct
+persistent alias is not a general callable lens ABI. Phase 6 remains incomplete.
+
+Validation for direct persistent callable aliases: **2310 pass / 39 existing skips /
+0 failures across 42 files** (1342 non-execution tests; 968 native/Wasm cases).
+Full strict C11, optimized native, supported sanitizers and both Emscripten/Node
+optimization levels passed without retries in 359.77 seconds. The final focused
+alias execution run passed all 26 cases. TypeScript and diff checks pass. Remote
+CI was not run.

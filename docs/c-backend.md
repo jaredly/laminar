@@ -534,3 +534,20 @@ before that acquisition guard can be relaxed. Projections, callable focus call a
 return ABIs, manual/scattered endpoints, and unsupported completion routes remain
 open. Phase 6 is incomplete. C emission/storage and the concurrent execution build
 scheduler are unchanged.
+
+
+## Whole-local persistent callable aliases
+
+Direct aliases of whole owned callable/recursive aggregate locals now execute.
+Representation inference and independent verification track the original logical
+owner through nested loans, swaps and release, retaining separate initial/final
+endpoint descriptors and current versions for subsequent reads. C already aliases
+the existing logical cell, so replacement follows current storage rather than an
+address into an obsolete aggregate. Existing ownership transfer and disposal handle
+extracted old values and unused replacements; there is no new allocation, pointer
+cast or environment duplication.
+
+Thirteen shared callable-focus samples include branch joins, consume/refill,
+callable/data transitions, deferred scalar completion and ordinary callable returns.
+Projected, computed/manual and scattered callable endpoints and callable focus
+parameter/result ABIs remain explicit restrictions. Phase 6 stays open.

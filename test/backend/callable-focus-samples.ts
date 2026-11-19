@@ -72,4 +72,87 @@ export const callableFocusSamples = [
             expected: condition === 'true' ? 5 : 7,
         },
     ]),
+    {
+        name: 'callable alias replacement and owner continuation',
+        source: '{let x = 3\n let f = fn () x\n {let a = ~f\n let old = a := fn () 5\n old()}\n f()}',
+        expected: 5,
+    },
+    {
+        name: 'callable alias unused loan',
+        source: '{let x = 3\n let f = fn () x\n {let a = ~f\n ()}\n f()}',
+        expected: 3,
+    },
+    {
+        name: 'callable alias aggregate replacement',
+        source: '{let x = 3\n let p = (fn () x, 4)\n {let a = ~p\n let old = a := (fn () 5, true)\n let (f, n) = old\n f() + n}\n let (g, b) = p\n (g(), b)}',
+        expected: [5, true],
+    },
+    {
+        name: 'callable alias nested loans and repeated replacement',
+        source: '{let x = 3\n let f = fn () x\n {let a = ~f\n let first = a := fn () 5\n {let b = ~a\n let second = b := fn () 7\n (first(), second())}}\n f()}',
+        expected: 7,
+    },
+    {
+        name: 'callable alias temporary data and refill',
+        source: '{let x = 3\n let f = fn () x\n {let a = ~f\n let old = a := true\n let b = a := fn () 7\n (old(), b)}\n f()}',
+        expected: 7,
+    },
+    {
+        name: 'callable alias extraction to data',
+        source: '{let x = 3\n let f = fn () x\n {let a = ~f\n let old = a := true\n old()}\n f}',
+        expected: true,
+    },
+    {
+        name: 'callable alias insertion from data',
+        source: '{let f = 3\n {let a = ~f\n let old = a := fn () 7\n old}\n f()}',
+        expected: 7,
+    },
+    {
+        name: 'callable alias consume and refill',
+        source: '{let x = 3\n let f = fn () x\n {let a = ~f\n let first = a\n a := fn () 7\n first()}\n f()}',
+        expected: 7,
+    },
+    {
+        name: 'callable alias unused environments',
+        source: '{let x = 3\n let f = fn () x\n let y = 5\n {let a = ~f\n let old = a := fn () y\n ()}\n 7}',
+        expected: 7,
+    },
+    ...(['true', 'false'] as const).map((condition) => ({
+        name: `callable alias divergent branch ${condition}`,
+        source: `{let x = 3
+ let f = fn () x
+ {let a = ~f
+ match ${condition} {true -> {let old = a := fn () 5
+ old()}; false -> {let y = (6, 7)
+ let old = a := fn () {let (u, v) = y
+ u + v}
+ old()}}}
+ f()}`,
+        expected: condition === 'true' ? 5 : 13,
+    })),
+    {
+        name: 'callable alias deferred scalar completion',
+        source: `{let x = 1
+ let v = 3
+ let f = fn () v
+ {let focus = ~{let a = ~f
+ @(x, {let old = a := fn () 7
+ old()
+ fn () ()})}
+ focus := 5}
+ (f(), x)}`,
+        expected: [7, 5],
+    },
+    {
+        name: 'callable alias returned replacement',
+        source: `fn make() {let v = 3
+ let f = fn () v
+ {let a = ~f
+ let old = a := fn () 7
+ old()}
+ f}
+{let f = make()
+ f()}`,
+        expected: 7,
+    },
 ];
