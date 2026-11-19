@@ -358,7 +358,7 @@ export function executeTypedProgram(
                     return copy(owned(lens(args[0]).peek()));
                 case 'getInput': {
                     const p = createPrompt();
-                    return p(data(args[0]));
+                    return p(data(args[0]) as string);
                 }
                 case 'print': {
                     console.log(data(args[0]));

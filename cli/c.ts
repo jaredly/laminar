@@ -8,6 +8,7 @@ import { emitC } from '../src/c/emit.ts';
 import { constructorTypes } from '../src/builtins.ts';
 import { locLines } from '../src/lexer.ts';
 import { executeTypedProgram } from '../src/eval-typed.ts';
+import { TypedProgram } from '../src/typed-ir.ts';
 
 const [_, __, name] = process.argv;
 const source = readFileSync(name, 'utf-8');
@@ -38,7 +39,7 @@ const native = targetConfig({
 // constructors.set('None', solver.generalize(fn([], plain(option)), []));
 
 console.time('Type');
-let p;
+let p: TypedProgram;
 try {
     p = typedProgram(source!);
 } catch (err) {
