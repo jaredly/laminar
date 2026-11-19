@@ -1361,3 +1361,27 @@ Three shared samples and three corruption cases pass. Validation: 1429
 non-execution passes / 39 existing skips; 6 focused native/Wasm cases; TypeScript
 and diff checks pass. Scattered private backing and general callable focus
 call/return ABIs remain separate work. Phase 6 is incomplete.
+
+
+## Retained recursive scattered backing
+
+Lexical scope retention now derives private backing across recursive scattered
+and manual target trees. Owner coverage is ordered and deduplicated by logical
+place, including shared aggregate projections and mixed enclosing/private targets.
+Independent analysis and concrete verification protect setup descriptors, physical
+layouts and retain-through-completion ownership. Existing C scope callbacks retain
+backing through restoration and dispose current versions afterward.
+Three shared cases cover captured callables, manual completion and mixed storage;
+two corruption cases protect owner coverage and physical order. General callable
+lens ABIs, selected callable lens results and function-return retention remain open.
+The native manual-argument cleanup-order restriction is unchanged. Phase 6 remains
+incomplete.
+
+Validation across the native-projection and lexical-retention slices: **2534 pass /
+39 existing skips / zero failures across 42 files** (1434 non-execution tests and
+1100 native/Wasm cases). Full strict C11, optimized native, supported sanitizers
+and both Emscripten/Node optimization levels passed without retries in 432.71
+seconds. Each slice passed focused execution (32 native/Wasm cases in total).
+TypeScript and diff checks pass. Remote CI was not run. General callable lens
+ABIs and the native manual-argument cleanup ordering boundary remain open;
+phase 6 is incomplete.

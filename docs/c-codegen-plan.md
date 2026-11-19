@@ -11,7 +11,7 @@ coverage, not completion of every phase exit gate.
 
 The scoped lens extensions are complete as of `707521c`; see the
 [completion record and follow-up mapping](checker-completeness-handoff.md).
-Latest local verification: **2477 pass / 39 existing skips / 0 failures across
+Latest local verification: **2534 pass / 39 existing skips / 0 failures across
 42 files**, with default TypeScript and diff checks passing. The latest full execution run passed without retries. Remote CI was not run for
 these slices. See also [the implementation record](backend-progress.md),
 [backend contract](backend-contract.md), [typed IR API](typed-ir.md), and
@@ -799,3 +799,31 @@ Three shared samples and three corruption cases pass. Validation: 1429
 non-execution passes / 39 existing skips; 6 focused native/Wasm cases; TypeScript
 and diff checks pass. Scattered private backing and general callable focus
 call/return ABIs remain separate work. Phase 6 is incomplete.
+
+
+## Phase 6: retained recursive scattered backing
+
+Scattered callable/manual focuses may now retain private lexical owners through
+same-function completion. Recursive target traversal derives an ordered unique
+owner set; existing enclosing owners stay in place and only private storage gets
+`retainedStorage` contracts. Multiple projections retain their shared aggregate
+owner once. Independent verification derives the same coverage, descriptors and
+physical ownership/layout records. Existing C lexical cleanup restores views and
+disposes current private versions after completion, preserving extracted old
+values and untouched callable siblings. No new allocation convention is introduced.
+
+Three shared samples cover captured private callables, mixed private/enclosing
+storage and manual cleanup. Corruption tests reject missing owner coverage and
+reordered physical retention contracts. Remaining work includes general callable
+focus parameter/result ABIs, selected callable lens results, true function-return
+retention and the explicitly diagnosed native argument-cleanup ordering boundary.
+These slices do not complete phase 6.
+
+Validation across the native-projection and lexical-retention slices: **2534 pass /
+39 existing skips / zero failures across 42 files** (1434 non-execution tests and
+1100 native/Wasm cases). Full strict C11, optimized native, supported sanitizers
+and both Emscripten/Node optimization levels passed without retries in 432.71
+seconds. Each slice passed focused execution (32 native/Wasm cases in total).
+TypeScript and diff checks pass. Remote CI was not run. General callable lens
+ABIs and the native manual-argument cleanup ordering boundary remain open;
+phase 6 is incomplete.

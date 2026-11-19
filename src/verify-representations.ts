@@ -506,6 +506,11 @@ export function verifyRepresentations(
         }
         return projectValue(state.places.get(target.place)!, target.path);
     }
+    function targetPlaces(target: FocusTarget): string[] {
+        if ('inner' in target) return targetPlaces(target.inner);
+        if ('items' in target) return target.items.flatMap(targetPlaces);
+        return [target.place];
+    }
     function enclosingTarget(target: FocusTarget, state: State): boolean {
         if ('inner' in target) return enclosingTarget(target.inner, state);
         if ('items' in target) return target.items.every((child) => enclosingTarget(child, state));
@@ -1156,6 +1161,16 @@ export function verifyRepresentations(
                             s.focusOwners.set(i.out.id, owner);
                         }
                         const target = nested.focusTargets.get(i.body.result);
+                        if (target && (v.kind === 'focus-tuple' || v.kind === 'focus-manual'))
+                            for (const place of new Set(targetPlaces(target)))
+                                if (!s.places.has(place)) {
+                                    const representation =
+                                        nested.places.get(place) ??
+                                        fail('Missing retained scattered backing');
+                                    retainedStorage.push({ place, representation });
+                                    s.places.set(place, representation);
+                                }
+
                         if (target && enclosingTarget(target, s))
                             s.focusTargets.set(i.out.id, target);
                         else if (v.kind === 'focus-tuple' || v.kind === 'focus-manual')

@@ -765,3 +765,16 @@ Three shared samples and three corruption cases pass. Validation: 1429
 non-execution passes / 39 existing skips; 6 focused native/Wasm cases; TypeScript
 and diff checks pass. Scattered private backing and general callable focus
 call/return ABIs remain separate work. Phase 6 is incomplete.
+
+
+## Private scattered backing through lexical completion
+
+Scattered callable/manual focuses now survive private lexical storage scopes
+within one C function. Verified retention records cover unique private owners;
+existing C logical cells, scope callbacks and ordered drops keep their backing
+alive through restoration and dispose the current version afterward. Extracted old
+callables retain independent environment ownership. Three new shared samples cover
+captured private values, mixed storage and cleanup; no C lowering or concurrent
+scheduler change is required. This does not implement callable lens function-return
+ABIs or choose semantics for the diagnosed native manual-argument cleanup boundary.
+Phase 6 remains incomplete.

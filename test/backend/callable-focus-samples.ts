@@ -820,4 +820,35 @@ export const callableFocusSamples = [
  (old(), seen)}`,
         expected: [3, 7],
     },
+    {
+        name: 'private scattered backing lexical swap',
+        source: `fn make(v) {fn () v}
+{let w = 7
+ let (old, before) = {let f = make(3)
+ {let n = 4
+ (f, n)}} := (fn () w, true)
+ (old(), before)}`,
+        expected: [3, 4],
+    },
+    {
+        name: 'private scattered backing manual cleanup',
+        source: `fn make(v) {fn () v}
+{let seen = 0
+ let (old, before) = {let f = make(3)
+ {let n = 4
+ @((f, n), {let installed = f := fn () 9
+ seen := installed()
+ fn () ()})}} := (fn () 7, true)
+ (old(), before, seen)}`,
+        expected: [3, 4, 7],
+    },
+    {
+        name: 'private scattered backing mixed enclosing storage',
+        source: `fn make(v) {fn () v}
+{let f = make(3)
+ let (old, before) = {let n = 4
+ (f, n)} := (fn () 7, true)
+ (old(), before, f())}`,
+        expected: [3, 4, 7],
+    },
 ];

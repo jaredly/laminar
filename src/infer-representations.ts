@@ -359,6 +359,11 @@ export function inferRepresentations(
         }
         return projectValue(state.places.get(target.place)!, target.path);
     }
+    function targetPlaces(target: FocusTarget): string[] {
+        if ('inner' in target) return targetPlaces(target.inner);
+        if ('items' in target) return target.items.flatMap(targetPlaces);
+        return [target.place];
+    }
     function enclosingTarget(target: FocusTarget, state: State): boolean {
         if ('inner' in target) return enclosingTarget(target.inner, state);
         if ('items' in target) return target.items.every((child) => enclosingTarget(child, state));
@@ -1037,6 +1042,16 @@ export function inferRepresentations(
                     }
                     s.places.forEach((_, place) => s.places.set(place, nested.places.get(place)!));
                     const target = nested.focusTargets.get(i.body.result);
+                    if (target && (out.kind === 'focus-tuple' || out.kind === 'focus-manual'))
+                        for (const place of new Set(targetPlaces(target)))
+                            if (!s.places.has(place)) {
+                                const representation =
+                                    nested.places.get(place) ??
+                                    fail('Missing retained scattered backing');
+                                retainedStorage.push({ place, representation });
+                                s.places.set(place, representation);
+                            }
+
                     if (target && enclosingTarget(target, s)) s.focusTargets.set(i.out.id, target);
                     else if (out.kind === 'focus-tuple' || out.kind === 'focus-manual')
                         return fail('Escaping scattered focus requires retained local backing');

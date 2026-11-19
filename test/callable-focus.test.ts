@@ -399,3 +399,34 @@ for (const field of ['layout', 'ownership'])
         expect(() => verifyConcreteProgram(c)).toThrow('Retained scope storage contract changed');
         expect(() => emitC(c)).toThrow('Retained scope storage contract changed');
     });
+it('rejects missing private scattered owner coverage', () => {
+    const c = concrete(
+        callableFocusSamples.find((s) => s.name === 'private scattered backing lexical swap')!
+            .source,
+    );
+    const annotation = c.analysis.entries
+        .flatMap((e: any) => e.values)
+        .find((v: any) => v.retainedStorage?.length === 2);
+    annotation.retainedStorage.pop();
+    expect(() => verifyConcreteProgram(c)).toThrow('Retained scope storage provenance changed');
+    expect(() => emitC(c)).toThrow('Retained scope storage provenance changed');
+});
+it('rejects reordered private scattered physical backing', () => {
+    const c = concrete(
+        callableFocusSamples.find((s) => s.name === 'private scattered backing lexical swap')!
+            .source,
+    );
+    const collect = (b: any): any => {
+        for (const i of b.instructions)
+            if (i.op === 'scope') {
+                if (i.retainedStorage?.length === 2) return i;
+                const child = collect(i.body);
+                if (child) return child;
+            }
+    };
+    c.code
+        .map((code: any) => collect(code.body))
+        .find(Boolean)
+        .retainedStorage.reverse();
+    expect(() => verifyConcreteProgram(c)).toThrow('Retained scope storage contract changed');
+});

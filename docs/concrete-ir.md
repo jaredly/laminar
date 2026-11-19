@@ -713,3 +713,15 @@ Three shared samples and three corruption cases pass. Validation: 1429
 non-execution passes / 39 existing skips; 6 focused native/Wasm cases; TypeScript
 and diff checks pass. Scattered private backing and general callable focus
 call/return ABIs remain separate work. Phase 6 is incomplete.
+
+
+## Recursive lexical retention coverage
+
+Scope `retainedStorage` contracts now cover private owners reachable through
+recursive scattered/manual targets. Coverage is the ordered unique set of logical
+places absent from enclosing storage, with exact setup descriptors and concrete
+layouts. Independent verification derives coverage before accepting retained state;
+missing, reordered or forged physical records fail before C emission. These records
+retain backing through completion, not duplicate affine value ownership. Existing
+lexical release/drop actions still govern restoration and disposal. Function-return
+callable ABIs and selected callable lens results remain separate work.
