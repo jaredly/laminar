@@ -5,6 +5,12 @@ import { verifyConcreteProgram } from '../verify-concrete.ts';
 import { BackendDiagnostic } from '../backend/target.ts';
 import { identifier, type Statement, type GoFile, type GoFunction } from './syntax.ts';
 
+type Completion = (body: Statement[]) => void;
+type Lens = { view: View; finish: Completion; stage?: (body: Statement[]) => Completion };
+const stage = (lens: Lens, body: Statement[]): Completion =>
+    lens.stage ? lens.stage(body) : lens.finish;
+const noFinish = (_body: Statement[]) => {};
+
 type Variable = { name: string; type: string };
 
 const unsupported = (message: string): never => {
@@ -52,7 +58,6 @@ export function lowerGo(program: ConcreteProgram): GoFile {
         return `${type(a.to)}{\n\tenvironment: (${expression}).environment,\n\tdispose: (${expression}).dispose,\n${entries}}`;
     };
 
-    const field = (expr: string, n: number) => `(${expr}).${identifier(layout(program.layouts.find((l) => l.fields.length > n)?.id ?? '').fields[n]?.name ?? `item${n}`)}`;
     const storage = new Storage((s) =>
         layout(s.layout).fields.map((f, i) => {
             if (f.kind !== 'value' || !f.name.startsWith('item')) {
@@ -81,7 +86,63 @@ export function lowerGo(program: ConcreteProgram): GoFile {
             .join(', ')}}`;
     };
 
+    const endpoint = (id: string, which: 'read' | 'replacement'): string => {
+        const l = layout(id);
+        const f = l.fields.find((f) => f.name === which) ?? l.fields.find((f) => f.name === 'read');
+        if (f?.kind === 'pointer' && f.layout) return f.layout;
+        const abi = l.fields.find((f) => f.name === 'restore');
+        if (abi?.kind !== 'code') return unsupported('Missing restoration ABI');
+        if (which === 'replacement')
+            return program.abis.find((a) => a.id === abi.abi)!.arguments[0]!;
+        const children = l.fields
+            .filter((f) => f.name.startsWith('item'))
+            .map((f) => endpoint((f as { layout: string }).layout, which));
+        return (
+            program.layouts.find(
+                (l) =>
+                    l.kind === 'record' &&
+                    l.fields.length === children.length &&
+                    l.fields.every((f, i) => f.kind === 'value' && f.layout === children[i]),
+            )?.id ?? unsupported('Missing lens read aggregate')
+        );
+    };
+
+    const incoming = (expression: string, id: string): View => {
+        const l = layout(id);
+        const f = l.fields.find((f) => f.name === 'read');
+        if (f?.kind === 'pointer' && f.layout)
+            return storage.own({ expression: `*(${expression}).read`, layout: f.layout });
+        return l.fields
+            .filter((f) => f.name.startsWith('item'))
+            .map((f) =>
+                incoming(`(${expression}).${identifier(f.name)}`, (f as { layout: string }).layout),
+            );
+    };
+
+    const flush = (expression: string, id: string, data: Data, body: Statement[]) => {
+        const l = layout(id);
+        const f =
+            l.fields.find((f) => f.name === 'replacement') ??
+            l.fields.find((f) => f.name === 'read');
+        if (f?.kind === 'pointer' && f.layout) {
+            body.push(`*(${expression}).${identifier(f.name)} = ${read(data, f.layout)}`);
+            return;
+        }
+        const parts = storage.parts(data);
+        l.fields
+            .filter((f) => f.name.startsWith('item'))
+            .forEach((f, i) =>
+                flush(
+                    `(${expression}).${identifier(f.name)}`,
+                    (f as { layout: string }).layout,
+                    parts[i]!,
+                    body,
+                ),
+            );
+    };
+
     const declarations: string[] = [];
+    let helperCounter = 0;
 
     // Layout type definitions
     for (const l of program.layouts) {
@@ -201,7 +262,9 @@ export function lowerGo(program: ConcreteProgram): GoFile {
 
     const functions: GoFunction[] = program.code.map((c) => {
         const values = new Map<string, string>();
+        const lenses = new Map<string, Lens>();
         const places = new Map<string, View>();
+        const loans = new Map<string, Lens>();
         let counter = 0;
         const fresh = () => `v${counter++}`;
         const variables: Variable[] = c.parameters.map((p, i) => ({
@@ -221,6 +284,7 @@ export function lowerGo(program: ConcreteProgram): GoFile {
             return name;
         };
 
+        const parameters: { expression: string; layout: string; view: View }[] = [];
         const setup: Statement[] = [];
         const bind = (p: IRPattern, data: Data, body: Statement[] = setup) => {
             if (p.kind === 'bind') {
@@ -236,17 +300,161 @@ export function lowerGo(program: ConcreteProgram): GoFile {
 
         c.parameters.forEach((p, i) => {
             if (p.lensPlace) {
-                unsupported('Lens parameters require Phase 2');
+                const view = incoming(`arg${i}`, p.layout);
+                places.set(p.lensPlace, view);
+                parameters.push({ expression: `arg${i}`, layout: p.layout, view });
             } else {
                 bind(p.pattern, { expression: `arg${i}`, layout: p.layout });
             }
         });
+
+        const flushParameters = (body: Statement[]) =>
+            parameters.forEach((p) => flush(p.expression, p.layout, storage.get(p.view), body));
+
+        const adaptStorage = (a: ConcreteValueAdapter, data: Data, output: Statement[]): Data => {
+            if (!Array.isArray(data) && data.layout === unit.id) return data;
+            if (a.kind === 'move') return data;
+            if (a.kind === 'aggregate')
+                return storage.parts(data).map((child, n) => adaptStorage(a.items[n]!, child, output));
+            const name = fresh();
+            declare(a.to, adaptValue(a, read(data, a.from)), output, name);
+            return { expression: name, layout: a.to };
+        };
+
+        const matches = (p: IRPattern, expr: string): string =>
+            p.kind === 'literal'
+                ? `${expr} == ${literal(p.value, unit.id)}`
+                : p.kind === 'tuple'
+                  ? p.items.map((p, i) => matches(p, `(${expr}).item${i}`)).join(' && ') || 'true'
+                  : p.kind === 'constructor'
+                    ? unsupported('Constructor match requires Phase 7')
+                    : 'true';
 
         const ref = (s: SlotRef) =>
             storage.project(places.get(s.place) ?? unsupported('Unavailable Go place'), s.path);
 
         const value = (id: string) =>
             values.get(id) ?? unsupported('Missing value in Go lowering');
+
+        // Adapt input/output backing at calls.
+        const adapt = (
+            lens: Lens,
+            id: string,
+            escapes: boolean,
+            body: Statement[],
+        ): { expression: string; finish: (body: Statement[]) => void } => {
+            const index = helperCounter++;
+            const name = `back${index}`;
+            const fields: string[] = [];
+            const init: Statement[] = [];
+
+            const build = (id: string, path: string): string => {
+                const l = layout(id);
+                const input = l.fields.find((f) => f.name === 'read');
+                if (input?.kind === 'pointer' && input.layout) {
+                    const output = l.fields.find((f) => f.name === 'replacement');
+                    const n = fields.length;
+                    const r = `read${n}`;
+                    const w = output ? `write${n}` : r;
+                    fields.push(`${r} ${type(input.layout)}`);
+                    const d = storage.get(
+                        storage.project(lens.view, path ? path.split('.').map(Number) : []),
+                    );
+                    init.push(`${name}.${r} = ${read(d, input.layout)}`);
+                    if (output?.kind === 'pointer' && output.layout) {
+                        fields.push(`${w} ${type(output.layout)}`);
+                        init.push(`${name}.${w} = ${zero(output.layout)}`);
+                    }
+                    return `${type(id)}{read: &${name}.${r}${output ? `, replacement: &${name}.${w}` : ''}}`;
+                }
+                return `${type(id)}{${
+                    l.fields
+                        .filter((f) => f.name.startsWith('item'))
+                        .map(
+                            (f, i) =>
+                                `${identifier(f.name)}: ${build((f as { layout: string }).layout, path ? path + '.' + i : String(i))}`,
+                        )
+                        .join(', ')
+                }}`;
+            };
+
+            const expression = build(id, '');
+            const backingType = `Backing${index}`;
+            declarations.push(
+                `type ${backingType} struct {\n${fields.map((f) => `\t${f}`).join('\n')}\n}`,
+            );
+            variables.push({ name, type: backingType + (escapes ? ' *' : '') });
+            if (escapes) {
+                body.push(`var ${name} *${backingType} = new(${backingType})`);
+            } else {
+                body.push(`var ${name} ${backingType}`);
+            }
+            body.push(`_ = ${name}`);
+            body.push(...init);
+
+            const arg = declare(id, expression, body);
+            const outputs = (expr: string, id: string): Data => {
+                const l = layout(id);
+                const f =
+                    l.fields.find((f) => f.name === 'replacement') ??
+                    l.fields.find((f) => f.name === 'read');
+                if (f?.kind === 'pointer' && f.layout)
+                    return { expression: `*(${expr}).${identifier(f.name)}`, layout: f.layout };
+                return l.fields
+                    .filter((f) => f.name.startsWith('item'))
+                    .map((f) => outputs(`(${expr}).${identifier(f.name)}`, (f as { layout: string }).layout));
+            };
+
+            return {
+                expression: arg,
+                finish: (body) => {
+                    const result = declare(
+                        endpoint(id, 'replacement'),
+                        read(outputs(arg, id), endpoint(id, 'replacement')),
+                        body,
+                    );
+                    storage.put(lens.view, {
+                        expression: result,
+                        layout: endpoint(id, 'replacement'),
+                    });
+                    lens.finish(body);
+                    body.push(`_ = ${name}`);
+                },
+            };
+        };
+
+        const runtimeLens = (
+            name: string,
+            id: string,
+            after: (body: Statement[]) => void,
+        ): Lens => {
+            const view = incoming(name, id);
+            return {
+                view,
+                finish: (body) => {
+                    const replacement = declare(
+                        endpoint(id, 'replacement'),
+                        read(storage.get(view), endpoint(id, 'replacement')),
+                        body,
+                    );
+                    body.push(
+                        {
+                            head: `if (${name}).restore != nil`,
+                            body: [`(${name}).restore((${name}).context, ${replacement})`],
+                        },
+                        {
+                            head: 'else',
+                            body: (() => {
+                                const b: Statement[] = [];
+                                flush(name, id, storage.get(view), b);
+                                return b;
+                            })(),
+                        },
+                    );
+                    after(body);
+                },
+            };
+        };
 
         const literal = (v: unknown, id: string): string => {
             if (v === null) return zero(id);
@@ -271,6 +479,8 @@ export function lowerGo(program: ConcreteProgram): GoFile {
             b.instructions.forEach((i) => {
                 if ('out' in i) outputLayouts.set(i.out.id, i.out.layout);
                 if (i.op === 'scope') index(i.body);
+                if (i.op === 'manual') index(i.cleanup);
+                if (i.op === 'case') i.cases.forEach((a) => index(a.body));
             });
         index(c.body);
 
@@ -288,8 +498,16 @@ export function lowerGo(program: ConcreteProgram): GoFile {
                     continue;
                 }
                 if (i.op === 'borrow') {
-                    return unsupported('Borrow operations require Phase 2');
+                    const loan = program.semantic.program.units
+                        .find((u) => u.id === c.unit)
+                        ?.loans.find((l) => l.id === i.loan);
+                    if (!loan) unsupported('Missing loan');
+                    const lens = lenses.get(i.lens)!;
+                    if (loan!.owners) places.set(loan!.place, lens.view);
+                    loans.set(i.loan, lens);
+                    continue;
                 }
+
                 const id = i.out.layout;
                 const name = fresh();
                 let expr!: string;
@@ -314,9 +532,40 @@ export function lowerGo(program: ConcreteProgram): GoFile {
                         expr = read(storage.get(ref(i.slot)), id);
                         storage.put(ref(i.slot), { expression: zero(unit.id), layout: unit.id });
                         break;
-                    case 'scope':
-                        expr = block(i.body, body);
+                    case 'acquire':
+                        lenses.set(i.out.id, { view: ref(i.slot), finish: noFinish });
+                        continue;
+                    case 'lens-tuple':
+                        lenses.set(i.out.id, {
+                            view: i.items.map((v) => lenses.get(v)!.view),
+                            stage: (body) => {
+                                const completions = i.items.map((v) => stage(lenses.get(v)!, body));
+                                return (body) => completions.forEach((complete) => complete(body));
+                            },
+                            finish: (body) => i.items.forEach((v) => lenses.get(v)!.finish(body)),
+                        });
+                        continue;
+                    case 'swap': {
+                        const lens = lenses.get(i.lens)!;
+                        expr = read(storage.get(lens.view), id);
+                        declare(id, expr, body, name);
+                        storage.put(lens.view, {
+                            expression: value(i.value),
+                            layout: outputLayouts.get(i.value)!,
+                        });
+                        lens.finish(body);
+                        values.set(i.out.id, name);
+                        continue;
+                    }
+                    case 'scope': {
+                        const result = block(i.body, body);
+                        if (lenses.has(i.body.result)) {
+                            lenses.set(i.out.id, lenses.get(i.body.result)!);
+                            continue;
+                        }
+                        expr = result;
                         break;
+                    }
                     case 'make-callable': {
                         const callable = program.callables.find((cb) => cb.id === i.callable)!;
                         const entries = callable.entries
@@ -349,25 +598,140 @@ export function lowerGo(program: ConcreteProgram): GoFile {
                     }
                     case 'invoke': {
                         const w = program.wrappers.find((w) => w.id === i.wrapper)!;
-                        const args = i.args.map(value);
-                        if (
-                            w.kind === 'invoke' ||
-                            w.kind === 'dispatch' ||
-                            w.kind === 'adapt-result' ||
-                            w.kind === 'adapt-aggregate-result'
-                        ) {
-                            expr = `(${value(i.callee)}).${identifier(i.field)}((${value(i.callee)}).environment${args.map((a) => `, ${a}`).join('')})`;
-                        } else if (w.kind === 'native') {
-                            const op = w.definition.slice(7);
-                            if (['+', '-', '*', '/', '==', '>=', '<='].includes(op)) {
-                                expr = `(${args[0]} ${op} ${args[1]})`;
-                            } else {
-                                return unsupported(`Native import ${w.definition}`);
-                            }
+                        const abi = program.abis.find((a) => a.id === i.abi)!;
+                        const isLens = layout(id).fields.some((f) => f.name === 'restore');
+                        const adapters: { finish: (body: Statement[]) => void }[] = [];
+                        let args: string[] = [];
+                        if (w.kind === 'native' && w.definition === 'native/dup') {
+                            const lens = lenses.get(i.args[0]!)!;
+                            expr = read(storage.get(lens.view), id);
+                            adapters.push({ finish: lens.finish });
+                        } else if (w.kind === 'native' && w.definition === 'native/fst') {
+                            const parent = lenses.get(i.args[0]!)!;
+                            lenses.set(i.out.id, {
+                                view: storage.project(parent.view, [0]),
+                                finish: parent.finish,
+                                stage: parent.stage,
+                            });
+                            continue;
                         } else {
-                            return unsupported(`Wrapper kind ${w.kind}`);
+                            args = i.args.map((v, n) => {
+                                if (!lenses.has(v)) return value(v);
+                                const a = adapt(lenses.get(v)!, abi.arguments[n]!, isLens, body);
+                                adapters.push(a);
+                                return a.expression;
+                            });
+                            if (
+                                w.kind === 'invoke' ||
+                                w.kind === 'dispatch' ||
+                                w.kind === 'adapt-result' ||
+                                w.kind === 'adapt-aggregate-result'
+                            ) {
+                                expr = `(${value(i.callee)}).${identifier(i.field)}((${value(i.callee)}).environment${args.map((a) => `, ${a}`).join('')})`;
+                            } else if (w.kind === 'native') {
+                                const op = w.definition.slice(7);
+                                if (['+', '-', '*', '/', '==', '>=', '<='].includes(op)) {
+                                    expr = `(${args[0]} ${op} ${args[1]})`;
+                                } else {
+                                    return unsupported(`Native import ${w.definition}`);
+                                }
+                            } else {
+                                return unsupported(`Wrapper kind ${w.kind}`);
+                            }
                         }
-                        break;
+                        declare(id, expr, body, name);
+                        values.set(i.out.id, name);
+                        if (isLens) {
+                            lenses.set(
+                                i.out.id,
+                                runtimeLens(name, id, (body) => adapters.forEach((a) => a.finish(body))),
+                            );
+                        } else {
+                            adapters.forEach((a) => a.finish(body));
+                        }
+                        continue;
+                    }
+                    case 'manual': {
+                        const frontend = lenses.get(i.lens)!;
+                        const manual: Lens = {
+                            view: frontend.view,
+                            stage: (output) => {
+                                const complete = stage(frontend, output);
+                                return (output) => {
+                                    block(i.cleanup, output);
+                                    complete(output);
+                                };
+                            },
+                            finish: (output) => stage(manual, output)(output),
+                        };
+                        lenses.set(i.out.id, manual);
+                        continue;
+                    }
+                    case 'case': {
+                        if (i.lensJoin) return unsupported('Lens case join requires Phase 5');
+                        declare(id, zero(id), body, name);
+                        const before = storage.snapshot();
+                        const arms = i.cases.map((arm, armIndex) => {
+                            storage.reset(before);
+                            const nested: Statement[] = [];
+                            bind(
+                                arm.pattern,
+                                {
+                                    expression: value(i.value),
+                                    layout: outputLayouts.get(i.value)!,
+                                },
+                                nested,
+                            );
+                            const result = block(arm.body, nested);
+                            if (i.aggregateJoin)
+                                nested.push(`${name} = ${adaptValue(i.aggregateJoin.arms[armIndex]!, result)}`);
+                            else if (i.callableJoin) {
+                                const adapter = i.callableJoin.arms[armIndex]!;
+                                const entries = adapter.entries
+                                    .map((e) => `, ${identifier(e.target)}: (${result}).${identifier(e.source)}`)
+                                    .join('');
+                                nested.push(`${name} = ${type(id)}{environment: (${result}).environment, dispose: (${result}).dispose${entries}}`);
+                            } else nested.push(`${name} = ${result}`);
+                            i.storageJoins?.forEach((join) => {
+                                const view =
+                                    places.get(join.place) ??
+                                    unsupported('Missing branch storage owner');
+                                storage.put(view, adaptStorage(join.arms[armIndex]!, storage.get(view), nested));
+                            });
+                            return { nested, state: storage.snapshot() };
+                        });
+                        storage.reset(before);
+                        // phi-join: for each cell, merge the per-arm states
+                        const merge = (data: Data[], previous?: Data): Data => {
+                            if (
+                                data.every((d) => JSON.stringify(d) === JSON.stringify(data[0])) &&
+                                (arms.length > 1 || JSON.stringify(data[0]) === JSON.stringify(previous))
+                            )
+                                return data[0]!;
+                            const first = data[0]!;
+                            if (!Array.isArray(first) && data.every((d) => !Array.isArray(d) && d.layout === first.layout)) {
+                                const phi = fresh();
+                                declare(first.layout, zero(first.layout), body, phi);
+                                arms.forEach((arm, n) => arm.nested.push(`${phi} = ${read(data[n]!, first.layout)}`));
+                                return { expression: phi, layout: first.layout };
+                            }
+                            const parts = data.map((d) => storage.parts(d));
+                            if (!parts[0]?.length || parts.some((p) => p.length !== parts[0]!.length))
+                                return unsupported('Storage version join requires an adapter');
+                            return parts[0].map((_, n) =>
+                                merge(parts.map((p) => p[n]!), previous && storage.parts(previous)[n]),
+                            );
+                        };
+                        before.forEach((previous, cell) => (cell.data = merge(arms.map((a) => a.state.get(cell)!), previous)));
+                        i.cases.forEach((arm, n) =>
+                            body.push({
+                                head: `${n ? 'else if' : 'if'} ${matches(arm.pattern, value(i.value))}`,
+                                body: arms[n]!.nested,
+                            }),
+                        );
+                        body.push({ head: 'else', body: ['panic("unmatched case")'] });
+                        values.set(i.out.id, name);
+                        continue;
                     }
                     default:
                         return unsupported(`Operation ${i.op} requires a later backend phase`);
@@ -376,6 +740,37 @@ export function lowerGo(program: ConcreteProgram): GoFile {
                 declare(id, expr, body, name);
                 values.set(i.out.id, name);
             }
+
+            const finish = (body: Statement[]) =>
+                b.cleanup.forEach((cl) => {
+                    if (cl.kind === 'release') {
+                        const lens = loans.get(cl.loan);
+                        if (lens) lens.finish(body);
+                    } else if (cl.kind === 'drop-place') {
+                        storage.put(ref(cl.slot), { expression: zero(unit.id), layout: unit.id });
+                    }
+                });
+
+            if (lenses.has(b.result)) {
+                const lens = lenses.get(b.result)!;
+                lenses.set(b.result, {
+                    view: lens.view,
+                    stage: (body) => {
+                        const complete = stage(lens, body);
+                        return (body) => {
+                            complete(body);
+                            finish(body);
+                        };
+                    },
+                    finish: (body) => {
+                        lens.finish(body);
+                        finish(body);
+                    },
+                });
+                return '';
+            }
+
+            finish(body);
             return value(b.result);
         };
 
@@ -386,6 +781,10 @@ export function lowerGo(program: ConcreteProgram): GoFile {
         ];
 
         const result = block(c.body, body);
+        if (lenses.has(c.body.result)) {
+            return unsupported('Returned lenses require Phase 4');
+        }
+        flushParameters(body);
         body.push(`return ${result}`);
 
         const sig = `func ${codes.get(c.id)}(environment any${c.parameters.map((p, i) => `, arg${i} ${type(p.layout)}`).join('')}) ${type(c.body.layout)}`;

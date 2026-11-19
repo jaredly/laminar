@@ -129,3 +129,62 @@ describe('Go Backend Phase 1: Scalars, Records, and Direct Calls', () => {
         );
     }
 });
+
+// Phase 2 samples: lenses (mutable references) and swaps
+const phase2CorpusSamples = backendCorpus.filter((s) =>
+    ['thin-update', 'scattered-update', 'thin-pair-update'].includes(s.name),
+);
+
+const phase2ExtraSamples = [
+    { name: 'simple-swap', source: '{let x = 1\n x := x + 1\n x}', expected: 2 },
+    { name: 'lexical-alias', source: '{let x = 1\n {let y = ~x\n y := y + 1}\n x}', expected: 2 },
+];
+
+const phase2Samples = [...phase2CorpusSamples, ...phase2ExtraSamples];
+
+describe('Go Backend Phase 2: Lenses and Swaps', () => {
+    for (const sample of phase2Samples) {
+        (goAvailable ? it.concurrent : it.skip)(
+            `Go: ${sample.name}`,
+            () =>
+                withBuildSlot(async () => {
+                    const p = typedProgram(sample.source);
+                    const c = compileConcreteProgram(p, goNativeTarget!, [
+                        { unit: p.units.at(-1)!.id, arguments: [] },
+                    ]);
+                    const source = emitGo(c);
+                    expect(normalize(executeTypedProgram(p))).toEqual(sample.expected);
+                    const results = await buildAndRunGo(source, {
+                        expected: [sample.expected],
+                    });
+                    expect(results).toEqual([sample.expected]);
+                }),
+            30000,
+        );
+    }
+});
+
+// Phase 3 samples: branches and recursion
+const phase3Samples = backendCorpus.filter((s) => ['branch', 'recursion'].includes(s.name));
+
+describe('Go Backend Phase 3: Branches and Recursion', () => {
+    for (const sample of phase3Samples) {
+        (goAvailable ? it.concurrent : it.skip)(
+            `Go: ${sample.name}`,
+            () =>
+                withBuildSlot(async () => {
+                    const p = typedProgram(sample.source);
+                    const c = compileConcreteProgram(p, goNativeTarget!, [
+                        { unit: p.units.at(-1)!.id, arguments: [] },
+                    ]);
+                    const source = emitGo(c);
+                    expect(normalize(executeTypedProgram(p))).toEqual(sample.expected);
+                    const results = await buildAndRunGo(source, {
+                        expected: [sample.expected],
+                    });
+                    expect(results).toEqual([sample.expected]);
+                }),
+            30000,
+        );
+    }
+});
