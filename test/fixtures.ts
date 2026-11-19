@@ -152,7 +152,9 @@ export const runSnapshot = (
             continue;
         }
         if (node.type === 'type-alias' || node.type === 'union') {
-            throw new Error('not supported yet');
+            // Types are file-global; the untyped evaluator needs nothing from them.
+            checker?.addType(node);
+            continue;
         }
         if (!body) {
             throw new Error(`what is this ${node.type} at line ${pos(node.loc).line + 1}`);

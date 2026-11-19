@@ -4,7 +4,7 @@ import type { Decl, FileItem } from '../../src/ast.ts';
 import { Checker } from '../../src/check.ts';
 import { lowerTypedProgram } from '../../src/lower-typed.ts';
 import type { Elaboration } from '../../src/elaborated.ts';
-import { TypeEnvironment } from '../../src/infer.ts';
+import type { TypeEnvironment } from '../../src/infer.ts';
 export function typedProgram(
     source: string,
     opts?: { environment?: TypeEnvironment; constructors?: TypeEnvironment },
@@ -21,7 +21,8 @@ export function typedProgram(
             continue;
         }
         if (item.type === 'type-alias' || item.type === 'union') {
-            throw new Error('not supported yet');
+            checker.addType(item);
+            continue;
         }
         const checked = checker.check(item, declaration);
         elaborations.push(checked.elaboration);

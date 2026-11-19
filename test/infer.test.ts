@@ -526,3 +526,90 @@ true`;
         expect(result.testResults.map((r) => r.failure)).toEqual([undefined]);
     });
 });
+
+describe('type declarations', () => {
+    const definition = (source: string, name: string) =>
+        printType(checkFile(parse(source)).definitions.get(name)!.body);
+    const rejectsFile = (source: string, code: string) => {
+        try {
+            checkFile(parse(source));
+            throw new Error('Expected type error');
+        } catch (e) {
+            expect(e).toBeInstanceOf(TypeDiagnostic);
+            expect((e as TypeDiagnostic).code).toBe(code);
+        }
+    };
+    const direction = `type direction {
+    Higher
+    Lower
+}`;
+    it('introduces nominal unions whose constructors build and match the union', () => {
+        expect(
+            definition(
+                `${direction}
+fn flip(d) {
+    match d {
+        Higher -> Lower
+        Lower -> Higher
+    }
+}`,
+                'flip',
+            ),
+        ).toBe('(direction) => direction');
+    });
+    it('resolves declared union names in annotations, ahead of type variables', () => {
+        expect(
+            definition(
+                `${direction}
+pick :: (direction) => Number
+fn pick(d) 1`,
+                'pick',
+            ),
+        ).toBe('(direction) => Number');
+        rejectsFile(
+            `${direction}
+pick :: (direction) => Number
+fn pick(d) 1
+pick(2)`,
+            'type-mismatch',
+        );
+    });
+    it('supports parameterized and recursive unions', () => {
+        const tree = `type tree(a) {
+    Leaf
+    Node(tree(a), a, tree(a))
+}`;
+        expect(definition(`${tree}\nfn single(x) Node(Leaf, x, Leaf)`, 'single')).toBe(
+            '(a) => tree<a>',
+        );
+        rejectsFile(`${tree}\nNode(Leaf, 1, Node(Leaf, "a", Leaf))`, 'type-mismatch');
+    });
+    it('expands aliases structurally, including parameters and lens types', () => {
+        expect(
+            definition(
+                `type pair(a, b) = (a, b)
+swap :: (pair(a, b)) => pair(b, a)
+fn swap((a, b)) (b, a)`,
+                'swap',
+            ),
+        ).toBe('((a, b)) => (b, a)');
+        expect(
+            definition(
+                `type counter = ~Int
+inc :: (counter) => ()
+fn inc(~x) {x := x + 1}`,
+                'inc',
+            ),
+        ).toBe('(Number/Number) => ()');
+    });
+    it('rejects malformed declarations and uses', () => {
+        rejectsFile('type t = (a, Number)', 'unknown-type');
+        rejectsFile('type t = List(t)', 'unknown-type');
+        rejectsFile('type t {\n    A(b)\n}', 'unknown-type');
+        rejectsFile('type t(a, a) = a', 'duplicate-type-parameter');
+        rejectsFile('type Number = Bool', 'duplicate-type');
+        rejectsFile(`${direction}\ntype other {\n    Higher\n}`, 'duplicate-constructor');
+        rejectsFile('type pair(a, b) = (a, b)\nf :: (pair(Number)) => Number\nfn f(x) 1', 'type-arity');
+        rejectsFile('f :: (Missing) => Number\nfn f(x) 1', 'unknown-type');
+    });
+});

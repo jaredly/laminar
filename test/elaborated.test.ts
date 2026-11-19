@@ -31,7 +31,8 @@ function elaborate(source: string, unit = 'test'): { checker: Checker; results: 
             continue;
         }
         if (item.type === 'type-alias' || item.type === 'union') {
-            throw new Error('not supported yet');
+            checker.addType(item);
+            continue;
         }
         const checked = checker.check(item, declaration);
         results.push(checked.elaboration);
@@ -249,7 +250,8 @@ for (const sample of backendCorpus)
                 continue;
             }
             if (ast.type === 'type-alias' || ast.type === 'union') {
-                throw new Error('not supported yet');
+                checker.addType(ast);
+                continue;
             }
             const checked = checker.check(ast, declaration);
             result = evalExpr(context, checker.lower(checked));

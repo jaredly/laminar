@@ -1,9 +1,14 @@
 // how to guess my number
+type direction {
+    Higher
+    Lower
+}
+
 fn nextGuess(direction, ~(min, max, lastGuess)) {
     round(
         match direction {
-            1 -> {(!max + !lastGuess) / 2}
-            0 -> {(!lastGuess + !min) / 2}
+            Higher -> {(!max + !lastGuess) / 2}
+            Lower -> {(!lastGuess + !min) / 2}
         }
     )
 }
@@ -11,14 +16,14 @@ fn nextGuess(direction, ~(min, max, lastGuess)) {
 fn handleResponse(response, ~state) {
     match response {
         "higher" -> {
-            let next = nextGuess(1, ~state)
+            let next = nextGuess(Higher, ~state)
             let (min, _, last) = ~state
             min := last
             last := next
             false
         }
         "lower" -> {
-            let next = nextGuess(0, ~state)
+            let next = nextGuess(Lower, ~state)
             let (_, max, last) = ~state
             max := last
             last := next

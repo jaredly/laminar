@@ -15,7 +15,8 @@ import {
     type Term,
     type Type,
     type Decl,
-    Id,
+    type Id,
+    type TypeDecl,
 } from './ast.ts';
 import {
     Solver,
@@ -58,6 +59,21 @@ type View = {
     targets: Binding[];
 };
 export type TypeEnvironment = ReadonlyMap<string, Scheme>;
+/** User-declared type names. Unions are nominal; aliases expand at each use. */
+export type TypeDefinition =
+    | { kind: 'union'; params: string[] }
+    | { kind: 'alias'; params: string[]; body: Type };
+export type TypeDefinitions = ReadonlyMap<string, TypeDefinition>;
+const builtinTypeArity: Record<string, number> = {
+    Number: 0,
+    Int: 0,
+    Bool: 0,
+    String: 0,
+    World: 0,
+    Handle: 0,
+    List: 1,
+};
+export const isBuiltinTypeName = (name: string) => Object.hasOwn(builtinTypeArity, name);
 export type Inference = {
     type: Ty;
     scheme: Scheme;
@@ -79,6 +95,7 @@ export class Inferencer {
         private globals: TypeEnvironment = new Map(),
         constructors: TypeEnvironment = new Map(),
         context: ElaborationContext = { id: 'unit/expression' },
+        private typeDefinitions: TypeDefinitions = new Map(),
     ) {
         this.builder = new ElaborationBuilder(context);
         // Re-home externally supplied variables so solver IDs never collide.
@@ -323,6 +340,51 @@ export class Inferencer {
         this.builder.record(node, t);
     }
 
+    /** Validate a type declaration against the definitions already in scope. */
+    typeDeclaration(node: TypeDecl): {
+        definition: TypeDefinition;
+        constructors: Map<string, Scheme>;
+    } {
+        const name = node.name.text;
+        if (isBuiltinTypeName(name) || this.typeDefinitions.has(name))
+            this.error('duplicate-type', node.name.loc, `Type ${name} already exists`);
+        const params = new Map<string, Ty>();
+        for (const arg of node.args ?? []) {
+            if (params.has(arg.text))
+                this.error('duplicate-type-parameter', arg.loc, `Duplicate type parameter ${arg.text}`);
+            params.set(arg.text, this.solver.fresh());
+        }
+        const constructors = new Map<string, Scheme>();
+        if (node.type === 'type-alias') {
+            // The alias is not yet registered, so a self-reference is an unknown type.
+            this.annotation(node.alias, params, true);
+            return { definition: { kind: 'alias', params: [...params.keys()], body: node.alias }, constructors };
+        }
+        const definition: TypeDefinition = { kind: 'union', params: [...params.keys()] };
+        const result = plain(con(name, ...params.values()));
+        // Unions are nominal, so constructors may refer to the union itself.
+        const previous = this.typeDefinitions;
+        this.typeDefinitions = new Map(previous).set(name, definition);
+        try {
+            for (const item of node.items) {
+                const constructor = item.name.text;
+                if (this.constructors.has(constructor) || constructors.has(constructor))
+                    this.error(
+                        'duplicate-constructor',
+                        item.loc,
+                        `Constructor ${constructor} already exists`,
+                    );
+                const args = (item.args ?? []).map((t) =>
+                    plain(this.valueAnnotation(t, params, true)),
+                );
+                constructors.set(constructor, this.solver.generalize(fn(args, result), []));
+            }
+        } finally {
+            this.typeDefinitions = previous;
+        }
+        return { definition, constructors };
+    }
+
     infer(ast: Linear, declaration?: Decl): Inference {
         const prepared = this.builder.prepare(ast, declaration);
         ast = prepared.ast;
@@ -399,50 +461,70 @@ export class Inferencer {
             ),
         };
     }
-    private constr(id: Id, args: Type[], vars: Map<string, Ty>): FlowTy {
-        if (['Number', 'Int', 'Bool', 'String', 'World', 'Handle', 'List'].includes(id.text)) {
-            if (id.text === 'List') {
-                if (args.length !== 1) throw new Error(`List type requires 1 arg`);
-            } else if (args.length) {
-                throw new Error(`${id.text} type expects 0 args`);
-            }
-
+    /**
+     * Resolve a named type. Builtins and declared types win over type variables; in a
+     * `closed` scope (type declaration bodies) every variable must already be bound.
+     */
+    private constr(id: Id, args: Type[], vars: Map<string, Ty>, closed: boolean): FlowTy {
+        const arity = (expected: number) => {
+            if (args.length !== expected)
+                this.error(
+                    'type-arity',
+                    id.loc,
+                    `Type ${id.text} expects ${expected} argument${expected === 1 ? '' : 's'}, found ${args.length}`,
+                );
+        };
+        if (isBuiltinTypeName(id.text)) {
+            arity(builtinTypeArity[id.text]);
             return plain(
                 con(
                     id.text === 'Int' ? 'Number' : id.text,
-                    ...args.map((t) => this.valueAnnotation(t, vars)),
+                    ...args.map((t) => this.valueAnnotation(t, vars, closed)),
                 ),
             );
         }
-        if (!/^[a-z]/.test(id.text)) this.error('unknown-type', id.loc, `Unknown type ${id.text}`);
+        const definition = this.typeDefinitions.get(id.text);
+        if (definition) {
+            arity(definition.params.length);
+            const values = args.map((t) => this.valueAnnotation(t, vars, closed));
+            if (definition.kind === 'union') return plain(con(id.text, ...values));
+            // Alias bodies were validated as closed over their parameters at declaration.
+            return this.annotation(
+                definition.body,
+                new Map(definition.params.map((name, i) => [name, values[i]])),
+                true,
+            );
+        }
+        if (args.length || !/^[a-z]/.test(id.text) || (closed && !vars.has(id.text)))
+            this.error('unknown-type', id.loc, `Unknown type ${id.text}`);
         if (!vars.has(id.text)) vars.set(id.text, this.solver.fresh());
         return plain(vars.get(id.text)!);
     }
-    private annotation(t: Type, vars: Map<string, Ty>): FlowTy {
+    private annotation(t: Type, vars: Map<string, Ty>, closed = false): FlowTy {
         switch (t.type) {
             case 'id': {
-                return this.constr(t, [], vars);
+                return this.constr(t, [], vars, closed);
             }
             case 'lens': {
-                const a = this.valueAnnotation(t.left, vars);
-                return flow(a, t.right ? this.valueAnnotation(t.right, vars) : a);
+                const a = this.valueAnnotation(t.left, vars, closed);
+                return flow(a, t.right ? this.valueAnnotation(t.right, vars, closed) : a);
             }
             case 'constr': {
-                return this.constr(t.name, t.args ?? [], vars);
+                return this.constr(t.name, t.args ?? [], vars, closed);
             }
             case 'tuple':
-                return plain(tuple(...t.items.map((v) => this.valueAnnotation(v, vars))));
+                return plain(tuple(...t.items.map((v) => this.valueAnnotation(v, vars, closed))));
             case 'fn':
                 return plain(
                     fn(
-                        t.args.map((v) => this.annotation(v, vars)),
-                        this.annotation(t.body, vars),
+                        t.args.map((v) => this.annotation(v, vars, closed)),
+                        this.annotation(t.body, vars, closed),
                     ),
                 );
         }
     }
-    private valueAnnotation(t: Type, vars: Map<string, Ty>): Ty {
-        const a = this.annotation(t, vars);
+    private valueAnnotation(t: Type, vars: Map<string, Ty>, closed = false): Ty {
+        const a = this.annotation(t, vars, closed);
         if (a.tag !== 'plain')
             return this.error(
                 'mode-mismatch',

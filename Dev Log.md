@@ -1,5 +1,10 @@
 
 
+Next steps:
+- type alias & unions
+- keep going on go
+- then bring c up to speed
+
 
 ---
 

@@ -119,7 +119,8 @@ const runSnapshot = (raw: string) => {
             continue;
         }
         if (node.type === 'type-alias' || node.type === 'union') {
-            throw new Error('not supported yet');
+            // Untyped evaluation: constructors are dynamic, so type declarations are inert.
+            continue;
         }
         if (node.type === 'fn') {
             if (!node.name) {

@@ -1,7 +1,13 @@
-import type { Decl, File, Linear } from './ast.ts';
+import type { Decl, File, Linear, TypeDecl } from './ast.ts';
 import { linearToExpr, type Scope } from './decompose.ts';
 import type { Expr } from './expr.ts';
-import { Inferencer, type Inference, type TypeEnvironment } from './infer.ts';
+import {
+    Inferencer,
+    type Inference,
+    type TypeDefinition,
+    type TypeDefinitions,
+    type TypeEnvironment,
+} from './infer.ts';
 import { builtinTypes, constructorTypes } from './builtins.ts';
 import { TypeDiagnostic, type Scheme } from './types.ts';
 import { verifyElaboration } from './backend/verify-elaboration.ts';
@@ -15,6 +21,8 @@ export type CheckedExpression = Inference & { readonly ast: Linear };
 /** Owns persistent definition schemes. A failed check never publishes a definition. */
 export class Checker {
     private environment: Map<string, Scheme>;
+    private constructors: Map<string, Scheme>;
+    private types = new Map<string, TypeDefinition>();
     private definitionIds = new Map<string, string>();
     private nextExpression = 0;
     private checked = new WeakMap<
@@ -30,7 +38,7 @@ export class Checker {
     >();
     constructor(
         environment: TypeEnvironment = builtinTypes(),
-        private constructors: TypeEnvironment = constructorTypes(),
+        constructors: TypeEnvironment = constructorTypes(),
         private unitId = 'unit',
     ) {
         this.environment = structuredClone(new Map(environment));
@@ -40,6 +48,27 @@ export class Checker {
     get definitions(): TypeEnvironment {
         return structuredClone(this.environment);
     }
+
+    /** Constructor schemes, including those introduced by declared unions. */
+    get constructorDefinitions(): TypeEnvironment {
+        return structuredClone(this.constructors);
+    }
+    get typeDefinitions(): TypeDefinitions {
+        return structuredClone(this.types);
+    }
+
+    /** Declare a type alias or union. A failed declaration publishes nothing. */
+    addType(node: TypeDecl): void {
+        const { definition, constructors } = new Inferencer(
+            this.environment,
+            this.constructors,
+            undefined,
+            this.types,
+        ).typeDeclaration(node);
+        this.types.set(node.name.text, definition);
+        for (const [name, scheme] of constructors) this.constructors.set(name, scheme);
+    }
+
     check(ast: Linear, declaration?: Decl): CheckedExpression {
         if (ast.type === 'fn' && ast.name && this.environment.has(ast.name))
             throw new TypeDiagnostic(
@@ -51,10 +80,12 @@ export class Checker {
             ast.type === 'fn' && ast.name
                 ? `${this.unitId}/definition/${encodeURIComponent(ast.name)}`
                 : `${this.unitId}/expression/${this.nextExpression++}`;
-        const inference = new Inferencer(this.environment, this.constructors, {
-            id,
-            definitions: this.definitionIds,
-        }).infer(ast, declaration);
+        const inference = new Inferencer(
+            this.environment,
+            this.constructors,
+            { id, definitions: this.definitionIds },
+            this.types,
+        ).infer(ast, declaration);
         verifyElaboration(inference.elaboration);
         const result = { ...inference, ast: inference.elaboration.source };
         this.checked.set(result, {
@@ -146,7 +177,9 @@ export function checkTypedFile(
     const { checker, expressions } = checkItems(file, environment, constructors, unitId);
     const imports = [
         ...[...environment].map(([name, scheme]) => importScheme(`native/${name}`, scheme)),
-        ...[...constructors].map(([name, scheme]) => importScheme(`constructor/${name}`, scheme)),
+        ...[...checker.constructorDefinitions].map(([name, scheme]) =>
+            importScheme(`constructor/${name}`, scheme),
+        ),
     ];
     return {
         program: lowerTypedProgram(
@@ -178,7 +211,14 @@ function checkItems(
             continue;
         }
         if (item.type === 'type-alias' || item.type === 'union') {
-            throw new Error('not yet implemeneted');
+            if (declaration)
+                throw new TypeDiagnostic(
+                    'orphan-declaration',
+                    declaration.loc,
+                    'Declaration has no implementation',
+                );
+            checker.addType(item);
+            continue;
         }
         const checked = checker.check(item, declaration);
         expressions.push(checked);

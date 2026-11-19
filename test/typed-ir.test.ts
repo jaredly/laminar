@@ -33,7 +33,8 @@ export function program(source: string) {
             continue;
         }
         if (item.type === 'type-alias' || item.type === 'union') {
-            throw new Error('not supported yet');
+            checker.addType(item);
+            continue;
         }
         const checked = checker.check(item, declaration);
         elaborations.push(checked.elaboration);
