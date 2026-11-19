@@ -5,9 +5,9 @@ export type TargetConfig = {
     triple: string;
     pointerBits: 32 | 64;
     byteOrder: 'little' | 'big';
-    abi: 'c11';
-    toolchain: { compiler: 'clang' | 'gcc' | 'emscripten'; version: string };
-    runtime: 'native' | 'emscripten-node' | 'emscripten-browser';
+    abi: 'c11' | 'go';
+    toolchain: { compiler: 'clang' | 'gcc' | 'emscripten' | 'go'; version: string };
+    runtime: 'native' | 'emscripten-node' | 'emscripten-browser' | 'go';
     features: readonly string[];
 };
 
@@ -32,11 +32,16 @@ export function targetConfig(config: TargetConfig): TargetConfig {
     if (
         ![32, 64].includes(config.pointerBits) ||
         !['little', 'big'].includes(config.byteOrder) ||
-        config.abi !== 'c11'
+        !['c11', 'go'].includes(config.abi)
     )
         throw new BackendDiagnostic(
             'invalid-target',
             'Unsupported address width, byte order, or ABI',
+        );
+    if (config.abi === 'go' && config.toolchain.compiler !== 'go')
+        throw new BackendDiagnostic(
+            'invalid-target',
+            'Go ABI requires the Go compiler toolchain',
         );
     if (
         config.runtime.startsWith('emscripten') &&
@@ -89,6 +94,27 @@ export function wasm32Emscripten(
         abi: 'c11',
         toolchain: { compiler: 'emscripten', version: compilerVersion },
         runtime,
+        features: [],
+    });
+}
+
+export function goTarget(
+    compilerVersion: string,
+    options: {
+        triple?: string;
+        pointerBits?: 32 | 64;
+        byteOrder?: 'little' | 'big';
+        runtime?: 'native' | 'go';
+    } = {},
+): TargetConfig {
+    return targetConfig({
+        schemaVersion: 1,
+        triple: options.triple ?? 'native-go',
+        pointerBits: options.pointerBits ?? 64,
+        byteOrder: options.byteOrder ?? 'little',
+        abi: 'go',
+        toolchain: { compiler: 'go', version: compilerVersion },
+        runtime: options.runtime ?? 'go',
         features: [],
     });
 }
