@@ -827,3 +827,21 @@ seconds. Each slice passed focused execution (32 native/Wasm cases in total).
 TypeScript and diff checks pass. Remote CI was not run. General callable lens
 ABIs and the native manual-argument cleanup ordering boundary remain open;
 phase 6 is incomplete.
+
+
+## Phase 6: proven native callee routing
+
+Callable acquisition may feed one same-block call whose evaluated descriptor is
+independently proven to be native `fst`; a direct `global` producer is no longer
+required. Stored, returned and forwarded native descriptors use existing exact
+projection endpoint/restoration contracts. User-defined and dynamic callable-focus
+callees still diagnose `Callable focus calls require verified native fst provenance`.
+This does not relax general lens ABIs or the native argument-cleanup restriction.
+
+The provenance implementation was incorporated in `32f436f` during this task;
+follow-up coverage adds three shared execution samples and a user-call ABI boundary
+test. All 6 focused native/Wasm cases and diff checks pass. The current broader
+run reports 1437 passes / 39 existing skips / 1 source-identity snapshot failure;
+TypeScript reports errors in cli/c.ts and src/eval-typed.ts introduced with the
+concurrent game changes. Those changes are preserved. No full execution run or
+remote CI is claimed for this follow-up. Phase 6 remains incomplete.

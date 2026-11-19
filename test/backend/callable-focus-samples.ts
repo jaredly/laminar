@@ -851,4 +851,19 @@ export const callableFocusSamples = [
  (old(), before, f())}`,
         expected: [3, 4, 7],
     },
+    {
+        name: 'proven native fst stored callee',
+        source: '{let first = fst\n let p = (fn () 3, 4)\n let old = first(~p) := fn () 7\n let (f, n) = p\n (old(), f(), n)}',
+        expected: [3, 7, 4],
+    },
+    {
+        name: 'proven native fst returned callee',
+        source: 'fn first() {fst}\n{let p = (fn () 3, 4)\n let get = first()\n let old = get(~p) := fn () 7\n let (f, n) = p\n (old(), f(), n)}',
+        expected: [3, 7, 4],
+    },
+    {
+        name: 'proven native fst forwarded callee',
+        source: 'fn pass(f) {f}\n{let first = pass(fst)\n let f = fn () 3\n let n = 4\n let old = first(~(f, n)) := fn () 7\n (old(), f(), n)}',
+        expected: [3, 7, 4],
+    },
 ];

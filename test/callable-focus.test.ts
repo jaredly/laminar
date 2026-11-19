@@ -430,3 +430,13 @@ it('rejects reordered private scattered physical backing', () => {
         .retainedStorage.reverse();
     expect(() => verifyConcreteProgram(c)).toThrow('Retained scope storage contract changed');
 });
+it('keeps user callable focus call ABIs explicit', () => {
+    const p = typedProgram(
+        'fn first(~(x, y)) ~x\n{let p = (fn () 3, 4)\n let old = first(~p) := fn () 7\n old()}',
+    );
+    expect(() =>
+        compileConcreteProgram(p, wasm32Emscripten('test'), [
+            { unit: p.units.at(-1)!.id, arguments: [] },
+        ]),
+    ).toThrow('Callable focus calls require verified native fst provenance');
+});
