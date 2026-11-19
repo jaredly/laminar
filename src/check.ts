@@ -177,6 +177,9 @@ function checkItems(
             declaration = item;
             continue;
         }
+        if (item.type === 'type-alias' || item.type === 'union') {
+            throw new Error('not yet implemeneted');
+        }
         const checked = checker.check(item, declaration);
         expressions.push(checked);
         if (item.type === 'fn' && item.name) checker.publish(checked);

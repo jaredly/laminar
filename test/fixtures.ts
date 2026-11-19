@@ -151,6 +151,9 @@ export const runSnapshot = (
             decl = null;
             continue;
         }
+        if (node.type === 'type-alias' || node.type === 'union') {
+            throw new Error('not supported yet');
+        }
         if (!body) {
             throw new Error(`what is this ${node.type} at line ${pos(node.loc).line + 1}`);
         }

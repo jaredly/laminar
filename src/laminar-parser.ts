@@ -9,13 +9,15 @@ import {
     b,
     lit,
     rest,
-    re,
     wrapper,
+    re,
     manyItems,
-} from '../parser-generator/grammar-lexer.ts';
+} from './grammar-lexer.ts';
 import {
     File,
     FileItem,
+    TypeDecl,
+    TypeConstr,
     Pat,
     Type,
     Term,
@@ -55,8 +57,105 @@ grammar.add('FileItem', [
     ),
     // FileItem:2
     option(
+        b('decl', 'TypeDecl'),
+        ({ decl, node }: { decl: TypeDecl; node: Node }): FileItem => decl,
+    ),
+    // FileItem:3
+    option(
         b('linear', 'Linear'),
         ({ linear, node }: { linear: Linear; node: Node }): FileItem => linear,
+    ),
+]);
+
+grammar.add('TypeDecl', [
+    // TypeDecl:1
+    option(
+        list(' ', lit('type'), b('name', 'id'), lit('='), b('alias', 'Type')),
+        ({ name, alias, node }: { name: Id; alias: Type; node: Node }): TypeDecl => ({
+            type: 'type-alias',
+            name,
+            alias,
+            loc: node.loc,
+        }),
+    ),
+    // TypeDecl:2
+    option(
+        list(
+            ' ',
+            lit('type'),
+            list('', b('name', 'id'), wrapper('(', list(',', many('args', 'id')))),
+            lit('='),
+            b('alias', 'Type'),
+        ),
+        ({
+            name,
+            args,
+            alias,
+            node,
+        }: {
+            name: Id;
+            args: Id[];
+            alias: Type;
+            node: Node;
+        }): TypeDecl => ({
+            type: 'type-alias',
+            name,
+            args,
+            alias,
+            loc: node.loc,
+        }),
+    ),
+    // TypeDecl:3
+    option(
+        list(
+            ' ',
+            lit('type'),
+            b('name', 'id'),
+            wrapper('{', list('\n', many('items', 'TypeConstr'))),
+        ),
+        ({ name, items, node }: { name: Id; items: TypeConstr[]; node: Node }): TypeDecl => ({
+            type: 'union',
+            name,
+            items,
+            loc: node.loc,
+        }),
+    ),
+    // TypeDecl:4
+    option(
+        list(
+            ' ',
+            lit('type'),
+            list('', b('name', 'id'), wrapper('(', list(',', many('args', 'id')))),
+            wrapper('{', list('\n', many('items', 'TypeConstr'))),
+        ),
+        ({
+            name,
+            args,
+            items,
+            node,
+        }: {
+            name: Id;
+            args: Id[];
+            items: TypeConstr[];
+            node: Node;
+        }): TypeDecl => ({ type: 'union', name, args, items, loc: node.loc }),
+    ),
+]);
+
+grammar.add('TypeConstr', [
+    // TypeConstr:1
+    option(b('name', /^[A-Z]/), ({ name, node }: { name: Id; node: Node }): TypeConstr => ({
+        name,
+        loc: node.loc,
+    })),
+    // TypeConstr:2
+    option(
+        list('', b('name', /^[A-Z]/), wrapper('(', list(',', many('args', 'Type')))),
+        ({ name, args, node }: { name: Id; args: Type[]; node: Node }): TypeConstr => ({
+            name,
+            args,
+            loc: node.loc,
+        }),
     ),
 ]);
 
@@ -226,12 +325,22 @@ grammar.add('Type', [
     ),
     // Type:4
     option(
+        list('', b('name', 'id'), wrapper('(', list(',', many('args', 'Type')))),
+        ({ name, args, node }: { name: Id; args: Type[]; node: Node }): Type => ({
+            type: 'constr',
+            name,
+            args,
+            loc: node.loc,
+        }),
+    ),
+    // Type:5
+    option(
         wrapper('(', list(',', many('items', 'Type'))),
         ({ items, node }: { items: Type[]; node: Node }): Type => ({ type: 'tuple', items }),
     ),
-    // Type:5
-    option(wrapper('(', null), ({ node }: { node: Node }): Type => ({ type: 'tuple', items: [] })),
     // Type:6
+    option(wrapper('(', null), ({ node }: { node: Node }): Type => ({ type: 'tuple', items: [] })),
+    // Type:7
     option(
         list(' ', wrapper('(', list(',', many('args', 'Type'))), lit('=>'), b('body', 'Type')),
         ({ args, body, node }: { args: Type[]; body: Type; node: Node }): Type => ({

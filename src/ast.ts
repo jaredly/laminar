@@ -21,11 +21,17 @@ export type Loc = number;
 export type Type =
     | Id
     | { type: 'lens'; left: Type; right?: Type }
+    | { type: 'constr'; name: Id; args?: Type[]; loc: Loc }
     | { type: 'tuple'; items: Type[] }
     | { type: 'fn'; args: Type[]; body: Type };
 
+export type TypeDecl =
+    | { type: 'type-alias'; name: Id; alias: Type; loc: Loc; args?: Id[] }
+    | { type: 'union'; name: Id; args?: Id[]; items: TypeConstr[]; loc: Loc };
+export type TypeConstr = { name: Id; loc: Loc; args?: Type[] };
+
 export type File = FileItem[];
-export type FileItem = Linear | Decl;
+export type FileItem = Linear | Decl | TypeDecl;
 export type Decl = { type: 'decl'; name: Id; ann: Type; loc: number };
 
 export type Lens =

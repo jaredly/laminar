@@ -9,7 +9,20 @@ File {
 
 FileItem {
     [" " name:id "::" ...ann:*Type] -> ({type: "decl", name, ann, loc: node.loc})
+    decl:TypeDecl -> decl
     linear:Linear -> linear
+}
+
+TypeDecl {
+    [" " "type" name:id "=" alias:Type] -> ({type: "type-alias", name, alias, loc: node.loc})
+    [" " "type" ["" name:id ["(," ...args:id]] "=" alias:Type] -> ({type: "type-alias", name, args, alias, loc: node.loc})
+    [" " "type" name:id ["{\n" ...items:TypeConstr]] -> ({type: "union", name, items, loc: node.loc})
+    [" " "type" ["" name:id ["(," ...args:id]] ["{\n" ...items:TypeConstr]] -> ({type: "union", name, args, items, loc: node.loc})
+}
+
+TypeConstr {
+    name:re"^[A-Z]" -> ({name, loc: node.loc})
+    ["" name:re"^[A-Z]" ["(," ...args:Type]] -> ({name, args, loc: node.loc})
 }
 
 function pcons(items:Pat[], loc:number) {
@@ -54,6 +67,7 @@ Type {
     text:id -> ({type: "id", text: text.text, loc: node.loc})
     ["" "~" left:Type] -> ({type: "lens", left})
     ["" left:Type "/" right:Type] -> ({type: "lens", left, right})
+    ["" name:id ["(," ...args:Type]] -> ({type: "constr", name, args, loc: node.loc})
     ["(," ...items:Type] -> ({type: "tuple", items})
     ["("] -> ({type: "tuple", items: []})
     [" " ["(," ...args:Type] "=>" body:Type] -> ({type: "fn", args, body})

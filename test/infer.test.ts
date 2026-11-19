@@ -16,6 +16,9 @@ function parse(source: string): FileItem[] {
 function expression(source: string): Linear {
     const [n] = parse(source);
     if (n.type === 'decl') throw new Error('Expected expression');
+    if (n.type === 'type-alias' || n.type === 'union') {
+        throw new Error('not supported yet');
+    }
     return n;
 }
 function type(source: string, checker = new Checker()): string {

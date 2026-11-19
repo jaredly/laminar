@@ -118,6 +118,9 @@ const runSnapshot = (raw: string) => {
             decl = { v: node, node: lnode };
             continue;
         }
+        if (node.type === 'type-alias' || node.type === 'union') {
+            throw new Error('not supported yet');
+        }
         if (node.type === 'fn') {
             if (!node.name) {
                 throw new Error(`nameless fn at line ${pos(node.loc).line + 1}`);

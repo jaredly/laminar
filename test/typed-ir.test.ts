@@ -32,6 +32,9 @@ export function program(source: string) {
             declaration = item;
             continue;
         }
+        if (item.type === 'type-alias' || item.type === 'union') {
+            throw new Error('not supported yet');
+        }
         const checked = checker.check(item, declaration);
         elaborations.push(checked.elaboration);
         if (item.type === 'fn' && item.name) checker.publish(checked);

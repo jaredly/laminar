@@ -15,6 +15,7 @@ import {
     type Term,
     type Type,
     type Decl,
+    Id,
 } from './ast.ts';
 import {
     Solver,
@@ -398,19 +399,36 @@ export class Inferencer {
             ),
         };
     }
+    private constr(id: Id, args: Type[], vars: Map<string, Ty>): FlowTy {
+        if (['Number', 'Int', 'Bool', 'String', 'World', 'Handle', 'List'].includes(id.text)) {
+            if (id.text === 'List') {
+                if (args.length !== 1) throw new Error(`List type requires 1 arg`);
+            } else if (args.length) {
+                throw new Error(`${id.text} type expects 0 args`);
+            }
+
+            return plain(
+                con(
+                    id.text === 'Int' ? 'Number' : id.text,
+                    ...args.map((t) => this.valueAnnotation(t, vars)),
+                ),
+            );
+        }
+        if (!/^[a-z]/.test(id.text)) this.error('unknown-type', id.loc, `Unknown type ${id.text}`);
+        if (!vars.has(id.text)) vars.set(id.text, this.solver.fresh());
+        return plain(vars.get(id.text)!);
+    }
     private annotation(t: Type, vars: Map<string, Ty>): FlowTy {
         switch (t.type) {
             case 'id': {
-                if (['Number', 'Int', 'Bool', 'String', 'World', 'Handle'].includes(t.text))
-                    return plain(con(t.text === 'Int' ? 'Number' : t.text));
-                if (!/^[a-z]/.test(t.text))
-                    this.error('unknown-type', t.loc, `Unknown type ${t.text}`);
-                if (!vars.has(t.text)) vars.set(t.text, this.solver.fresh());
-                return plain(vars.get(t.text)!);
+                return this.constr(t, [], vars);
             }
             case 'lens': {
                 const a = this.valueAnnotation(t.left, vars);
                 return flow(a, t.right ? this.valueAnnotation(t.right, vars) : a);
+            }
+            case 'constr': {
+                return this.constr(t.name, t.args ?? [], vars);
             }
             case 'tuple':
                 return plain(tuple(...t.items.map((v) => this.valueAnnotation(v, vars))));
