@@ -5,7 +5,7 @@ execute the documented scalar/tuple native C and Emscripten/Node subset. Typed
 indirect closure invocation and environment disposal implement part of phase 6.
 Compatible user-defined/native intrinsic joins and differing callable results
 execute, including differing lens-result shapes and recursive callable tuple results. Owned callable tuples and recursive callable tuple branch-result joins execute through concrete recursive storage; callable
-general focus storage/restoration remains open; direct and scattered callable swaps, persistent whole/projected/manual/scattered aliases, lexical forwarding and manual callable restoration execute. Phase 7 runtime and host integration and phase 8 optimization remain broader
+focus parameter/result ABIs execute through demand-driven specialization, including callee-private returned backing; recursive and branch-selected callees taking callable focuses remain open. Direct and scattered callable swaps, persistent whole/projected/manual/scattered aliases, lexical forwarding and manual callable restoration execute. Phase 7 runtime and host integration and phase 8 optimization remain broader
 work. This is subset
 coverage, not completion of every phase exit gate.
 
@@ -866,3 +866,62 @@ TypeScript and diff checks pass. Broad non-execution validation reports 1442 pas
 Wasm run or remote CI is claimed for this legacy-only correction. Phase 6 remains
 incomplete. Concurrent evaluator, systematic fixture and developer-log work is
 preserved.
+
+
+## Phase 6: demand-driven callable focus parameter and result ABIs
+
+User functions may now receive callable/aggregate-with-callable focuses and return
+callable focuses. A variant's identity includes its caller's replacement demand, so
+the callee is specialized on both endpoints: the setup read it exposes and the
+replacement representation its completion installs. Parameter contracts carry each
+focus argument's final replacement independently of its read.
+
+Lens setup precedes analysis of the replacement, so the demand is derived lazily
+rather than predicted. Representation analysis runs the callee through setup at the
+call, records a pending call entry, and interns the variant only when the returned
+focus completes. The completing consumer has then installed a concrete replacement:
+an immediate swap (`value`), a persistent alias release (`loan`), a consuming focus
+call's parameter contract (`consumer`), or a forwarding caller's own completion.
+Because the real analysis supplies the demand, replacements built by branches,
+scopes and focus-taking calls need no separate equation solver; the earlier
+`RepresentationDemands` evaluator is removed. Alias replacements joined across
+branches specialize on the resulting `callable-choice`. One call site completed with
+divergent demands, or never completed, is an explicit diagnostic.
+
+A returned focus routes either to one parameter projection or to callee-private
+storage. Private backing (for example `fn temp() ~{lens v <- fn () 1\n v}`) uses
+the existing retained-scope contract and the returned lens's heap residual context,
+so the backing outlives the callee frame until restoration releases it. Private
+results forward through relaying callees. Callee setup writes to a focus parameter
+before returning a lens to it are now accepted; the read endpoint reflects the
+post-setup storage.
+
+Independent verification derives the result route (parameter projection or private)
+from typed IR, checks each demand source structurally, checks the annotated focus
+replacement against the demand and variant key, and checks parameter completion
+inside the variant. Returned-focus arguments verify their endpoints at their own
+completion. No C storage, environment or restoration convention changes.
+
+Twenty-two shared demand samples execute on typed IR, the legacy reference and
+native/Wasm C, covering exchanges, projections, scattered and forwarded parameters,
+distinct replacement variants, branch/scope/call replacements, persistent and unused
+result aliases, joined alias replacements, setup effects, private/captured/forwarded
+private backing, results consumed by focus calls and closure callees. Corruption
+tests reject forged alias/consumer sources, replacement demands and private
+retention contracts.
+
+Remaining explicit boundaries: recursive callees taking callable focuses
+(`Recursive callable endpoint demands require a fixed-point constraint`, which needs
+a contract fixed point), branch-selected callees taking callable focuses (`Callable
+focus calls require verified native fst provenance`, which needs per-option
+completion and a joined dispatch contract), native `fst` over a callable result or
+manual argument (`Callable fst argument cleanup ordering requires an explicit
+adapter`), and returned lenses selected by a callee branch. Phase 6 remains
+incomplete.
+
+Validation: 1510 non-execution passes with only the existing source-identity
+snapshot failure; the full `LAMINAR_EXEC=1` execution file passed 1150 native/Wasm
+cases (strict and optimized native, supported sanitizers, both Emscripten/Node
+optimization levels) in 301.89 seconds without retries. TypeScript checks pass.
+Remote CI was not run. Execution tests in `test/c/execute.test.ts` are now opt-in
+with `LAMINAR_EXEC=1`.

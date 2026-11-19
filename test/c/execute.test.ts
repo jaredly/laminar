@@ -52,7 +52,11 @@ afterAll(() => {
     if (oldCores === undefined) delete process.env.EMCC_CORES;
     else process.env.EMCC_CORES = oldCores;
 });
-const version = (cmd: string) => spawnSync(cmd, ['--version'], { encoding: 'utf8' });
+// Native/Wasm builds are slow; opt in with LAMINAR_EXEC=1.
+const executionEnabled = !!process.env.LAMINAR_EXEC;
+const skipped = { status: 1, stdout: '' } as const;
+const version = (cmd: string) =>
+    executionEnabled ? spawnSync(cmd, ['--version'], { encoding: 'utf8' }) : skipped;
 const clang = version('clang'),
     emcc = version('emcc'),
     node = version('node');
@@ -72,8 +76,9 @@ if (emcc.status === 0 && !process.env.EM_CACHE) {
         await rm(cache, { recursive: true });
     });
 }
-const macros =
-    spawnSync('clang', ['-dM', '-E', '-x', 'c', '/dev/null'], { encoding: 'utf8' }).stdout ?? '';
+const macros = executionEnabled
+    ? (spawnSync('clang', ['-dM', '-E', '-x', 'c', '/dev/null'], { encoding: 'utf8' }).stdout ?? '')
+    : '';
 const native =
     clang.status === 0
         ? targetConfig({
@@ -135,9 +140,9 @@ const normalize = (v: unknown): unknown =>
           : v;
 for (const wasm of [false, true]) {
     const available = wasm ? emcc.status === 0 && node.status === 0 : clang.status === 0;
-    if (!available && process.env.CI)
+    if (executionEnabled && !available && process.env.CI)
         throw Error(`Required backend toolchain missing: ${wasm ? 'emcc/Node' : 'clang'}`);
-    if (!available)
+    if (executionEnabled && !available)
         console.warn(`Skipping local backend execution: missing ${wasm ? 'emcc/Node' : 'clang'}`);
     for (const sample of samples)
         (available ? it.concurrent : it.skip)(

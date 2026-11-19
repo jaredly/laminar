@@ -356,6 +356,8 @@ export function verifyRepresentations(
         focusOwners: Map<string, { place: string; path: number[] }>;
         focusWrites: Map<string, SemanticType>;
         callResults: Map<string, FocusTarget>;
+        /** Returned focuses backed by callee-private storage retained by the call. */
+        privateCallResults: Set<string>;
         nativeProjections: Set<string>;
         focusTargets: Map<string, FocusTarget>;
         dataOwners: Map<string, { place: string; path: number[] }>;
@@ -369,6 +371,7 @@ export function verifyRepresentations(
         focusOwners: new Map(),
         focusWrites: new Map(),
         callResults: new Map(),
+        privateCallResults: new Set(),
         nativeProjections: new Set(),
         focusTargets: new Map(),
         dataOwners: new Map(),
@@ -382,6 +385,7 @@ export function verifyRepresentations(
         focusOwners: new Map(s.focusOwners),
         focusWrites: new Map(s.focusWrites),
         callResults: new Map(s.callResults),
+        privateCallResults: new Set(s.privateCallResults),
         nativeProjections: new Set(s.nativeProjections),
         focusTargets: new Map(s.focusTargets),
         dataOwners: new Map(s.dataOwners),
@@ -679,10 +683,12 @@ export function verifyRepresentations(
         if ('items' in target) return target.items.flatMap(targetLeaves);
         return [target];
     }
+    /** Derives the parameter projection backing a returned focus; `undefined`
+     * means callee-private storage retained by the call's residual context. */
     function resultRoute(
         variant: RepresentationVariant,
         active = new Set<string>(),
-    ): { argument: number; path: number[] } {
+    ): { argument: number; path: number[] } | undefined {
         if (active.has(variant.id)) return fail('Recursive callable result route');
         active = new Set(active).add(variant.id);
         const fn = fnFor(variant.unit, variant.function),
@@ -694,17 +700,13 @@ export function verifyRepresentations(
             }
         };
         scan(fn.body);
-        const route = (id: string): { argument: number; path: number[] } => {
+        const route = (id: string): { argument: number; path: number[] } | undefined => {
             const i = instructions.get(id) ?? fail('Unavailable callable result route');
             if (i.op === 'scope') return route(i.body.result);
             if (i.op === 'manual') return route(i.lens);
             if (i.op === 'acquire') {
                 const argument = fn.parameters.findIndex((p) => p.lensPlace === i.slot.place);
-                if (argument < 0)
-                    return fail(
-                        'Private callable result backing requires a retained return contract',
-                    );
-                return { argument, path: i.slot.path };
+                return argument < 0 ? undefined : { argument, path: i.slot.path };
             }
             if (i.op === 'call') {
                 const call =
@@ -719,8 +721,9 @@ export function verifyRepresentations(
                                   fail('Invalid callable forwarding target'),
                               active,
                           );
+                if (!inner) return undefined;
                 const outer = route(i.args[inner.argument]!);
-                return { argument: outer.argument, path: [...outer.path, ...inner.path] };
+                return outer && { argument: outer.argument, path: [...outer.path, ...inner.path] };
             }
             return fail('Callable result requires a verified parameter projection');
         };
@@ -832,7 +835,11 @@ export function verifyRepresentations(
                         const owner = s.focusOwners.get(i.lens);
                         if (loan.owners) {
                             const write = s.focusWrites.get(i.lens);
-                            if (!owner || !write)
+                            const callTarget = s.callResults.get(i.lens);
+                            if (
+                                (!owner && !callTarget && !s.privateCallResults.has(i.lens)) ||
+                                !write
+                            )
                                 return fail('Computed callable alias lacks a logical frontend');
                             s.places.set(loan.place, focus.read);
                             const complete = s.finishes.get(i.lens);
@@ -847,14 +854,16 @@ export function verifyRepresentations(
                                     replacement,
                                     'Computed callable alias replacement provenance changed',
                                 );
-                                state.places.set(
-                                    owner.place,
-                                    replaceValue(
-                                        state.places.get(owner.place)!,
-                                        owner.path,
-                                        replacement,
-                                    ),
-                                );
+                                if (callTarget) writeTarget(callTarget, replacement, state, false);
+                                else if (owner)
+                                    state.places.set(
+                                        owner.place,
+                                        replaceValue(
+                                            state.places.get(owner.place)!,
+                                            owner.path,
+                                            replacement,
+                                        ),
+                                    );
                                 complete?.(state, true);
                             });
                         } else if (
@@ -906,7 +915,8 @@ export function verifyRepresentations(
                             const callTarget = s.callResults.get(i.lens);
                             const owner = s.focusOwners.get(i.lens);
                             if (callTarget) writeTarget(callTarget, focus.replacement, s, false);
-                            else if (!owner) return fail('Nonlocal callable focus swap');
+                            else if (!owner && !s.privateCallResults.has(i.lens))
+                                return fail('Nonlocal callable focus swap');
                             if (owner)
                                 s.places.set(
                                     owner.place,
@@ -1228,7 +1238,9 @@ export function verifyRepresentations(
                         );
                         const callTarget = nested.callResults.get(i.body.result);
                         if (callTarget) s.callResults.set(i.out.id, callTarget);
-                        if (v.kind === 'local-focus' && !callTarget) {
+                        const privateResult = nested.privateCallResults.has(i.body.result);
+                        if (privateResult) s.privateCallResults.add(i.out.id);
+                        if (v.kind === 'local-focus' && !callTarget && !privateResult) {
                             const owner = nested.focusOwners.get(i.body.result);
                             if (!owner)
                                 return fail('Escaping callable focus lacks a logical owner');
@@ -1609,7 +1621,13 @@ export function verifyRepresentations(
                                     writeTarget(target, readTarget(target, state, write), state);
                             });
                         }
-                        if (callee.kind === 'callable' && args.some(isFocus)) {
+                        if (
+                            callee.kind === 'callable' &&
+                            (args.some(isFocus) ||
+                                (i.out.type.tag === 'flow' &&
+                                    (containsCallable(i.out.type.read) ||
+                                        containsCallable(i.out.type.write))))
+                        ) {
                             const variant =
                                 variants.get(call.target) ?? fail('Missing demanded variant');
                             const targets = i.args.map((id, n) =>
@@ -1623,15 +1641,24 @@ export function verifyRepresentations(
                                     call.demand.replacement,
                                     'Callable result demand changed',
                                 );
-                                const route = resultRoute(variant);
-                                s.callResults.set(
-                                    i.out.id,
-                                    projectedTarget(
-                                        targets[route.argument] ??
-                                            fail('Demanded call lacks argument backing'),
-                                        route.path,
-                                    ),
+                                // The consumer installs the annotated replacement; its
+                                // source (swap, alias or forwarding) is checked separately.
+                                requireEqual(
+                                    v.replacement,
+                                    call.demand.replacement,
+                                    'Callable result demand changed',
                                 );
+                                const route = resultRoute(variant);
+                                if (route)
+                                    s.callResults.set(
+                                        i.out.id,
+                                        projectedTarget(
+                                            targets[route.argument] ??
+                                                fail('Demanded call lacks argument backing'),
+                                            route.path,
+                                        ),
+                                    );
+                                else s.privateCallResults.add(i.out.id);
                             } else if (call.demand || variant.resultDemand)
                                 return fail('Unexpected callable result demand');
                             s.finishes.set(i.out.id, (current, apply) => {
@@ -1647,6 +1674,9 @@ export function verifyRepresentations(
                                                     >
                                                 ).replacement,
                                                 current,
+                                                // Returned-focus arguments verify their
+                                                // endpoints at their own completion.
+                                                !s.callResults.has(i.args[n]!),
                                             );
                                     });
                             });
@@ -1683,7 +1713,20 @@ export function verifyRepresentations(
                 if (instruction.op === 'call') {
                     const demand = calls.get(instruction.out.id)?.demand;
                     if (demand) {
-                        if (demand.value) {
+                        if (demand.consumer) {
+                            if (
+                                !b.instructions.some(
+                                    (i) =>
+                                        i.op === 'call' &&
+                                        i.out.id === demand.consumer &&
+                                        i.args.includes(instruction.out.id),
+                                )
+                            )
+                                return fail('Callable replacement demand source changed');
+                        } else if (demand.loan) {
+                            if (!borrowedLoans(instruction.out.id, b).includes(demand.loan))
+                                return fail('Callable replacement demand source changed');
+                        } else if (demand.value) {
                             if (
                                 !b.instructions.some(
                                     (i) =>
@@ -1750,28 +1793,35 @@ export function verifyRepresentations(
             for (const cleanup of deferred.reverse()) s.finishes.get(cleanup.value)!(s, false);
             return result;
         }
-        const result = block(body, state, !!parameters?.length, resultDemand);
-        if (isFocus(result) && parameters?.length) {
+        // Demanded variants are entered with focus arguments or a result demand.
+        const demanded = !!parameters?.length || resultDemand !== undefined;
+        const result = block(body, state, demanded, resultDemand);
+        if (isFocus(result) && demanded) {
             if (!resultDemand) return fail('Callable lens result requires a replacement demand');
-            const target =
-                targetFor(state, body.result) ?? fail('Demanded result lacks logical backing');
-            const leaves = targetLeaves(target);
-            if (leaves.length !== 1 || !parameters.some((p) => p.place === leaves[0]!.place))
-                return fail('Callable result requires a verified parameter projection');
-            parameters.forEach((p) =>
-                requireEqual(
-                    state.places.get(p.place),
-                    (p.representation as Extract<ValueRepresentation, { kind: 'local-focus' }>)
-                        .read,
-                    'Demanded lens setup effects require explicit storage contracts',
-                ),
+            const forwardedPrivate = state.privateCallResults.has(body.result);
+            const target = forwardedPrivate
+                ? undefined
+                : (targetFor(state, body.result) ?? fail('Demanded result lacks logical backing'));
+            const leaves = target ? targetLeaves(target) : [];
+            const lensPlaces = new Set(
+                unit.functions
+                    .find((f) => f.body === body)
+                    ?.parameters.flatMap((p) => (p.lensPlace ? [p.lensPlace] : [])) ?? [],
             );
+            // A leaf is a focus parameter projection or callee-private storage.
+            if (
+                (!forwardedPrivate && leaves.length !== 1) ||
+                (leaves.length &&
+                    lensPlaces.has(leaves[0]!.place) &&
+                    !parameters?.some((p) => p.place === leaves[0]!.place))
+            )
+                return fail('Callable result requires a verified parameter projection');
             requireEqual(
                 result.replacement,
                 resultDemand,
                 'Callable result replacement endpoint changed',
             );
-            writeTarget(target, resultDemand, state, false);
+            if (target) writeTarget(target, resultDemand, state, false);
             state.finishes.get(body.result)?.(state, true);
         }
         parameters?.forEach((p) => {

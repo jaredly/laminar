@@ -115,8 +115,10 @@ traps, malformed results and expected-result mismatches retain their temporary
 compiler/runtime versions. Successful runs remove their directories.
 
 Run `bun test test/c` for the backend tests, `bun test` for all regressions, and
-`bunx tsc --noEmit` for TypeScript checks. Missing local compiler/runtime tools
-produce explicit execution skips; `CI` makes them failures. Tests copy the local
+`bunx tsc --noEmit` for TypeScript checks. Native/Wasm execution tests in
+`test/c/execute.test.ts` are skipped unless `LAMINAR_EXEC=1` is set (for example
+`LAMINAR_EXEC=1 bun test test/c/execute.test.ts`). When enabled, missing local
+compiler/runtime tools produce explicit execution skips; `CI` makes them failures. Tests copy the local
 Emscripten cache to writable temporary storage when `EM_CACHE` is unset, removing
 relocation-sensitive build files. Set `EM_CACHE` to an existing writable cache to
 reuse it. The relocated Homebrew cache disables batch library builds to avoid
