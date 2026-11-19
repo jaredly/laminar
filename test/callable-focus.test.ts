@@ -195,3 +195,25 @@ it('independently checks manual callable read provenance', () => {
     v.read = structuredClone(v.replacement);
     expect(() => verifyConcreteProgram(c)).toThrow('Manual callable read provenance changed');
 });
+it('independently checks forwarded callable endpoint agreement', () => {
+    const c = concrete(
+        callableFocusSamples.find((s) => s.name === 'forwarded callable focus lexical swap')!
+            .source,
+    );
+    const focus = c.analysis.entries[0].values
+        .filter((v: any) => v.representation.kind === 'local-focus')
+        .at(-1).representation;
+    focus.replacement = structuredClone(focus.read);
+    expect(() => verifyConcreteProgram(c)).toThrow('Scope result representation mismatch');
+    expect(() => emitC(c)).toThrow('Scope result representation mismatch');
+});
+it('keeps escaping private callable backing explicit', () => {
+    const p = typedProgram(
+        'fn make() {fn () 3}\n{let old = {let f = make()\n f} := fn () 7\n old()}',
+    );
+    expect(() =>
+        compileConcreteProgram(p, wasm32Emscripten('test'), [
+            { unit: p.units.at(-1)!.id, arguments: [] },
+        ]),
+    ).toThrow('Escaping callable focus requires retained local backing');
+});

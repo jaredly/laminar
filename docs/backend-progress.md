@@ -1170,3 +1170,22 @@ native/Wasm cases). Full strict C11, optimized native, supported sanitizers and
 both Emscripten/Node optimization levels passed without retries in 369.41 seconds.
 Each slice also passed its 12 focused native/Wasm cases. TypeScript and diff
 checks pass. Remote CI was not run. These slices do not complete phase 6.
+
+
+## Phase 6: lexical forwarding of callable focuses
+
+Callable/aggregate local focuses backed by enclosing storage now retain logical
+owner/path identities through lexical scope results. Independent verification
+checks scope endpoint agreement and derives the same owner identity. Completion
+retains frontend-then-lexical-release ordering for callable focuses as well as
+ordinary lenses. Forwarded callable manual cleanup is analyzed against installed
+storage at completion, preserving its original callable ABI. Private owners that
+would escape their defining scope and callable function-result ABIs still receive
+explicit diagnostics; no C storage or lifetime convention is changed.
+
+Six shared cases cover direct/projected/nested aggregate focuses, manual cleanup,
+lexical loan release and unused environments. Corruption coverage rejects altered
+forwarded endpoint descriptors; a boundary test protects private backing escape.
+All 12 focused native/Wasm cases, the full non-execution suite, TypeScript and diff
+checks pass. Persistent computed manual aliases and general callable focus ABIs
+remain open. Phase 6 is incomplete.

@@ -542,7 +542,7 @@ export function verifyRepresentations(
                 return false;
             });
         }
-        function block(b: IRBlock, s: State): ValueRepresentation {
+        function block(b: IRBlock, s: State, allowLocalFocusResult = false): ValueRepresentation {
             const deferred: { value: string; body: IRBlock }[] = [];
             function borrowedLoans(value: string, body: IRBlock): string[] {
                 const loans: string[] = [];
@@ -660,6 +660,7 @@ export function verifyRepresentations(
                                     (use) => use.op === 'swap' && use.lens === i.out.id,
                                 ).length !== 1 &&
                                     borrowedLoans(i.out.id, b).length !== 1 &&
+                                    !(allowLocalFocusResult && b.result === i.out.id) &&
                                     !b.instructions.some(
                                         (use) => use.op === 'manual' && use.lens === i.out.id,
                                     ))
@@ -749,6 +750,7 @@ export function verifyRepresentations(
                         const frontendFinish = s.finishes.get(i.lens);
                         let analyzed = false;
                         const finish = (state: State, apply: boolean) => {
+                            if (!apply && v.kind === 'local-focus') return;
                             const annotation = annotations.get(i.out.id)!;
                             if (apply && v.kind === 'local-focus')
                                 requireEqual(
@@ -842,12 +844,20 @@ export function verifyRepresentations(
                         const nested = clone(s);
                         requireEqual(
                             v,
-                            block(i.body, nested),
+                            block(i.body, nested, true),
                             'Scope result representation mismatch',
                         );
                         s.places.forEach((_, place) =>
                             s.places.set(place, nested.places.get(place)!),
                         );
+                        if (v.kind === 'local-focus') {
+                            const owner = nested.focusOwners.get(i.body.result);
+                            if (!owner || !s.places.has(owner.place))
+                                return fail(
+                                    'Escaping callable focus requires retained local backing',
+                                );
+                            s.focusOwners.set(i.out.id, owner);
+                        }
                         const finish = nested.finishes.get(i.body.result);
                         if (finish) {
                             const retained = clone(nested);
@@ -1125,13 +1135,15 @@ export function verifyRepresentations(
                 s.values.set(i.out.id, v);
             }
             const result = get(s, b.result);
+            if (result.kind === 'local-focus' && !allowLocalFocusResult)
+                return fail('Callable focus results require an explicit return ABI');
             if (result.kind !== 'lens' && result.kind !== 'local-focus')
                 for (const action of b.cleanup)
                     if (action.kind === 'release') {
                         const value = s.loanFinishes.get(action.loan);
                         if (value) s.finishes.get(value)?.(s, true);
                     }
-            if (result.kind === 'lens') {
+            if (result.kind === 'lens' || result.kind === 'local-focus') {
                 const finish = s.finishes.get(b.result);
                 const releases = b.cleanup.flatMap((action) => {
                     if (action.kind !== 'release') return [];

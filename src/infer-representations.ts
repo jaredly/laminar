@@ -411,6 +411,7 @@ export function inferRepresentations(
         s: State,
         record: Pick<RepresentationVariant, 'values' | 'calls'>,
         chain: string[],
+        allowLocalFocusResult = false,
     ): ValueRepresentation {
         // Cleanup is a separate executable region. Its data moves carry the
         // restoration-time types verified by typed IR, rather than setup types.
@@ -528,6 +529,7 @@ export function inferRepresentations(
                                 (use) => use.op === 'swap' && use.lens === i.out.id,
                             ).length !== 1 &&
                                 borrows(i.out.id, body).length !== 1 &&
+                                !(allowLocalFocusResult && body.result === i.out.id) &&
                                 !body.instructions.some(
                                     (use) => use.op === 'manual' && use.lens === i.out.id,
                                 ))
@@ -622,6 +624,9 @@ export function inferRepresentations(
                     // descriptor effects without replaying SSA/call annotations.
                     let analyzed = false;
                     const finish = (state: State, apply: boolean) => {
+                        // Callable cleanup needs the actual installed representation,
+                        // which is known when the forwarded focus completes.
+                        if (!apply && manualFocus.kind === 'local-focus') return;
                         const annotation = record.values.find((v) => v.value === i.out.id)!;
                         if (apply && manualFocus.kind === 'local-focus')
                             manualFocus.replacement = containsCallable(write)
@@ -752,7 +757,13 @@ export function inferRepresentations(
                 }
                 case 'scope': {
                     const nested = clone(s);
-                    out = block(unit, i.body, nested, record, chain);
+                    out = block(unit, i.body, nested, record, chain, true);
+                    if (out.kind === 'local-focus') {
+                        const owner = nested.focusOwners.get(i.body.result);
+                        if (!owner || !s.places.has(owner.place))
+                            return fail('Escaping callable focus requires retained local backing');
+                        s.focusOwners.set(i.out.id, owner);
+                    }
                     s.places.forEach((_, place) => s.places.set(place, nested.places.get(place)!));
                     const finish = nested.finishes.get(i.body.result);
                     if (finish) {
@@ -906,6 +917,8 @@ export function inferRepresentations(
             });
         }
         const result = get(s, body.result);
+        if (result.kind === 'local-focus' && !allowLocalFocusResult)
+            return fail('Callable focus results require an explicit return ABI');
         // A plain block releases its lexical loans before its caller continues.
         // Lens results defer those releases; analyze remaining regions without
         // applying their effects to setup state.
@@ -915,7 +928,7 @@ export function inferRepresentations(
                     const value = s.loanFinishes.get(action.loan);
                     if (value) s.finishes.get(value)?.(s, true);
                 }
-        if (result.kind === 'lens') {
+        if (result.kind === 'lens' || result.kind === 'local-focus') {
             const finish = s.finishes.get(body.result);
             const releases = body.cleanup.flatMap((action) => {
                 if (action.kind !== 'release') return [];

@@ -354,4 +354,68 @@ export const callableFocusSamples = [
  9}`,
         expected: 9,
     },
+    {
+        name: 'forwarded callable focus lexical swap',
+        source: `{let v = 3
+ let f = fn () v
+ let old = {let marker = ()
+ f} := fn () 7
+ (old(), f())}`,
+        expected: [3, 7],
+    },
+    {
+        name: 'forwarded callable focus manual cleanup',
+        source: `{let v = 3
+ let f = fn () v
+ let seen = 0
+ let old = {let marker = ()
+ @(f, {let installed = f := fn () 9
+ seen := installed()
+ fn () ()})} := fn () 7
+ (old(), seen, f())}`,
+        expected: [3, 7, 9],
+    },
+    {
+        name: 'forwarded callable focus projected',
+        source: `{let v = 3
+ let p = (fn () v, 4)
+ {let (a, b) = ~p
+ let old = {let marker = ()
+ a} := fn () 7
+ old()}
+ let (f, n) = p
+ (f(), n)}`,
+        expected: [7, 4],
+    },
+    {
+        name: 'forwarded callable focus lexical loan release',
+        source: `{let v = 3
+ let f = fn () v
+ let old = {let a = ~f
+ a} := fn () 7
+ (old(), f())}`,
+        expected: [3, 7],
+    },
+    {
+        name: 'forwarded callable focus nested aggregate',
+        source: `{let v = 3
+ let p = ((fn () v, 4), true)
+ let old = {let marker = ()
+ {let other = ()
+ p}} := ((fn () 7, false), 9)
+ let ((f, n), b) = old
+ let ((g, c), z) = p
+ (f(), n, b, g(), c, z)}`,
+        expected: [3, 4, true, 7, false, 9],
+    },
+    {
+        name: 'forwarded callable focus unused environments',
+        source: `{let v = 3
+ let f = fn () v
+ let w = 7
+ let old = {let marker = ()
+ @(f, fn () ())} := fn () w
+ 9}`,
+        expected: 9,
+    },
 ];
