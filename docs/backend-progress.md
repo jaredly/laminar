@@ -1279,3 +1279,24 @@ Three shared forwarding cases and one corruption case pass. Validation: 1401
 non-execution passes / 39 existing skips; 6 focused native/Wasm passes; TypeScript
 and diff checks pass. Persistent scattered aliases and general callable lens ABIs
 remain open. Phase 6 is incomplete.
+
+
+## Persistent scattered callable aliases
+
+Persistent computed loans now retain private callable-tuple descriptors separately
+from protected original owners. At release, representation analysis and independent
+verification transfer the final representation through every recursive target
+before completing member/manual cleanup. Existing C scattered views and lexical
+release handlers already supply the corresponding physical order; the concurrent
+execution scheduler and typed owner verifier are unchanged.
+Five shared samples cover flat/nested/mixed aliases, consume/refill, manual cleanup
+and unused disposal. Three corruption/safety tests protect final provenance and
+all original owners. General callable lens ABIs, selected callable lens results and
+escaping private backing remain open. Phase 6 is incomplete.
+
+Validation across the five scattered-callable slices: **2477 pass / 39 existing
+skips / zero failures across 42 files** (1409 non-execution tests and 1068
+native/Wasm cases). Full strict C11, optimized native, supported sanitizers and
+both Emscripten/Node optimization levels passed without retries in 405.62 seconds.
+Each slice passed its focused execution cases (34 native/Wasm cases in total).
+TypeScript and diff checks pass. Remote CI was not run. Phase 6 remains incomplete.

@@ -692,3 +692,15 @@ Three shared forwarding cases and one corruption case pass. Validation: 1401
 non-execution passes / 39 existing skips; 6 focused native/Wasm passes; TypeScript
 and diff checks pass. Persistent scattered aliases and general callable lens ABIs
 remain open. Phase 6 is incomplete.
+
+
+## Persistent scattered callable restoration
+
+Persistent aliases of flat/nested/mixed scattered callable focuses now execute
+through the existing C view arrays and lexical release callbacks. Representation
+completion checks private alias contents and restores every logical target before
+manual/member cleanup. Source order, original callable ABIs and affine environment
+disposal are preserved. Five shared samples include consume/refill, manual cleanup
+and unused environments. No C lowering or build scheduler change is required.
+Callable lens parameter/result ABIs, selected callable lens results and escaping
+private callable backing remain open; phase 6 is incomplete.

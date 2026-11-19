@@ -701,7 +701,28 @@ export function verifyRepresentations(
                 if (i.op === 'borrow') {
                     const loan = unit.loans.find((l) => l.id === i.loan)!;
                     const focus = get(s, i.lens);
-                    if (focus.kind === 'local-focus') {
+                    if (focus.kind === 'focus-tuple' || focus.kind === 'focus-manual') {
+                        const target = s.focusTargets.get(i.lens),
+                            write = s.focusWrites.get(i.lens);
+                        if (!loan.owners || !target || !write)
+                            return fail('Scattered callable aliases require computed backing');
+                        s.places.set(loan.place, focus.read);
+                        const complete = s.finishes.get(i.lens);
+                        s.finishes.set(i.lens, (state, apply) => {
+                            if (!apply) return;
+                            const replacement = containsCallable(write)
+                                ? (state.places.get(loan.place) ??
+                                  fail('Missing scattered alias backing'))
+                                : { kind: 'data' as const, layout: layoutId(write) };
+                            requireEqual(
+                                focus.replacement,
+                                replacement,
+                                'Scattered callable alias replacement provenance changed',
+                            );
+                            writeTarget(target, replacement, state);
+                            complete?.(state, true);
+                        });
+                    } else if (focus.kind === 'local-focus') {
                         const owner = s.focusOwners.get(i.lens);
                         if (loan.owners) {
                             const write = s.focusWrites.get(i.lens);

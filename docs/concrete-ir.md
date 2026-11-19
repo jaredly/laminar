@@ -640,3 +640,15 @@ Three shared forwarding cases and one corruption case pass. Validation: 1401
 non-execution passes / 39 existing skips; 6 focused native/Wasm passes; TypeScript
 and diff checks pass. Persistent scattered aliases and general callable lens ABIs
 remain open. Phase 6 is incomplete.
+
+
+## Persistent scattered endpoint completion
+
+`focus-tuple` and `focus-manual` computed loans initialize private read descriptors
+and retain semantic write contracts. Release derives and independently verifies
+the final alias replacement, propagates it to ordered recursive logical targets,
+and only then executes retained member/manual completions. The existing physical
+endpoint records retain original child ABIs through cleanup; no runtime owned
+closure environment is copied. Exact computed loan owner protections remain
+independently checked by typed IR. Callable focus call/return ABIs, selected lens
+results and escaping private backing remain separate work.

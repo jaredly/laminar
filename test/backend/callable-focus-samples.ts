@@ -645,4 +645,66 @@ export const callableFocusSamples = [
  (old(), before, f(), n)}`,
         expected: [3, 4, 7, true],
     },
+    {
+        name: 'scattered callable persistent flat alias',
+        source: `{let f = fn () 3
+ let g = fn () 4
+ {let (a, b) = ~(f, g)
+ let old = a := fn () 7
+ let other = b := fn () 8
+ (old(), other())}
+ (f(), g())}`,
+        expected: [7, 8],
+    },
+    {
+        name: 'scattered callable persistent nested mixed alias',
+        source: `{let f = fn () 3
+ let x = 4
+ let y = 5
+ {let (a, (b, c)) = ~(f, (x, y))
+ {let d = ~a
+ let old = d
+ d := fn () 7
+ old()}
+ b := true
+ c := ()}
+ (f(), x, y)}`,
+        expected: [7, true, null],
+    },
+    {
+        name: 'scattered callable persistent manual cleanup',
+        source: `{let f = fn () 3
+ let n = 4
+ let seen = 0
+ {let (a, b) = ~{@((f, n), {let installed = f := fn () 9
+ seen := installed()
+ fn () ()})}
+ let old = a := fn () 7
+ old()
+ b := true}
+ (seen, f(), n)}`,
+        expected: [7, 9, true],
+    },
+    {
+        name: 'scattered callable persistent unused alias',
+        source: `{let v = 3
+ let f = fn () v
+ let n = 4
+ {let (a, b) = ~(f, n)
+ ()}
+ (f(), n)}`,
+        expected: [3, 4],
+    },
+    {
+        name: 'scattered callable persistent unused environments',
+        source: `{let v = 3
+ let f = fn () v
+ let n = 4
+ let w = 7
+ {let (a, b) = ~(f, n)
+ let old = a := fn () w
+ b := true}
+ 9}`,
+        expected: 9,
+    },
 ];

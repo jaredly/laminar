@@ -5,13 +5,13 @@ execute the documented scalar/tuple native C and Emscripten/Node subset. Typed
 indirect closure invocation and environment disposal implement part of phase 6.
 Compatible user-defined/native intrinsic joins and differing callable results
 execute, including differing lens-result shapes and recursive callable tuple results. Owned callable tuples and recursive callable tuple branch-result joins execute through concrete recursive storage; callable
-general focus storage/restoration remains open; direct callable swaps, persistent whole/projected/manual aliases, lexical forwarding and immediate manual callable swaps execute. Phase 7 runtime and host integration and phase 8 optimization remain broader
+general focus storage/restoration remains open; direct and scattered callable swaps, persistent whole/projected/manual/scattered aliases, lexical forwarding and manual callable restoration execute. Phase 7 runtime and host integration and phase 8 optimization remain broader
 work. This is subset
 coverage, not completion of every phase exit gate.
 
 The scoped lens extensions are complete as of `707521c`; see the
 [completion record and follow-up mapping](checker-completeness-handoff.md).
-Latest local verification: **2418 pass / 39 existing skips / 0 failures across
+Latest local verification: **2477 pass / 39 existing skips / 0 failures across
 42 files**, with default TypeScript and diff checks passing. The latest full execution run passed without retries. Remote CI was not run for
 these slices. See also [the implementation record](backend-progress.md),
 [backend contract](backend-contract.md), [typed IR API](typed-ir.md), and
@@ -713,3 +713,28 @@ Three shared forwarding cases and one corruption case pass. Validation: 1401
 non-execution passes / 39 existing skips; 6 focused native/Wasm passes; TypeScript
 and diff checks pass. Persistent scattered aliases and general callable lens ABIs
 remain open. Phase 6 is incomplete.
+
+
+## Phase 6: persistent scattered callable aliases
+
+Computed aliases of scattered callable/aggregate focuses now retain a private
+current descriptor while every original logical owner remains exclusively
+protected. Release independently checks the final alias replacement, propagates
+it through the recursive target tree, then completes member/manual frontends and
+lexical releases in source order. Nested aliases use existing exact projection
+contracts. No C storage or environment allocation/disposal convention changes.
+
+Five shared cases cover flat aliases, nested/mixed consume/refill, manual cleanup,
+unused loans and unused environments. Corruption tests reject forged final alias
+provenance and missing owner protections; source safety still rejects access to
+protected owners. The independent typed-IR owner verifier is unchanged.
+Remaining boundaries include callable focus parameter/result ABIs, selected
+callable lens results, escaping private callable backing and unmodeled completion
+routes. These scattered slices do not complete phase 6.
+
+Validation across the five scattered-callable slices: **2477 pass / 39 existing
+skips / zero failures across 42 files** (1409 non-execution tests and 1068
+native/Wasm cases). Full strict C11, optimized native, supported sanitizers and
+both Emscripten/Node optimization levels passed without retries in 405.62 seconds.
+Each slice passed its focused execution cases (34 native/Wasm cases in total).
+TypeScript and diff checks pass. Remote CI was not run. Phase 6 remains incomplete.

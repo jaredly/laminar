@@ -295,3 +295,34 @@ it('checks forwarded scattered endpoint agreement', () => {
     focus.replacement.items[0] = structuredClone(focus.read.items[0]);
     expect(() => verifyConcreteProgram(c)).toThrow('Scope result representation mismatch');
 });
+it('rejects forged scattered alias completion provenance', () => {
+    const c = concrete(
+        callableFocusSamples.find((s) => s.name === 'scattered callable persistent flat alias')!
+            .source,
+    );
+    const focus = c.analysis.entries[0].values.find(
+        (v: any) => v.representation.kind === 'focus-tuple',
+    ).representation;
+    focus.replacement = structuredClone(focus.read);
+    expect(() => verifyConcreteProgram(c)).toThrow(
+        'Scattered callable alias replacement provenance changed',
+    );
+    expect(() => emitC(c)).toThrow('Scattered callable alias replacement provenance changed');
+});
+it('rejects missing scattered alias owner protection', () => {
+    const c = concrete(
+        callableFocusSamples.find((s) => s.name === 'scattered callable persistent flat alias')!
+            .source,
+    );
+    const loan = c.semantic.program.units
+        .flatMap((u: any) => u.loans)
+        .find((l: any) => l.owners?.length === 2);
+    loan.owners.pop();
+    expect(() => verifyConcreteProgram(c)).toThrow('Computed loan owner protection mismatch');
+    expect(() => emitC(c)).toThrow('Computed loan owner protection mismatch');
+});
+it('keeps scattered callable alias owners exclusive', () => {
+    expect(() =>
+        typedProgram('{let f = fn () 3\n let n = 4\n let (a, b) = ~(f, n)\n f()\n a := fn () 7}'),
+    ).toThrow('Binding is exclusively borrowed until its aliases leave scope');
+});
