@@ -21,16 +21,24 @@ export function identifier(name: string): string {
 }
 
 export function printGo(file: GoFile): string {
-    const statements = (body: Statement[], depth: number): string[] =>
-        body.flatMap((s) =>
-            typeof s === 'string'
-                ? ['\t'.repeat(depth) + s]
-                : [
-                      '\t'.repeat(depth) + s.head + ' {',
-                      ...statements(s.body, depth + 1),
-                      '\t'.repeat(depth) + '}',
-                  ],
-        );
+    const printBody = (body: Statement[], depth: number): string[] => {
+        const lines: string[] = [];
+        for (const s of body) {
+            if (typeof s === 'string') {
+                lines.push('\t'.repeat(depth) + s);
+            } else {
+                const isElse = s.head.startsWith('else');
+                if (isElse && lines.length > 0 && lines[lines.length - 1]!.trimEnd().endsWith('}')) {
+                    lines[lines.length - 1] = `${lines[lines.length - 1]!} ${s.head} {`;
+                } else {
+                    lines.push('\t'.repeat(depth) + s.head + ' {');
+                }
+                lines.push(...printBody(s.body, depth + 1));
+                lines.push('\t'.repeat(depth) + '}');
+            }
+        }
+        return lines;
+    };
 
     const sections: string[] = [`package ${file.packageName ?? 'main'}`];
 
@@ -50,7 +58,7 @@ export function printGo(file: GoFile): string {
     if (file.functions && file.functions.length > 0) {
         sections.push(
             ...file.functions.map(
-                (f) => `${f.signature} {\n${statements(f.body, 1).join('\n')}\n}`,
+                (f) => `${f.signature} {\n${printBody(f.body, 1).join('\n')}\n}`,
             ),
         );
     }
