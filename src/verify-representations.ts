@@ -589,6 +589,10 @@ export function verifyRepresentations(
         v: ValueRepresentation,
     ): void {
         if (target !== callee.definition) fail('Wrong native call target');
+        if (callee.definition === 'native/fst' && args[0]?.kind === 'focus-tuple') {
+            requireEqual(v, args[0].items[0], 'Scattered fst child provenance changed');
+            return;
+        }
         if (callee.definition === 'native/fst' && args[0]?.kind === 'local-focus') {
             if (v.kind !== 'local-focus') return fail('Callable fst lost endpoint provenance');
             requireEqual(
@@ -1432,6 +1436,34 @@ export function verifyRepresentations(
                                             : { kind: 'data', layout: layoutId(write) },
                                         'Callable fst parent replacement provenance changed',
                                     );
+                            });
+                        }
+                        if (
+                            callee.kind === 'native' &&
+                            callee.definition === 'native/fst' &&
+                            args[0]?.kind === 'focus-tuple'
+                        ) {
+                            const target = s.focusTargets.get(i.args[0]!),
+                                write = s.focusWrites.get(i.args[0]!);
+                            if (
+                                !target ||
+                                !('items' in target) ||
+                                !write ||
+                                s.finishes.has(i.args[0]!)
+                            )
+                                return fail(
+                                    'Callable fst completion requires a direct scattered frontend',
+                                );
+                            const child = target.items[0] ?? fail('Missing fst logical child');
+                            if ('place' in child)
+                                s.focusOwners.set(i.out.id, {
+                                    place: child.place,
+                                    path: [...child.path],
+                                });
+                            else s.focusTargets.set(i.out.id, child);
+                            s.finishes.set(i.out.id, (state, apply) => {
+                                if (apply)
+                                    writeTarget(target, readTarget(target, state, write), state);
                             });
                         }
                         const finishes = i.args.map((id) => s.finishes.get(id));

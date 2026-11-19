@@ -1312,3 +1312,16 @@ C already projects the logical view. Non-direct completion and scattered inputs
 remain separate boundaries. Three shared samples and a serialized read corruption
 case pass. Validation: 1413 non-execution passes / 39 existing skips; 6 focused
 native/Wasm cases; TypeScript and diff checks pass. Phase 6 remains incomplete.
+
+
+## Phase 6: scattered native fst callable projection
+
+Direct native `fst` now selects explicit child descriptors and logical targets
+from scattered callable inputs, including nested subtrees and projected owned
+storage. Completion reconstructs the parent endpoint descriptor from current
+ordered targets. Independent verification checks selected-child provenance and
+parent/child replacement contracts. Existing C native projection preserves view
+identity and untouched siblings. Three samples and a corruption case pass.
+Validation: 1417 non-execution passes / 39 existing skips; 6 focused native/Wasm
+cases; TypeScript and diff checks pass. Manual/persistent completion and general
+callable lens ABIs remain open. Phase 6 is incomplete.

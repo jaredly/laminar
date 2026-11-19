@@ -732,4 +732,32 @@ export const callableFocusSamples = [
  9}`,
         expected: 9,
     },
+    {
+        name: 'callable fst scattered replacement',
+        source: `{let f = fn () 3
+ let n = 4
+ let old = fst(~(f, n)) := fn () 7
+ (old(), f(), n)}`,
+        expected: [3, 7, 4],
+    },
+    {
+        name: 'callable fst scattered subtree',
+        source: `{let f = fn () 3
+ let x = 4
+ let y = 5
+ let (old, n) = fst(~((f, x), y)) := (fn () 7, true)
+ (old(), n, f(), x, y)}`,
+        expected: [3, 4, 7, true, 5],
+    },
+    {
+        name: 'callable fst scattered projected owners',
+        source: `{let p = (fn () 3, 4)
+ let n = 5
+ {let (a, b) = ~p
+ let old = fst(~(a, n)) := fn () 7
+ old()}
+ let (f, b) = p
+ (f(), b, n)}`,
+        expected: [7, 4, 5],
+    },
 ];

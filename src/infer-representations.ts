@@ -397,6 +397,8 @@ export function inferRepresentations(
         type: SemanticFlow,
     ): ValueRepresentation => {
         if (type.tag === 'plain') return data(type.value);
+        if (name === 'native/fst' && args[0]?.kind === 'focus-tuple')
+            return args[0].items[0] ?? fail('Missing fst focus child');
         if (name === 'native/fst' && args[0]?.kind === 'local-focus') {
             if (!containsCallable(type.read) && !containsCallable(type.write))
                 return fail('Data projection of callable storage requires an endpoint adapter');
@@ -963,6 +965,28 @@ export function inferRepresentations(
                                 parent.replacement = containsCallable(write)
                                     ? projectValue(state.places.get(owner.place)!, owner.path)
                                     : data(write);
+                        });
+                    }
+                    if (
+                        callee.kind === 'native' &&
+                        callee.definition === 'native/fst' &&
+                        args[0]?.kind === 'focus-tuple'
+                    ) {
+                        const target = s.focusTargets.get(i.args[0]!),
+                            write = s.focusWrites.get(i.args[0]!);
+                        if (!target || !('items' in target) || !write || s.finishes.has(i.args[0]!))
+                            return fail(
+                                'Callable fst completion requires a direct scattered frontend',
+                            );
+                        const child = target.items[0] ?? fail('Missing fst logical child');
+                        if ('place' in child)
+                            s.focusOwners.set(i.out.id, {
+                                place: child.place,
+                                path: [...child.path],
+                            });
+                        else s.focusTargets.set(i.out.id, child);
+                        s.finishes.set(i.out.id, (state, apply) => {
+                            if (apply) writeTarget(target, readTarget(target, state, write), state);
                         });
                     }
                     const finishes = i.args.map((id) => s.finishes.get(id));

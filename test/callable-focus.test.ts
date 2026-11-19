@@ -341,3 +341,13 @@ it('rejects forged callable fst projected read provenance', () => {
     expect(() => verifyConcreteProgram(c)).toThrow('Callable fst read provenance changed');
     expect(() => emitC(c)).toThrow('Callable fst read provenance changed');
 });
+it('rejects forged scattered fst selected child', () => {
+    const c = concrete(
+        callableFocusSamples.find((s) => s.name === 'callable fst scattered replacement')!.source,
+    );
+    const call = c.analysis.entries[0].calls.find((v: any) => v.target === 'native/fst');
+    const value = c.analysis.entries[0].values.find((v: any) => v.value === call.value);
+    value.representation.read = structuredClone(value.representation.replacement);
+    call.result = structuredClone(value.representation);
+    expect(() => verifyConcreteProgram(c)).toThrow('Scattered fst child provenance changed');
+});
