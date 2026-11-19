@@ -528,3 +528,18 @@ Validation: 1355 non-execution passes / 39 existing skips / zero failures; all
 12 focused native/Wasm cases, TypeScript and diff checks pass. Manual/computed and
 scattered callable endpoints and callable parameter/result ABIs remain open.
 Phase 6 is incomplete.
+
+
+## Physical manual callable endpoints
+
+Manual restoration `kind` is `deferred` for semantic lens shapes or `local-focus`
+for immediate callable-bearing frontends. With `local-focus`, `frontend` and
+`result` are concrete endpoint-record layout IDs, each retaining its independent
+read/replacement layouts and exact restoration ABI. The result replacement is the
+installed input; the frontend replacement is derived after the manual's cleanup.
+Nested manuals may therefore retain different replacement descriptors. Independent
+analysis verifies their logical owner/path and endpoint provenance; independent
+concrete verification derives the mode, layouts, storage transitions and ordered
+stage/cleanup/dispose-result/restore/release contract. Printing exposes the pair as
+`callable-endpoints`. This does not authorize computed persistent manual aliases,
+scattered callable endpoints or callable lens call/return ABIs.

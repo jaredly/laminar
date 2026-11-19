@@ -370,6 +370,16 @@ export function lconcrete(program: ConcreteProgram, options: ConcretePrintOption
                     expression = words(
                         'manual',
                         value(i.lens),
+                        ...(i.restoration.kind === 'local-focus'
+                            ? [
+                                  words(
+                                      'callable-endpoints',
+                                      name(i.restoration.frontend),
+                                      '->',
+                                      name(i.restoration.result),
+                                  ),
+                              ]
+                            : []),
                         'holds',
                         tuple(i.holds.map(slot)),
                         'order',

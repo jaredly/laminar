@@ -131,7 +131,7 @@ for (const [name, source] of [
             compileConcreteProgram(p, wasm32Emscripten('test'), [
                 { unit: p.units.at(-1)!.id, arguments: [] },
             ]),
-        ).toThrow('Callable focuses require a direct whole-owned-local swap');
+        ).toThrow('Callable aliases require a direct owned-local loan');
     });
 it('keeps persistent aliases exclusive over callable owners', () => {
     expect(() =>
@@ -163,4 +163,35 @@ it('checks projected subloan final provenance independently', () => {
         'Callable alias final replacement provenance changed',
     );
     expect(() => emitC(c)).toThrow('Callable alias final replacement provenance changed');
+});
+function firstManual(block: any): any {
+    for (const i of block.instructions) {
+        if (i.op === 'manual') return i;
+        if (i.op === 'scope') {
+            const found = firstManual(i.body);
+            if (found) return found;
+        }
+    }
+}
+for (const field of ['frontend', 'result', 'kind', 'order'] as const)
+    it(`rejects a forged manual callable physical ${field}`, () => {
+        const c = concrete(
+            callableFocusSamples.find((s) => s.name === 'manual callable swap cleanup replacement')!
+                .source,
+        );
+        const m = c.code.map((code: any) => firstManual(code.body)).find(Boolean);
+        if (field === 'order') m.restoration.order.reverse();
+        else m.restoration[field] = 'forged-endpoint-contract';
+        expect(() => verifyConcreteProgram(c)).toThrow('Manual restoration contract changed');
+        expect(() => emitC(c)).toThrow('Manual restoration contract changed');
+    });
+it('independently checks manual callable read provenance', () => {
+    const c = concrete(
+        callableFocusSamples.find((s) => s.name === 'manual callable swap cleanup replacement')!
+            .source,
+    );
+    const m = c.code.map((code: any) => firstManual(code.body)).find(Boolean);
+    const v = c.analysis.entries[0].values.find((v: any) => v.value === m.out.id).representation;
+    v.read = structuredClone(v.replacement);
+    expect(() => verifyConcreteProgram(c)).toThrow('Manual callable read provenance changed');
 });

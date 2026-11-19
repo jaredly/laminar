@@ -5,13 +5,13 @@ execute the documented scalar/tuple native C and Emscripten/Node subset. Typed
 indirect closure invocation and environment disposal implement part of phase 6.
 Compatible user-defined/native intrinsic joins and differing callable results
 execute, including differing lens-result shapes and recursive callable tuple results. Owned callable tuples and recursive callable tuple branch-result joins execute through concrete recursive storage; callable
-general focus storage/restoration remains open; direct whole-owned-local callable swaps and persistent aliases execute. Phase 7 runtime and host integration and phase 8 optimization remain broader
+general focus storage/restoration remains open; direct callable swaps, persistent whole/projected aliases and immediate manual callable swaps execute. Phase 7 runtime and host integration and phase 8 optimization remain broader
 work. This is subset
 coverage, not completion of every phase exit gate.
 
 The scoped lens extensions are complete as of `707521c`; see the
 [completion record and follow-up mapping](checker-completeness-handoff.md).
-Latest local verification: **2310 pass / 39 existing skips / 0 failures across
+Latest local verification: **2370 pass / 39 existing skips / 0 failures across
 42 files**, with default TypeScript and diff checks passing. The latest full execution run passed without retries. Remote CI was not run for
 these slices. See also [the implementation record](backend-progress.md),
 [backend contract](backend-contract.md), [typed IR API](typed-ir.md), and
@@ -565,3 +565,34 @@ Validation: 1355 non-execution passes / 39 existing skips / zero failures; all
 12 focused native/Wasm cases, TypeScript and diff checks pass. Manual/computed and
 scattered callable endpoints and callable parameter/result ABIs remain open.
 Phase 6 is incomplete.
+
+
+## Phase 6: immediate manual callable swaps
+
+Immediate manual callable/aggregate swaps now retain independent endpoint
+representations through cleanup, including nested manuals and projected frontends.
+A manual result's replacement describes the installed RHS; its frontend's final
+replacement describes storage after that manual's cleanup. Representation analysis
+and independent verification derive these boundaries in cleanup order and retain
+existing cleanup storage transitions. Every local callable frontend is attached to
+an explicit logical owner/path. Computed persistent manual aliases remain rejected.
+
+Concrete manual restoration uses `kind: 'local-focus'` for this route, with
+`frontend` and `result` naming physical endpoint record layouts instead of semantic
+lens shapes. The normal `deferred` route is unchanged. Both routes retain stage,
+cleanup, owned-result disposal, restore and release ordering. Independent concrete
+verification derives the mode, endpoint layouts, transitions and ordering; the
+printer exposes `callable-endpoints`. C reuses existing logical manual restoration.
+
+Six new shared samples cover direct, projected, aggregate and unused swaps,
+cleanup replacement and nested cleanup order. Corruption tests reject altered
+physical mode/endpoints/order and manual read provenance. General computed
+persistent aliases, scattered callable focuses, selected callable lens results and
+callable focus parameter/result ABIs remain open. Phase 6 is incomplete.
+
+Validation across the three projection/manual slices: **2370 pass / 39 existing
+skips / zero failures across 42 files** (1366 non-execution tests and 1004
+native/Wasm cases). Full strict C11, optimized native, supported sanitizers and
+both Emscripten/Node optimization levels passed without retries in 369.41 seconds.
+Each slice also passed its 12 focused native/Wasm cases. TypeScript and diff
+checks pass. Remote CI was not run. These slices do not complete phase 6.

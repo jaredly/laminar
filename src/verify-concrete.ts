@@ -716,7 +716,12 @@ export function verifyConcreteProgram(p: ConcreteProgram): void {
                     if (o.op !== 'manual') return fail('Manual restoration operation changed');
                     const frontend = reps.get(i.lens)!,
                         result = reps.get(i.out.id)!;
-                    if (frontend.kind !== 'lens' || result.kind !== 'lens')
+                    if (
+                        !(
+                            (frontend.kind === 'lens' && result.kind === 'lens') ||
+                            (frontend.kind === 'local-focus' && result.kind === 'local-focus')
+                        )
+                    )
                         return fail('Manual restoration lacks lens shapes');
                     eq(
                         {
@@ -732,9 +737,10 @@ export function verifyConcreteProgram(p: ConcreteProgram): void {
                             holds: i.holds,
                             reconstruction: i.reconstruction,
                             restoration: {
-                                kind: 'deferred',
-                                frontend: frontend.shape,
-                                result: result.shape,
+                                kind: frontend.kind === 'local-focus' ? 'local-focus' : 'deferred',
+                                frontend:
+                                    frontend.kind === 'lens' ? frontend.shape : storage(frontend),
+                                result: result.kind === 'lens' ? result.shape : storage(result),
                                 order: ['stage', 'cleanup', 'dispose-result', 'restore', 'release'],
                                 retention: 'through-enclosing-cleanup',
                                 ...(r.values.find((v) => v.value === i.out.id)!.cleanupStorage

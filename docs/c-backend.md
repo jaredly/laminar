@@ -583,3 +583,16 @@ Validation: 1355 non-execution passes / 39 existing skips / zero failures; all
 12 focused native/Wasm cases, TypeScript and diff checks pass. Manual/computed and
 scattered callable endpoints and callable parameter/result ABIs remain open.
 Phase 6 is incomplete.
+
+
+## Immediate manual callable restoration
+
+Immediate manual callable/aggregate swaps, nested manuals and projected frontends
+now execute through existing C logical views and stage/finish callbacks. Verified
+physical endpoint contracts distinguish the installed replacement from contents
+after cleanup, preserving each original invocation ABI. Cleanup can replace the
+installed owner without disposing the extracted old result or duplicating an owned
+environment. Six shared samples cover cleanup replacement/order, aggregate and
+projected frontends and unused disposal. Computed persistent manual aliases,
+scattered callable endpoints and callable focus call/return ABIs remain open.
+Phase 6 is incomplete.

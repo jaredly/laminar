@@ -292,4 +292,66 @@ export const callableFocusSamples = [
  p}`,
         expected: [7, 9],
     },
+    {
+        name: 'manual callable swap direct',
+        source: `{let v = 3
+ let f = fn () v
+ let old = @(f, fn () ()) := fn () 7
+ (old(), f())}`,
+        expected: [3, 7],
+    },
+    {
+        name: 'manual callable swap cleanup replacement',
+        source: `{let v = 3
+ let f = fn () v
+ let seen = 0
+ let old = @(f, {let installed = f := fn () 9
+ seen := installed()
+ fn () ()}) := fn () 7
+ (old(), seen, f())}`,
+        expected: [3, 7, 9],
+    },
+    {
+        name: 'manual callable swap nested cleanup order',
+        source: `{let v = 3
+ let f = fn () v
+ let seen = 0
+ let old = @(@(f, {let installed = f := fn () 9
+ seen := seen * 10 + installed()
+ fn () ()}), {let installed = f := fn () 8
+ seen := installed()
+ fn () ()}) := fn () 7
+ (old(), seen, f())}`,
+        expected: [3, 78, 9],
+    },
+    {
+        name: 'manual callable swap aggregate',
+        source: `{let v = 3
+ let p = (fn () v, 4)
+ let old = @(p, fn () ()) := (fn () 7, true)
+ let (f, n) = old
+ let (g, b) = p
+ (f(), n, g(), b)}`,
+        expected: [3, 4, 7, true],
+    },
+    {
+        name: 'manual callable swap projected',
+        source: `{let v = 3
+ let p = (fn () v, 4)
+ {let (a, b) = ~p
+ let old = @(a, fn () ()) := fn () 7
+ old()}
+ let (f, n) = p
+ (f(), n)}`,
+        expected: [7, 4],
+    },
+    {
+        name: 'manual callable swap unused',
+        source: `{let v = 3
+ let f = fn () v
+ let w = 7
+ let old = @(f, fn () ()) := fn () w
+ 9}`,
+        expected: 9,
+    },
 ];

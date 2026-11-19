@@ -506,16 +506,21 @@ export function lowerConcreteProgram(
                 if (i.op === 'manual') {
                     const frontend = values.get(i.lens)!,
                         result = values.get(i.out.id)!;
-                    if (frontend.kind !== 'lens' || result.kind !== 'lens')
+                    if (
+                        !(
+                            (frontend.kind === 'lens' && result.kind === 'lens') ||
+                            (frontend.kind === 'local-focus' && result.kind === 'local-focus')
+                        )
+                    )
                         return fail('Manual restoration requires lens representations');
                     return {
                         ...i,
                         out,
                         cleanup: lower(i.cleanup),
                         restoration: {
-                            kind: 'deferred',
-                            frontend: frontend.shape,
-                            result: result.shape,
+                            kind: frontend.kind === 'local-focus' ? 'local-focus' : 'deferred',
+                            frontend: frontend.kind === 'lens' ? frontend.shape : layout(frontend),
+                            result: result.kind === 'lens' ? result.shape : layout(result),
                             order: ['stage', 'cleanup', 'dispose-result', 'restore', 'release'],
                             retention: 'through-enclosing-cleanup',
                             ...(record.values.find((v) => v.value === i.out.id)!.cleanupStorage

@@ -659,7 +659,10 @@ export function verifyRepresentations(
                                 (b.instructions.filter(
                                     (use) => use.op === 'swap' && use.lens === i.out.id,
                                 ).length !== 1 &&
-                                    borrowedLoans(i.out.id, b).length !== 1)
+                                    borrowedLoans(i.out.id, b).length !== 1 &&
+                                    !b.instructions.some(
+                                        (use) => use.op === 'manual' && use.lens === i.out.id,
+                                    ))
                             )
                                 return fail(
                                     'Callable focuses require a direct whole-owned-local swap',
@@ -688,6 +691,13 @@ export function verifyRepresentations(
                                     return fail(
                                         'Callable aliases require a direct owned-local loan',
                                     );
+                            }
+                            if (
+                                borrowed.length ||
+                                b.instructions.some(
+                                    (use) => use.op === 'manual' && use.lens === i.out.id,
+                                )
+                            ) {
                                 const write = i.out.type.write;
                                 s.finishes.set(i.out.id, (state, apply) => {
                                     if (apply)
@@ -722,11 +732,32 @@ export function verifyRepresentations(
                         break;
                     }
                     case 'manual': {
-                        topology(lens(get(s, i.lens)), lens(v));
+                        const frontend = get(s, i.lens);
+                        const owner = s.focusOwners.get(i.lens);
+                        if (frontend.kind === 'local-focus') {
+                            if (v.kind !== 'local-focus' || !owner)
+                                return fail('Manual callable focus lacks a logical owner');
+                            requireEqual(
+                                v.read,
+                                frontend.read,
+                                'Manual callable read provenance changed',
+                            );
+                            s.focusOwners.set(i.out.id, owner);
+                        } else topology(lens(frontend), lens(v));
+                        if (i.out.type.tag !== 'flow') return fail('Manual produced data');
+                        const write = i.out.type.write;
                         const frontendFinish = s.finishes.get(i.lens);
                         let analyzed = false;
                         const finish = (state: State, apply: boolean) => {
                             const annotation = annotations.get(i.out.id)!;
+                            if (apply && v.kind === 'local-focus')
+                                requireEqual(
+                                    v.replacement,
+                                    containsCallable(write)
+                                        ? projectValue(state.places.get(owner!.place)!, owner!.path)
+                                        : { kind: 'data', layout: layoutId(write) },
+                                    'Manual callable replacement provenance changed',
+                                );
                             if (!analyzed) {
                                 analyzed = true;
                                 const restored = clone(state);

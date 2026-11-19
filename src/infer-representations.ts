@@ -527,7 +527,10 @@ export function inferRepresentations(
                             (body.instructions.filter(
                                 (use) => use.op === 'swap' && use.lens === i.out.id,
                             ).length !== 1 &&
-                                borrows(i.out.id, body).length !== 1)
+                                borrows(i.out.id, body).length !== 1 &&
+                                !body.instructions.some(
+                                    (use) => use.op === 'manual' && use.lens === i.out.id,
+                                ))
                         )
                             return fail('Callable focuses require a direct whole-owned-local swap');
                         const owner = s.places.get(i.slot.place);
@@ -552,6 +555,13 @@ export function inferRepresentations(
                                 JSON.stringify(loan.path) !== JSON.stringify(i.slot.path)
                             )
                                 return fail('Callable aliases require a direct owned-local loan');
+                        }
+                        if (
+                            borrowed.length ||
+                            body.instructions.some(
+                                (use) => use.op === 'manual' && use.lens === i.out.id,
+                            )
+                        ) {
                             const focus = out;
                             const write = i.out.type.write;
                             s.finishes.set(i.out.id, (state, apply) => {
@@ -588,16 +598,35 @@ export function inferRepresentations(
                 }
                 case 'manual': {
                     if (i.out.type.tag !== 'flow') return fail('Manual produced data');
-                    out = {
-                        kind: 'lens',
-                        shape: retype(shape(get(s, i.lens)), i.out.type.read, i.out.type.write),
-                    };
+                    const frontend = get(s, i.lens);
+                    out =
+                        frontend.kind === 'local-focus'
+                            ? {
+                                  kind: 'local-focus',
+                                  read: frontend.read,
+                                  replacement: frontend.read,
+                              }
+                            : {
+                                  kind: 'lens',
+                                  shape: retype(shape(frontend), i.out.type.read, i.out.type.write),
+                              };
+                    const owner = s.focusOwners.get(i.lens);
+                    if (frontend.kind === 'local-focus') {
+                        if (!owner) return fail('Manual callable focus lacks a logical owner');
+                        s.focusOwners.set(i.out.id, owner);
+                    }
+                    const manualFocus = out;
+                    const write = i.out.type.write;
                     const frontendFinish = s.finishes.get(i.lens);
                     // Analyze each retained region once. A release reuses its verified
                     // descriptor effects without replaying SSA/call annotations.
                     let analyzed = false;
                     const finish = (state: State, apply: boolean) => {
                         const annotation = record.values.find((v) => v.value === i.out.id)!;
+                        if (apply && manualFocus.kind === 'local-focus')
+                            manualFocus.replacement = containsCallable(write)
+                                ? projectValue(state.places.get(owner!.place)!, owner!.path)
+                                : data(write);
                         if (!analyzed) {
                             analyzed = true;
                             const restored = clone(state);

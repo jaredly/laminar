@@ -1146,3 +1146,27 @@ Validation: 1355 non-execution passes / 39 existing skips / zero failures; all
 12 focused native/Wasm cases, TypeScript and diff checks pass. Manual/computed and
 scattered callable endpoints and callable parameter/result ABIs remain open.
 Phase 6 is incomplete.
+
+
+## Immediate manual callable endpoint contracts
+
+Manual callable swaps now propagate the original read and independent installed
+replacement through exact logical-owner identities. Nested cleanup derives each
+frontend's post-cleanup descriptor separately from the enclosing manual's input.
+Existing cleanup storage transitions and C stage/finish ordering preserve extracted
+old values and final owner disposal. Projected and recursive aggregate frontends
+share this route; computed persistent manual aliases remain explicitly unsupported.
+
+Concrete restoration distinguishes physical `local-focus` endpoints from ordinary
+semantic `deferred` shapes. Independent verification derives both physical records,
+mode, ordered phases and storage transitions. The printer displays callable endpoint
+layouts. Six shared samples and five corruption tests cover this boundary. There
+are no incompatible code-pointer casts or new environment allocation conventions.
+The concurrent execution build scheduler is unchanged. Phase 6 remains open.
+
+Validation across the three projection/manual slices: **2370 pass / 39 existing
+skips / zero failures across 42 files** (1366 non-execution tests and 1004
+native/Wasm cases). Full strict C11, optimized native, supported sanitizers and
+both Emscripten/Node optimization levels passed without retries in 369.41 seconds.
+Each slice also passed its 12 focused native/Wasm cases. TypeScript and diff
+checks pass. Remote CI was not run. These slices do not complete phase 6.
