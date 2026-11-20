@@ -1,6 +1,7 @@
 # Plan: Zig Backend for Laminar
 
-Status: **Proposed; Phase 0 strictness fixture done** (see §3, "Verified"). A third consumer of `ConcreteProgram`, beside the C/Wasm
+Status: **Phase 1 done** (scalars, records, direct calls). Phase 0 is done
+except the `target.ts` schema change, which has a stopgap (see Phase 0 below). A third consumer of `ConcreteProgram`, beside the C/Wasm
 backend (`src/c/`) and the Go backend (`src/go/`). Like them, it begins at
 verified concrete IR and does no semantic analysis, specialization, or
 representation inference.
@@ -150,8 +151,8 @@ ReleaseSafe with `-lc`. Confirmed:
 - **Aliasing is real:** `x = .{ .a = x.b, .b = x.a }` yields `{2, 2}`, and the
   test pins this. Building into a temporary gives the correct `{2, 1}`.
 
-The Phase 0 runner (`src/zig/build.ts`), target config, and syntax module are
-still to do.
+The runner (`src/zig/build.ts`) and syntax module (`src/zig/syntax.ts`) now
+exist. The target config change is deferred (see Phase 0).
 
 ---
 
@@ -210,6 +211,34 @@ Layouts, record structs, arithmetic and comparison intrinsics, special-float
 printing, recursive tuple printing, and direct and self-recursive calls.
 **Gate:** the Go plan's phase-1 corpus and arithmetic samples (`nan`,
 `infinity`, `negative-zero`, `nested-tuple`, ...).
+
+**Done.** `test/zig/execute.test.ts` passes 23 phase-1 samples on Zig 0.17-dev:
+the Go phase-1 set, plus negative infinity, `0.1 + 0.2`, unit, multi-argument and
+nested direct calls, tuple destructuring in `let` and in a parameter, and a
+shadowed `let`. Two further tests check that lens updates and `match` raise
+`unsupported-zig` rather than emitting partial code. Every sample is also checked
+against `executeTypedProgram`. Notes:
+
+- Phase 1 was built without touching existing non-Zig files, which forced two
+  deviations from this plan:
+  - **Target:** `src/zig/target.ts` exports a stopgap `zigTarget()`. It is a
+    validated native `c11` config with triple `native-zig`, toolchain version
+    `zig <version>`, and feature `zig-stopgap`. Concrete IR uses the target only
+    for layout-table identity and cache keys, so this is enough for lowering.
+    Replace it once `target.ts` accepts `abi: 'zig'`.
+  - **Storage:** `Storage` is imported from `src/c/storage.ts` instead of being
+    moved to `src/backend/`.
+- Each IR value gets its own fresh `var` (`v0`, `v1`, ...). So the only
+  assignments into existing variables will be the phi and flush assignments
+  added in later phases, and only those need to watch for the aliasing hazard.
+- Capture-free code always emits `_ = environment;`. Direct calls pass the
+  callee record's `.environment` field, never the caller's own environment, so
+  that discard is never pointless.
+- Callable records give their pointer and code fields `= null` defaults, so a
+  capture-free value is just `L6{}`. Indirect calls unwrap the entry with `.?`.
+- Native arithmetic is inlined at direct calls. It is also emitted as `nativeN`
+  helpers for use as callable entries; Zig skips analysis of unreferenced
+  functions, so unused helpers are free.
 
 ### Phase 2: Lenses, swaps, aliases
 Shared `Storage`, thin lenses (`read: *R, replacement: *W`), scattered lenses,
