@@ -492,13 +492,19 @@ export function lconcrete(program: ConcreteProgram, options: ConcretePrintOption
                                   ),
                               ]
                             : []),
-                        ...(i.lensJoin
+                        ...(i.lensJoin?.kind === 'selected-focus'
                             ? [
-                                  call('selected-focus', i.lensJoin.arms.map(topology)),
+                                  call('selected-callable-focus', i.lensJoin.arms.map(name)),
                                   '->',
-                                  topology(i.lensJoin.result),
+                                  name(i.lensJoin.result),
                               ]
-                            : []),
+                            : i.lensJoin
+                              ? [
+                                    call('selected-focus', i.lensJoin.arms.map(topology)),
+                                    '->',
+                                    topology(i.lensJoin.result),
+                                ]
+                              : []),
                         braces(
                             i.cases.map((c) =>
                                 words(

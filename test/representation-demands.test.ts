@@ -114,7 +114,12 @@ for (const [name, source, message] of [
     [
         'recursive branch-selected lens result',
         'fn walk(k, ~x) ~{match k {0 -> x\n j -> walk(j - 1, ~x)}}\n{let f = fn () 3\n let old = walk(2, ~f) := fn () 7\n (old(), f())}',
-        'Callable focuses require a direct whole-owned-local swap',
+        'Branch-selected callable lens results require a selected return route',
+    ],
+    [
+        'callee branch-selected lens result',
+        'fn pick(c, ~(x, y)) ~{match c {true -> x\n false -> y}}\n{let p = (fn () 3, fn () 4)\n let old = pick(true, ~p) := fn () 7\n let (f, g) = p\n (old(), f(), g())}',
+        'Branch-selected callable lens results require a selected return route',
     ],
     [
         'branch-selected scattered differing contracts',

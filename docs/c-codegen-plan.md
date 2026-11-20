@@ -1075,3 +1075,52 @@ whose conversion must run inside restoration. Phase 6 remains incomplete.
 Validation: 1536 non-execution passes with only the existing source-identity
 snapshot failure; the full `LAMINAR_EXEC=1` execution file passed 1188 native/Wasm
 cases in 411.71 seconds without retries. TypeScript checks pass. Remote CI was not run.
+
+
+## Phase 6: branch-selected callable focuses within a function
+
+A `case` whose lens result carries callables, for example
+`~{match c {true -> f; false -> g}}`, now produces a `local-focus` instead of being
+rejected. Arms may yield callable focuses (local owners, projections, forwarded or
+private call results). The selected focus's read is the join of the arm reads; its
+replacement comes from its consumer (swap, persistent alias or forwarding) through
+the existing completion path. Swaps and aliases do not write storage directly. On
+completion, each arm's restored state receives the replacement in that arm's own
+target, and the existing post-completion union records `cleanupJoins`: the
+selected arm's owner holds the replacement, the others keep their old values, and
+the continuation sees the join. The state set formerly named `privateCallResults`
+is now `deferredFocuses`, covering every focus whose replacement is installed only
+by its own completion.
+
+Representation verification mirrors this: arms are verified with focus results
+allowed, the joined read is checked with `verifyJoin`, each arm's annotated
+replacement must equal the selected focus replacement, and the existing
+cleanup-join provenance check confirms only the selected arm's owner was written.
+
+Concrete IR adds a `selected-focus` `lensJoin` with arm focus layouts, the joined
+focus layout and per-arm read adapters, derived independently by the concrete
+verifier. C reuses the existing selected-lens lowering (runtime arm tag, staged
+frontends, per-arm cleanup normalization) and converts each arm's read into the
+joined focus with its adapter. With structural callable storage this is usually a
+move. Arms with different entry tables repack through the existing callable join
+adapter.
+
+Same-owner and sibling-projection arms need no special handling: the join of the
+replacement with itself is the replacement, and siblings update their own paths.
+A whole owner and a projection of that owner cannot both be arms, because their
+types differ.
+
+Ten shared samples cover both arms, captured environments, projected arms,
+aggregate focuses, unused aliases, forwarded swaps, same-owner arms and an
+entry-table conversion. Corruption tests reject forged read adapters, arm and
+result layouts, and completions that write the wrong arm owner.
+
+Callee-returned selected focuses (`fn pick(c, ~(x, y)) ~{match c {...}}`) and
+recursive selected results (`walk`) now report `Branch-selected callable lens
+results require a selected return route`; they need the arm tag to cross the
+function boundary in the returned lens's residual context. Dispatched callable lens
+results remain separate work. Phase 6 remains incomplete.
+
+Validation: 1550 non-execution passes with only the existing source-identity
+snapshot failure; the full `LAMINAR_EXEC=1` execution file passed 1206 native/Wasm
+cases in 433.86 seconds without retries. TypeScript checks pass. Remote CI was not run.

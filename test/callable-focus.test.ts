@@ -430,3 +430,42 @@ it('rejects forged parent replacement through a returned callable fst frontend',
     expect(() => verifyConcreteProgram(c)).toThrow('Call result annotation mismatch');
     expect(() => emitC(c)).toThrow('Call result annotation mismatch');
 });
+function selectedFocus(c: any): any {
+    const find = (b: any): any => {
+        for (const i of b.instructions) {
+            if (i.op === 'case' && i.lensJoin?.kind === 'selected-focus') return i;
+            for (const nested of [i.body, ...(i.cases ?? []).map((a: any) => a.body)])
+                if (nested) {
+                    const found = find(nested);
+                    if (found) return found;
+                }
+        }
+    };
+    return c.code.map((code: any) => find(code.body)).find(Boolean);
+}
+for (const mutation of ['read', 'arm', 'result'] as const)
+    it(`rejects forged selected callable focus ${mutation}`, () => {
+        const c = concrete(
+            callableFocusSamples.find((s) => s.name === 'selected callable converts entry tables')!
+                .source,
+        );
+        const join = selectedFocus(c).lensJoin;
+        if (mutation === 'read') join.reads[0].to = 'forged-layout';
+        if (mutation === 'arm') join.arms.reverse();
+        if (mutation === 'result') join.result = 'forged-layout';
+        expect(() => verifyConcreteProgram(c)).toThrow(
+            'Selected-branch restoration adapter changed',
+        );
+        expect(() => emitC(c)).toThrow('Selected-branch restoration adapter changed');
+    });
+it('rejects selected callable completions that write the wrong arm owner', () => {
+    const c = concrete(
+        callableFocusSamples.find((s) => s.name === 'selected callable alias true')!.source,
+    );
+    const selected = c.analysis.entries[0].values.find(
+        (v: any) => v.representation.kind === 'local-focus' && v.cleanupJoins,
+    );
+    expect(selected).toBeDefined();
+    selected.cleanupJoins[0].arms.reverse();
+    expect(() => verifyConcreteProgram(c)).toThrow('Cleanup storage arm provenance changed');
+});

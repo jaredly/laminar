@@ -117,8 +117,8 @@ type State = {
     focusOwners: Map<string, { place: string; path: number[] }>;
     focusWrites: Map<string, SemanticType>;
     callResults: Map<string, FocusTarget>;
-    /** Returned focuses backed by callee-private storage retained by the call. */
-    privateCallResults: Set<string>;
+    /** Focuses whose replacement is installed only by their own completion: callee-private returned backing and branch-selected focuses. */
+    deferredFocuses: Set<string>;
     nativeProjections: Set<string>;
     focusTargets: Map<string, FocusTarget>;
     dataOwners: Map<string, { place: string; path: number[] }>;
@@ -191,7 +191,7 @@ export function inferRepresentations(
         focusOwners: new Map(),
         focusWrites: new Map(),
         callResults: new Map(),
-        privateCallResults: new Set(),
+        deferredFocuses: new Set(),
         nativeProjections: new Set(),
         focusTargets: new Map(),
         dataOwners: new Map(),
@@ -205,7 +205,7 @@ export function inferRepresentations(
         focusOwners: new Map(s.focusOwners),
         focusWrites: new Map(s.focusWrites),
         callResults: new Map(s.callResults),
-        privateCallResults: new Set(s.privateCallResults),
+        deferredFocuses: new Set(s.deferredFocuses),
         nativeProjections: new Set(s.nativeProjections),
         focusTargets: new Map(s.focusTargets),
         dataOwners: new Map(s.dataOwners),
@@ -677,7 +677,17 @@ export function inferRepresentations(
             record,
             result,
         };
-        if (isFocus(result) && !state.privateCallResults.has(fn.body.result)) {
+        // A returned focus selected by a branch needs a per-arm return route.
+        const selectedResult = (b: IRBlock, id: string): boolean => {
+            const def = b.instructions.find((i) => 'out' in i && i.out.id === id);
+            return (
+                def?.op === 'case' ||
+                (def?.op === 'scope' && selectedResult(def.body, def.body.result))
+            );
+        };
+        if (isFocus(result) && selectedResult(fn.body, fn.body.result))
+            return fail('Branch-selected callable lens results require a selected return route');
+        if (isFocus(result) && !state.deferredFocuses.has(fn.body.result)) {
             const target =
                 targetFor(state, fn.body.result) ?? fail('Demanded result lacks logical backing');
             const leaves = targetLeaves(target);
@@ -959,7 +969,7 @@ export function inferRepresentations(
                     if (loan.owners) {
                         const write = s.focusWrites.get(i.lens);
                         const callTarget = s.callResults.get(i.lens);
-                        if ((!owner && !callTarget && !s.privateCallResults.has(i.lens)) || !write)
+                        if ((!owner && !callTarget && !s.deferredFocuses.has(i.lens)) || !write)
                             return fail('Computed callable alias lacks a logical frontend');
                         s.places.set(loan.place, focus.read);
                         const complete = s.finishes.get(i.lens);
@@ -1238,7 +1248,7 @@ export function inferRepresentations(
                         const callTarget = s.callResults.get(i.lens);
                         const owner = s.focusOwners.get(i.lens);
                         if (callTarget) writeTarget(callTarget, focus.replacement, s);
-                        else if (!owner && !s.privateCallResults.has(i.lens))
+                        else if (!owner && !s.deferredFocuses.has(i.lens))
                             return fail('Nonlocal callable focus swap');
                         if (owner)
                             s.places.set(
@@ -1455,7 +1465,7 @@ export function inferRepresentations(
                                     i.out.id,
                                     projectedTarget(target, setup.route.path),
                                 );
-                            } else s.privateCallResults.add(i.out.id);
+                            } else s.deferredFocuses.add(i.out.id);
                             const focus = out;
                             pendingDemands.add(entry);
                             s.finishes.set(i.out.id, (state, apply) => {
@@ -1494,7 +1504,7 @@ export function inferRepresentations(
                             owner = s.focusOwners.get(i.args[0]!);
                         const write = s.focusWrites.get(i.args[0]!);
                         const callTarget = s.callResults.get(i.args[0]!);
-                        const privateResult = s.privateCallResults.has(i.args[0]!);
+                        const privateResult = s.deferredFocuses.has(i.args[0]!);
                         if ((!owner && !callTarget && !privateResult) || !write)
                             return fail('Callable fst completion requires a direct owned frontend');
                         if (owner) {
@@ -1515,7 +1525,7 @@ export function inferRepresentations(
                             // is exclusively borrowed, so it retains its setup read.
                             if (callTarget)
                                 s.callResults.set(i.out.id, projectedTarget(callTarget, [0]));
-                            else s.privateCallResults.add(i.out.id);
+                            else s.deferredFocuses.add(i.out.id);
                             const projection = out,
                                 type = i.out.type;
                             s.finishes.set(i.out.id, (_state, apply) => {
@@ -1575,8 +1585,8 @@ export function inferRepresentations(
                     out = block(unit, i.body, nested, record, chain, true);
                     const callTarget = nested.callResults.get(i.body.result);
                     if (callTarget) s.callResults.set(i.out.id, callTarget);
-                    const privateResult = nested.privateCallResults.has(i.body.result);
-                    if (privateResult) s.privateCallResults.add(i.out.id);
+                    const privateResult = nested.deferredFocuses.has(i.body.result);
+                    if (privateResult) s.deferredFocuses.add(i.out.id);
                     if (out.kind === 'local-focus' && !callTarget && !privateResult) {
                         const owner = nested.focusOwners.get(i.body.result);
                         if (!owner) return fail('Escaping callable focus lacks a logical owner');
@@ -1629,20 +1639,35 @@ export function inferRepresentations(
                 }
                 case 'case': {
                     const states: State[] = [];
+                    // A branch-selected callable focus: each arm yields a focus whose
+                    // replacement is installed when the selected focus completes.
+                    const selectedCallable =
+                        i.out.type.tag === 'flow' &&
+                        (containsCallable(i.out.type.read) || containsCallable(i.out.type.write));
                     let pending: RecursionPending | undefined;
                     const branches = i.cases.flatMap((arm) => {
                         const state = clone(s);
                         bind(arm.pattern, get(s, i.value), state);
                         try {
-                            const result = block(unit, arm.body, state, record, chain);
+                            const result = block(
+                                unit,
+                                arm.body,
+                                state,
+                                record,
+                                chain,
+                                selectedCallable,
+                            );
                             states.push(state);
                             return [result];
                         } catch (error) {
                             // A seeding pass treats an arm that reaches an unsolved
                             // recursive call as divergent: the least fixed point
                             // starts from the remaining (base) arms.
-                            if (!(error instanceof RecursionPending) || i.out.type.tag === 'flow')
-                                throw error;
+                            if (!(error instanceof RecursionPending)) throw error;
+                            if (i.out.type.tag === 'flow')
+                                return fail(
+                                    'Branch-selected callable lens results require a selected return route',
+                                );
                             pending = error;
                             return [];
                         }
@@ -1682,10 +1707,36 @@ export function inferRepresentations(
                             s.places.set(place, result);
                         } else s.places.set(place, current);
                     });
-                    out =
-                        i.out.type.tag === 'flow'
-                            ? { kind: 'lens', shape: reps.thin(i.out.type.read, i.out.type.write) }
-                            : join(branches, true);
+                    const armFocuses = selectedCallable
+                        ? branches.map((b) =>
+                              b.kind === 'local-focus'
+                                  ? b
+                                  : fail('Selected scattered callable focuses require arm targets'),
+                          )
+                        : [];
+                    const armTargets = armFocuses.map((_, n) =>
+                        targetFor(states[n]!, i.cases[n]!.body.result),
+                    );
+                    armTargets.forEach((target, n) => {
+                        if (!target && !states[n]!.deferredFocuses.has(i.cases[n]!.body.result))
+                            fail('Selected callable focus arm lacks a logical target');
+                    });
+                    if (selectedCallable) {
+                        const read = join(
+                            armFocuses.map((f) => f.read),
+                            true,
+                        );
+                        out = { kind: 'local-focus', read, replacement: read };
+                        s.deferredFocuses.add(i.out.id);
+                    } else
+                        out =
+                            i.out.type.tag === 'flow'
+                                ? {
+                                      kind: 'lens',
+                                      shape: reps.thin(i.out.type.read, i.out.type.write),
+                                  }
+                                : join(branches, true);
+                    const selected = out;
                     if (i.out.type.tag === 'flow') {
                         const finishes = i.cases.map((arm, n) =>
                             states[n]!.finishes.get(arm.body.result),
@@ -1719,7 +1770,7 @@ export function inferRepresentations(
                         // private state. Post-cleanup unions are separate from setup
                         // joins so original cleanup keeps its exact representation.
                         const places = [...s.places.keys()];
-                        if (finishes.some(Boolean))
+                        if (finishes.some(Boolean) || selectedCallable)
                             s.finishes.set(i.out.id, (current, apply) => {
                                 if (!apply) return;
                                 const completed = states.map((setup, n) => {
@@ -1735,6 +1786,14 @@ export function inferRepresentations(
                                                 setup.places.get(j.place)!,
                                             ),
                                         );
+                                    if (selectedCallable && selected.kind === 'local-focus') {
+                                        // Only this arm's owner receives the replacement
+                                        // when it is selected; the union below joins arms.
+                                        armFocuses[n]!.replacement = selected.replacement;
+                                        const target = armTargets[n];
+                                        if (target)
+                                            writeTarget(target, selected.replacement, restored);
+                                    }
                                     finishes[n]?.(restored, true);
                                     return restored;
                                 });

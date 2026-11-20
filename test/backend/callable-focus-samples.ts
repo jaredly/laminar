@@ -906,4 +906,49 @@ export const callableFocusSamples = [
         source: 'fn temp(~log) ~{lens v <- (fn () 1, 2)\n {let (g, n) = v\n let o = log := g\n ()}}\n{let log = fn () 0\n let old = fst(~temp(~log)) := fn () 8\n (old(), log())}',
         expected: [1, 8],
     },
+    {
+        name: 'selected callable alias true',
+        source: '{let f = fn () 3\n let g = fn () 4\n let r = {let l = ~{match true {true -> f; false -> g}}\n let old = l := fn () 7\n old()}\n (r, f(), g())}',
+        expected: [3, 7, 4],
+    },
+    {
+        name: 'selected callable alias false',
+        source: '{let f = fn () 3\n let g = fn () 4\n let r = {let l = ~{match false {true -> f; false -> g}}\n let old = l := fn () 7\n old()}\n (r, f(), g())}',
+        expected: [4, 3, 7],
+    },
+    {
+        name: 'selected callable captured arm',
+        source: '{let f = fn () 3\n let k = 5\n let g = fn () k\n let r = {let l = ~{match false {true -> f; false -> g}}\n let old = l := fn () 7\n old()}\n (r, f(), g())}',
+        expected: [5, 3, 7],
+    },
+    {
+        name: 'selected callable projected arms',
+        source: '{let p = (fn () 3, fn () 4)\n let r = {let l = ~{match false {true -> {let (x, y) = ~p\n x}; false -> {let (x, y) = ~p\n y}}}\n let old = l := fn () 7\n old()}\n let (f, g) = p\n (r, f(), g())}',
+        expected: [4, 3, 7],
+    },
+    {
+        name: 'selected callable unused alias',
+        source: '{let f = fn () 3\n let g = fn () 4\n {let l = ~{match true {true -> f; false -> g}}\n ()}\n (f(), g())}',
+        expected: [3, 4],
+    },
+    {
+        name: 'selected callable aggregate focus',
+        source: '{let p = (fn () 3, 1)\n let q = (fn () 4, 2)\n let r = {let l = ~{match false {true -> p; false -> q}}\n let (o, n) = l := (fn () 7, 9)\n (o(), n)}\n let (f, a) = p\n let (g, b) = q\n (r, f(), a, g(), b)}',
+        expected: [[4, 2], 3, 1, 7, 9],
+    },
+    {
+        name: 'selected callable converts entry tables',
+        source: 'fn mk() {fn (h) h()}\n{let a = mk()\n let one = a(fn () 1)\n let f = mk()\n let g = fn (h) h()\n let r = {let l = ~{match true {true -> f; false -> g}}\n let old = l := fn (h) 7\n old(fn () 5)}\n (one, r, f(fn () 0), g(fn () 2))}',
+        expected: [1, 5, 7, 2],
+    },
+    {
+        name: 'selected callable same owner',
+        source: '{let f = fn () 3\n let r = {let l = ~{match true {true -> f; false -> f}}\n let old = l := fn () 7\n old()}\n (r, f())}',
+        expected: [3, 7],
+    },
+    {
+        name: 'selected callable forwarded swap',
+        source: '{let f = fn () 3\n let g = fn () 4\n let old = {let l = ~{match true {true -> f; false -> g}}\n l} := fn () 7\n (old(), f(), g())}',
+        expected: [3, 7, 4],
+    },
 ];

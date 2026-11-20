@@ -694,6 +694,8 @@ export function lowerC(program: ConcreteProgram): TranslationUnit {
                     }
                     case 'case': {
                         if (i.lensJoin) {
+                            const focusReads =
+                                i.lensJoin.kind === 'selected-focus' ? i.lensJoin.reads : undefined;
                             const before = storage.snapshot();
                             const selected = fresh();
                             variables.push({ name: selected, type: 'int' });
@@ -833,7 +835,9 @@ export function lowerC(program: ConcreteProgram): TranslationUnit {
                                 const lens = lenses.get(arm.body.result)!;
                                 nested.push(
                                     `${selected} = ${n};`,
-                                    `${focus} = ${read(storage.get(lens.view), input)};`,
+                                    focusReads
+                                        ? `${focus} = ${adaptValue(focusReads[n]!, read(storage.get(lens.view), focusReads[n]!.from))};`
+                                        : `${focus} = ${read(storage.get(lens.view), input)};`,
                                 );
                                 // Lift setup storage out of the conditional so deferred cleanup can
                                 // retain it. Only the selected arm assigns or allocates its backing.

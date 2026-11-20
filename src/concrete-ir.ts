@@ -159,7 +159,16 @@ export type ConcreteInstruction =
               };
           }[];
           aggregateJoin?: { ownership: 'transfer-selected-result'; arms: ConcreteValueAdapter[] };
-          lensJoin?: { kind: 'selected'; arms: string[]; result: string };
+          lensJoin?:
+              | { kind: 'selected'; arms: string[]; result: string }
+              | {
+                    /** A branch-selected callable focus: arm focus layouts, the joined
+                     * focus layout, and per-arm conversions into the joined read. */
+                    kind: 'selected-focus';
+                    arms: string[];
+                    result: string;
+                    reads: ConcreteValueAdapter[];
+                };
           callableJoin?: {
               kind: 'erased-environment';
               result: string;

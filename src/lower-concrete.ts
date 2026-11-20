@@ -525,6 +525,8 @@ export function lowerConcreteProgram(
             return { source: from.field, target: entry.field };
         }),
     });
+    const focusRead = (v: ValueRepresentation): ValueRepresentation =>
+        v.kind === 'local-focus' ? v.read : fail('Selected callable arm is not a local focus');
     const valueAdapter = (
         from: ValueRepresentation,
         to: ValueRepresentation,
@@ -703,25 +705,39 @@ export function lowerConcreteProgram(
                                   },
                               }
                             : {}),
-                        ...(i.out.type.tag === 'flow'
+                        ...(values.get(i.out.id)!.kind === 'local-focus'
                             ? {
                                   lensJoin: {
-                                      kind: 'selected' as const,
-                                      arms: i.cases.map(
-                                          (c) =>
-                                              (
-                                                  values.get(c.body.result)! as {
-                                                      kind: 'lens';
-                                                      shape: string;
-                                                  }
-                                              ).shape,
+                                      kind: 'selected-focus' as const,
+                                      arms: i.cases.map((c) => layout(values.get(c.body.result)!)),
+                                      result: layout(values.get(i.out.id)!),
+                                      reads: i.cases.map((c) =>
+                                          valueAdapter(
+                                              focusRead(values.get(c.body.result)!),
+                                              focusRead(values.get(i.out.id)!),
+                                          ),
                                       ),
-                                      result: (
-                                          values.get(i.out.id)! as { kind: 'lens'; shape: string }
-                                      ).shape,
                                   },
                               }
-                            : {}),
+                            : i.out.type.tag === 'flow'
+                              ? {
+                                    lensJoin: {
+                                        kind: 'selected' as const,
+                                        arms: i.cases.map(
+                                            (c) =>
+                                                (
+                                                    values.get(c.body.result)! as {
+                                                        kind: 'lens';
+                                                        shape: string;
+                                                    }
+                                                ).shape,
+                                        ),
+                                        result: (
+                                            values.get(i.out.id)! as { kind: 'lens'; shape: string }
+                                        ).shape,
+                                    },
+                                }
+                              : {}),
                     };
                 if (i.op === 'global' || i.op === 'closure') {
                     const c = callable(group(values.get(i.out.id)!));

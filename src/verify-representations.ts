@@ -356,8 +356,8 @@ export function verifyRepresentations(
         focusOwners: Map<string, { place: string; path: number[] }>;
         focusWrites: Map<string, SemanticType>;
         callResults: Map<string, FocusTarget>;
-        /** Returned focuses backed by callee-private storage retained by the call. */
-        privateCallResults: Set<string>;
+        /** Focuses whose replacement is installed only by their own completion: callee-private returned backing and branch-selected focuses. */
+        deferredFocuses: Set<string>;
         nativeProjections: Set<string>;
         focusTargets: Map<string, FocusTarget>;
         dataOwners: Map<string, { place: string; path: number[] }>;
@@ -371,7 +371,7 @@ export function verifyRepresentations(
         focusOwners: new Map(),
         focusWrites: new Map(),
         callResults: new Map(),
-        privateCallResults: new Set(),
+        deferredFocuses: new Set(),
         nativeProjections: new Set(),
         focusTargets: new Map(),
         dataOwners: new Map(),
@@ -385,7 +385,7 @@ export function verifyRepresentations(
         focusOwners: new Map(s.focusOwners),
         focusWrites: new Map(s.focusWrites),
         callResults: new Map(s.callResults),
-        privateCallResults: new Set(s.privateCallResults),
+        deferredFocuses: new Set(s.deferredFocuses),
         nativeProjections: new Set(s.nativeProjections),
         focusTargets: new Map(s.focusTargets),
         dataOwners: new Map(s.dataOwners),
@@ -849,10 +849,7 @@ export function verifyRepresentations(
                         if (loan.owners) {
                             const write = s.focusWrites.get(i.lens);
                             const callTarget = s.callResults.get(i.lens);
-                            if (
-                                (!owner && !callTarget && !s.privateCallResults.has(i.lens)) ||
-                                !write
-                            )
+                            if ((!owner && !callTarget && !s.deferredFocuses.has(i.lens)) || !write)
                                 return fail('Computed callable alias lacks a logical frontend');
                             s.places.set(loan.place, focus.read);
                             const complete = s.finishes.get(i.lens);
@@ -928,7 +925,7 @@ export function verifyRepresentations(
                             const callTarget = s.callResults.get(i.lens);
                             const owner = s.focusOwners.get(i.lens);
                             if (callTarget) writeTarget(callTarget, focus.replacement, s, false);
-                            else if (!owner && !s.privateCallResults.has(i.lens))
+                            else if (!owner && !s.deferredFocuses.has(i.lens))
                                 return fail('Nonlocal callable focus swap');
                             if (owner)
                                 s.places.set(
@@ -1251,8 +1248,8 @@ export function verifyRepresentations(
                         );
                         const callTarget = nested.callResults.get(i.body.result);
                         if (callTarget) s.callResults.set(i.out.id, callTarget);
-                        const privateResult = nested.privateCallResults.has(i.body.result);
-                        if (privateResult) s.privateCallResults.add(i.out.id);
+                        const privateResult = nested.deferredFocuses.has(i.body.result);
+                        if (privateResult) s.deferredFocuses.add(i.out.id);
                         if (v.kind === 'local-focus' && !callTarget && !privateResult) {
                             const owner = nested.focusOwners.get(i.body.result);
                             if (!owner)
@@ -1306,13 +1303,23 @@ export function verifyRepresentations(
                         break;
                     }
                     case 'case': {
-                        if (i.out.type.tag === 'flow' && lens(v).kind !== 'thin')
+                        const selectedCallable =
+                            i.out.type.tag === 'flow' &&
+                            (containsCallable(i.out.type.read) ||
+                                containsCallable(i.out.type.write));
+                        if (selectedCallable && v.kind !== 'local-focus')
+                            fail('Selected callable branches must expose a local focus');
+                        if (
+                            i.out.type.tag === 'flow' &&
+                            !selectedCallable &&
+                            lens(v).kind !== 'thin'
+                        )
                             fail('Selected-branch adapter must expose a thin focus');
                         const states: State[] = [];
                         const results = i.cases.map((arm) => {
                             const branch = clone(s);
                             bind(arm.pattern, get(s, i.value), branch);
-                            const result = block(arm.body, branch);
+                            const result = block(arm.body, branch, selectedCallable);
                             states.push(branch);
                             return result;
                         });
@@ -1365,7 +1372,28 @@ export function verifyRepresentations(
                                 s.places.set(place, joined.result);
                             } else s.places.set(place, current);
                         });
-                        if (i.out.type.tag === 'flow') results.forEach(lens);
+                        const armFocuses = selectedCallable
+                            ? results.map((r) =>
+                                  r.kind === 'local-focus'
+                                      ? r
+                                      : fail(
+                                            'Selected scattered callable focuses require arm targets',
+                                        ),
+                              )
+                            : [];
+                        const armTargets = armFocuses.map((_, n) => {
+                            const target = targetFor(states[n]!, i.cases[n]!.body.result);
+                            if (!target && !states[n]!.deferredFocuses.has(i.cases[n]!.body.result))
+                                fail('Selected callable focus arm lacks a logical target');
+                            return target;
+                        });
+                        if (selectedCallable && v.kind === 'local-focus') {
+                            verifyJoin(
+                                v.read,
+                                armFocuses.map((f) => f.read),
+                            );
+                            s.deferredFocuses.add(i.out.id);
+                        } else if (i.out.type.tag === 'flow') results.forEach(lens);
                         else verifyJoin(v, results);
                         if (i.out.type.tag === 'flow') {
                             const finishes = i.cases.map((arm, n) =>
@@ -1397,7 +1425,7 @@ export function verifyRepresentations(
                                         );
                                 });
                             const places = [...s.places.keys()];
-                            if (finishes.some(Boolean))
+                            if (finishes.some(Boolean) || selectedCallable)
                                 s.finishes.set(i.out.id, (current, apply) => {
                                     if (!apply) return;
                                     const completed = states.map((setup, n) => {
@@ -1412,6 +1440,17 @@ export function verifyRepresentations(
                                                     setup.places.get(j.place)!,
                                                 ),
                                             );
+                                        if (selectedCallable && v.kind === 'local-focus') {
+                                            // The selected arm installs the focus replacement.
+                                            requireEqual(
+                                                armFocuses[n]!.replacement,
+                                                v.replacement,
+                                                'Selected callable arm replacement changed',
+                                            );
+                                            const target = armTargets[n];
+                                            if (target)
+                                                writeTarget(target, v.replacement, restored);
+                                        }
                                         finishes[n]?.(restored, true);
                                         return restored;
                                     });
@@ -1614,7 +1653,7 @@ export function verifyRepresentations(
                                 owner = s.focusOwners.get(i.args[0]!);
                             const write = s.focusWrites.get(i.args[0]!);
                             const callTarget = s.callResults.get(i.args[0]!);
-                            const privateResult = s.privateCallResults.has(i.args[0]!);
+                            const privateResult = s.deferredFocuses.has(i.args[0]!);
                             if ((!owner && !callTarget && !privateResult) || !write)
                                 return fail(
                                     'Callable fst completion requires a direct owned frontend',
@@ -1640,7 +1679,7 @@ export function verifyRepresentations(
                             } else {
                                 if (callTarget)
                                     s.callResults.set(i.out.id, projectedTarget(callTarget, [0]));
-                                else s.privateCallResults.add(i.out.id);
+                                else s.deferredFocuses.add(i.out.id);
                                 const type = i.out.type;
                                 s.finishes.set(i.out.id, (_state, apply) => {
                                     if (!apply) return;
@@ -1735,7 +1774,7 @@ export function verifyRepresentations(
                                             route.path,
                                         ),
                                     );
-                                else s.privateCallResults.add(i.out.id);
+                                else s.deferredFocuses.add(i.out.id);
                             } else if (call.demand || variant.resultDemand)
                                 return fail('Unexpected callable result demand');
                             s.finishes.set(i.out.id, (current, apply) => {
@@ -1877,7 +1916,7 @@ export function verifyRepresentations(
         const result = block(body, state, demanded, resultDemand);
         if (isFocus(result) && demanded) {
             if (!resultDemand) return fail('Callable lens result requires a replacement demand');
-            const forwardedPrivate = state.privateCallResults.has(body.result);
+            const forwardedPrivate = state.deferredFocuses.has(body.result);
             const target = forwardedPrivate
                 ? undefined
                 : (targetFor(state, body.result) ?? fail('Demanded result lacks logical backing'));

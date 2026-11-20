@@ -879,23 +879,38 @@ export function verifyConcreteProgram(p: ConcreteProgram): void {
                         o.cases.length !== i.cases.length
                     )
                         fail('Case contract changed');
+                    const focusRead = (id: string): ValueRepresentation => {
+                        const v = reps.get(id)!;
+                        return v.kind === 'local-focus'
+                            ? v.read
+                            : fail('Selected callable arm is not a local focus');
+                    };
                     const join =
-                        i.out.type.tag === 'flow'
+                        reps.get(i.out.id)!.kind === 'local-focus'
                             ? {
-                                  kind: 'selected',
-                                  arms: i.cases.map(
-                                      (c) =>
-                                          (
-                                              reps.get(c.body.result)! as {
-                                                  kind: 'lens';
-                                                  shape: string;
-                                              }
-                                          ).shape,
+                                  kind: 'selected-focus',
+                                  arms: i.cases.map((c) => storage(reps.get(c.body.result)!)),
+                                  result: storage(reps.get(i.out.id)!),
+                                  reads: i.cases.map((c) =>
+                                      adapter(focusRead(c.body.result), focusRead(i.out.id)),
                                   ),
-                                  result: (reps.get(i.out.id)! as { kind: 'lens'; shape: string })
-                                      .shape,
                               }
-                            : undefined;
+                            : i.out.type.tag === 'flow'
+                              ? {
+                                    kind: 'selected',
+                                    arms: i.cases.map(
+                                        (c) =>
+                                            (
+                                                reps.get(c.body.result)! as {
+                                                    kind: 'lens';
+                                                    shape: string;
+                                                }
+                                            ).shape,
+                                    ),
+                                    result: (reps.get(i.out.id)! as { kind: 'lens'; shape: string })
+                                        .shape,
+                                }
+                              : undefined;
                     eq(
                         o.cleanupJoins,
                         r.values
