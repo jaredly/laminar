@@ -18,6 +18,13 @@ these slices. See also [the implementation record](backend-progress.md),
 [C backend](c-backend.md). Each further slice should be independently reviewable
 and preserve checked and unchecked execution paths.
 
+> **Direction change (2026-11-20):** phase 6 now moves callables to ABI-keyed,
+> type-determined representations. See
+> [ABI-keyed callable representations](abi-callable-representations.md). Most of the
+> identity-precise callable machinery recorded in the phase-6 sections below is
+> slated for removal under that plan's migration milestones; the shared execution
+> samples remain the behavioral corpus.
+
 ## Outcome and scope
 
 Compile checked Laminar programs to readable, standalone C that can target native execution and WebAssembly, specializing reachable generic definitions on both semantic types and lens representations. Preserve the current affine language: top-level functions are reusable; first-class functions and other local values are consumed at most once; unused owned values are allowed; persistent aliases exclusively borrow their owner; lens contents must be restored at lifetime end; closures capture values by moving them at creation and cannot borrow outer storage.
