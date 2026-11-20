@@ -146,7 +146,17 @@ export function lowerGo(program: ConcreteProgram): GoFile {
             });
             declarations.push(`type ${type(l.id)} struct {\n${fields.join('\n')}\n}`);
         } else if (l.kind === 'union') {
-            unsupported('Union layout requires Phase 7');
+            // Tagged union; boxed variants share immutable payloads under Go's GC.
+            const variants = l.fields.map((f, n) =>
+                f.kind === 'value'
+                    ? `\tv${n} ${type(f.layout)}`
+                    : f.kind === 'pointer' && f.layout
+                      ? `\tv${n} *${type(f.layout)}`
+                      : unsupported('Union variant requires data storage'),
+            );
+            declarations.push(
+                `type ${type(l.id)} struct {\n\ttag uint32\n${variants.join('\n')}\n}`,
+            );
         }
     }
 
@@ -159,6 +169,20 @@ export function lowerGo(program: ConcreteProgram): GoFile {
     }
 
     const helpers: GoFunction[] = [];
+    const variant = (id: string, n: number) => {
+        const f = layout(id).fields[n]!;
+        if (f.kind === 'code' || !f.layout)
+            return unsupported('Union variant requires data storage');
+        return { boxed: f.kind === 'pointer', layout: f.layout };
+    };
+    const tagOf = (id: string, name: string): number => {
+        const n = layout(id).fields.findIndex((f) => f.name === name);
+        return n < 0 ? unsupported(`Constructor ${name} is absent from its union layout`) : n;
+    };
+    // Boxed payloads are never written in place (binding copies them out and
+    // construction allocates), so `dup` and moves may share them.
+    const payload = (expr: string, id: string, n: number): string =>
+        variant(id, n).boxed ? `(*(${expr}).v${n})` : `(${expr}).v${n}`;
     const nativeEntries = new Set([
         ...program.callables
             .filter((c) => c.descriptor.kind === 'native')
@@ -280,7 +304,16 @@ export function lowerGo(program: ConcreteProgram): GoFile {
             } else if (p.kind === 'tuple') {
                 p.items.forEach((item, i) => bind(item, storage.parts(data)[i]!, body));
             } else if (p.kind === 'constructor') {
-                unsupported('Constructor pattern requires Phase 7');
+                // Borrowed matches moved their owner out first; reconstruction is explicit IR.
+                if (Array.isArray(data)) return unsupported('Constructor pattern over a tuple');
+                const n = tagOf(data.layout, p.name),
+                    v = variant(data.layout, n);
+                const contents: Data = {
+                    expression: declare(v.layout, payload(data.expression, data.layout, n), body),
+                    layout: v.layout,
+                };
+                if (p.items.length === 1) bind(p.items[0]!, contents, body);
+                else p.items.forEach((item, k) => bind(item, storage.parts(contents)[k]!, body));
             } else if (p.kind === 'drop') {
                 // Drop in Go is automatic via GC for plain data
             }
@@ -299,14 +332,31 @@ export function lowerGo(program: ConcreteProgram): GoFile {
         const flushParameters = (body: Statement[]) =>
             parameters.forEach((p) => flush(p.expression, p.layout, storage.get(p.view), body));
 
-        const matches = (p: IRPattern, expr: string): string =>
-            p.kind === 'literal'
-                ? `${expr} == ${literal(p.value, unit.id)}`
-                : p.kind === 'tuple'
-                  ? p.items.map((p, i) => matches(p, `(${expr}).item${i}`)).join(' && ') || 'true'
-                  : p.kind === 'constructor'
-                    ? unsupported('Constructor match requires Phase 7')
-                    : 'true';
+        const matches = (p: IRPattern, expr: string, id: string): string => {
+            if (p.kind === 'literal') return `${expr} == ${literal(p.value, unit.id)}`;
+            const fields = layout(id).fields as { layout: string }[];
+            if (p.kind === 'tuple')
+                return (
+                    p.items
+                        .map((p, i) => matches(p, `(${expr}).item${i}`, fields[i]!.layout))
+                        .join(' && ') || 'true'
+                );
+            if (p.kind !== 'constructor') return 'true';
+            const n = tagOf(id, p.name),
+                v = variant(id, n),
+                contents = payload(expr, id, n);
+            const items =
+                p.items.length === 1
+                    ? [matches(p.items[0]!, contents, v.layout)]
+                    : p.items.map((item, k) =>
+                          matches(
+                              item,
+                              `(${contents}).item${k}`,
+                              (layout(v.layout).fields[k] as { layout: string }).layout,
+                          ),
+                      );
+            return [`(${expr}).tag == ${n}`, ...items.filter((m) => m !== 'true')].join(' && ');
+        };
 
         const ref = (s: SlotRef) =>
             storage.project(places.get(s.place) ?? unsupported('Unavailable Go place'), s.path);
@@ -496,6 +546,25 @@ export function lowerGo(program: ConcreteProgram): GoFile {
                     case 'constant':
                         expr = literal(i.value, id);
                         break;
+                    case 'construct': {
+                        const n = tagOf(id, i.name),
+                            v = variant(id, n),
+                            l = layout(v.layout);
+                        let contents =
+                            i.items.length === 0
+                                ? zero(v.layout)
+                                : i.items.length === 1
+                                  ? value(i.items[0]!)
+                                  : `${type(v.layout)}{${i.items.map((it, k) => `${identifier(l.fields[k]!.name)}: ${value(it)}`).join(', ')}}`;
+                        if (v.boxed) {
+                            const box = fresh();
+                            variables.push({ name: box, type: `*${type(v.layout)}` });
+                            body.push(`${box} = new(${type(v.layout)})`, `*${box} = ${contents}`);
+                            contents = box;
+                        }
+                        expr = `${type(id)}{tag: ${n}, v${n}: ${contents}}`;
+                        break;
+                    }
                     case 'tuple': {
                         const l = layout(id);
                         if (!l.fields.length) {
@@ -763,7 +832,7 @@ export function lowerGo(program: ConcreteProgram): GoFile {
                             merge(arms, body);
                             i.cases.forEach((arm, n) =>
                                 body.push({
-                                    head: `${n ? 'else if' : 'if'} (${matches(arm.pattern, value(i.value))})`,
+                                    head: `${n ? 'else if' : 'if'} (${matches(arm.pattern, value(i.value), outputLayouts.get(i.value)!)})`,
                                     body: arms[n]!.nested,
                                 }),
                             );
@@ -920,7 +989,7 @@ export function lowerGo(program: ConcreteProgram): GoFile {
                         );
                         i.cases.forEach((arm, n) =>
                             body.push({
-                                head: `${n ? 'else if' : 'if'} ${matches(arm.pattern, value(i.value))}`,
+                                head: `${n ? 'else if' : 'if'} ${matches(arm.pattern, value(i.value), outputLayouts.get(i.value)!)}`,
                                 body: arms[n]!.nested,
                             }),
                         );
@@ -1059,6 +1128,7 @@ export function lowerGo(program: ConcreteProgram): GoFile {
         ],
     });
 
+    const printers = new Set<string>();
     const print = (expr: string, id: string, body: Statement[]) => {
         const l = layout(id);
         if (l.kind === 'f64') {
@@ -1074,6 +1144,58 @@ export function lowerGo(program: ConcreteProgram): GoFile {
                 print(`(${expr}).${identifier(f.name)}`, (f as { layout: string }).layout, body);
             });
             body.push('fmt.Print("]")');
+        } else if (l.kind === 'union') {
+            const name = `print_${type(id)}`;
+            if (!printers.has(id)) {
+                printers.add(id);
+                const body: Statement[] = [];
+                const names = l.fields.map((f) => f.name);
+                if (names.length === 2 && names[0] === 'nil' && names[1] === 'cons') {
+                    // The reference protocol prints cons cells as one JSON array.
+                    const cell = variant(id, 1);
+                    const head = (layout(cell.layout).fields[0] as { layout: string }).layout;
+                    const loop: Statement[] = [
+                        { head: 'if !first', body: ['fmt.Print(",")'] },
+                        'first = false',
+                    ];
+                    print(`(*value.v1).item0`, head, loop);
+                    loop.push('value = (*value.v1).item1');
+                    body.push(
+                        'first := true',
+                        'fmt.Print("[")',
+                        { head: 'for value.tag == 1', body: loop },
+                        'fmt.Print("]")',
+                    );
+                } else
+                    l.fields.forEach((f, n) => {
+                        const v = variant(id, n);
+                        const arm: Statement[] = [
+                            `fmt.Print("{\\"kind\\":\\"variant\\",\\"name\\":\\"${identifier(f.name)}\\",\\"items\\":[")`,
+                        ];
+                        const arity = (
+                            program.semantic.generic.imports.find(
+                                (s) => s.definition === `constructor/${f.name}`,
+                            )?.type as { args?: unknown[] } | undefined
+                        )?.args?.length;
+                        if (arity === undefined)
+                            return unsupported(`Unknown constructor ${f.name}`);
+                        const contents = payload('value', id, n);
+                        if (arity === 1) print(contents, v.layout, arm);
+                        else
+                            for (let k = 0; k < arity; k++) {
+                                if (k) arm.push('fmt.Print(",")');
+                                print(
+                                    `(${contents}).item${k}`,
+                                    (layout(v.layout).fields[k] as { layout: string }).layout,
+                                    arm,
+                                );
+                            }
+                        arm.push('fmt.Print("]}")');
+                        body.push({ head: `${n ? 'else if' : 'if'} value.tag == ${n}`, body: arm });
+                    });
+                helpers.push({ signature: `func ${name}(value ${type(id)})`, body });
+            }
+            body.push(`${name}(${expr})`);
         } else {
             unsupported('Entry result requires a supported test layout');
         }

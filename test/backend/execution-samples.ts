@@ -21,6 +21,8 @@ import { callableJoinSamples } from './callable-join-samples.ts';
 import { indirectCallSamples, unconstrainedClosureSamples } from './indirect-call-samples.ts';
 import { phase5Samples } from '../c/phase5-samples.ts';
 import { backendCorpus } from './corpus.ts';
+import { nominalSamples } from './nominal-samples.ts';
+import { aslensNominalSamples, borrowedNominalSamples } from './nominal-pattern-samples.ts';
 export const samples = [
     ...enabledMigrationSamples,
     ...demandSamples,
@@ -31,7 +33,16 @@ export const samples = [
     ...aggregateJoinSamples,
     ...callableFocusSamples,
     ...callableStorageSamples,
-    ...backendCorpus.filter((s) => s.phase <= 6),
+    // Phase 7 nominal data executes; strings remain a later phase-7 slice.
+    ...backendCorpus.filter((s) => s.phase <= 6 || s.name === 'list'),
+    ...nominalSamples.map((s) => ({ ...s, name: `nominal: ${s.name}` })),
+    ...[...borrowedNominalSamples, ...aslensNominalSamples]
+        .filter(([name]) => name !== 'string literal')
+        .map(([name, source, expected]) => ({
+            name: `nominal pattern: ${name}`,
+            source,
+            expected,
+        })),
     ...capturedCleanupSamples,
     ...indirectCallSamples,
     ...unconstrainedClosureSamples,

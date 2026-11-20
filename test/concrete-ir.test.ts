@@ -399,7 +399,8 @@ it('propagates returned lens representation contracts into concrete call results
     ]);
 });
 it('keeps semantic and dynamic result diagnostics in the concrete API', () => {
-    expect(() => compile('fn id(x) x\nid')).toThrow('Wrong type argument count');
+    // A generic entry expression is instantiated at unit, leaving a callable root.
+    expect(() => compile('fn id(x) x\nid')).toThrow('Callable entry roots');
     expect(() =>
         compile(
             '{let f = match true {true -> fn () {fn (x) x}; false -> fn () {fn (x) x}}\n let g = f()\n g(1)}',

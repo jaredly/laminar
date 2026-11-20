@@ -6,7 +6,9 @@ Status: phases 0–6 are complete for the checked subset (phase 6 closed
 executes affine closures, typed indirect calls and representation joins through
 [ABI-keyed, type-determined callable representations](abi-callable-representations.md);
 see [*Phase 6 completion*](#phase-6-completion-2026-11-20). Phase 7 runtime and host
-integration and phase 8 optimization remain broader work.
+integration and phase 8 optimization remain broader work. Phase 7 is in progress:
+slice 1, nominal union data, is complete (see
+[*Phase 7 progress*](#phase-7-progress)).
 
 The scoped lens extensions are complete as of `707521c`; see the
 [completion record and follow-up mapping](checker-completeness-handoff.md).
@@ -1307,3 +1309,45 @@ passed, 1303 skipped, no failures, all 38 snapshots passing (4644 assertions).
 `LAMINAR_EXEC=1 bun test test/c/execute.test.ts` passes all 1262 native/Wasm cases
 (4407 assertions, 338.77 seconds); `LAMINAR_EXEC=1 bun test test/go` passes 662
 tests (701 assertions, 95.52 seconds). Remote CI was not run.
+
+## Phase 7 progress
+
+Slices, in order: (1) nominal unions, (2) strings, (3) a runtime import registry,
+(4) a compiler command/API, (5) backend selection in the test runner, (6) host
+exports, then documentation and the CI exit gate.
+
+### Slice 1: nominal union data (2026-11-20)
+
+Work item 1 for nominal data and item 2's owned operations for it: user unions and
+the builtin `List`/`Option` compile and execute on native C, Wasm and Go.
+Storage schemas are derived from constructor imports, recursive variants are boxed,
+and C has recursive drop, deep `dup` and protocol printing. Borrowed constructor
+matches and `aslens` constructor patterns execute through their existing explicit
+reconstruction IR. See [the C backend](c-backend.md#phase-7-nominal-union-data)
+for the representation.
+
+Layout identities now include only the schemas a type reaches, so derived builtins
+do not perturb existing layout IDs or printed expectations. Entry expressions with an
+unconstrained result type (such as `[]`) are instantiated at unit.
+
+Tests: 28 nominal execution samples (`test/backend/nominal-samples.ts`), 17 list
+borrowed-pattern and `aslens` samples moved into
+`test/backend/nominal-pattern-samples.ts` and added to the shared corpus, the
+corpus `list` entry, and five unit tests in `test/nominal-data.test.ts` for
+derivation, schema-keyed identity, C/Go emission and reconstruction. Three tests
+that asserted `No storage definition for List` now check successful lowering, or
+assert the remaining string restriction instead; two diagnostics for a generic
+`id` entry now expect the callable-root contract.
+
+Remaining phase-7 restrictions: strings (`No storage definition for String`),
+natives beyond arithmetic, comparisons, `dup` and `fst`, and the compiler command,
+runner integration and host exports. Lenses projecting *into* a union value
+without a pattern are not a source form; constructor fields are reached only
+through patterns.
+
+Validation: TypeScript and `git diff --check` pass. The regular suite reports 2152
+passed, 1395 skipped, no failures, all 38 snapshots passing (4721 assertions).
+`LAMINAR_EXEC=1 bun test test/c/execute.test.ts` passes all 1354 native/Wasm cases
+(4729 assertions, 362.23 seconds), under ASan/UBSan at `-O0` and `-O2` natively;
+`LAMINAR_EXEC=1 bun test test/go` passes 708 tests (747 assertions, 104.94
+seconds). Remote CI was not run.

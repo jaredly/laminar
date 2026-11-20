@@ -115,8 +115,19 @@ export function lowerC(program: ConcreteProgram): TranslationUnit {
             `typedef ${type(a.result)} (*${abiNames.get(a.id)})(void *${a.arguments.map((id) => `, ${type(id)}`).join('')});`,
         );
     for (const l of program.layouts)
-        if (!['f64', 'bool'].includes(l.kind)) {
-            if (l.kind === 'union') unsupported('Heap/nominal data requires phase 7');
+        if (l.kind === 'union') {
+            // Tagged union; boxed variants hold an owned heap payload.
+            const variants = l.fields.map((f, n) =>
+                f.kind === 'value'
+                    ? `${type(f.layout)} v${n};`
+                    : f.kind === 'pointer' && f.layout
+                      ? `${type(f.layout)} *v${n};`
+                      : unsupported('Union variant requires data storage'),
+            );
+            declarations.push(
+                `struct ${type(l.id)} { uint32_t tag; union { ${variants.join(' ')} } as; };`,
+            );
+        } else if (!['f64', 'bool'].includes(l.kind)) {
             declarations.push(
                 `struct ${type(l.id)} { ${l.fields.map((f) => (f.kind === 'value' ? `${type(f.layout)} ${identifier(f.name)};` : f.kind === 'pointer' ? `${f.layout ? type(f.layout) : 'void'} *${identifier(f.name)};` : `${abiNames.get(f.abi)} ${identifier(f.name)};`)).join(' ') || 'unsigned char inhabitant;'} };`,
             );
@@ -134,10 +145,85 @@ export function lowerC(program: ConcreteProgram): TranslationUnit {
     const disposers = new Map(
         program.wrappers.filter((w) => w.kind === 'dispose').map((w, i) => [w.id, `dispose${i}`]),
     );
+    // Union operations are recursive C functions, generated once per layout on first use.
+    const unionHelpers = new Map<string, string>();
+    const unionHelper = (
+        kind: 'drop' | 'dup' | 'print',
+        id: string,
+        result: string,
+        generate: (body: Statement[]) => void,
+    ): string => {
+        const key = `${kind}:${id}`;
+        const existing = unionHelpers.get(key);
+        if (existing) return existing;
+        const name = `${kind}_${type(id)}`;
+        unionHelpers.set(key, name);
+        const signature = `${result} ${name}(${type(id)} value)`;
+        declarations.push(signature + ';');
+        const body: Statement[] = ['(void)value;'];
+        generate(body);
+        helpers.push({ signature, body });
+        return name;
+    };
+    const variant = (id: string, n: number) => {
+        const f = layout(id).fields[n]!;
+        if (f.kind === 'code' || !f.layout)
+            return unsupported('Union variant requires data storage');
+        return { boxed: f.kind === 'pointer', layout: f.layout, name: f.name };
+    };
+    const tagOf = (id: string, name: string): number => {
+        const n = layout(id).fields.findIndex((f) => f.name === name);
+        return n < 0 ? unsupported(`Constructor ${name} is absent from its union layout`) : n;
+    };
+    /** Payload of variant `n`, read through its box when the variant is boxed. */
+    const payload = (expr: string, id: string, n: number): string =>
+        variant(id, n).boxed ? `(*(${expr}).as.v${n})` : `(${expr}).as.v${n}`;
+    /** Deep copy for affine `dup`: each boxed payload gets its own allocation. */
+    const duplicate = (expr: string, id: string): string => {
+        const l = layout(id);
+        if (l.kind === 'union')
+            return `${unionHelper('dup', id, type(id), (body) => {
+                body.push(`${type(id)} copy = value;`);
+                l.fields.forEach((_, n) => {
+                    const v = variant(id, n);
+                    const copied = duplicate(payload('value', id, n), v.layout);
+                    body.push({
+                        head: `${n ? 'else if' : 'if'} (value.tag == ${n})`,
+                        body: v.boxed
+                            ? [
+                                  `copy.as.v${n} = allocate_context(sizeof *copy.as.v${n});`,
+                                  `*copy.as.v${n} = ${copied};`,
+                              ]
+                            : [`copy.as.v${n} = ${copied};`],
+                    });
+                });
+                body.push('return copy;');
+            })}(${expr})`;
+        if (l.kind === 'record' && l.fields.every((f) => f.kind === 'value'))
+            return `(${type(id)}){${l.fields.map((f, n) => duplicate(field(expr, n), (f as { layout: string }).layout)).join(', ')}}`;
+        return expr;
+    };
     const drop = (data: Data, body: Statement[]): void => {
         if (Array.isArray(data)) return data.forEach((d) => drop(d, body));
         const l = layout(data.layout);
-        if (l.fields.some((f) => f.name === 'dispose')) {
+        if (l.kind === 'union') {
+            const id = data.layout;
+            const name = unionHelper('drop', id, type(unit.id), (body) => {
+                l.fields.forEach((_, n) => {
+                    const v = variant(id, n);
+                    const arm: Statement[] = [];
+                    drop({ expression: payload('value', id, n), layout: v.layout }, arm);
+                    if (v.boxed) arm.push(`release_context(value.as.v${n});`);
+                    if (arm.length)
+                        body.push({
+                            head: `${body.length > 1 ? 'else if' : 'if'} (value.tag == ${n})`,
+                            body: arm,
+                        });
+                });
+                body.push(`return ${zero(unit.id)};`);
+            });
+            body.push(`${name}(${data.expression});`);
+        } else if (l.fields.some((f) => f.name === 'dispose')) {
             body.push({
                 head: `if ((${data.expression}).dispose)`,
                 body: [`(${data.expression}).dispose((${data.expression}).environment);`],
@@ -189,7 +275,10 @@ export function lowerC(program: ConcreteProgram): TranslationUnit {
         const op = w.definition.slice(7);
         if (['+', '-', '*', '/', '==', '>=', '<='].includes(op)) result = `(arg0 ${op} arg1)`;
         else if (op === 'dup')
-            result = read(storage.get(incoming('arg0', abi.arguments[0]!)), abi.result);
+            result = duplicate(
+                read(storage.get(incoming('arg0', abi.arguments[0]!)), abi.result),
+                abi.result,
+            );
         else if (op === 'fst') {
             const input = layout(abi.arguments[0]!),
                 output = layout(abi.result);
@@ -314,8 +403,26 @@ export function lowerC(program: ConcreteProgram): TranslationUnit {
             if (p.kind === 'bind') places.set(p.slot.place, storage.own(data));
             else if (p.kind === 'tuple')
                 p.items.forEach((p, i) => bind(p, storage.parts(data)[i]!, body));
-            else if (p.kind === 'constructor') unsupported('Constructor pattern requires phase 7');
-            else if (p.kind === 'drop') drop(data, body);
+            else if (p.kind === 'constructor') {
+                // Borrowed matches moved their owner out first; reconstruction is explicit IR.
+                if (Array.isArray(data)) return unsupported('Constructor pattern over a tuple');
+                const n = tagOf(data.layout, p.name),
+                    v = variant(data.layout, n);
+                // The case already selected this variant; take its payload and free the box.
+                let contents: Data = {
+                    expression: payload(data.expression, data.layout, n),
+                    layout: v.layout,
+                };
+                if (v.boxed) {
+                    contents = {
+                        expression: declare(v.layout, contents.expression, body),
+                        layout: v.layout,
+                    };
+                    body.push(`release_context((${data.expression}).as.v${n});`);
+                }
+                if (p.items.length === 1) bind(p.items[0]!, contents, body);
+                else p.items.forEach((item, k) => bind(item, storage.parts(contents)[k]!, body));
+            } else if (p.kind === 'drop') drop(data, body);
         };
         const parameters: { expression: string; layout: string; view: View }[] = [];
         c.parameters.forEach((p, i) => {
@@ -465,14 +572,31 @@ export function lowerC(program: ConcreteProgram): TranslationUnit {
                             '-0': '(-0.0)',
                         }[String(v.number)]!
                       : unsupported('Literal');
-        const matches = (p: IRPattern, expr: string): string =>
-            p.kind === 'literal'
-                ? `${expr} == ${literal(p.value, unit.id)}`
-                : p.kind === 'tuple'
-                  ? p.items.map((p, i) => matches(p, field(expr, i))).join(' && ') || '1'
-                  : p.kind === 'constructor'
-                    ? unsupported('Constructor match')
-                    : '1';
+        const matches = (p: IRPattern, expr: string, id: string): string => {
+            if (p.kind === 'literal') return `${expr} == ${literal(p.value, unit.id)}`;
+            const fields = layout(id).fields as { layout: string }[];
+            if (p.kind === 'tuple')
+                return (
+                    p.items
+                        .map((p, i) => matches(p, field(expr, i), fields[i]!.layout))
+                        .join(' && ') || '1'
+                );
+            if (p.kind !== 'constructor') return '1';
+            const n = tagOf(id, p.name),
+                v = variant(id, n),
+                contents = payload(expr, id, n);
+            const items =
+                p.items.length === 1
+                    ? [matches(p.items[0]!, contents, v.layout)]
+                    : p.items.map((item, k) =>
+                          matches(
+                              item,
+                              field(contents, k),
+                              (layout(v.layout).fields[k] as { layout: string }).layout,
+                          ),
+                      );
+            return [`(${expr}).tag == ${n}`, ...items.filter((m) => m !== '1')].join(' && ');
+        };
         const block = (b: ConcreteBlock, body: Statement[]): string => {
             for (const i of b.instructions) {
                 if (i.op === 'bind') {
@@ -559,6 +683,27 @@ export function lowerC(program: ConcreteProgram): TranslationUnit {
                     case 'constant':
                         expr = literal(i.value, id);
                         break;
+                    case 'construct': {
+                        const n = tagOf(id, i.name),
+                            v = variant(id, n);
+                        let contents =
+                            i.items.length === 0
+                                ? zero(v.layout)
+                                : i.items.length === 1
+                                  ? value(i.items[0]!)
+                                  : `(${type(v.layout)}){${i.items.map(value).join(', ')}}`;
+                        if (v.boxed) {
+                            const box = fresh();
+                            variables.push({ name: box, type: `${type(v.layout)} *` });
+                            body.push(
+                                `${type(v.layout)} *${box} = allocate_context(sizeof *${box});`,
+                                `*${box} = ${contents};`,
+                            );
+                            contents = box;
+                        }
+                        expr = `(${type(id)}){.tag=${n}, .as.v${n}=${contents}}`;
+                        break;
+                    }
                     case 'tuple':
                         expr = `(${type(id)}){${i.items.map(value).join(', ') || '0'}}`;
                         break;
@@ -736,7 +881,7 @@ export function lowerC(program: ConcreteProgram): TranslationUnit {
                             merge(arms, body);
                             i.cases.forEach((arm, n) =>
                                 body.push({
-                                    head: `${n ? 'else if' : 'if'} (${matches(arm.pattern, value(i.value))})`,
+                                    head: `${n ? 'else if' : 'if'} (${matches(arm.pattern, value(i.value), outputLayouts.get(i.value)!)})`,
                                     body: arms[n]!.nested,
                                 }),
                             );
@@ -886,7 +1031,7 @@ export function lowerC(program: ConcreteProgram): TranslationUnit {
                         );
                         i.cases.forEach((arm, n) =>
                             body.push({
-                                head: `${n ? 'else if' : 'if'} (${matches(arm.pattern, value(i.value))})`,
+                                head: `${n ? 'else if' : 'if'} (${matches(arm.pattern, value(i.value), outputLayouts.get(i.value)!)})`,
                                 body: arms[n]!.nested,
                             }),
                         );
@@ -913,7 +1058,7 @@ export function lowerC(program: ConcreteProgram): TranslationUnit {
                         let args: string[] = [];
                         if (w?.kind === 'native' && w.definition === 'native/dup') {
                             const lens = lenses.get(i.args[0]!)!;
-                            expr = read(storage.get(lens.view), id);
+                            expr = duplicate(read(storage.get(lens.view), id), id);
                             adapters.push({ finish: lens.finish });
                         } else if (w?.kind === 'native' && w.definition === 'native/fst') {
                             const parent = lenses.get(i.args[0]!)!;
@@ -1116,6 +1261,8 @@ export function lowerC(program: ConcreteProgram): TranslationUnit {
         }
         return { signature: signature(c), body };
     });
+    // Helpers generated while emitting the entry adapter (result printing and drops) follow.
+    const emittedHelpers = helpers.length;
     functions.push(
         ...helpers,
         {
@@ -1149,6 +1296,56 @@ export function lowerC(program: ConcreteProgram): TranslationUnit {
                 print(field(expr, i), (f as { layout: string }).layout, body);
             });
             body.push('putchar(93);');
+        } else if (l.kind === 'union') {
+            const names = l.fields.map((f) => f.name);
+            const list = names.length === 2 && names[0] === 'nil' && names[1] === 'cons';
+            const name = unionHelper('print', id, 'void', (body) => {
+                if (list) {
+                    // The reference protocol prints cons cells as one JSON array.
+                    const cell = variant(id, 1);
+                    const tail = layout(cell.layout).fields[1] as { layout: string };
+                    if (tail.layout !== id) return unsupported('List tail changed its layout');
+                    body.push('int first = 1;', 'putchar(91);');
+                    const loop: Statement[] = [
+                        { head: 'if (!first)', body: ['putchar(44);'] },
+                        'first = 0;',
+                    ];
+                    print(
+                        field(payload('value', id, 1), 0),
+                        (layout(cell.layout).fields[0] as { layout: string }).layout,
+                        loop,
+                    );
+                    loop.push(`value = ${field(payload('value', id, 1), 1)};`);
+                    body.push({ head: 'while (value.tag == 1)', body: loop }, 'putchar(93);');
+                    return;
+                }
+                l.fields.forEach((f, n) => {
+                    const v = variant(id, n);
+                    const arm: Statement[] = [
+                        `fputs("{\\"kind\\":\\"variant\\",\\"name\\":\\"${identifier(f.name)}\\",\\"items\\":[", stdout);`,
+                    ];
+                    const contents = payload('value', id, n);
+                    const arity = (
+                        program.semantic.generic.imports.find(
+                            (s) => s.definition === `constructor/${f.name}`,
+                        )?.type as { args?: unknown[] } | undefined
+                    )?.args?.length;
+                    if (arity === undefined) return unsupported(`Unknown constructor ${f.name}`);
+                    if (arity === 1) print(contents, v.layout, arm);
+                    else
+                        for (let k = 0; k < arity; k++) {
+                            if (k) arm.push('putchar(44);');
+                            print(
+                                field(contents, k),
+                                (layout(v.layout).fields[k] as { layout: string }).layout,
+                                arm,
+                            );
+                        }
+                    arm.push('fputs("]}", stdout);');
+                    body.push({ head: `${n ? 'else if' : 'if'} (value.tag == ${n})`, body: arm });
+                });
+            });
+            body.push(`${name}(${expr});`);
         } else unsupported('Entry result requires a host contract');
     };
     declarations.push('void print_number(double x);');
@@ -1177,8 +1374,10 @@ export function lowerC(program: ConcreteProgram): TranslationUnit {
         main.push(`${type(c.body.layout)} ${v} = ${codes.get(entry)}(NULL);`, `(void)${v};`);
         print(v, c.body.layout, main);
         main.push('putchar(10);');
+        drop({ expression: v, layout: c.body.layout }, main);
     }
     main.push({ head: 'if (live_contexts != 0)', body: ['abort();'] }, 'return 0;');
     functions.push({ signature: 'int main(void)', body: main });
+    functions.push(...helpers.slice(emittedHelpers));
     return { declarations, functions };
 }

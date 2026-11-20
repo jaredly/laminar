@@ -4,76 +4,7 @@ import { legacyReference } from './backend/legacy-reference.ts';
 import { executeTypedProgram } from '../src/eval-typed.ts';
 import { verifyTypedProgram } from '../src/verify-ir.ts';
 
-const samples = [
-    [
-        'constructor aliases',
-        '{let xs = [1, 2]\n {let [h, ...rest] = ~xs\n h := 3\n rest := []}\n xs}',
-        [3],
-    ],
-    [
-        'owned replacement after aliases end',
-        '{let xs = [1, 2]\n {let [h, ...rest] = ~xs\n h := 3}\n xs := []\n xs}',
-        [],
-    ],
-    [
-        'borrowed match',
-        '{let xs = [1, 2]\n match ~xs {[h, ...rest] -> {h := 3\n ()}; [] -> ()}\n xs}',
-        [3, 2],
-    ],
-    [
-        'empty borrowed match',
-        '{let xs = []\n match ~xs {[h, ...rest] -> {h := 3\n ()}; [] -> ()}\n xs}',
-        [],
-    ],
-    [
-        'borrowed match result',
-        '{let xs = [1, 2]\n let result = match ~xs {[h, ...rest] -> dup(~h); [] -> 0}\n (result, xs)}',
-        [1, [1, 2]],
-    ],
-    [
-        'type-changing fields',
-        '{let xs = [1, 2]\n {let [h, ...rest] = ~xs\n h := true\n rest := []}\n xs}',
-        [true],
-    ],
-    ['borrowed tuple match', '{let xs = (1, 2)\n match ~xs {(h, rest) -> {h := 3}}\n xs}', [3, 2]],
-    [
-        'nested constructor patterns',
-        '{let xs = [1, 2]\n {let [a, b] = ~xs\n a := 3\n b := 4}\n xs}',
-        [3, 4],
-    ],
-    [
-        'returned borrowed match',
-        'fn first(~xs) ~{match ~xs {[h, ...rest] -> h}}\n {let xs = [1, 2]\n first(~xs) := 3\n xs}',
-        [3, 2],
-    ],
-    ...(['true', 'false'] as const).map(
-        (condition) =>
-            [
-                `branch over reconstructed field ${condition}`,
-                `{let xs = [1, 2]
- {let [h, ...rest] = ~xs
- {let selected = ~{match ${condition} {true -> h; false -> h}}
- selected := 4}}
- xs}`,
-                [4, 2],
-            ] as const,
-    ),
-    [
-        'reconstructed field captured and refilled',
-        '{let xs = [1, 2]\n {let [h, ...rest] = ~xs\n let f = fn () h\n h := 4\n f()}\n xs}',
-        [4, 2],
-    ],
-    [
-        'manual cleanup updates reconstructed sibling',
-        '{let xs = [1, 2]\n {let [h, ...rest] = ~xs\n {let f = ~{@(h, fn () {rest := []})}\n f := 4}}\n xs}',
-        [4],
-    ],
-    [
-        'temporary cleanup refills reconstructed field',
-        '{let xs = [1, 2]\n {let [h, ...rest] = ~xs\n {let f = ~{lens v <- h\n h := v}\n f := 4}}\n xs}',
-        [4, 2],
-    ],
-] as const;
+import { borrowedNominalSamples as samples } from './backend/nominal-pattern-samples.ts';
 for (const [name, source, expected] of samples)
     it(name, () => {
         const artifact = JSON.parse(JSON.stringify(typedProgram(source)));
@@ -237,17 +168,29 @@ for (const sample of borrowedPatternSamples)
         ]);
         verifyConcreteProgram(JSON.parse(JSON.stringify(concrete)));
     });
-it('keeps nominal runtime layout restrictions separate from borrowed checking', () => {
+it('lowers borrowed constructor reconstruction over derived nominal storage', () => {
     const p = typedProgram(samples[0][1]);
+    const concrete = compileConcreteProgram(p, wasm32Emscripten('test'), [
+        { unit: p.units.at(-1)!.id, arguments: [] },
+    ]);
+    const list = concrete.layouts.find((l) => l.kind === 'union')!;
+    expect(list.fields.map((f) => [f.name, f.kind])).toEqual([
+        ['nil', 'value'],
+        ['cons', 'pointer'],
+    ]);
+    verifyConcreteProgram(JSON.parse(JSON.stringify(concrete)));
+});
+it('keeps string runtime layout restrictions separate from borrowed checking', () => {
+    const p = typedProgram('{let s = "a"\n match ~s {"a" -> (); _ -> ()}\n s}');
     try {
         compileConcreteProgram(p, wasm32Emscripten('test'), [
             { unit: p.units.at(-1)!.id, arguments: [] },
         ]);
-        throw Error('Expected nominal adapter restriction');
+        throw Error('Expected string storage restriction');
     } catch (e) {
         expect(e).toBeInstanceOf(BackendDiagnostic);
         expect((e as BackendDiagnostic).code).toBe('unsupported-layout');
-        expect((e as Error).message).toBe('No storage definition for List');
+        expect((e as Error).message).toBe('No storage definition for String');
     }
 });
 

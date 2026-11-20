@@ -1,4 +1,7 @@
-import type { NominalLayoutDefinition } from './layout-definitions.ts';
+import {
+    deriveNominalLayoutDefinitions,
+    type NominalLayoutDefinition,
+} from './layout-definitions.ts';
 import { createHash } from 'node:crypto';
 import { freezeTree, type SemanticFlow, type SemanticType } from './elaborated.ts';
 import { BackendDiagnostic, targetKey } from './backend/target.ts';
@@ -137,7 +140,12 @@ export function inferRepresentations(
             'invalid-entry-contract',
             'Entry contracts must identify requested roots without overlap',
         );
-    const layouts = new LayoutTable(source.target, options.layoutDefinitions),
+    // Without explicit schemas, unions are derived from every constructor the
+    // generic program imports (specialization filters unused ones out).
+    const layouts = new LayoutTable(
+            source.target,
+            options.layoutDefinitions ?? deriveNominalLayoutDefinitions(source.generic.imports),
+        ),
         reps = new RepresentationTable(layouts);
     const units = new Map(source.program.units.map((u) => [u.id, u]));
     const definitions = new Map(

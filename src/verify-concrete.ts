@@ -1,4 +1,8 @@
-import { layoutDefinitionsKey } from './layout-definitions.ts';
+import {
+    layoutDefinitionsKey,
+    layoutSchemaKey,
+    relevantDefinitions,
+} from './layout-definitions.ts';
 import { mapSemantic } from './typed-ir.ts';
 import { BackendDiagnostic, targetKey } from './backend/target.ts';
 import { concreteName } from './concrete-layouts.ts';
@@ -116,8 +120,7 @@ export function verifyConcreteProgram(p: ConcreteProgram): void {
         if (a.key !== key || a.id !== concreteName('abi', key)) fail('Noncanonical call ABI');
     }
     const unitType: SemanticType = { tag: 'tuple', items: [] };
-    const nominalSchemas = p.analysis.layoutDefinitions ?? [],
-        schemaKey = nominalSchemas.length ? layoutDefinitionsKey(nominalSchemas) : '';
+    const nominalSchemas = p.analysis.layoutDefinitions ?? [];
     const seenData = new Set<string>();
     function data(t: SemanticType): string {
         if (t.tag === 'fn') return typeRecord(typeKey(t)).layout;
@@ -133,7 +136,8 @@ export function verifyConcreteProgram(p: ConcreteProgram): void {
             );
             return id;
         }
-        const id = lid(['data', typeKey(t), ...(schemaKey ? [schemaKey] : [])]);
+        const schema = layoutSchemaKey(nominalSchemas, t);
+        const id = lid(['data', typeKey(t), ...(schema ? [schema] : [])]);
         if (seenData.has(id)) return id;
         seenData.add(id);
         if (t.tag === 'tuple')
@@ -333,7 +337,12 @@ export function verifyConcreteProgram(p: ConcreteProgram): void {
     };
     p.analysis.layouts.forEach((l) => discoverType(l.type));
     const graphKey = JSON.stringify([
-        layoutDefinitionsKey(p.analysis.layoutDefinitions),
+        layoutDefinitionsKey(
+            relevantDefinitions(
+                p.analysis.layoutDefinitions,
+                p.analysis.layouts.map((l) => l.type),
+            ),
+        ),
         p.analysis.variants.map((v) => v.key).sort(),
         [...typeGroups]
             .map((t) => [JSON.stringify(['type', t]), [...(contracts.get(t)?.keys() ?? [])].sort()])

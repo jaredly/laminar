@@ -17,7 +17,11 @@ import {
 } from './specialize.ts';
 import type { TargetConfig } from './backend/target.ts';
 import { typeKey, type TypedProgram } from './typed-ir.ts';
-import { layoutDefinitionsKey, type NominalLayoutDefinition } from './layout-definitions.ts';
+import {
+    layoutDefinitionsKey,
+    relevantDefinitions,
+    type NominalLayoutDefinition,
+} from './layout-definitions.ts';
 import type { EntryRepresentationArgument } from './infer-representations.ts';
 import type { IRBlock, IRUnit } from './typed-ir.ts';
 import type {
@@ -156,7 +160,12 @@ export function lowerConcreteProgram(
     };
     analysis.layouts.forEach((l) => discoverType(l.type));
     const graphKey = JSON.stringify([
-        layoutDefinitionsKey(analysis.layoutDefinitions),
+        layoutDefinitionsKey(
+            relevantDefinitions(
+                analysis.layoutDefinitions,
+                analysis.layouts.map((l) => l.type),
+            ),
+        ),
         analysis.variants.map((v) => v.key).sort(),
         [...groups.values()]
             .filter((g) => g.descriptor.kind === 'callable')

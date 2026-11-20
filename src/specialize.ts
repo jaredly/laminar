@@ -106,6 +106,11 @@ export function specializeProgram(
                 'invalid-specialization-root',
                 `Unknown entry or definition ${source}`,
             );
+        // An entry expression generic in a type nothing constrains (for example a
+        // result of `[]`) holds no value of that type; instantiate it at unit, as
+        // unsolved body variables are. Definition roots still need explicit arguments.
+        if (root && unit && !unit.definition && !args.length)
+            args = scheme.quantified.map(() => unitType);
         if (scheme.quantified.length !== args.length)
             throw new BackendDiagnostic(
                 'invalid-specialization-arguments',

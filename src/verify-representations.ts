@@ -1,4 +1,4 @@
-import { layoutDefinitionsKey } from './layout-definitions.ts';
+import { layoutSchemaKey } from './layout-definitions.ts';
 import { mapSemantic, type Instance } from './typed-ir.ts';
 import { createHash } from 'node:crypto';
 import type { SemanticType, SemanticFlow } from './elaborated.ts';
@@ -81,7 +81,6 @@ export function verifyRepresentations(
     };
     const target = targetKey(source.target);
     const schemas = analysis.layoutDefinitions ?? [];
-    const schemaKey = schemas.length ? layoutDefinitionsKey(schemas) : '';
     const layouts = unique(analysis.layouts, (l) => l.id, 'layout');
     const shapes = unique(analysis.shapes, (s) => s.id, 'shape');
     const backings = unique(analysis.backings, (b) => b.id, 'backing');
@@ -104,7 +103,12 @@ export function verifyRepresentations(
     const layout = (id: string): Layout => layouts.get(id) ?? fail('Missing or foreign layout');
     const shape = (id: string): LensRep => shapes.get(id) ?? fail('Missing or foreign lens shape');
     const layoutId = (t: SemanticType): string =>
-        JSON.stringify(['layout', target, typeKey(t), ...(schemaKey ? [schemaKey] : [])]);
+        JSON.stringify([
+            'layout',
+            target,
+            typeKey(t),
+            ...[layoutSchemaKey(schemas, t)].filter(Boolean),
+        ]);
     const typeEqual = (a: SemanticType, b: SemanticType) => {
         if (typeKey(a) !== typeKey(b)) fail('Representation semantic type mismatch');
     };

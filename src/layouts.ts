@@ -1,7 +1,11 @@
 import { freezeTree, type SemanticType } from './elaborated.ts';
 import { typeKey, mapSemantic } from './typed-ir.ts';
 import { BackendDiagnostic, targetConfig, targetKey, type TargetConfig } from './backend/target.ts';
-import { layoutDefinitionsKey, type NominalLayoutDefinition } from './layout-definitions.ts';
+import {
+    layoutDefinitionsKey,
+    layoutSchemaKey,
+    type NominalLayoutDefinition,
+} from './layout-definitions.ts';
 export type LayoutId = string;
 export type Layout = {
     id: LayoutId;
@@ -47,7 +51,7 @@ export class LayoutTable {
             'layout',
             this.targetKey,
             typeKey(type),
-            ...(this.schemaKey ? [this.schemaKey] : []),
+            ...(this.schemaKey ? [layoutSchemaKey(this.definitions, type)].filter(Boolean) : []),
         ]);
         if (this.records.has(id)) return id;
         if (this.records.size >= this.maxLayouts)

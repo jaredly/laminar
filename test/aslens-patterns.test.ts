@@ -1,3 +1,4 @@
+import { verifyConcreteProgram } from '../src/verify-concrete.ts';
 import { expect, it } from 'bun:test';
 import { typedProgram } from './backend/typed-program.ts';
 import { legacyReference } from './backend/legacy-reference.ts';
@@ -6,20 +7,7 @@ import { verifyTypedProgram } from '../src/verify-ir.ts';
 import { specializeProgram } from '../src/specialize.ts';
 import { wasm32Emscripten } from '../src/backend/target.ts';
 
-const samples = [
-    [
-        'constructor final type',
-        '{let seen = 0\n {let f = ~{lens [h, ...t] <- 1\n seen := (h, t)}\n f := [3, 4]}\n seen}',
-        [3, [4]],
-    ],
-    [
-        'nested literals',
-        '{let seen = 0\n {let f = ~{lens [1, v] <- ()\n seen := v}\n f := [1, 3]}\n seen}',
-        3,
-    ],
-    ['string literal', '{let f = ~{lens "done" <- 1\n ()}\n f := "done"}', 1],
-    ['owned fields need no refill', '{let f = ~{lens [h, ...t] <- 1\n (h, t)}\n f := [3, 4]}', 1],
-] as const;
+import { aslensNominalSamples as samples } from './backend/nominal-pattern-samples.ts';
 for (const [name, source, expected] of samples)
     it(`aslens pattern: ${name}`, () => {
         const p = JSON.parse(JSON.stringify(typedProgram(source)));
@@ -61,11 +49,13 @@ it('retains final constructor pattern elaboration without changing caller syntax
     expect(JSON.stringify(parsed.value)).toBe(original);
     verifyElaboration(JSON.parse(JSON.stringify(checked.elaboration)));
     const p = typedProgram(samples[0][1]);
-    expect(() =>
-        compileConcreteProgram(p, wasm32Emscripten('test'), [
-            { unit: p.units.at(-1)!.id, arguments: [] },
-        ]),
-    ).toThrow('No storage definition for List');
+    // Phase 7 derives list storage from the constructor imports; the reconstruction
+    // still lowers through ordinary verified concrete IR.
+    const concrete = compileConcreteProgram(p, wasm32Emscripten('test'), [
+        { unit: p.units.at(-1)!.id, arguments: [] },
+    ]);
+    expect(concrete.layouts.some((l) => l.kind === 'union')).toBe(true);
+    expect(() => verifyConcreteProgram(JSON.parse(JSON.stringify(concrete)))).not.toThrow();
 });
 
 it('restores borrowed lexical storage from owned constructor fields', () => {

@@ -7,7 +7,11 @@ import type { ConcreteLayout, ConcreteField, ConcreteABI } from './concrete-ir.t
 export const concreteName = (prefix: string, key: string): string =>
     `${prefix}_${createHash('sha256').update(key).digest('hex')}`;
 export type { NominalLayoutDefinition } from './layout-definitions.ts';
-import { layoutDefinitionsKey, type NominalLayoutDefinition } from './layout-definitions.ts';
+import {
+    layoutDefinitionsKey,
+    layoutSchemaKey,
+    type NominalLayoutDefinition,
+} from './layout-definitions.ts';
 
 /** C storage descriptions. Pointer/code edges are distinct from by-value dependencies. */
 export class ConcreteLayoutTable {
@@ -127,7 +131,8 @@ export class ConcreteLayoutTable {
             throw new BackendDiagnostic('unsolved-layout', `Unsolved concrete data type ${id}`);
         });
         const typeIdentity = typeKey(type),
-            parts = ['data', typeIdentity, ...(this.schemaKey ? [this.schemaKey] : [])];
+            schema = this.schemaKey ? layoutSchemaKey([...this.nominal.values()], type) : '',
+            parts = ['data', typeIdentity, ...(schema ? [schema] : [])];
         const key = JSON.stringify(['physical-layout', this.targetIdentity, ...parts]),
             id = concreteName('layout', key);
         // All recursive references use forward names. finish() checks only by-value edges.

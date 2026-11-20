@@ -1,4 +1,4 @@
-# C backend: phases 4–6 subset
+# C backend: phases 4–6 and phase 7 nominal data
 
 `src/c/lower.ts` consumes independently verified concrete IR. It resolves logical
 places, projections, thin/scattered lenses, typed storage versions, and restoration
@@ -83,16 +83,15 @@ returned and captured joined callees, and thin/scattered lens arguments and
 returned focuses use the same ownership and restoration paths. There is no extra
 join allocation or function-pointer cast.
 
-Callable focus storage/replacement, nominal/heap data, and unsupported native imports retain
-explicit diagnostics. Dynamic callable entry roots require a host
-adapter. This remains partial phase-6 support.
+Strings and unsupported native imports retain explicit diagnostics. Dynamic
+callable entry roots require a host adapter. Nominal union data is described in
+*Phase 7: nominal union data* below.
 
 Implemented imports are numeric `+`, `-`, `*`, `/`, `==`, `>=`, `<=`, data `dup`,
 and logical `fst`. `dup` of a computed focus restores that focus after copying it.
 There is no evaluator fallback. Function roots with parameters need a future host
 adapter, and borrowed lenses cannot escape the test entry boundary. Raw owned-local lenses cannot escape through function returns. Borrowed matching
-uses scoped reconstruction; its scalar/tuple subset is supported, while nominal
-list/variant data still requires physical storage adapters. Explicit manual
+uses scoped reconstruction over scalar, tuple and nominal union data. Explicit manual
 restoration now supports the tested scalar/tuple subset on C/Wasm. Its lens
 adapter separates staging from completion: final contents reach the selected
 owner before cleanup reads them, and original restoration runs afterward.
@@ -173,9 +172,9 @@ ownership checks still require field refill and protect the original owner. Conc
 lowering retains this contract and verification checks it against semantic IR.
 
 The scalar/tuple borrowed-match cases in `test/backend/borrowed-pattern-samples.ts`
-execute through the existing C/Wasm manual adapter. List patterns execute in checked
-legacy and detached typed paths; physical list lowering retains the explicit
-`unsupported-layout: No storage definition for List` restriction. Callable storage restrictions are unchanged.
+execute through the existing C/Wasm manual adapter. List patterns in
+`test/backend/nominal-pattern-samples.ts` also execute natively, on Wasm and in Go;
+only the string-literal `aslens` case waits for string storage.
 
 ## Captured cleanup environments
 
@@ -824,3 +823,37 @@ TypeScript and diff checks pass. Broad non-execution validation reports 1442 pas
 Wasm run or remote CI is claimed for this legacy-only correction. Phase 6 remains
 incomplete. Concurrent evaluator, systematic fixture and developer-log work is
 preserved.
+
+## Phase 7: nominal union data
+
+Union storage is derived, not registered. `deriveNominalLayoutDefinitions`
+(`src/layout-definitions.ts`) groups the generic program's constructor imports by
+result type. The checker imports every constructor of every union in declaration
+order, so each group is the union's complete variant list and its order is the tag
+order. Explicit `layoutDefinitions` still override derivation. A variant payload
+is its single argument, a tuple of several, or unit. A variant is boxed when its
+generic payload mentions any nominal type; every recursive cycle passes through such
+a payload, so by-value layouts stay finite and the choice depends only on the
+declaration. A layout's identity includes only the schemas its type reaches, so
+the always-derived `List` and `Option` leave scalar, tuple and callable layout IDs
+unchanged.
+
+C lowers a union to `struct { uint32_t tag; union { P0 v0; P1 *v1; ... } as; }`.
+Construction allocates boxed payloads with `allocate_context`. Matching tests the
+tag and nested payload patterns; binding copies a boxed payload out and frees its
+box, which is sound because the case already selected that variant. Borrowed
+matches need nothing extra: typed IR moves the owner out, binds owned parts and
+reconstructs through explicit manual cleanup. Per-layout recursive helpers are
+generated on first use: `drop_L` frees boxes (wildcards, block cleanup, branch
+normalization and the entry result all use it), `dup_L` deep-copies for `dup`, and
+`print_L` writes the test protocol (`nil`/`cons` as a JSON array, other variants as
+`{"kind":"variant","name":…,"items":[…]}`). The entry adapter now drops its result
+before the live-allocation check, so leaked boxes trap.
+
+Go uses the same tagged struct with `*P` boxes. Payloads are never written in place
+(binding copies them out; construction allocates), so moves and `dup` share boxes
+under the garbage collector.
+
+Entry expressions whose type stays generic (for example a bare `[]`) are
+instantiated at unit, matching the phase-6 rule for unconstrained body types.
+Definition roots still require explicit type arguments.

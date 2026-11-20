@@ -40,8 +40,9 @@ it('reserves recursive variants before analyzing bodies', () => {
     expect(r.variants[0]!.calls.some((c) => c.target === r.variants[0]!.id)).toBe(true);
 });
 it('diagnoses unsupported nominal storage and callable roots', () => {
-    expect(() => analyze('[1,2]')).toThrow('No storage definition');
-    expect(() => analyze('fn id(x) x\nid')).toThrow('Wrong type argument count');
+    expect(() => analyze('"a"')).toThrow('No storage definition for String');
+    // A generic entry expression is instantiated at unit, leaving a callable root.
+    expect(() => analyze('fn id(x) x\nid')).toThrow('Callable entry roots');
     const p = typedProgram('fn id(x) x\nid(1)');
     const s = specializeProgram(p, target, [
         { unit: p.units[0]!.id, arguments: [{ tag: 'con', name: 'Number', args: [] }] },
