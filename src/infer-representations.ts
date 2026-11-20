@@ -85,6 +85,9 @@ type State = {
     values: Map<string, ValueRepresentation>;
     lenses: Map<string, LensRepId>;
     known: Map<string, CallableMember>;
+    /** Bounded code hints for whole local slots; never part of a representation key.
+     * Borrows and potentially effectful regions invalidate these hints. */
+    knownPlaces: Map<string, CallableMember>;
 };
 /** Infer type-determined values and ordinary lens shapes at each callable ABI. */
 export function inferRepresentations(
@@ -181,11 +184,17 @@ export function inferRepresentations(
     const entries: RepresentationAnalysis['entries'] = [];
     const roots: RepresentationAnalysis['roots'] = [];
     const exports: RepresentationAnalysis['exports'] = [];
-    const fresh = (): State => ({ values: new Map(), lenses: new Map(), known: new Map() });
+    const fresh = (): State => ({
+        values: new Map(),
+        lenses: new Map(),
+        known: new Map(),
+        knownPlaces: new Map(),
+    });
     const clone = (s: State): State => ({
         values: new Map(s.values),
         lenses: new Map(s.lenses),
         known: new Map(s.known),
+        knownPlaces: new Map(s.knownPlaces),
     });
     const fail = (message: string): never => {
         throw new BackendDiagnostic('unsupported-representation', message);
@@ -345,7 +354,13 @@ export function inferRepresentations(
         chain: string[],
     ): ValueRepresentation {
         for (const i of body.instructions) {
-            if (i.op === 'bind') continue;
+            if (i.op === 'bind') {
+                const member = s.known.get(i.value);
+                if (i.pattern.kind === 'bind' && member)
+                    s.knownPlaces.set(i.pattern.slot.place, member);
+                else s.knownPlaces.clear();
+                continue;
+            }
             if (i.op === 'borrow') {
                 const loan = unit.loans.find((l) => l.id === i.loan)!;
                 if (loan.owners) s.lenses.set(loan.place, shape(get(s, i.lens)));
@@ -357,12 +372,20 @@ export function inferRepresentations(
                 case 'string':
                 case 'construct':
                 case 'tuple':
-                case 'move':
                 case 'swap':
                     if (i.out.type.tag !== 'plain') return fail('Data instruction produced a lens');
                     out = typeRep(i.out.type.value);
                     break;
+                case 'move': {
+                    if (i.out.type.tag !== 'plain') return fail('Move produced a lens');
+                    const member = !i.slot.path.length && s.knownPlaces.get(i.slot.place);
+                    if (member) s.known.set(i.out.id, member);
+                    s.knownPlaces.delete(i.slot.place);
+                    out = typeRep(i.out.type.value);
+                    break;
+                }
                 case 'acquire': {
+                    s.knownPlaces.delete(i.slot.place);
                     if (i.out.type.tag !== 'flow') return fail('Acquire produced data');
                     let base = s.lenses.get(i.slot.place);
                     if (base) for (const index of i.slot.path) base = reps.project(base, index);
@@ -375,6 +398,7 @@ export function inferRepresentations(
                     break;
                 }
                 case 'manual':
+                    s.knownPlaces.clear();
                     if (i.out.type.tag !== 'flow') return fail('Manual produced data');
                     out = {
                         kind: 'lens',
@@ -420,6 +444,7 @@ export function inferRepresentations(
                     break;
                 }
                 case 'call': {
+                    s.knownPlaces.clear();
                     const value = get(s, i.callee),
                         args = i.args.map((id) => get(s, id));
                     if (value.kind !== 'callable') return fail('Call operand is not callable');
@@ -447,10 +472,16 @@ export function inferRepresentations(
                     });
                     break;
                 }
-                case 'scope':
-                    out = block(unit, i.body, clone(s), record, chain);
+                case 'scope': {
+                    s.knownPlaces.clear();
+                    const nested = clone(s);
+                    out = block(unit, i.body, nested, record, chain);
+                    const member = nested.known.get(i.body.result);
+                    if (member) s.known.set(i.out.id, member);
                     break;
+                }
                 case 'case': {
+                    s.knownPlaces.clear();
                     const branches = i.cases.map((arm) =>
                         block(unit, arm.body, clone(s), record, chain),
                     );

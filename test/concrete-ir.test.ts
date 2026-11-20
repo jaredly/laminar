@@ -466,3 +466,31 @@ it('preserves specialization and representation budgets through the whole phase-
         'Representation resource limit',
     );
 });
+
+it('directly invokes a locally bound captured closure', () => {
+    const c = compile('{let x = 3\n let f = fn () x\n f()}');
+    const calls = c.code.flatMap((c) => instructions(c.body)).filter((i) => i.op === 'invoke');
+    expect(calls).toHaveLength(1);
+    expect(calls[0]!.op === 'invoke' && calls[0]!.field).toBeUndefined();
+    expect(calls[0]!.op === 'invoke' && calls[0]!.wrapper).toBeString();
+});
+it('directly invokes a closure returned through a lexical scope', () => {
+    const c = compile('{let f = {let x = 3\n fn () x}\n f()}');
+    const calls = c.code.flatMap((c) => instructions(c.body)).filter((i) => i.op === 'invoke');
+    expect(calls).toHaveLength(1);
+    expect(calls[0]!.op === 'invoke' && calls[0]!.field).toBeUndefined();
+});
+it('forgets known local code when its storage is borrowed and replaced', () => {
+    const c = compile('{let x = 3\n let f = fn () x\n f := fn () 9\n f()}');
+    const call = c.code.flatMap((c) => instructions(c.body)).find((i) => i.op === 'invoke');
+    expect(call?.op === 'invoke' && call.field).toBeString();
+});
+it('independently rejects forged local known-callee provenance', () => {
+    const c = structuredClone(compile('{let x = 3\n let f = fn () x\n f()}'));
+    const call = c.analysis.entries
+        .flatMap((e) => e.calls)
+        .find((c) => c.callee?.kind === 'closure')!;
+    if (call.callee?.kind !== 'closure') throw Error('Missing known closure');
+    call.callee = { ...call.callee, function: 'forged' };
+    expect(() => verifyConcreteProgram(c)).toThrow('Call callee provenance changed');
+});

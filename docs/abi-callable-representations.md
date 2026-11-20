@@ -610,3 +610,60 @@ as recorded.
 Validation: `bun test` passes with 2,062 passed, 1,295 skipped, no failures and
 all 38 snapshots passing (4,631 assertions). TypeScript and `git diff --check`
 pass.
+
+### M6: measured code size and bounded known-callee propagation
+
+Measured before extending the optimization. `cli/measure-callables.ts` compiles the
+same 625 source programs with a selected compiler checkout. The identity-precise
+baseline is `f3664b1`; the ABI baseline is `b512977` (M5 plus the snapshot repair).
+The identity baseline accepts 622 programs, rejecting only the three migration
+boundary programs. Both ABI versions accept all 625. Totals below include only
+the 622 programs accepted by all three versions, preserving the corpus's duplicates.
+
+| Metric | Identity baseline | M5 | M6 bounded hints |
+| --- | ---: | ---: | ---: |
+| Generated C bytes | 2,849,878 | 2,709,515 | 2,684,101 |
+| Host `-O2` object bytes | 2,013,440 | 1,981,656 | 1,981,640 |
+| Concrete code bodies | 2,179 | 2,246 | 2,246 |
+| Wrapper records | 4,719 | 5,105 | 5,105 |
+| Callable entry records (type and member metadata combined) | 2,291 | 2,091 | 1,710 |
+
+Measurement uses Apple clang 21.0.0 (`clang-2100.0.123.102`) on arm64 macOS.
+Objects are host `clang -std=c11 -O2 -c` outputs of generated wasm32-target C;
+object-file bytes include metadata/data, and are a size proxy, **not Wasm binary
+size or a runtime performance measurement**. No debug information is requested.
+The 16-byte aggregate object difference from M5 is negligible; this is consistent
+with the host optimizer already removing most local indirection. The report
+records a corpus hash and compiler version; the measured corpus hash is
+`ca6a365c1fbfc804d65b563c6dc1efa0970cb272c77c10dfd9289c266e3b7b0a`.
+
+Reproduce from `ts/`, with a baseline checkout and dependencies available:
+
+```sh
+bun cli/measure-callables.ts /path/to/identity-baseline --objects > baseline.json
+bun cli/measure-callables.ts . --objects > current.json
+```
+
+M1 already called immediate known globals/closures directly. M6 preserves that
+hint through whole-slot local binds/moves and callable results of lexical scopes.
+The hint is invalidated by borrowing the slot, calls, manual regions and branch
+or scope boundaries. It stores only one member per slot, never joins code sets,
+and never puts identity into representation/specialization keys. The independent
+verifier derives the same provenance from IR and rejects forged direct callees.
+Four tests cover direct captured/scoped calls, replacement invalidation and forged
+provenance. Three printed expectations were refreshed; no tests or samples retired.
+
+**Flow-class decision.** Defer flow-class ABI sets. M5 already reduces generated C
+by 4.9% and aggregate object bytes by 1.6% against the identity baseline. The bounded
+hint extension further reduces C by 0.9% and entry metadata by 18.2%, without a
+meaningful optimized object-size improvement. These small standalone corpus
+programs do not establish a payoff for new flow-class storage contracts. Revisit
+with larger module workloads showing ABI/member cross-product growth; flow-class
+ABI sets have **not** been implemented or claimed complete.
+
+**Validation (2026-11-20).** TypeScript and `git diff --check` pass. The regular
+suite reports 2,066 passed, 1,295 skipped, no failures and all 38 snapshots passing
+(4,638 assertions). Native/Wasm passes all 1,254 cases (4,379 assertions,
+433.48 seconds); Go passes all 625 programs and both runtime traps (627 assertions,
+475.04 seconds). The benchmark smoke run accepts all 625 programs and reproduces
+the per-program C byte counts from the object measurement run.

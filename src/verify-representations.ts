@@ -292,12 +292,19 @@ export function verifyRepresentations(
         values: Map<string, ValueRepresentation>;
         lenses: Map<string, LensRep>;
         known: Map<string, CallableMember>;
+        knownPlaces: Map<string, CallableMember>;
     };
-    const fresh = (): State => ({ values: new Map(), lenses: new Map(), known: new Map() });
+    const fresh = (): State => ({
+        values: new Map(),
+        lenses: new Map(),
+        known: new Map(),
+        knownPlaces: new Map(),
+    });
     const clone = (s: State): State => ({
         values: new Map(s.values),
         lenses: new Map(s.lenses),
         known: new Map(s.known),
+        knownPlaces: new Map(s.knownPlaces),
     });
     const get = (s: State, id: string): ValueRepresentation =>
         s.values.get(id) ?? fail('Missing operand annotation');
@@ -352,6 +359,10 @@ export function verifyRepresentations(
             for (const i of b.instructions) {
                 if (i.op === 'bind') {
                     bind(i.pattern, get(s, i.value), s);
+                    const member = s.known.get(i.value);
+                    if (i.pattern.kind === 'bind' && member)
+                        s.knownPlaces.set(i.pattern.slot.place, member);
+                    else s.knownPlaces.clear();
                     continue;
                 }
                 if (i.op === 'borrow') {
@@ -374,10 +385,16 @@ export function verifyRepresentations(
                     case 'constant':
                     case 'string':
                     case 'tuple':
-                    case 'move':
                     case 'swap':
                         break;
+                    case 'move': {
+                        const member = !i.slot.path.length && s.knownPlaces.get(i.slot.place);
+                        if (member) s.known.set(i.out.id, member);
+                        s.knownPlaces.delete(i.slot.place);
+                        break;
+                    }
                     case 'acquire': {
+                        s.knownPlaces.delete(i.slot.place);
                         const base = s.lenses.get(i.slot.place);
                         if (base) topology(projectedShape(base, i.slot.path), lens(v));
                         else if (lens(v).kind !== 'thin')
@@ -385,6 +402,7 @@ export function verifyRepresentations(
                         break;
                     }
                     case 'manual':
+                        s.knownPlaces.clear();
                         topology(lens(get(s, i.lens)), lens(v));
                         block(i.cleanup, clone(s));
                         break;
@@ -398,14 +416,20 @@ export function verifyRepresentations(
                         );
                         break;
                     }
-                    case 'scope':
+                    case 'scope': {
+                        s.knownPlaces.clear();
+                        const nested = clone(s);
                         requireEqual(
                             v,
-                            block(i.body, clone(s)),
+                            block(i.body, nested),
                             'Scope result representation mismatch',
                         );
+                        const member = nested.known.get(i.body.result);
+                        if (member) s.known.set(i.out.id, member);
                         break;
+                    }
                     case 'case': {
+                        s.knownPlaces.clear();
                         const results = i.cases.map((arm) => {
                             bind(arm.pattern, get(s, i.value), s);
                             return block(arm.body, clone(s));
@@ -450,6 +474,7 @@ export function verifyRepresentations(
                         break;
                     }
                     case 'call': {
+                        s.knownPlaces.clear();
                         const call = calls.get(i.out.id) ?? fail('Missing call annotation');
                         if (
                             Object.keys(call).some(

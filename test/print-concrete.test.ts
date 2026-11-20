@@ -243,64 +243,57 @@ it('prints captures and disposer contracts for affine closures', () => {
       toolchain emscripten "test" features ()
       entries (entry0)
       forward {
-          layouts (L0, L1, L2, L4, L3)
+          layouts (L0, L1, L3, L2, L4)
           abis (abi0, abi1, abi2)
           code (lambda0, entry0)
       }
       layouts {
-          L0 = record callable {
+          L0 = unit
+          L1 = record environment
+          L2 = f64
+          L3 = record environment {capture0: L2}
+          L4 = record callable {
               environment: ptr<void>
               dispose: code<abi1>
-              invoke0: code<abi0>
           }
-          L1 = unit
-          L2 = record environment
-          L3 = f64
-          L4 = record environment {capture0: L3}
       }
       abis {
-          abi0 = (env: ptr<void>, L1) -> L3
-          abi1 = (env: ptr<void>) -> L1
-          abi2 = (env: ptr<void>) -> L3
+          abi0 = (env: ptr<void>, L0) -> L2
+          abi1 = (env: ptr<void>) -> L0
+          abi2 = (env: ptr<void>) -> L2
       }
       wrappers {
-          wrap0 : abi0 env L4 = invoke lambda0 transfer-captures-and-free
-          wrap1 : abi1 env L4 = dispose (L3) drop-captures-and-free
-          wrap2 : abi1 env L2 = dispose () drop-captures-and-free
+          wrap0 : abi0 env L3 = invoke lambda0 transfer-captures-and-free
+          wrap1 : abi1 env L3 = dispose (L2) drop-captures-and-free
+          wrap2 : abi1 env L1 = dispose () drop-captures-and-free
       }
       callables {
-          callable0 : L0 env L4 {
-              dispose wrap1
-              invoke0 = wrap0 : abi0
-          }
-          callable1 : L0 env L2 {
-              dispose wrap2
-              invoke0 : abi0
-          }
+          callable0 : L4 env L3 {dispose wrap1}
+          callable1 : L4 env L1 {dispose wrap2}
       }
-      fn lambda0((): L1) : abi0 env L4 captures (capture0 $x: L3) {
-          %0: L3 = move $x
-          return %0 : L3
+      fn lambda0((): L0) : abi0 env L3 captures (capture0 $x: L2) {
+          %0: L2 = move $x
+          return %0 : L2
           cleanup {drop $x}
       }
-      fn entry0() : abi2 env L1 {
-          %0: L3 = 1
-          %1: L3 = scope {
+      fn entry0() : abi2 env L0 {
+          %0: L2 = 1
+          %1: L2 = scope {
               bind $x = %0
-              %2: L3 = move $x
-              %3: L0 = make-callable callable0 {capture0 <- %2}
-              %4: L3 = scope {
+              %2: L2 = move $x
+              %3: L4 = make-callable callable0 {capture0 <- %2}
+              %4: L2 = scope {
                   bind $f = %3
-                  %5: L0 = move $f
-                  %6: L1 = ()
-                  %7: L3 = %5.invoke0(%6) : abi0
-                  return %7 : L3
+                  %5: L4 = move $f
+                  %6: L0 = ()
+                  %7: L2 = %5(%6) via wrap0 : abi0
+                  return %7 : L2
                   cleanup {drop $f}
               }
-              return %4 : L3
+              return %4 : L2
               cleanup {drop $x}
           }
-          return %1 : L3
+          return %1 : L2
       }"
     `);
 });
@@ -1223,64 +1216,57 @@ it('prints all concrete instructions: closure', () => {
       toolchain emscripten "test" features ()
       entries (entry0)
       forward {
-          layouts (L0, L1, L2, L4, L3)
+          layouts (L0, L1, L3, L2, L4)
           abis (abi0, abi1, abi2)
           code (lambda0, entry0)
       }
       layouts {
-          L0 = record callable {
+          L0 = unit
+          L1 = record environment
+          L2 = f64
+          L3 = record environment {capture0: L2}
+          L4 = record callable {
               environment: ptr<void>
               dispose: code<abi1>
-              invoke0: code<abi0>
           }
-          L1 = unit
-          L2 = record environment
-          L3 = f64
-          L4 = record environment {capture0: L3}
       }
       abis {
-          abi0 = (env: ptr<void>, L1) -> L3
-          abi1 = (env: ptr<void>) -> L1
-          abi2 = (env: ptr<void>) -> L3
+          abi0 = (env: ptr<void>, L0) -> L2
+          abi1 = (env: ptr<void>) -> L0
+          abi2 = (env: ptr<void>) -> L2
       }
       wrappers {
-          wrap0 : abi0 env L4 = invoke lambda0 transfer-captures-and-free
-          wrap1 : abi1 env L4 = dispose (L3) drop-captures-and-free
-          wrap2 : abi1 env L2 = dispose () drop-captures-and-free
+          wrap0 : abi0 env L3 = invoke lambda0 transfer-captures-and-free
+          wrap1 : abi1 env L3 = dispose (L2) drop-captures-and-free
+          wrap2 : abi1 env L1 = dispose () drop-captures-and-free
       }
       callables {
-          callable0 : L0 env L4 {
-              dispose wrap1
-              invoke0 = wrap0 : abi0
-          }
-          callable1 : L0 env L2 {
-              dispose wrap2
-              invoke0 : abi0
-          }
+          callable0 : L4 env L3 {dispose wrap1}
+          callable1 : L4 env L1 {dispose wrap2}
       }
-      fn lambda0((): L1) : abi0 env L4 captures (capture0 $x: L3) {
-          %0: L3 = move $x
-          return %0 : L3
+      fn lambda0((): L0) : abi0 env L3 captures (capture0 $x: L2) {
+          %0: L2 = move $x
+          return %0 : L2
           cleanup {drop $x}
       }
-      fn entry0() : abi2 env L1 {
-          %0: L3 = 1
-          %1: L3 = scope {
+      fn entry0() : abi2 env L0 {
+          %0: L2 = 1
+          %1: L2 = scope {
               bind $x = %0
-              %2: L3 = move $x
-              %3: L0 = make-callable callable0 {capture0 <- %2}
-              %4: L3 = scope {
+              %2: L2 = move $x
+              %3: L4 = make-callable callable0 {capture0 <- %2}
+              %4: L2 = scope {
                   bind $f = %3
-                  %5: L0 = move $f
-                  %6: L1 = ()
-                  %7: L3 = %5.invoke0(%6) : abi0
-                  return %7 : L3
+                  %5: L4 = move $f
+                  %6: L0 = ()
+                  %7: L2 = %5(%6) via wrap0 : abi0
+                  return %7 : L2
                   cleanup {drop $f}
               }
-              return %4 : L3
+              return %4 : L2
               cleanup {drop $x}
           }
-          return %1 : L3
+          return %1 : L2
       }"
     `);
     expect(JSON.stringify(p)).toBe(before);

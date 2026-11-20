@@ -73,53 +73,53 @@ it('prints the complete captured callable environment lifecycle', () => {
       #include <stdint.h>
       typedef struct L0 L0;
       typedef struct L1 L1;
-      typedef struct L2 L2;
-      typedef double L3;
+      typedef double L2;
+      typedef struct L3 L3;
       typedef struct L4 L4;
       typedef L0 (*A0)(void *);
-      typedef L3 (*A1)(void *);
+      typedef L2 (*A1)(void *);
       struct L0 { unsigned char inhabitant; };
       struct L1 { unsigned char inhabitant; };
-      struct L2 { void *environment; A0 dispose; A1 invoke0; };
-      struct L4 { L3 capture0; };
+      struct L3 { L2 capture0; };
+      struct L4 { void *environment; A0 dispose; };
       static size_t live_contexts = 0;
       void *allocate_context(size_t size);
       void release_context(void *context);
-      L3 fn0(void *environment);
-      L3 fn1(void *environment);
+      L2 fn0(void *environment);
+      L2 fn1(void *environment);
       L0 dispose0(void *environment);
       void print_number(double x);
-      L3 fn0(void *environment) {
+      L2 fn0(void *environment) {
           (void)environment;
-          L3 v0 = ((L4 *)environment)->capture0;
+          L2 v0 = ((L3 *)environment)->capture0;
           (void)v0;
           release_context(environment);
-          L3 v1 = v0;
+          L2 v1 = v0;
           (void)v1;
           return v1;
       }
-      L3 fn1(void *environment) {
+      L2 fn1(void *environment) {
           (void)environment;
-          L3 v0 = 2;
+          L2 v0 = 2;
           (void)v0;
-          L3 v2 = v0;
+          L2 v2 = v0;
           (void)v2;
-          L4 *v4 = allocate_context(sizeof *v4);
+          L3 *v4 = allocate_context(sizeof *v4);
           v4->capture0 = v2;
-          L2 v3 = (L2){.environment=v4, .dispose=dispose0, .invoke0=fn0};
+          L4 v3 = (L4){.environment=v4, .dispose=dispose0};
           (void)v3;
-          L2 v6 = v3;
+          L4 v6 = v3;
           (void)v6;
-          L3 v7 = (v6).invoke0((v6).environment);
+          L2 v7 = fn0((v6).environment);
           (void)v7;
-          L3 v5 = v7;
+          L2 v5 = v7;
           (void)v5;
-          L3 v1 = v5;
+          L2 v1 = v5;
           (void)v1;
           return v1;
       }
       L0 dispose0(void *environment) {
-          L4 *captured = environment;
+          L3 *captured = environment;
           release_context(captured);
           return (L0){0};
       }
@@ -153,7 +153,7 @@ it('prints the complete captured callable environment lifecycle', () => {
           }
       }
       int main(void) {
-          L3 result0 = fn1(NULL);
+          L2 result0 = fn1(NULL);
           (void)result0;
           print_number(result0);
           putchar(10);

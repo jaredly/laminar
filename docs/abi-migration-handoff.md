@@ -3,8 +3,8 @@
 This hand-off covers the migration described in
 [abi-callable-representations.md](abi-callable-representations.md). Read that
 design doc first, especially *The new model* and *Migration plan*. The user asked for
-**one commit per milestone (M0–M5)**. M6 is optional phase-8 work and has not been
-requested.
+**one commit per milestone (M0–M5)**. M6 was subsequently requested; its measured scope and the flow-class deferral
+are recorded below.
 
 ## Where things stand
 
@@ -15,7 +15,8 @@ requested.
 | M2: callable lenses as phase-5 lenses (delete focus machinery) | **Verified and committed** (`ecfdea1`) |
 | M3: remove callable joins and dispatch leftovers | **Verified and committed** (`b537fcb`) |
 | M4: recursion via the worklist; budgets as resource limits | **Verified and committed** (`bb87846`) |
-| M5: concrete verifier, C and Go cleanup | **Verified and committed** (the M5 commit containing this update) |
+| M5: concrete verifier, C and Go cleanup | **Verified and committed** (`d7f95a6`) |
+| M6: measured known-callee optimization | **Verified and committed** (the M6 commit containing this update); flow-class ABI sets deferred |
 
 The previously known source-identity snapshot failure in
 `test/print-concrete.test.ts` was resolved in a post-migration follow-up at the
@@ -183,7 +184,33 @@ for the expected runtime traps (3.97 seconds). The final regular run followed th
 corpus runs, resolving compiler-contention timeouts from an earlier overlapping run.
 `git diff --check` is clean. No tests or behavioral samples were retired.
 
-**M0–M5 are complete.** M6 remains optional and unrequested.
+**M0–M5 are complete.** M6 was subsequently requested; see its measured scope below.
+
+## M6: measurements and bounded direct calls (2026-11-20)
+
+M6 was requested after M5 and the snapshot repair. Added a reproducible
+`cli/measure-callables.ts` benchmark and compared identity baseline `f3664b1`,
+M5/snapshot baseline `b512977`, and the bounded-hint extension over the same 625
+programs (622 accepted by all versions). See the design doc for metrics, toolchain,
+commands and limitations. M5 is already smaller than the identity baseline; M6
+reduces source size/entry metadata further but optimized host objects barely change.
+
+Known-callee hints now survive whole local binds/moves and callable lexical-scope
+results. Borrowing invalidates the slot; calls/manual regions/branches/scopes
+conservatively discard local slot hints. No identity enters value representation
+or specialization keys. The independent verifier checks these provenance rules.
+Four focused tests cover captured/scoped direct calls, invalidation and forgeries.
+
+Flow-class ABI sets remain deliberately deferred based on the measurements;
+they are not implemented. Larger-module evidence of ABI/member cross-product
+bloat is needed before changing storage contracts.
+
+Validation: TypeScript and diff checks pass; regular suite **2066 pass / 1295 skip /
+0 fail**, all 38 snapshots pass (4638 assertions). Native/Wasm: **1254 pass / 0
+fail**, 4379 assertions, 433.48 seconds. Go: **627 pass / 0 fail** including the
+runtime traps, 627 assertions, 475.04 seconds. Benchmark smoke accepts all 625
+programs and matches the measured per-program C byte counts. The measurement and
+bounded known-callee work is complete; flow-class ABI sets remain deferred.
 
 ## Gotchas learned in M1
 
