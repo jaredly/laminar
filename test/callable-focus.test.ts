@@ -469,3 +469,22 @@ it('rejects selected callable completions that write the wrong arm owner', () =>
     selected.cleanupJoins[0].arms.reverse();
     expect(() => verifyConcreteProgram(c)).toThrow('Cleanup storage arm provenance changed');
 });
+it('rejects callee-selected completions that write the wrong arm owner', () => {
+    const c = concrete(
+        callableFocusSamples.find((s) => s.name === 'selected callable result true')!.source,
+    );
+    const selected = c.analysis.variants
+        .flatMap((v: any) => v.values)
+        .find((v: any) => v.representation.kind === 'local-focus' && v.cleanupJoins);
+    expect(selected).toBeDefined();
+    selected.cleanupJoins[0].arms.reverse();
+    expect(() => verifyConcreteProgram(c)).toThrow('Cleanup storage arm provenance changed');
+});
+it('rejects a forged callee-selected result demand', () => {
+    const c = concrete(
+        callableFocusSamples.find((s) => s.name === 'selected callable result true')!.source,
+    );
+    const call = c.analysis.entries[0].calls.find((call: any) => call.demand);
+    call.demand.replacement = structuredClone(call.result.read);
+    expect(() => verifyConcreteProgram(c)).toThrow('Callable result demand changed');
+});

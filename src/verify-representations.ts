@@ -716,6 +716,8 @@ export function verifyRepresentations(
         const route = (id: string): { argument: number; path: number[] } | undefined => {
             const i = instructions.get(id) ?? fail('Unavailable callable result route');
             if (i.op === 'scope') return route(i.body.result);
+            // A branch-selected result is installed by its own completion.
+            if (i.op === 'case') return undefined;
             if (i.op === 'manual') return route(i.lens);
             if (i.op === 'acquire') {
                 const argument = fn.parameters.findIndex((p) => p.lensPlace === i.slot.place);

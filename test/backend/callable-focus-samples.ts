@@ -951,4 +951,49 @@ export const callableFocusSamples = [
         source: '{let f = fn () 3\n let g = fn () 4\n let old = {let l = ~{match true {true -> f; false -> g}}\n l} := fn () 7\n (old(), f(), g())}',
         expected: [3, 7, 4],
     },
+    {
+        name: 'selected callable result true',
+        source: 'fn pick(c, ~(x, y)) ~{match c {true -> x\n false -> y}}\n{let p = (fn () 3, fn () 4)\n let old = pick(true, ~p) := fn () 7\n let (f, g) = p\n (old(), f(), g())}',
+        expected: [3, 7, 4],
+    },
+    {
+        name: 'selected callable result false',
+        source: 'fn pick(c, ~(x, y)) ~{match c {true -> x\n false -> y}}\n{let p = (fn () 3, fn () 4)\n let old = pick(false, ~p) := fn () 7\n let (f, g) = p\n (old(), f(), g())}',
+        expected: [4, 3, 7],
+    },
+    {
+        name: 'selected callable result scattered argument',
+        source: 'fn pick(c, ~(x, y)) ~{match c {true -> x\n false -> y}}\n{let f = fn () 3\n let g = fn () 4\n let old = pick(false, ~(f, g)) := fn () 7\n (old(), f(), g())}',
+        expected: [4, 3, 7],
+    },
+    {
+        name: 'selected callable result alias',
+        source: 'fn pick(c, ~(x, y)) ~{match c {true -> x\n false -> y}}\n{let p = (fn () 3, fn () 4)\n let r = {let l = ~pick(true, ~p)\n let o = l := fn () 7\n o()}\n let (f, g) = p\n (r, f(), g())}',
+        expected: [3, 7, 4],
+    },
+    {
+        name: 'selected callable result forwarded',
+        source: 'fn pick(c, ~(x, y)) ~{match c {true -> x\n false -> y}}\nfn relay(c, ~p) ~pick(c, ~p)\n{let p = (fn () 3, fn () 4)\n let old = relay(false, ~p) := fn () 7\n let (f, g) = p\n (old(), f(), g())}',
+        expected: [4, 3, 7],
+    },
+    {
+        name: 'selected callable result consumed by focus call',
+        source: 'fn pick(c, ~(x, y)) ~{match c {true -> x\n false -> y}}\nfn ex(new, ~x) {x := new}\n{let p = (fn () 3, fn () 4)\n let old = ex(fn () 7, ~pick(true, ~p))\n let (f, g) = p\n (old(), f(), g())}',
+        expected: [3, 7, 4],
+    },
+    {
+        name: 'selected callable result captured arm',
+        source: 'fn pick(c, ~(x, y)) ~{match c {true -> x\n false -> y}}\n{let k = 9\n let p = (fn () 3, fn () k)\n let old = pick(false, ~p) := fn () 7\n let (f, g) = p\n (old(), f(), g())}',
+        expected: [9, 3, 7],
+    },
+    {
+        name: 'selected callable result private arm',
+        source: 'fn tap(c, ~x) ~{match c {true -> x\n false -> {lens v <- fn () 0\n {let o = x := v\n ()}}}}\n{let f = fn () 3\n let old = tap(false, ~f) := fn () 7\n (old(), f())}',
+        expected: [0, 7],
+    },
+    {
+        name: 'selected callable result converts entry tables',
+        source: 'fn mk() {fn (h) h()}\nfn pick(c, ~(x, y)) ~{match c {true -> x\n false -> y}}\n{let a = mk()\n let one = a(fn () 1)\n let p = (mk(), fn (h) h())\n let old = pick(true, ~p) := fn (h) 7\n let (f, g) = p\n (one, old(fn () 5), f(fn () 0), g(fn () 2))}',
+        expected: [1, 5, 7, 2],
+    },
 ];

@@ -1124,3 +1124,36 @@ results remain separate work. Phase 6 remains incomplete.
 Validation: 1550 non-execution passes with only the existing source-identity
 snapshot failure; the full `LAMINAR_EXEC=1` execution file passed 1206 native/Wasm
 cases in 433.86 seconds without retries. TypeScript checks pass. Remote CI was not run.
+
+
+## Phase 6: callee-selected callable lens results
+
+Functions may now return branch-selected callable focuses, for example
+`fn pick(c, ~(x, y)) ~{match c {true -> x; false -> y}}`. No per-arm return route
+is needed at the caller: the result is a deferred focus, like callee-private
+backing. When its consumer installs the demand, the callee's completion runs the
+selected-focus finish against its own parameter places, writing the replacement
+into each arm's restored state and joining them. The resulting parameter contract
+(for example the selected component's join of old value and replacement) is what
+the caller writes back to its storage, through the existing completion path.
+Independent result-route derivation treats a `case` result as deferred.
+
+C needed no change. The callee's returned lens already carries the selected-arm
+tag, staged frontends and per-arm normalization in its restore context, so
+restoration writes only the selected arm, normalizes owners to the joined layouts,
+and flushes the parameters to the caller.
+
+Nine shared samples cover both arms, scattered arguments, persistent result
+aliases, forwarding through another callee, results consumed by focus calls,
+captured arms, a callee-private arm and an entry-table conversion across the
+function boundary. Corruption tests reject callee completions that write the wrong
+arm owner and forged result demands.
+
+Recursive selected results (`walk`) need a fixed point whose parameter contracts
+depend on the replacement demand, which arrives only at completion. They now
+report `Recursive callable lens results require a demand-dependent fixed point`.
+Dispatched callable lens results remain separate work. Phase 6 remains incomplete.
+
+Validation: 1557 non-execution passes with only the existing source-identity
+snapshot failure; the full `LAMINAR_EXEC=1` execution file passed 1224 native/Wasm
+cases in 451.77 seconds without retries. TypeScript checks pass. Remote CI was not run.

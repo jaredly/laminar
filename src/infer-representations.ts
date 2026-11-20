@@ -677,16 +677,9 @@ export function inferRepresentations(
             record,
             result,
         };
-        // A returned focus selected by a branch needs a per-arm return route.
-        const selectedResult = (b: IRBlock, id: string): boolean => {
-            const def = b.instructions.find((i) => 'out' in i && i.out.id === id);
-            return (
-                def?.op === 'case' ||
-                (def?.op === 'scope' && selectedResult(def.body, def.body.result))
-            );
-        };
-        if (isFocus(result) && selectedResult(fn.body, fn.body.result))
-            return fail('Branch-selected callable lens results require a selected return route');
+        // A deferred result (callee-private backing or a branch-selected focus) has no
+        // parameter route: its completion installs the replacement in callee storage,
+        // and the caller observes it through the parameter contracts.
         if (isFocus(result) && !state.deferredFocuses.has(fn.body.result)) {
             const target =
                 targetFor(state, fn.body.result) ?? fail('Demanded result lacks logical backing');
@@ -1664,9 +1657,11 @@ export function inferRepresentations(
                             // recursive call as divergent: the least fixed point
                             // starts from the remaining (base) arms.
                             if (!(error instanceof RecursionPending)) throw error;
+                            // A recursive lens result's parameter contracts depend on the
+                            // replacement demand, known only at completion.
                             if (i.out.type.tag === 'flow')
                                 return fail(
-                                    'Branch-selected callable lens results require a selected return route',
+                                    'Recursive callable lens results require a demand-dependent fixed point',
                                 );
                             pending = error;
                             return [];
