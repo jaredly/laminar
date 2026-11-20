@@ -119,10 +119,30 @@ it('diagnoses changing-specialization recursion in verified generic IR', () => {
         specializeProgram(p, target, [{ unit: p.units.at(-1)!.id, arguments: [] }]),
     ).toThrow('Changing-specialization recursion');
 });
-it('rejects unresolved local annotations without erasing unused local callables', () => {
-    const p = parse('fn outer(x) {let f = fn (y) y\n x}\nouter(1)');
+it('defaults unconstrained local types to unit without erasing unused local callables', () => {
+    const r = run('fn outer(x) {let f = fn (y) y\n x}\nouter(1)');
+    expect(executeTypedProgram(r.program)).toEqual(1);
+    const text = JSON.stringify(r.program);
+    expect(text).not.toContain('"tag":"variable"');
+    // The unused closure is kept; its parameter type is unit.
+    expect(text).toContain(
+        '{"tag":"fn","args":[{"tag":"plain","value":{"tag":"tuple","items":[]}}]',
+    );
+});
+it('defaults unconstrained types consistently across dependent instances', () => {
+    const r = run('fn keep(g, x) x\nfn outer(x) keep(fn (y) y, x)\nouter(1)');
+    expect(executeTypedProgram(r.program)).toEqual(1);
+    expect(JSON.stringify(r.program)).not.toContain('"tag":"variable"');
+    const keep = r.instances.filter((s) => s.source.endsWith('/keep'));
+    expect(keep).toHaveLength(1);
+});
+it('still rejects unresolved explicit root type arguments', () => {
+    const p = parse('fn id(x) x\nid(1)');
+    const id = p.units.find((u) => u.definition?.endsWith('/id'))!;
     expect(() =>
-        specializeProgram(p, target, [{ unit: p.units.at(-1)!.id, arguments: [] }]),
+        specializeProgram(p, target, [
+            { unit: id.id, arguments: [{ tag: 'variable', id: 'free', rigid: false }] },
+        ]),
     ).toThrow('Reachable semantic type contains');
 });
 it('keeps native and wasm semantic caches distinct', () => {

@@ -220,9 +220,10 @@ export function inferRepresentations(
     const join = (items: ValueRepresentation[], _aggregate = false): ValueRepresentation => {
         const first = items[0] ?? fail('Empty representation join');
         if (items.every((v) => equal(first, v))) return first;
+        // Plain values are type-determined; lens joins normalize before reaching here.
         throw new BackendDiagnostic(
-            'unsupported-representation-join',
-            'Different value representations require an adapter',
+            'invalid-representation',
+            'Plain value representations of one semantic type differ',
         );
     };
     const retype = (id: LensRepId, read: SemanticType, write: SemanticType): LensRepId => {

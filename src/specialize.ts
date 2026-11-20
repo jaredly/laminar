@@ -32,6 +32,17 @@ function concrete(type: SemanticType): SemanticType {
     });
 }
 
+const unitType: SemanticType = { tag: 'tuple', items: [] };
+/**
+ * A body variable still unsolved after substituting the instance's arguments is
+ * unconstrained by every use, e.g. the parameter of a closure that is never called.
+ * No value of that type is ever produced, so any closed type is sound; choose unit
+ * uniformly so every occurrence (and every dependent instance) agrees.
+ */
+function defaulted(type: SemanticType): SemanticType {
+    return mapSemantic(type, () => unitType);
+}
+
 /** Rewrite semantic annotations and explicit instances, without inference or source ASTs. */
 function rewrite<T>(
     input: T,
@@ -122,7 +133,7 @@ export function specializeProgram(
             );
         const substitutions = new Map(scheme.quantified.map((p, i) => [p, args[i]!]));
         const substitute = (t: SemanticType) =>
-            concrete(mapSemantic(t, (id) => substitutions.get(id)));
+            defaulted(mapSemantic(t, (id) => substitutions.get(id)));
         const record: SemanticSpecialization = {
             id: `spec_${createHash('sha256').update(key).digest('hex')}`,
             key,

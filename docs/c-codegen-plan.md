@@ -1,29 +1,30 @@
 # Plan: typed lowering, representation specialization, and C/Wasm code generation
 
-Status: phases 0–3 are implemented through the concrete-IR exit gate; phases 4–5
-execute the documented scalar/tuple native C and Emscripten/Node subset. Typed
-indirect closure invocation and environment disposal implement part of phase 6.
-Compatible user-defined/native intrinsic joins and differing callable results
-execute, including differing lens-result shapes and recursive callable tuple results. Owned callable tuples and recursive callable tuple branch-result joins execute through concrete recursive storage; callable
-focus parameter/result ABIs execute through demand-driven specialization, including callee-private returned backing, recursive callees (least fixed point) and branch-selected callees, with dispatch argument adapters for differing whole-focus contracts; branch-selected, callee-selected, dispatched and recursive callable lens results execute. Direct and scattered callable swaps, persistent whole/projected/manual/scattered aliases, lexical forwarding and manual callable restoration execute. Phase 7 runtime and host integration and phase 8 optimization remain broader
-work. This is subset
-coverage, not completion of every phase exit gate.
+Status: phases 0–6 are complete for the checked subset (phase 6 closed
+2026-11-20). Phases 0–3 are implemented through the concrete-IR exit gate; phases
+4–5 execute the documented scalar/tuple native C and Emscripten/Node subset. Phase 6
+executes affine closures, typed indirect calls and representation joins through
+[ABI-keyed, type-determined callable representations](abi-callable-representations.md);
+see [*Phase 6 completion*](#phase-6-completion-2026-11-20). Phase 7 runtime and host
+integration and phase 8 optimization remain broader work.
 
 The scoped lens extensions are complete as of `707521c`; see the
 [completion record and follow-up mapping](checker-completeness-handoff.md).
-Latest local verification: **2534 pass / 39 existing skips / 0 failures across
-42 files**, with default TypeScript and diff checks passing. The latest full execution run passed without retries. Remote CI was not run for
-these slices. See also [the implementation record](backend-progress.md),
+Latest local verification (phase 6 close): **2072 pass / 1303 skip / 0 failures
+across 48 files**, all 38 snapshots passing; TypeScript and diff checks pass. The
+native/Wasm corpus passes 1262 cases and the Go tests 662, without retries. Remote
+CI was not run for these slices. See also [the implementation record](backend-progress.md),
 [backend contract](backend-contract.md), [typed IR API](typed-ir.md), and
 [C backend](c-backend.md). Each further slice should be independently reviewable
 and preserve checked and unchecked execution paths.
 
-> **Direction change (2026-11-20):** phase 6 now moves callables to ABI-keyed,
+> **Direction change (2026-11-20):** phase 6 moved callables to ABI-keyed,
 > type-determined representations. See
-> [ABI-keyed callable representations](abi-callable-representations.md). Most of the
-> identity-precise callable machinery recorded in the phase-6 sections below is
-> slated for removal under that plan's migration milestones; the shared execution
-> samples remain the behavioral corpus.
+> [ABI-keyed callable representations](abi-callable-representations.md). The
+> identity-precise callable machinery recorded in the historical phase-6 sections
+> below (focus endpoints, demands, dispatch and join adapters, recursion hypotheses)
+> was removed by that migration; the shared execution samples remain the
+> behavioral corpus.
 
 ## Outcome and scope
 
@@ -333,6 +334,7 @@ The defaults above make progress possible without additional up-front language d
 - Whether a direct Wasm emitter, memory64 support, or a Wasm GC representation is warranted after the C-to-Wasm path is reliable. None is required to preserve the initial source semantics.
 - Which currently unsupported semantic lens forms to implement after the checked subset has a working C backend.
 
+*Historical (superseded by [Phase 6 completion](#phase-6-completion-2026-11-20)):*
 Phases 0–5 are complete for the documented subset. Phase 6 is partially
 implemented: typed code-pointer invocation and compatible branch-selected closures
 work, including different capture environments, nested joins, and supported native
@@ -1246,3 +1248,62 @@ remains incomplete.
 Validation: 1578 non-execution passes with only the existing source-identity
 snapshot failure; the full `LAMINAR_EXEC=1` execution file passed 1248 native/Wasm
 cases in 468.82 seconds without retries. TypeScript checks pass. Remote CI was not run.
+
+## Phase 6 completion (2026-11-20)
+
+Phase 6 is closed. The sections above starting at *Phase 6 next boundary* are a
+historical record of the identity-precise model; the
+[ABI migration](abi-callable-representations.md) (M0–M5, with M6 measured and
+closed) replaced it. The two boundaries the last section left open, scattered
+dispatch arguments with differing contracts and recursion with alternating inputs,
+compile and execute under that model.
+
+Work items against the current implementation:
+
+1. Capture structs move contents at closure creation; captured lens values move
+   contents and the caller refills the alias. No closure keeps a borrowed address.
+2. Each callable type has one record with one exact typed entry per ABI. Members
+   fill entries with exact invoke wrappers or lens-result normalizers; there are no
+   function-pointer casts.
+3. Environments are heap-allocated and disposed when invoked or dropped, including
+   closures returned from functions, stored in tuples and captured by other closures.
+4. Branch, storage and aggregate joins of callables are record moves; differing
+   lens results normalize to thin runtime lenses.
+5. Tagged selected lenses cover runtime-selected lens shapes; callable values need
+   no tagged representation because their layout is type-determined.
+6. Indirect calls carrying or returning lenses run natively and on Wasm, including
+   branch-selected callees with different capture environments.
+
+**Closing gap: unconstrained closure types.** A closure that no use constrains,
+such as `g` in `apply(fn (y) y, fn (z) 1, 3)` or an unused local `fn (y) y`, left
+an unsolved type variable, so specialization rejected a checked program with
+`unsolved-specialization`. That conflicted with this plan's rule that
+specialization must not change which programs pass checking. Body variables still
+unsolved after instance substitution now default to unit (`src/specialize.ts`):
+no value of such a type is ever produced, and choosing unit uniformly keeps every
+occurrence and dependent instance consistent. Explicit root type arguments must
+still be concrete. Four execution samples (`unconstrainedClosureSamples`) and
+three specializer tests cover this; the earlier test that asserted the rejection
+was rewritten.
+
+The plain-value join in `infer-representations.ts` can no longer meet differing
+representations (plain values are type-determined; lens joins normalize first), so
+it now reports an internal `invalid-representation` invariant failure instead of
+an unsupported-program diagnostic. The C/Go `Storage version join requires an
+adapter` check remains as a defensive lowering error; branch probes covering
+whole versus component replacement, type-changing arms, nested changes, callable
+tuples and single-arm updates did not reach it.
+
+**Exit gate evidence.** The representation and concrete verifiers independently
+check callable signatures, ABI slots, member sets, environment ownership and
+restoration. Every shared execution sample runs natively under
+AddressSanitizer/UndefinedBehaviorSanitizer with `detect_stack_use_after_return`,
+at `-O0` and `-O2`, and under Emscripten/Node at both levels; Go runs the same
+corpus. Phase 7 owns the remaining runtime-data restrictions, for example closures
+capturing strings (`No storage definition for String`).
+
+Validation: TypeScript and `git diff --check` pass. The regular suite reports 2072
+passed, 1303 skipped, no failures, all 38 snapshots passing (4644 assertions).
+`LAMINAR_EXEC=1 bun test test/c/execute.test.ts` passes all 1262 native/Wasm cases
+(4407 assertions, 338.77 seconds); `LAMINAR_EXEC=1 bun test test/go` passes 662
+tests (701 assertions, 95.52 seconds). Remote CI was not run.

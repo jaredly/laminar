@@ -18,7 +18,7 @@ import { lensBranchSamples } from './lens-branch-samples.ts';
 import { computedAliases } from './computed-alias-samples.ts';
 import { capturedCleanupSamples } from './captured-cleanup-samples.ts';
 import { callableJoinSamples } from './callable-join-samples.ts';
-import { indirectCallSamples } from './indirect-call-samples.ts';
+import { indirectCallSamples, unconstrainedClosureSamples } from './indirect-call-samples.ts';
 import { phase5Samples } from '../c/phase5-samples.ts';
 import { backendCorpus } from './corpus.ts';
 export const samples = [
@@ -34,6 +34,7 @@ export const samples = [
     ...backendCorpus.filter((s) => s.phase <= 6),
     ...capturedCleanupSamples,
     ...indirectCallSamples,
+    ...unconstrainedClosureSamples,
     ...callableJoinSamples,
     ...nativeJoinSamples,
     ...callableResultSamples,
