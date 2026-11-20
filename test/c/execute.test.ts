@@ -1,4 +1,5 @@
 import { demandSamples } from '../backend/demand-samples.ts';
+import { enabledMigrationSamples } from '../backend/abi-migration-samples.ts';
 import { deferredStorageSamples } from '../backend/deferred-storage-samples.ts';
 import { lensStorageJoinSamples } from '../backend/lens-storage-join-samples.ts';
 import { storageJoinSamples } from '../backend/storage-join-samples.ts';
@@ -95,7 +96,10 @@ const native =
               features: [],
           })
         : undefined;
+// The behavioral corpus: shared samples whose expected results must not change
+// across representation redesigns (see docs/abi-callable-representations.md).
 const samples = [
+    ...enabledMigrationSamples,
     ...demandSamples,
     ...deferredStorageSamples,
     ...lensStorageJoinSamples,
