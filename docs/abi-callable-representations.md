@@ -1,9 +1,11 @@
 # Design: ABI-keyed callable representations
 
-Status: **migration complete: M0–M5 implemented and verified** (2026-11-20). This replaces
-the identity-precise callable model that phase 6 of the
-[C codegen plan](c-codegen-plan.md) has been extending. The migration plan and
-progress notes below track the remaining work.
+Status: **migration complete; M6 closed** (2026-11-20). M0–M5 are implemented and
+verified. Optional M6 measured code size and added bounded known-callee direct calls;
+flow-class ABI sets and wider known-callee propagation are deliberately deferred (see
+*M6* below). This replaces the identity-precise callable model that phase 6 of the
+[C codegen plan](c-codegen-plan.md) had been extending. The migration plan and
+progress notes below record the work.
 
 ## Summary
 
