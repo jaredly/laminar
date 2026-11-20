@@ -66,7 +66,7 @@ it('counts every reachable alternative against the representation budget', () =>
             [{ unit: p.units.at(-1)!.id, arguments: [] }],
             { maxVariants: 1 },
         ),
-    ).toThrow('Representation budget');
+    ).toThrow('Representation resource limit');
 });
 
 it('gives a callable type one entry per call ABI', () => {

@@ -1,6 +1,6 @@
 # Design: ABI-keyed callable representations
 
-Status: **migration in progress; M0–M3 implemented** (2026-11-20). This replaces
+Status: **migration in progress; M0–M4 implemented** (2026-11-20). This replaces
 the identity-precise callable model that phase 6 of the
 [C codegen plan](c-codegen-plan.md) has been extending. The migration plan and
 progress notes below track the remaining work.
@@ -541,3 +541,28 @@ failure (4,622 assertions; 37 other snapshots pass).
 cases (4,379 assertions, 475.36 seconds), including scattered dispatch with
 differing installed closures and native dynamic lens-result normalization.
 `git diff --check` is clean.
+
+### M4: dependency worklist and resource limits
+
+Roots and representation variants are now independent work items. Calls register
+reverse dependencies on callee results and callable member sets. Discovering a
+member or changing a result shape queues only the affected bodies; recursive calls
+read the reserved variant's current shape instead of recursively analyzing it.
+Each replay replaces its SSA/call annotations and refreshes its dependency edges.
+Earlier topology specializations that become unreachable are omitted from the
+final analysis. The independent verifier still checks the resulting fixed point.
+
+The whole-program rescan and 64-pass convergence gate are removed. `maxVariants`
+(default 256) and the new `maxWorkItems` (default 100,000, also exposed through
+`compileConcreteProgram`) are explicit resource budgets. Exhaustion reports
+`representation-resource-limit`, rather than an unsupported-program diagnostic.
+Invalid budget values retain `invalid-representation-budget`.
+
+Two tests cover propagation through 81 lens-returning bodies and configurable
+work-item exhaustion/recovery. Existing variant-budget tests now require the
+resource-limit diagnostic. No execution samples, snapshots or tests were retired.
+
+**Validation (2026-11-20).** TypeScript passes. `bun test` reports 1,436 passed,
+1,293 skipped and the one known source-identity snapshot failure (4,627 assertions;
+37 other snapshots pass). The complete native/Wasm corpus passes all 1,254 cases
+(4,379 assertions, 485.92 seconds). `git diff --check` is clean.

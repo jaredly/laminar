@@ -52,7 +52,7 @@ it('rejects invalid budgets and reports variant expansion', () => {
     const p = semantic('fn id(x) x\n(id(1),id(true))');
     expect(() => inferRepresentations(p, { maxVariants: 0 })).toThrow('positive integer');
     expect(() => inferRepresentations(p, { maxVariants: 1 })).toThrow(
-        'Representation budget 1 exceeded',
+        'Representation resource limit 1 exceeded',
     );
 });
 it('is deterministic after serialization and separates targets', () => {
@@ -134,4 +134,35 @@ it('specializes recursive changes from thin to scattered arguments', () => {
             'fn rec(n, ~(x, y)) (match dup(~n) {0 -> (); _ -> rec(n - 1, ~(x, y))})\n{let pair = (1, 2)\n rec(2, ~pair)}',
         ),
     ).not.toThrow();
+});
+
+it('propagates scattered results through more than 64 dependent bodies', () => {
+    const definitions = Array.from({ length: 80 }, (_, n) => `fn step${n}(~p) ~{step${n + 1}(~p)}`);
+    const r = analyze(
+        [
+            'fn step80(~(x, y)) ~(x, y)',
+            ...definitions.reverse(),
+            '{let p = (1, 2)\n step0(~p) := (3, 4)\n p}',
+        ].join('\n'),
+    );
+    expect(r.variants).toHaveLength(81);
+    expect(
+        r.variants.every(
+            (v) =>
+                v.result.kind === 'lens' &&
+                r.shapes.find((s) => v.result.kind === 'lens' && s.id === v.result.shape)?.kind ===
+                    'tuple',
+        ),
+    ).toBe(true);
+});
+it('reports representation exhaustion as a configurable resource limit', () => {
+    const p = semantic('fn id(x) x\nid(1)');
+    expect(() => inferRepresentations(p, { maxWorkItems: 0 })).toThrow('positive integer');
+    try {
+        inferRepresentations(p, { maxWorkItems: 1 });
+        throw Error('Expected resource exhaustion');
+    } catch (error) {
+        expect((error as { code: string }).code).toBe('representation-resource-limit');
+    }
+    expect(() => inferRepresentations(p, { maxWorkItems: 10 })).not.toThrow();
 });

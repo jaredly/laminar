@@ -463,6 +463,6 @@ it('preserves specialization and representation budgets through the whole phase-
         'Specialization budget',
     );
     expect(() => compileConcreteProgram(generic, target, roots, { maxVariants: 1 })).toThrow(
-        'Representation budget',
+        'Representation resource limit',
     );
 });

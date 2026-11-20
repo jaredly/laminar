@@ -633,6 +633,7 @@ export function compileConcreteProgram(
     options: {
         maxInstances?: number;
         maxVariants?: number;
+        maxWorkItems?: number;
         layoutDefinitions?: readonly NominalLayoutDefinition[];
     } = {},
 ): ConcreteProgram {
@@ -641,6 +642,7 @@ export function compileConcreteProgram(
     });
     const analysis = inferRepresentations(semantic, {
         maxVariants: options.maxVariants,
+        maxWorkItems: options.maxWorkItems,
         layoutDefinitions: options.layoutDefinitions,
         entryArguments: roots.flatMap((r, i) =>
             r.parameters ? [{ unit: semantic.roots[i]!, entry: i, arguments: r.parameters }] : [],

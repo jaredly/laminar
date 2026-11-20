@@ -13,8 +13,8 @@ requested.
 | M0: corpus freeze | **Committed** (`67b5781`) |
 | M1: type-determined callables, whole-program member sets | **Verified and committed** (`b77a37e`) |
 | M2: callable lenses as phase-5 lenses (delete focus machinery) | **Verified and committed** (`ecfdea1`) |
-| M3: remove callable joins and dispatch leftovers | **Verified and committed** (the M3 commit containing this update) |
-| M4: recursion via the worklist; budgets as resource limits | Demand recursion machinery removed in M2; worklist and resource limits remain |
+| M3: remove callable joins and dispatch leftovers | **Verified and committed** (`b537fcb`) |
+| M4: recursion via the worklist; budgets as resource limits | **Verified and committed** (the M4 commit containing this update) |
 | M5: concrete verifier, C and Go cleanup | Not started |
 
 Unrelated, existing failure, not ours: `can show original identities and source
@@ -33,7 +33,7 @@ Never update that snapshot with `-u`. When regenerating printed snapshots, filte
 - `git diff --check`: clean.
 
 The C fix includes native wrappers used as adapter sources in `nativeEntries`.
-M2 and M3 are implemented below; M4–M5 remain.
+M2–M4 are implemented below; M5 remains.
 
 ## What M1 changed (orientation for M2+)
 
@@ -137,15 +137,29 @@ M3 is implemented below.
 TypeScript is clean. The regular suite reports **1434 pass / 1293 skip / 1 fail**
 (the known snapshot, 4622 assertions). Full native/Wasm validation reports
 **1254 pass / 0 fail**, 4379 assertions, 475.36 seconds. `git diff --check` is clean.
-The next implementation milestone is **M4**.
+M4 is implemented below.
 
-## Next steps (M4–M5)
+## M4 implementation (2026-11-20)
 
-- **M4.** Replace the whole-program result-shape rescan with the finite worklist
-  and resource-limit diagnostics. The old `RecursionHypothesis`, `RecursionPending`,
-  `activeRoots`, setup/completion fixed points and changing-input guard were removed
-  as part of M2's focus machinery deletion. The remaining limits are the variant
-  budget and whole-program pass cap.
+`infer-representations.ts` now schedules root/variant bodies on a dependency
+worklist. Result reads and callable member-set reads register reverse edges;
+changes enqueue dependents. Replays replace annotations and refresh edges.
+Recursive calls use reserved result shapes. Cached topology variants which are
+no longer reachable are pruned before independent verification.
+
+The whole-program pass loop and its 64-pass cap are gone. `maxVariants` (256 by
+default) and `maxWorkItems` (100,000 by default) report
+`representation-resource-limit` on exhaustion. `compileConcreteProgram` forwards
+both options. Added long result-propagation and work-budget tests; no behavioral
+samples or snapshots were changed.
+
+Validation: TypeScript passes; regular suite **1436 pass / 1293 skip / 1 fail**
+(the known source-identity snapshot; 4627 assertions, 37 other snapshots pass).
+Native/Wasm: **1254 pass / 0 fail**, 4379 assertions, 485.92 seconds.
+`git diff --check` is clean. The next milestone is **M5**.
+
+## Next steps (M5)
+
 - **M5.**
   - Simplify the concrete verifier and C now that only type and member records exist.
   - Possibly emit `NULL` instead of `((Lk){0}).environment` for direct calls of

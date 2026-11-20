@@ -91,6 +91,7 @@ export function inferRepresentations(
     input: SpecializedProgram,
     options: {
         maxVariants?: number;
+        maxWorkItems?: number;
         layoutDefinitions?: readonly NominalLayoutDefinition[];
         entryArguments?: {
             unit: string;
@@ -107,6 +108,12 @@ export function inferRepresentations(
         throw new BackendDiagnostic(
             'invalid-representation-budget',
             'Representation budget must be a positive integer',
+        );
+    const workLimit = options.maxWorkItems ?? 100_000;
+    if (!Number.isSafeInteger(workLimit) || workLimit < 1)
+        throw new BackendDiagnostic(
+            'invalid-representation-budget',
+            'Work item budget must be a positive integer',
         );
     const entryContracts = options.entryArguments ?? [];
     if (
@@ -137,8 +144,22 @@ export function inferRepresentations(
         string,
         Omit<RepresentationVariant, 'result'> & { result?: ValueRepresentation }
     >();
-    // Members of each callable type, persisted across whole-program passes. A member
-    // added during a pass reaches every indirect call of its type in the next pass.
+    const tasks = new Map<string, () => void>();
+    const queue = new Set<string>();
+    const dependents = new Map<string, Set<string>>();
+    const dependencies = new Map<string, Set<string>>();
+    let current = '';
+    const depend = (key: string): void => {
+        if (!current) return;
+        if (!dependents.has(key)) dependents.set(key, new Set());
+        dependents.get(key)!.add(current);
+        if (!dependencies.has(current)) dependencies.set(current, new Set());
+        dependencies.get(current)!.add(key);
+    };
+    const changed = (key: string): void => {
+        dependents.get(key)?.forEach((id) => queue.add(id));
+    };
+    // Member discovery wakes only bodies that read this callable type's member set.
     const callableTypes = new Map<
         string,
         { signature: SemanticType; members: Map<string, CallableMember> }
@@ -147,12 +168,12 @@ export function inferRepresentations(
         const k = typeKey(type);
         let entry = callableTypes.get(k);
         if (!entry) callableTypes.set(k, (entry = { signature: type, members: new Map() }));
-        entry.members.set(memberKey(member), member);
+        const identity = memberKey(member);
+        if (!entry.members.has(identity)) {
+            entry.members.set(identity, member);
+            changed(`members:${k}`);
+        }
     };
-    const membersSnapshot = (): string =>
-        JSON.stringify(
-            [...callableTypes.keys()].sort().map((k) => [k, membersOf(k).map(memberKey)]),
-        );
     const membersOf = (type: string): CallableMember[] =>
         [...(callableTypes.get(type)?.members ?? new Map<string, CallableMember>())]
             .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
@@ -160,7 +181,6 @@ export function inferRepresentations(
     const entries: RepresentationAnalysis['entries'] = [];
     const roots: RepresentationAnalysis['roots'] = [];
     const exports: RepresentationAnalysis['exports'] = [];
-    const previousResults = new Map<string, ValueRepresentation>();
     const fresh = (): State => ({ values: new Map(), lenses: new Map(), known: new Map() });
     const clone = (s: State): State => ({
         values: new Map(s.values),
@@ -244,7 +264,7 @@ export function inferRepresentations(
             };
         if (callee.kind === 'dispatch') {
             // Specialize every member at this ABI; recursive members expose their
-            // current result-shape approximation until the program passes stabilize.
+            // current result-shape approximation until the worklist stabilizes.
             const calls = callee.options.map((option) => invoke(option, args, chain, resultType));
             const results = calls.map((call) => call.result);
             let result: ValueRepresentation;
@@ -271,6 +291,7 @@ export function inferRepresentations(
             callee.captures.map(key),
             args.map(key),
         ]);
+        depend(variantKey);
         const cached = variants.get(variantKey);
         if (cached) {
             if (!cached.result) return fail('Missing recursive result approximation');
@@ -278,8 +299,8 @@ export function inferRepresentations(
         }
         if (variants.size >= limit)
             throw new BackendDiagnostic(
-                'representation-budget',
-                `Representation budget ${limit} exceeded: ${[...chain, identity].join(' -> ')}`,
+                'representation-resource-limit',
+                `Representation resource limit ${limit} exceeded: ${[...chain, identity].join(' -> ')}`,
             );
         const variant: Omit<RepresentationVariant, 'result'> & { result?: ValueRepresentation } = {
             id: `rep_${createHash('sha256').update(variantKey).digest('hex')}`,
@@ -295,19 +316,26 @@ export function inferRepresentations(
         variant.result =
             fn.type.result.tag === 'plain'
                 ? typeRep(fn.type.result.value)
-                : (previousResults.get(variantKey) ?? {
+                : {
                       kind: 'lens',
                       shape: reps.thin(fn.type.result.read, fn.type.result.write),
-                  });
+                  };
         variants.set(variantKey, variant);
-        const state = fresh();
-        fn.parameters.forEach((p, i) => {
-            const arg = args[i] ?? fail('Missing argument representation');
-            if (p.lensPlace) state.lenses.set(p.lensPlace, shape(arg));
+        tasks.set(variantKey, () => {
+            const state = fresh();
+            fn.parameters.forEach((p, i) => {
+                if (p.lensPlace) state.lenses.set(p.lensPlace, shape(args[i]!));
+            });
+            variant.values = [];
+            variant.calls = [];
+            const result = block(unit, fn.body, state, variant, []);
+            if (!equal(variant.result!, result)) {
+                variant.result = result;
+                changed(variantKey);
+            }
         });
-        const result = block(unit, fn.body, state, variant, [...chain, identity]);
-        variant.result = result;
-        return { target: variant.id, result };
+        queue.add(variantKey);
+        return { target: variant.id, result: variant.result! };
     };
     function block(
         unit: IRUnit,
@@ -395,6 +423,7 @@ export function inferRepresentations(
                     const value = get(s, i.callee),
                         args = i.args.map((id) => get(s, id));
                     if (value.kind !== 'callable') return fail('Call operand is not callable');
+                    depend(`members:${value.type}`);
                     const options = membersOf(value.type);
                     const direct =
                         s.known.get(i.callee) ??
@@ -437,22 +466,11 @@ export function inferRepresentations(
         }
         return get(s, body.result);
     }
-    // Whole-program passes propagate member discovery and recursive lens result
-    // shapes. Recursive calls read the previous pass's declared result shape.
-    for (let pass = 0; ; pass++) {
-        if (pass > 64) fail('Callable member discovery did not converge');
-        const before = membersSnapshot();
-        const resultsBefore = JSON.stringify(
-            [...previousResults]
-                .sort(([a], [b]) => a.localeCompare(b))
-                .map(([k, v]) => [k, key(v)]),
-        );
-        variants.clear();
-        entries.length = 0;
-        roots.length = 0;
-        exports.length = 0;
-
-        for (const [rootIndex, id] of source.roots.entries()) {
+    // Roots and variants are independent work items. Reading a result or member
+    // set registers a reverse edge, so changes revisit only dependent bodies.
+    for (const [rootIndex, id] of source.roots.entries()) {
+        const task = `root:${rootIndex}`;
+        tasks.set(task, () => {
             const unit = units.get(id) ?? fail('Unknown representation root');
             const entry = {
                 unit: id,
@@ -506,31 +524,54 @@ export function inferRepresentations(
                     return fail('Entry argument representation mode mismatch');
                 });
                 const called = invoke(root, args, []);
-                exports.push({
-                    entry: roots.length,
+                exports[rootIndex] = {
+                    entry: rootIndex,
                     variant: called.target,
                     arguments: args,
                     result: called.result,
-                });
+                };
             } else if (incoming) fail('Expression root cannot have incoming arguments');
-            entries.push(entry);
-            roots.push({ unit: id, result });
-        }
-        variants.forEach((v, k) => previousResults.set(k, v.result!));
-        const resultsAfter = JSON.stringify(
-            [...previousResults]
-                .sort(([a], [b]) => a.localeCompare(b))
-                .map(([k, v]) => [k, key(v)]),
-        );
-        if (membersSnapshot() === before && resultsBefore === resultsAfter) break;
+            entries[rootIndex] = entry;
+            roots[rootIndex] = { unit: id, result };
+        });
+        queue.add(task);
     }
+    let workItems = 0;
+    while (queue.size) {
+        if (++workItems > workLimit)
+            throw new BackendDiagnostic(
+                'representation-resource-limit',
+                `Representation work item resource limit ${workLimit} exceeded`,
+            );
+        const id = queue.values().next().value!;
+        queue.delete(id);
+        for (const dependency of dependencies.get(id) ?? []) dependents.get(dependency)?.delete(id);
+        dependencies.delete(id);
+        current = id;
+        tasks.get(id)!();
+    }
+    current = '';
+    // Topology changes can leave earlier specializations cached but unreachable.
+    const byId = new Map([...variants.values()].map((v) => [v.id, v]));
+    const reachable = new Set<string>();
+    const visit = (id: string): void => {
+        if (reachable.has(id)) return;
+        const v = byId.get(id);
+        if (!v) return;
+        reachable.add(id);
+        v.calls.forEach((c) => (c.targets ?? [c.target]).forEach(visit));
+    };
+    entries.forEach((e) => e.calls.forEach((c) => (c.targets ?? [c.target]).forEach(visit)));
+    const finalExports = exports.filter(Boolean);
+    finalExports.forEach((e) => visit(e.variant));
     const analysis: RepresentationAnalysis = {
         schemaVersion: 1,
         layoutDefinitions: layouts.definitions,
         roots,
         entries,
-        exports,
+        exports: finalExports,
         variants: [...variants.values()]
+            .filter((v) => reachable.has(v.id))
             .map((v) => ({ ...v, result: v.result ?? fail('Unsolved variant result') }))
             .sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0)),
         callables: [...callableTypes.keys()].sort().map((type) => ({
