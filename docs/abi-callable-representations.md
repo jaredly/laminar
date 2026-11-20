@@ -1,9 +1,9 @@
 # Design: ABI-keyed callable representations
 
-Status: **accepted direction, not yet implemented** (2026-11-20). This replaces the
-identity-precise callable model that phase 6 of the
-[C codegen plan](c-codegen-plan.md) has been extending. Implementation follows the
-migration plan below; until then the current analysis stays in place.
+Status: **migration in progress; M0 and M1 implemented** (2026-11-20). This replaces
+the identity-precise callable model that phase 6 of the
+[C codegen plan](c-codegen-plan.md) has been extending. The migration plan and
+progress notes below track the remaining work.
 
 ## Summary
 
@@ -399,3 +399,66 @@ intermediate states prove awkward, as long as each still passes the corpus.
    one layout, so it should.
 5. **Host exports of callables.** An exported callable must declare the ABIs it
    supports. This fits the existing explicit export contract, but needs a test.
+
+## Migration progress
+
+### M0: corpus freeze (`67b5781`)
+
+The three expected-to-pass programs are recorded in
+`test/backend/abi-migration-samples.ts` and run through typed IR, the legacy
+reference, concrete verification, C emission and (once enabled) native/Wasm.
+
+### M1: type-determined callables with whole-program member sets
+
+- **Representation.** A callable value is `{ kind: 'callable', type }`. Lambdas,
+  definitions and natives are `CallableMember`s with type-determined captures, listed
+  per type in `RepresentationAnalysis.callables`. `native` and `callable-choice` are
+  no longer value representations.
+- **Known code.** A `global`/`closure` value used only as an immediate callee stays a
+  direct call to its exact variant. Any other use escapes, and the member joins its
+  type's set (`src/callable-escape.ts`, shared with the verifier). A native that is the
+  only member of its type is also called directly, because it is lowered as an
+  intrinsic.
+- **Indirect calls** dispatch over every member of the callee's type at the call's
+  ABI. The analysis runs whole-program passes until the member sets stop growing; an
+  in-progress recursive lens result contributes in the next pass.
+- **Verification.** The representation verifier derives escaping members
+  independently, requires them to equal the listed sets, and checks direct-call
+  callees and dispatch targets.
+- **Concrete lowering.** Concrete lowering builds one record per callable type, with
+  dispatch entries for its indirect-call ABIs. Member records reuse the type's layout
+  and entry order, so joins are moves. The `callableJoin` and callable `adapt-result`
+  adapters are gone. Direct calls invoke the member's exact wrapper; the `invoke`
+  instruction then has no `field`, and C and Go call the wrapper's function. Record
+  identities derive from group keys, and the type's layout follows from its entry ABIs
+  alone, so member environments can capture values of their own type.
+- **Results.** All three migration programs now compile and verify: `nest`, scattered
+  dispatch with differing installed closures, and alternating-input recursion. The
+  last two were scheduled for M3 and M4 but follow from type-determined contracts.
+
+**Retired internal tests (66).** All forge, or look up, distinctions that only existed
+between callable identities:
+
+- callable endpoint provenance forgeries;
+- `callable-choice` analysis and join adapters;
+- callable storage, aggregate and selected-lens storage join adapters;
+- deferred cleanup descriptor transitions and post-cleanup joins;
+- demand-identity variants;
+- `adapt-result` and dispatch focus-argument adapters;
+- boundary tests whose programs now compile.
+
+Rewritten tests check the ABI-model equivalents: one entry per call ABI on a type
+record, direct versus record calls, member-set provenance, and forged native members.
+Printed IR and C expectations were regenerated; known calls now name their code
+directly.
+
+The focus endpoint machinery (`local-focus`, demands and routing) still runs on
+type-determined representations; M2 removes it.
+
+**Validation (2026-11-20).** `npx tsc --noEmit -p .` passes. `bun test` reports
+1,429 passed, 1,293 skipped and the one pre-existing source-identity snapshot
+failure (`can show original identities and source origins for debugging`); that
+snapshot was not updated. `LAMINAR_EXEC=1 bun test test/c/execute.test.ts` passes
+all 1,254 native/Wasm cases (4,379 assertions, 479.43 seconds), including the four
+native dynamic lens result cases fixed by reifying native adapter sources in C.
+`git diff --check` is clean.

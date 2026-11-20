@@ -181,11 +181,17 @@ export function lowerC(program: ConcreteProgram): TranslationUnit {
             w.kind === 'dispatch' ? w.targets.map((t) => t.callable) : [],
         ),
     );
-    const nativeEntries = new Set(
-        program.callables
+    const nativeEntries = new Set([
+        ...program.callables
             .filter((c) => nativeMembers.has(c.id) && c.descriptor.kind === 'native')
             .flatMap((c) => c.entries.map((e) => e.wrapper)),
-    );
+        // Adapters (result or argument staging) call their native source directly.
+        ...program.wrappers.flatMap((w) =>
+            'source' in w && program.wrappers.some((x) => x.id === w.source && x.kind === 'native')
+                ? [w.source]
+                : [],
+        ),
+    ]);
     const nativeCodes = new Map<string, string>();
     for (const w of program.wrappers) {
         if (w.kind !== 'native' || !nativeEntries.has(w.id)) continue;
@@ -1163,14 +1169,17 @@ export function lowerC(program: ConcreteProgram): TranslationUnit {
                         continue;
                     }
                     case 'invoke': {
-                        const callable =
-                            program.callables.find(
+                        // An indirect call goes through the callee record's entry; a
+                        // direct call invokes its known member's wrapper itself.
+                        if (
+                            i.field !== undefined &&
+                            !program.callables.some(
                                 (x) =>
                                     x.layout === outputLayouts.get(i.callee) &&
                                     x.entries.some((e) => e.wrapper === i.wrapper),
-                            ) ?? unsupported('Missing callable storage contract');
-                        if (!callable.entries.some((e) => e.wrapper === i.wrapper))
-                            unsupported('Invalid callable entry');
+                            )
+                        )
+                            unsupported('Missing callable storage contract');
                         const w = program.wrappers.find((w) => w.id === i.wrapper)!;
                         const abi = program.abis.find((a) => a.id === i.abi)!;
                         const isLens = layout(id).fields.some((f) => f.name === 'restore');
@@ -1203,7 +1212,10 @@ export function lowerC(program: ConcreteProgram): TranslationUnit {
                                 w.kind === 'adapt-aggregate-result' ||
                                 w.kind === 'adapt-lens-result'
                             )
-                                expr = `(${value(i.callee)}).${identifier(i.field)}((${value(i.callee)}).environment${args.map((a) => `, ${a}`).join('')})`;
+                                expr =
+                                    i.field === undefined
+                                        ? `${wrapperFunction(i.wrapper)}((${value(i.callee)}).environment${args.map((a) => `, ${a}`).join('')})`
+                                        : `(${value(i.callee)}).${identifier(i.field)}((${value(i.callee)}).environment${args.map((a) => `, ${a}`).join('')})`;
                             else if (w.kind === 'native') {
                                 const op = w.definition.slice(7);
                                 if (['+', '-', '*', '/', '==', '>=', '<='].includes(op))

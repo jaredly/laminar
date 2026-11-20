@@ -1,4 +1,4 @@
-import type { ValueRepresentation } from './infer-representations.ts';
+import type { CallableMember, ValueRepresentation } from './infer-representations.ts';
 /** Canonical field order, including nested callable environments, for cache identities. */
 export function representationKey(v: ValueRepresentation): string {
     switch (v.kind) {
@@ -31,19 +31,18 @@ export function representationKey(v: ValueRepresentation): string {
             });
         case 'lens':
             return JSON.stringify({ kind: 'lens', shape: v.shape });
-        case 'native':
-            return JSON.stringify({ kind: 'native', definition: v.definition });
-        case 'callable-choice':
-            return JSON.stringify({
-                kind: v.kind,
-                options: v.options.map((c) => JSON.parse(representationKey(c))),
-            });
         case 'callable':
-            return JSON.stringify({
-                kind: 'callable',
-                unit: v.unit,
-                function: v.function,
-                captures: v.captures.map((c) => JSON.parse(representationKey(c))),
-            });
+            return JSON.stringify({ kind: 'callable', type: v.type });
     }
+}
+/** Canonical identity of a callable member (closure code with captures, or a native). */
+export function memberKey(m: CallableMember): string {
+    return m.kind === 'native'
+        ? JSON.stringify({ kind: 'native', definition: m.definition })
+        : JSON.stringify({
+              kind: 'closure',
+              unit: m.unit,
+              function: m.function,
+              captures: m.captures.map((c) => JSON.parse(representationKey(c))),
+          });
 }

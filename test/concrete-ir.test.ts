@@ -42,26 +42,25 @@ it('emits wrappers for first-class and higher-order function values', () => {
     expect(p.wrappers.filter((w) => w.kind === 'invoke')).toHaveLength(2);
     const ops = p.code.flatMap((c) => instructions(c.body));
     expect(ops.some((i) => i.op === 'make-callable')).toBe(true);
-    expect(
-        ops
-            .filter((i) => i.op === 'invoke')
-            .every((i) => i.op === 'invoke' && !!i.callee && !!i.field),
-    ).toBe(true);
+    const invokes = ops.filter((i) => i.op === 'invoke');
+    // `apply(id, 1)` calls known code directly; `f(x)` goes through f's type record.
+    expect(invokes.some((i) => i.op === 'invoke' && !i.field)).toBe(true);
+    expect(invokes.some((i) => i.op === 'invoke' && !!i.field)).toBe(true);
 });
-it('gives identical semantic types distinct thin/scattered invocation slots', () => {
+it('gives identical semantic types distinct thin/scattered call ABIs', () => {
     const p = compile(
         'fn inc(~(x, y)) {x := x + 1}\n{let pair = (1, 2)\n let a = 1\n let b = 2\n inc(~pair)\n inc(~(a, b))\n (pair, a, b)}',
     );
-    const c = p.callables.find((c) => c.descriptor.kind === 'callable')!;
-    expect(c.entries).toHaveLength(2);
-    expect(c.entries[0]!.abi).not.toBe(c.entries[1]!.abi);
+    const invokes = p.wrappers.filter((w) => w.kind === 'invoke');
+    expect(invokes).toHaveLength(2);
+    expect(invokes[0]!.abi).not.toBe(invokes[1]!.abi);
 });
 it('uses disposal-only callable storage when invocation is unreachable', () => {
     const p = compile('{let x = 1\n let f = fn (()) x\n 2}');
-    expect(p.callables).toHaveLength(1);
-    expect(p.callables[0]!.entries).toHaveLength(0);
-    expect(p.wrappers).toHaveLength(1);
-    expect(p.wrappers[0]!.kind).toBe('dispose');
+    // The closure's type record and its member record, neither invoked.
+    expect(p.callables).toHaveLength(2);
+    expect(p.callables.every((c) => c.entries.length === 0)).toBe(true);
+    expect(p.wrappers.every((w) => w.kind === 'dispose')).toBe(true);
     expect(p.code).toHaveLength(1);
 });
 it('resolves recursive code and all forward declarations', () => {
@@ -250,7 +249,10 @@ it('compiles an explicit generic scalar function entry', () => {
 });
 it('gives returned closures typed wrappers and environment layouts', () => {
     const p = compile('fn make(x) {fn (y) {x + y}}\n{let f = make(1)\n f(2)}');
-    expect(p.callables.filter((c) => c.descriptor.kind === 'callable')).toHaveLength(2);
+    // The returned closure is a member of its type, with one entry for `f(2)`.
+    expect(
+        p.callables.filter((c) => c.descriptor.kind === 'closure' && c.entries.length === 1),
+    ).toHaveLength(1);
     expect(p.wrappers.filter((w) => w.kind === 'invoke')).toHaveLength(2);
     expect(p.code.some((c) => c.captures.length === 1)).toBe(true);
 });

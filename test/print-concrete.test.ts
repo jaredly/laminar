@@ -30,7 +30,7 @@ it('prints generic variants with compact cross-references through lexer nodes', 
       toolchain emscripten "test" features ()
       entries (entry0)
       forward {
-          layouts (L0, L1, L2, L3, L4, L5, L6)
+          layouts (L0, L1, L2, L3, L4, L5)
           abis (abi0, abi1, abi2, abi3)
           code (id0, id1, entry0)
       }
@@ -42,14 +42,8 @@ it('prints generic variants with compact cross-references through lexer nodes', 
           L4 = record callable {
               environment: ptr<void>
               dispose: code<abi3>
-              invoke0: code<abi1>
           }
-          L5 = record callable {
-              environment: ptr<void>
-              dispose: code<abi3>
-              invoke0: code<abi0>
-          }
-          L6 = record {
+          L5 = record {
               item0: L3
               item1: L1
           }
@@ -57,24 +51,22 @@ it('prints generic variants with compact cross-references through lexer nodes', 
       abis {
           abi0 = (env: ptr<void>, L1) -> L1
           abi1 = (env: ptr<void>, L3) -> L3
-          abi2 = (env: ptr<void>) -> L6
+          abi2 = (env: ptr<void>) -> L5
           abi3 = (env: ptr<void>) -> L0
       }
       wrappers {
           wrap0 : abi3 env L2 = dispose () drop-captures-and-free
-          wrap1 : abi1 env L2 = invoke id0 transfer-captures-and-free
-          wrap2 : abi0 env L2 = invoke id1 transfer-captures-and-free
+          wrap1 : abi0 env L2 = invoke id1 transfer-captures-and-free
+          wrap2 : abi3 env L2 = dispose () drop-captures-and-free
           wrap3 : abi3 env L2 = dispose () drop-captures-and-free
+          wrap4 : abi3 env L2 = dispose () drop-captures-and-free
+          wrap5 : abi1 env L2 = invoke id0 transfer-captures-and-free
       }
       callables {
-          callable0 : L4 env L2 {
-              dispose wrap0
-              invoke0 = wrap1 : abi1
-          }
-          callable1 : L5 env L2 {
-              dispose wrap3
-              invoke0 = wrap2 : abi0
-          }
+          callable0 : L4 env L2 {dispose wrap2}
+          callable1 : L4 env L2 {dispose wrap3}
+          callable2 : L4 env L2 {dispose wrap0}
+          callable3 : L4 env L2 {dispose wrap4}
       }
       fn id0($x: L3) : abi1 env L2 {
           %0: L3 = move $x
@@ -89,12 +81,12 @@ it('prints generic variants with compact cross-references through lexer nodes', 
       fn entry0() : abi2 env L0 {
           %0: L4 = make-callable callable0 {}
           %1: L3 = 1
-          %2: L3 = %0.invoke0(%1) via wrap1 : abi1
-          %3: L5 = make-callable callable1 {}
+          %2: L3 = %0(%1) via wrap5 : abi1
+          %3: L4 = make-callable callable2 {}
           %4: L1 = true
-          %5: L1 = %3.invoke0(%4) via wrap2 : abi0
-          %6: L6 = (%2, %5)
-          return %6 : L6
+          %5: L1 = %3(%4) via wrap1 : abi0
+          %6: L5 = (%2, %5)
+          return %6 : L5
       }"
     `);
 });
@@ -109,89 +101,87 @@ it('prints nested lens topology, loans, and deferred restoration cleanup', () =>
       toolchain emscripten "test" features ()
       entries (entry0)
       forward {
-          layouts (L0, L3, L5, L6, L4, L1, L7, L8, L9, L2)
+          layouts (L2, L4, L5, L3, L0, L6, L7, L8, L1, L9)
           abis (abi0, abi1, abi2, abi3, abi4)
           code (first0, entry0)
       }
       layouts {
-          L0 = record callable {
-              environment: ptr<void>
-              dispose: code<abi3>
-              invoke0: code<abi1>
+          L0 = bool
+          L1 = f64
+          L2 = record {
+              item0: L0
+              item1: L1
           }
-          L1 = bool
-          L2 = f64
           L3 = record {
               item0: L1
-              item1: L2
+              item1: L1
           }
           L4 = record {
-              item0: L2
-              item1: L2
+              item0: L3
+              item1: L1
           }
-          L5 = record {
-              item0: L4
-              item1: L2
-          }
-          L6 = unit
-          L7 = record thin {
-              read: ptr<L4>
-              replacement: ptr<L1>
+          L5 = unit
+          L6 = record thin {
+              read: ptr<L3>
+              replacement: ptr<L0>
               restore: code<abi4>
               context: ptr<void>
           }
-          L8 = record environment
-          L9 = record thin {
-              read: ptr<L5>
-              replacement: ptr<L3>
+          L7 = record environment
+          L8 = record thin {
+              read: ptr<L4>
+              replacement: ptr<L2>
               restore: code<abi0>
               context: ptr<void>
           }
+          L9 = record callable {
+              environment: ptr<void>
+              dispose: code<abi3>
+          }
       }
       abis {
-          abi0 = (env: ptr<void>, L3) -> L6
-          abi1 = (env: ptr<void>, L9) -> L7
-          abi2 = (env: ptr<void>) -> L3
-          abi3 = (env: ptr<void>) -> L6
-          abi4 = (env: ptr<void>, L1) -> L6
+          abi0 = (env: ptr<void>, L2) -> L5
+          abi1 = (env: ptr<void>, L8) -> L6
+          abi2 = (env: ptr<void>) -> L2
+          abi3 = (env: ptr<void>) -> L5
+          abi4 = (env: ptr<void>, L0) -> L5
       }
       wrappers {
-          wrap0 : abi3 env L8 = dispose () drop-captures-and-free
-          wrap1 : abi1 env L8 = invoke first0 transfer-captures-and-free
+          wrap0 : abi3 env L7 = dispose () drop-captures-and-free
+          wrap1 : abi1 env L7 = invoke first0 transfer-captures-and-free
+          wrap2 : abi3 env L7 = dispose () drop-captures-and-free
       }
       callables {
-          callable0 : L0 env L8 {
-              dispose wrap0
-              invoke0 = wrap1 : abi1
-          }
+          callable0 : L9 env L7 {dispose wrap0}
+          callable1 : L9 env L7 {dispose wrap2}
       }
-      fn first0(lens $p0 ($p0.0, $p0.1): L9) : abi1 env L8 {
-          %0: L7 = acquire $p0.0
-          return %0 : L7
+      fn first0(lens $p0 ($p0.0, $p0.1): L8) : abi1 env L7 {
+          %0: L6 = acquire $p0.0
+          return %0 : L6
           cleanup after-restore {restored $p0 : (Bool, Number)}
       }
-      fn entry0() : abi2 env L6 {
-          %0: L2 = 1
-          %1: L2 = 2
-          %2: L4 = (%0, %1)
-          %3: L2 = 3
-          %4: L5 = (%2, %3)
-          %5: L3 = scope {
+      fn entry0() : abi2 env L5 {
+          %0: L1 = 1
+          %1: L1 = 2
+          %2: L3 = (%0, %1)
+          %3: L1 = 3
+          %4: L4 = (%2, %3)
+          %5: L2 = scope {
               bind $pair = %4
-              %6: L9 = acquire $pair
-              %7: L0 = make-callable callable0 {}
-              %8: L7 = %7.invoke0(%6) via wrap1 : abi1
-              %9: L1 = true
-              %10: L4 = swap(%8, %9)
-              %11: L3 = scope {
+              %6: L8 = acquire $pair
+              %7: L9 = make-callable callable1 {}
+              %8: L6 = %7(%6) via wrap1 : abi1
+              %9: L0 = true
+              %10: L3 = swap(%8, %9)
+              %11: L2 = scope {
                   bind _ = %10
-                  %12: L3 = move $pair
-                  return %12 : L3
+                  %12: L2 = move $pair
+                  return %12 : L2
               }
-              return %11 : L3
+              return %11 : L2
               cleanup {drop $pair}
           }
-          return %5 : L3
+          return %5 : L2
       }"
     `);
     const alias = printConcreteProgram(compile('{let x = 1\n {let y = ~x\n y := 2}\n x}'));
@@ -253,7 +243,7 @@ it('prints captures and disposer contracts for affine closures', () => {
       toolchain emscripten "test" features ()
       entries (entry0)
       forward {
-          layouts (L0, L1, L3, L2)
+          layouts (L0, L1, L2, L4, L3)
           abis (abi0, abi1, abi2)
           code (lambda0, entry0)
       }
@@ -264,47 +254,54 @@ it('prints captures and disposer contracts for affine closures', () => {
               invoke0: code<abi0>
           }
           L1 = unit
-          L2 = f64
-          L3 = record environment {capture0: L2}
+          L2 = record environment
+          L3 = f64
+          L4 = record environment {capture0: L3}
       }
       abis {
-          abi0 = (env: ptr<void>, L1) -> L2
+          abi0 = (env: ptr<void>, L1) -> L3
           abi1 = (env: ptr<void>) -> L1
-          abi2 = (env: ptr<void>) -> L2
+          abi2 = (env: ptr<void>) -> L3
       }
       wrappers {
-          wrap0 : abi0 env L3 = invoke lambda0 transfer-captures-and-free
-          wrap1 : abi1 env L3 = dispose (L2) drop-captures-and-free
+          wrap0 : abi0 env L4 = invoke lambda0 transfer-captures-and-free
+          wrap1 : abi0 env L2 = dispatch (callable0 wrap0) selected-environment
+          wrap2 : abi1 env L4 = dispose (L3) drop-captures-and-free
+          wrap3 : abi1 env L2 = dispose () drop-captures-and-free
       }
       callables {
-          callable0 : L0 env L3 {
-              dispose wrap1
+          callable0 : L0 env L4 {
+              dispose wrap2
               invoke0 = wrap0 : abi0
           }
+          callable1 : L0 env L2 {
+              dispose wrap3
+              invoke0 = wrap1 : abi0
+          }
       }
-      fn lambda0((): L1) : abi0 env L3 captures (capture0 $x: L2) {
-          %0: L2 = move $x
-          return %0 : L2
+      fn lambda0((): L1) : abi0 env L4 captures (capture0 $x: L3) {
+          %0: L3 = move $x
+          return %0 : L3
           cleanup {drop $x}
       }
       fn entry0() : abi2 env L1 {
-          %0: L2 = 1
-          %1: L2 = scope {
+          %0: L3 = 1
+          %1: L3 = scope {
               bind $x = %0
-              %2: L2 = move $x
+              %2: L3 = move $x
               %3: L0 = make-callable callable0 {capture0 <- %2}
-              %4: L2 = scope {
+              %4: L3 = scope {
                   bind $f = %3
                   %5: L0 = move $f
                   %6: L1 = ()
-                  %7: L2 = %5.invoke0(%6) via wrap0 : abi0
-                  return %7 : L2
+                  %7: L3 = %5.invoke0(%6) via wrap1 : abi0
+                  return %7 : L3
                   cleanup {drop $f}
               }
-              return %4 : L2
+              return %4 : L3
               cleanup {drop $x}
           }
-          return %1 : L2
+          return %1 : L3
       }"
     `);
 });
@@ -328,7 +325,6 @@ it('prints all concrete instructions: scalar', () => {
           L3 = record callable {
               environment: ptr<void>
               dispose: code<abi1>
-              invoke0: code<abi0>
           }
       }
       abis {
@@ -337,23 +333,22 @@ it('prints all concrete instructions: scalar', () => {
           abi2 = (env: ptr<void>) -> L2
       }
       wrappers {
-          wrap0 : abi0 env L1 = native "native/+" no-environment
+          wrap0 : abi1 env L1 = dispose () drop-captures-and-free
           wrap1 : abi1 env L1 = dispose () drop-captures-and-free
+          wrap2 : abi0 env L1 = native "native/+" no-environment
       }
       callables {
-          callable0 : L3 env L1 {
-              dispose wrap1
-              invoke0 = wrap0 : abi0
-          }
+          callable0 : L3 env L1 {dispose wrap1}
+          callable1 : L3 env L1 {dispose wrap0}
       }
       fn entry0() : abi2 env L0 {
           %0: L2 = 1
           %1: L2 = scope {
               bind $x = %0
-              %2: L3 = make-callable callable0 {}
+              %2: L3 = make-callable callable1 {}
               %3: L2 = move $x
               %4: L2 = 2
-              %5: L2 = %2.invoke0(%3, %4) via wrap0 : abi0
+              %5: L2 = %2(%3, %4) via wrap2 : abi0
               return %5 : L2
               cleanup {drop $x}
           }
@@ -407,7 +402,7 @@ it('prints all concrete instructions: generic-calls', () => {
       toolchain emscripten "test" features ()
       entries (entry0)
       forward {
-          layouts (L0, L1, L2, L3, L4, L5, L6)
+          layouts (L0, L1, L2, L3, L4, L5)
           abis (abi0, abi1, abi2, abi3)
           code (id0, id1, entry0)
       }
@@ -419,14 +414,8 @@ it('prints all concrete instructions: generic-calls', () => {
           L4 = record callable {
               environment: ptr<void>
               dispose: code<abi3>
-              invoke0: code<abi1>
           }
-          L5 = record callable {
-              environment: ptr<void>
-              dispose: code<abi3>
-              invoke0: code<abi0>
-          }
-          L6 = record {
+          L5 = record {
               item0: L3
               item1: L1
           }
@@ -434,24 +423,22 @@ it('prints all concrete instructions: generic-calls', () => {
       abis {
           abi0 = (env: ptr<void>, L1) -> L1
           abi1 = (env: ptr<void>, L3) -> L3
-          abi2 = (env: ptr<void>) -> L6
+          abi2 = (env: ptr<void>) -> L5
           abi3 = (env: ptr<void>) -> L0
       }
       wrappers {
           wrap0 : abi3 env L2 = dispose () drop-captures-and-free
-          wrap1 : abi1 env L2 = invoke id0 transfer-captures-and-free
-          wrap2 : abi0 env L2 = invoke id1 transfer-captures-and-free
+          wrap1 : abi0 env L2 = invoke id1 transfer-captures-and-free
+          wrap2 : abi3 env L2 = dispose () drop-captures-and-free
           wrap3 : abi3 env L2 = dispose () drop-captures-and-free
+          wrap4 : abi3 env L2 = dispose () drop-captures-and-free
+          wrap5 : abi1 env L2 = invoke id0 transfer-captures-and-free
       }
       callables {
-          callable0 : L4 env L2 {
-              dispose wrap0
-              invoke0 = wrap1 : abi1
-          }
-          callable1 : L5 env L2 {
-              dispose wrap3
-              invoke0 = wrap2 : abi0
-          }
+          callable0 : L4 env L2 {dispose wrap2}
+          callable1 : L4 env L2 {dispose wrap3}
+          callable2 : L4 env L2 {dispose wrap0}
+          callable3 : L4 env L2 {dispose wrap4}
       }
       fn id0($x: L3) : abi1 env L2 {
           %0: L3 = move $x
@@ -466,12 +453,12 @@ it('prints all concrete instructions: generic-calls', () => {
       fn entry0() : abi2 env L0 {
           %0: L4 = make-callable callable0 {}
           %1: L3 = 1
-          %2: L3 = %0.invoke0(%1) via wrap1 : abi1
-          %3: L5 = make-callable callable1 {}
+          %2: L3 = %0(%1) via wrap5 : abi1
+          %3: L4 = make-callable callable2 {}
           %4: L1 = true
-          %5: L1 = %3.invoke0(%4) via wrap2 : abi0
-          %6: L6 = (%2, %5)
-          return %6 : L6
+          %5: L1 = %3(%4) via wrap1 : abi0
+          %6: L5 = (%2, %5)
+          return %6 : L5
       }"
     `);
     expect(JSON.stringify(p)).toBe(before);
@@ -496,7 +483,6 @@ it('prints all concrete instructions: annotated-generic', () => {
           L3 = record callable {
               environment: ptr<void>
               dispose: code<abi1>
-              invoke0: code<abi0>
           }
       }
       abis {
@@ -505,14 +491,13 @@ it('prints all concrete instructions: annotated-generic', () => {
           abi2 = (env: ptr<void>) -> L2
       }
       wrappers {
-          wrap0 : abi0 env L1 = invoke id0 transfer-captures-and-free
-          wrap1 : abi1 env L1 = dispose () drop-captures-and-free
+          wrap0 : abi1 env L1 = dispose () drop-captures-and-free
+          wrap1 : abi0 env L1 = invoke id0 transfer-captures-and-free
+          wrap2 : abi1 env L1 = dispose () drop-captures-and-free
       }
       callables {
-          callable0 : L3 env L1 {
-              dispose wrap1
-              invoke0 = wrap0 : abi0
-          }
+          callable0 : L3 env L1 {dispose wrap0}
+          callable1 : L3 env L1 {dispose wrap2}
       }
       fn id0($x: L2) : abi0 env L1 {
           %0: L2 = move $x
@@ -522,7 +507,7 @@ it('prints all concrete instructions: annotated-generic', () => {
       fn entry0() : abi2 env L0 {
           %0: L3 = make-callable callable0 {}
           %1: L2 = 2
-          %2: L2 = %0.invoke0(%1) via wrap0 : abi0
+          %2: L2 = %0(%1) via wrap1 : abi0
           return %2 : L2
       }"
     `);
@@ -548,7 +533,6 @@ it('prints all concrete instructions: narrow-contract', () => {
           L3 = record callable {
               environment: ptr<void>
               dispose: code<abi1>
-              invoke0: code<abi0>
           }
       }
       abis {
@@ -558,13 +542,12 @@ it('prints all concrete instructions: narrow-contract', () => {
       }
       wrappers {
           wrap0 : abi1 env L1 = dispose () drop-captures-and-free
-          wrap1 : abi0 env L1 = invoke id0 transfer-captures-and-free
+          wrap1 : abi1 env L1 = dispose () drop-captures-and-free
+          wrap2 : abi0 env L1 = invoke id0 transfer-captures-and-free
       }
       callables {
-          callable0 : L3 env L1 {
-              dispose wrap0
-              invoke0 = wrap1 : abi0
-          }
+          callable0 : L3 env L1 {dispose wrap1}
+          callable1 : L3 env L1 {dispose wrap0}
       }
       fn id0($x: L2) : abi0 env L1 {
           %0: L2 = move $x
@@ -574,7 +557,7 @@ it('prints all concrete instructions: narrow-contract', () => {
       fn entry0() : abi2 env L0 {
           %0: L3 = make-callable callable0 {}
           %1: L2 = 2
-          %2: L2 = %0.invoke0(%1) via wrap1 : abi0
+          %2: L2 = %0(%1) via wrap2 : abi0
           return %2 : L2
       }"
     `);
@@ -589,85 +572,77 @@ it('prints all concrete instructions: thin-update', () => {
       toolchain emscripten "test" features ()
       entries (entry0)
       forward {
-          layouts (L0, L1, L2, L3, L4, L5, L6)
+          layouts (L0, L1, L2, L3, L4, L5)
           abis (abi0, abi1, abi2, abi3, abi4)
           code (inc0, entry0)
       }
       layouts {
-          L0 = record callable {
-              environment: ptr<void>
-              dispose: code<abi2>
-              invoke0: code<abi4>
-          }
-          L1 = unit
-          L2 = record environment
-          L3 = record thin {
-              read: ptr<L1>
-              replacement: ptr<L4>
+          L0 = unit
+          L1 = record environment
+          L2 = record thin {
+              read: ptr<L0>
+              replacement: ptr<L3>
               restore: code<abi0>
               context: ptr<void>
           }
-          L4 = f64
+          L3 = f64
+          L4 = record thin {
+              read: ptr<L3>
+              restore: code<abi0>
+              context: ptr<void>
+          }
           L5 = record callable {
               environment: ptr<void>
               dispose: code<abi2>
-              invoke0: code<abi1>
-          }
-          L6 = record thin {
-              read: ptr<L4>
-              restore: code<abi0>
-              context: ptr<void>
           }
       }
       abis {
-          abi0 = (env: ptr<void>, L4) -> L1
-          abi1 = (env: ptr<void>, L4, L4) -> L4
-          abi2 = (env: ptr<void>) -> L1
-          abi3 = (env: ptr<void>) -> L4
-          abi4 = (env: ptr<void>, L6) -> L1
+          abi0 = (env: ptr<void>, L3) -> L0
+          abi1 = (env: ptr<void>, L3, L3) -> L3
+          abi2 = (env: ptr<void>) -> L0
+          abi3 = (env: ptr<void>) -> L3
+          abi4 = (env: ptr<void>, L4) -> L0
       }
       wrappers {
-          wrap0 : abi1 env L2 = native "native/+" no-environment
-          wrap1 : abi4 env L2 = invoke inc0 transfer-captures-and-free
-          wrap2 : abi2 env L2 = dispose () drop-captures-and-free
-          wrap3 : abi2 env L2 = dispose () drop-captures-and-free
+          wrap0 : abi2 env L1 = dispose () drop-captures-and-free
+          wrap1 : abi2 env L1 = dispose () drop-captures-and-free
+          wrap2 : abi2 env L1 = dispose () drop-captures-and-free
+          wrap3 : abi4 env L1 = invoke inc0 transfer-captures-and-free
+          wrap4 : abi1 env L1 = native "native/+" no-environment
+          wrap5 : abi2 env L1 = dispose () drop-captures-and-free
       }
       callables {
-          callable0 : L0 env L2 {
-              dispose wrap3
-              invoke0 = wrap1 : abi4
-          }
-          callable1 : L5 env L2 {
-              dispose wrap2
-              invoke0 = wrap0 : abi1
-          }
+          callable0 : L5 env L1 {dispose wrap2}
+          callable1 : L5 env L1 {dispose wrap5}
+          callable2 : L5 env L1 {dispose wrap1}
+          callable3 : L5 env L1 {dispose wrap0}
       }
-      fn inc0(lens $p0 $p0: L6) : abi4 env L2 {
-          %0: L3 = acquire $p0
-          %1: L5 = make-callable callable1 {}
-          %2: L4 = move $p0
-          %3: L4 = 1
-          %4: L4 = %1.invoke0(%2, %3) via wrap0 : abi1
-          %5: L1 = swap(%0, %4)
-          return %5 : L1
+      fn inc0(lens $p0 $p0: L4) : abi4 env L1 {
+          %0: L2 = acquire $p0
+          %1: L5 = make-callable callable3 {}
+          %2: L3 = move $p0
+          %3: L3 = 1
+          %4: L3 = %1(%2, %3) via wrap4 : abi1
+          %5: L0 = swap(%0, %4)
+          return %5 : L0
           cleanup {restored $p0 : Number}
       }
-      fn entry0() : abi3 env L1 {
-          %0: L4 = 1
-          %1: L4 = scope {
+      fn entry0() : abi3 env L0 {
+          %0: L3 = 1
+          %1: L3 = scope {
               bind $x = %0
-              %2: L6 = acquire $x
-              %3: L0 = make-callable callable0 {}
-              %4: L1 = %3.invoke0(%2) via wrap1 : abi4
-              %5: L4 = scope {
+              %2: L4 = acquire $x
+              %3: L5 = make-callable callable2 {}
+              %4: L0 = %3(%2) via wrap3 : abi4
+              %5: L3 = scope {
                   bind _ = %4
-                  %6: L4 = move $x
-                  return %6 : L4
+                  %6: L3 = move $x
+                  return %6 : L3
               }
-              return %5 : L4
+              return %5 : L3
               cleanup {drop $x}
           }
-          return %1 : L4
+          return %1 : L3
       }"
     `);
     expect(JSON.stringify(p)).toBe(before);
@@ -683,7 +658,7 @@ it('prints all concrete instructions: scattered-update', () => {
       toolchain emscripten "test" features ()
       entries (entry0)
       forward {
-          layouts (L1, L2, L4, L5, L6, L3, L7, L0, L8)
+          layouts (L1, L2, L4, L5, L6, L3, L0, L7)
           abis (abi0, abi1, abi2, abi3, abi4, abi5)
           code (inc0, entry0)
       }
@@ -715,12 +690,6 @@ it('prints all concrete instructions: scattered-update', () => {
           L7 = record callable {
               environment: ptr<void>
               dispose: code<abi4>
-              invoke0: code<abi1>
-          }
-          L8 = record callable {
-              environment: ptr<void>
-              dispose: code<abi4>
-              invoke0: code<abi5>
           }
       }
       abis {
@@ -732,27 +701,25 @@ it('prints all concrete instructions: scattered-update', () => {
           abi5 = (env: ptr<void>, L1) -> L2
       }
       wrappers {
-          wrap0 : abi1 env L5 = native "native/+" no-environment
-          wrap1 : abi4 env L5 = dispose () drop-captures-and-free
+          wrap0 : abi4 env L5 = dispose () drop-captures-and-free
+          wrap1 : abi5 env L5 = invoke inc0 transfer-captures-and-free
           wrap2 : abi4 env L5 = dispose () drop-captures-and-free
-          wrap3 : abi5 env L5 = invoke inc0 transfer-captures-and-free
+          wrap3 : abi1 env L5 = native "native/+" no-environment
+          wrap4 : abi4 env L5 = dispose () drop-captures-and-free
+          wrap5 : abi4 env L5 = dispose () drop-captures-and-free
       }
       callables {
-          callable0 : L7 env L5 {
-              dispose wrap2
-              invoke0 = wrap0 : abi1
-          }
-          callable1 : L8 env L5 {
-              dispose wrap1
-              invoke0 = wrap3 : abi5
-          }
+          callable0 : L7 env L5 {dispose wrap4}
+          callable1 : L7 env L5 {dispose wrap5}
+          callable2 : L7 env L5 {dispose wrap2}
+          callable3 : L7 env L5 {dispose wrap0}
       }
       fn inc0(lens $p0 ($p0.0, $p0.1): L1) : abi5 env L5 {
           %0: L6 = acquire $p0.0
-          %1: L7 = make-callable callable0 {}
+          %1: L7 = make-callable callable3 {}
           %2: L3 = move $p0.0
           %3: L3 = 1
-          %4: L3 = %1.invoke0(%2, %3) via wrap0 : abi1
+          %4: L3 = %1(%2, %3) via wrap3 : abi1
           %5: L2 = swap(%0, %4)
           return %5 : L2
           cleanup {restored $p0 : (Number, Number)}
@@ -767,8 +734,8 @@ it('prints all concrete instructions: scattered-update', () => {
                   %4: L0 = acquire $a
                   %5: L0 = acquire $b
                   %6: L1 = lens-tuple(%4, %5)
-                  %7: L8 = make-callable callable1 {}
-                  %8: L2 = %7.invoke0(%6) via wrap3 : abi5
+                  %7: L7 = make-callable callable1 {}
+                  %8: L2 = %7(%6) via wrap1 : abi5
                   %9: L4 = scope {
                       bind _ = %8
                       %10: L3 = move $a
@@ -796,92 +763,84 @@ it('prints all concrete instructions: thin-pair-update', () => {
       toolchain emscripten "test" features ()
       entries (entry0)
       forward {
-          layouts (L0, L1, L3, L4, L5, L6, L2, L7)
+          layouts (L0, L2, L3, L4, L5, L1, L6)
           abis (abi0, abi1, abi2, abi3, abi4, abi5)
           code (inc0, entry0)
       }
       layouts {
-          L0 = record callable {
-              environment: ptr<void>
-              dispose: code<abi5>
-              invoke0: code<abi0>
+          L0 = unit
+          L1 = f64
+          L2 = record {
+              item0: L1
+              item1: L1
           }
-          L1 = unit
-          L2 = f64
-          L3 = record {
-              item0: L2
-              item1: L2
-          }
-          L4 = record environment
-          L5 = record thin {
-              read: ptr<L1>
-              replacement: ptr<L2>
+          L3 = record environment
+          L4 = record thin {
+              read: ptr<L0>
+              replacement: ptr<L1>
               restore: code<abi1>
               context: ptr<void>
           }
-          L6 = record thin {
-              read: ptr<L3>
+          L5 = record thin {
+              read: ptr<L2>
               restore: code<abi4>
               context: ptr<void>
           }
-          L7 = record callable {
+          L6 = record callable {
               environment: ptr<void>
               dispose: code<abi5>
-              invoke0: code<abi2>
           }
       }
       abis {
-          abi0 = (env: ptr<void>, L6) -> L1
-          abi1 = (env: ptr<void>, L2) -> L1
-          abi2 = (env: ptr<void>, L2, L2) -> L2
-          abi3 = (env: ptr<void>) -> L3
-          abi4 = (env: ptr<void>, L3) -> L1
-          abi5 = (env: ptr<void>) -> L1
+          abi0 = (env: ptr<void>, L5) -> L0
+          abi1 = (env: ptr<void>, L1) -> L0
+          abi2 = (env: ptr<void>, L1, L1) -> L1
+          abi3 = (env: ptr<void>) -> L2
+          abi4 = (env: ptr<void>, L2) -> L0
+          abi5 = (env: ptr<void>) -> L0
       }
       wrappers {
-          wrap0 : abi5 env L4 = dispose () drop-captures-and-free
-          wrap1 : abi0 env L4 = invoke inc0 transfer-captures-and-free
-          wrap2 : abi5 env L4 = dispose () drop-captures-and-free
-          wrap3 : abi2 env L4 = native "native/+" no-environment
+          wrap0 : abi5 env L3 = dispose () drop-captures-and-free
+          wrap1 : abi5 env L3 = dispose () drop-captures-and-free
+          wrap2 : abi0 env L3 = invoke inc0 transfer-captures-and-free
+          wrap3 : abi5 env L3 = dispose () drop-captures-and-free
+          wrap4 : abi2 env L3 = native "native/+" no-environment
+          wrap5 : abi5 env L3 = dispose () drop-captures-and-free
       }
       callables {
-          callable0 : L7 env L4 {
-              dispose wrap2
-              invoke0 = wrap3 : abi2
-          }
-          callable1 : L0 env L4 {
-              dispose wrap0
-              invoke0 = wrap1 : abi0
-          }
+          callable0 : L6 env L3 {dispose wrap3}
+          callable1 : L6 env L3 {dispose wrap5}
+          callable2 : L6 env L3 {dispose wrap1}
+          callable3 : L6 env L3 {dispose wrap0}
       }
-      fn inc0(lens $p0 ($p0.0, $p0.1): L6) : abi0 env L4 {
-          %0: L5 = acquire $p0.0
-          %1: L7 = make-callable callable0 {}
-          %2: L2 = move $p0.0
-          %3: L2 = 1
-          %4: L2 = %1.invoke0(%2, %3) via wrap3 : abi2
-          %5: L1 = swap(%0, %4)
-          return %5 : L1
+      fn inc0(lens $p0 ($p0.0, $p0.1): L5) : abi0 env L3 {
+          %0: L4 = acquire $p0.0
+          %1: L6 = make-callable callable3 {}
+          %2: L1 = move $p0.0
+          %3: L1 = 1
+          %4: L1 = %1(%2, %3) via wrap4 : abi2
+          %5: L0 = swap(%0, %4)
+          return %5 : L0
           cleanup {restored $p0 : (Number, Number)}
       }
-      fn entry0() : abi3 env L1 {
-          %0: L2 = 1
-          %1: L2 = 2
-          %2: L3 = (%0, %1)
-          %3: L3 = scope {
+      fn entry0() : abi3 env L0 {
+          %0: L1 = 1
+          %1: L1 = 2
+          %2: L2 = (%0, %1)
+          %3: L2 = scope {
               bind $x = %2
-              %4: L6 = acquire $x
-              %5: L0 = make-callable callable1 {}
-              %6: L1 = %5.invoke0(%4) via wrap1 : abi0
-              %7: L3 = scope {
+              %4: L5 = acquire $x
+              %5: L6 = make-callable callable1 {}
+              %6: L0 = %5(%4) via wrap2 : abi0
+              %7: L2 = scope {
                   bind _ = %6
-                  %8: L3 = move $x
-                  return %8 : L3
+                  %8: L2 = move $x
+                  return %8 : L2
               }
-              return %7 : L3
+              return %7 : L2
               cleanup {drop $x}
           }
-          return %3 : L3
+          return %3 : L2
       }"
     `);
     expect(JSON.stringify(p)).toBe(before);
@@ -940,7 +899,7 @@ it('prints all concrete instructions: recursion', () => {
       toolchain emscripten "test" features ()
       entries (entry0)
       forward {
-          layouts (L0, L1, L2, L3, L4, L5, L6)
+          layouts (L0, L1, L2, L3, L4)
           abis (abi0, abi1, abi2, abi3, abi4, abi5)
           code (count0, entry0)
       }
@@ -948,61 +907,47 @@ it('prints all concrete instructions: recursion', () => {
           L0 = unit
           L1 = record environment
           L2 = f64
-          L3 = record callable {
-              environment: ptr<void>
-              dispose: code<abi4>
-              invoke0: code<abi2>
-          }
-          L4 = record callable {
-              environment: ptr<void>
-              dispose: code<abi4>
-              invoke0: code<abi0>
-          }
-          L5 = record thin {
+          L3 = record thin {
               read: ptr<L2>
               restore: code<abi1>
               context: ptr<void>
           }
-          L6 = record callable {
+          L4 = record callable {
               environment: ptr<void>
               dispose: code<abi4>
-              invoke0: code<abi3>
           }
       }
       abis {
           abi0 = (env: ptr<void>, L2) -> L2
           abi1 = (env: ptr<void>, L2) -> L0
           abi2 = (env: ptr<void>, L2, L2) -> L2
-          abi3 = (env: ptr<void>, L5) -> L2
+          abi3 = (env: ptr<void>, L3) -> L2
           abi4 = (env: ptr<void>) -> L0
           abi5 = (env: ptr<void>) -> L2
       }
       wrappers {
           wrap0 : abi4 env L1 = dispose () drop-captures-and-free
-          wrap1 : abi4 env L1 = dispose () drop-captures-and-free
+          wrap1 : abi3 env L1 = native "native/dup" no-environment
           wrap2 : abi0 env L1 = invoke count0 transfer-captures-and-free
-          wrap3 : abi4 env L1 = dispose () drop-captures-and-free
-          wrap4 : abi3 env L1 = native "native/dup" no-environment
-          wrap5 : abi2 env L1 = native "native/-" no-environment
+          wrap3 : abi2 env L1 = native "native/-" no-environment
+          wrap4 : abi4 env L1 = dispose () drop-captures-and-free
+          wrap5 : abi4 env L1 = dispose () drop-captures-and-free
+          wrap6 : abi4 env L1 = dispose () drop-captures-and-free
+          wrap7 : abi4 env L1 = dispose () drop-captures-and-free
+          wrap8 : abi4 env L1 = dispose () drop-captures-and-free
       }
       callables {
-          callable0 : L4 env L1 {
-              dispose wrap1
-              invoke0 = wrap2 : abi0
-          }
-          callable1 : L6 env L1 {
-              dispose wrap0
-              invoke0 = wrap4 : abi3
-          }
-          callable2 : L3 env L1 {
-              dispose wrap3
-              invoke0 = wrap5 : abi2
-          }
+          callable0 : L4 env L1 {dispose wrap0}
+          callable1 : L4 env L1 {dispose wrap5}
+          callable2 : L4 env L1 {dispose wrap7}
+          callable3 : L4 env L1 {dispose wrap6}
+          callable4 : L4 env L1 {dispose wrap8}
+          callable5 : L4 env L1 {dispose wrap4}
       }
       fn count0($n: L2) : abi0 env L1 {
-          %0: L5 = acquire $n
-          %1: L6 = make-callable callable1 {}
-          %2: L2 = %1.invoke0(%0) via wrap4 : abi3
+          %0: L3 = acquire $n
+          %1: L4 = make-callable callable2 {}
+          %2: L2 = %1(%0) via wrap1 : abi3
           %3: L2 = match %2 {
               0 -> {
                   %4: L2 = 0
@@ -1010,12 +955,12 @@ it('prints all concrete instructions: recursion', () => {
                   cleanup {drop $n}
               }
               _ -> {
-                  %5: L4 = make-callable callable0 {}
-                  %6: L3 = make-callable callable2 {}
+                  %5: L4 = make-callable callable3 {}
+                  %6: L4 = make-callable callable0 {}
                   %7: L2 = move $n
                   %8: L2 = 1
-                  %9: L2 = %6.invoke0(%7, %8) via wrap5 : abi2
-                  %10: L2 = %5.invoke0(%9) via wrap2 : abi0
+                  %9: L2 = %6(%7, %8) via wrap3 : abi2
+                  %10: L2 = %5(%9) via wrap2 : abi0
                   return %10 : L2
               }
           }
@@ -1023,9 +968,9 @@ it('prints all concrete instructions: recursion', () => {
           cleanup {drop $n}
       }
       fn entry0() : abi5 env L0 {
-          %0: L4 = make-callable callable0 {}
+          %0: L4 = make-callable callable3 {}
           %1: L2 = 3
-          %2: L2 = %0.invoke0(%1) via wrap2 : abi0
+          %2: L2 = %0(%1) via wrap2 : abi0
           return %2 : L2
       }"
     `);
@@ -1090,7 +1035,7 @@ it('prints all concrete instructions: returned-focus', () => {
       toolchain emscripten "test" features ()
       entries (entry0)
       forward {
-          layouts (L2, L3, L4, L5, L0, L6, L1, L7, L8)
+          layouts (L2, L3, L4, L0, L5, L1, L6, L7, L8)
           abis (abi0, abi1, abi2, abi3, abi4)
           code (entry0)
       }
@@ -1106,41 +1051,39 @@ it('prints all concrete instructions: returned-focus', () => {
               item0: L1
               item1: L1
           }
-          L5 = record callable {
-              environment: ptr<void>
-              dispose: code<abi2>
-              invoke0: code<abi3>
-          }
-          L6 = record environment
-          L7 = record thin {
+          L5 = record environment
+          L6 = record thin {
               read: ptr<L1>
               replacement: ptr<L0>
               restore: code<abi4>
               context: ptr<void>
           }
-          L8 = record thin {
+          L7 = record thin {
               read: ptr<L4>
               replacement: ptr<L2>
               restore: code<abi0>
               context: ptr<void>
+          }
+          L8 = record callable {
+              environment: ptr<void>
+              dispose: code<abi2>
           }
       }
       abis {
           abi0 = (env: ptr<void>, L2) -> L3
           abi1 = (env: ptr<void>) -> L2
           abi2 = (env: ptr<void>) -> L3
-          abi3 = (env: ptr<void>, L8) -> L7
+          abi3 = (env: ptr<void>, L7) -> L6
           abi4 = (env: ptr<void>, L0) -> L3
       }
       wrappers {
-          wrap0 : abi2 env L6 = dispose () drop-captures-and-free
-          wrap1 : abi3 env L6 = native "native/fst" no-environment
+          wrap0 : abi2 env L5 = dispose () drop-captures-and-free
+          wrap1 : abi2 env L5 = dispose () drop-captures-and-free
+          wrap2 : abi3 env L5 = native "native/fst" no-environment
       }
       callables {
-          callable0 : L5 env L6 {
-              dispose wrap0
-              invoke0 = wrap1 : abi3
-          }
+          callable0 : L8 env L5 {dispose wrap0}
+          callable1 : L8 env L5 {dispose wrap1}
       }
       fn entry0() : abi1 env L3 {
           %0: L1 = 1
@@ -1148,9 +1091,9 @@ it('prints all concrete instructions: returned-focus', () => {
           %2: L4 = (%0, %1)
           %3: L2 = scope {
               bind $x = %2
-              %4: L8 = acquire $x
-              %5: L5 = make-callable callable0 {}
-              %6: L7 = %5.invoke0(%4) via wrap1 : abi3
+              %4: L7 = acquire $x
+              %5: L8 = make-callable callable0 {}
+              %6: L6 = %5(%4) via wrap2 : abi3
               %7: L0 = true
               %8: L1 = swap(%6, %7)
               %9: L2 = scope {
@@ -1177,7 +1120,7 @@ it('prints all concrete instructions: nested-shape', () => {
       toolchain emscripten "test" features ()
       entries (entry0)
       forward {
-          layouts (L2, L3, L4, L0, L5, L6, L7, L1, L8, L9)
+          layouts (L2, L3, L4, L0, L5, L6, L1, L7, L8, L9)
           abis (abi0, abi1, abi2, abi3, abi4, abi5)
           code (set0, entry0)
       }
@@ -1200,19 +1143,18 @@ it('prints all concrete instructions: nested-shape', () => {
               context: ptr<void>
           }
           L6 = record environment
-          L7 = record callable {
-              environment: ptr<void>
-              dispose: code<abi4>
-              invoke0: code<abi3>
-          }
-          L8 = record thin {
+          L7 = record thin {
               read: ptr<L1>
               restore: code<abi0>
               context: ptr<void>
           }
+          L8 = record callable {
+              environment: ptr<void>
+              dispose: code<abi4>
+          }
           L9 = record scattered {
               item0: L5
-              item1: L8
+              item1: L7
               restore: code<abi1>
               context: ptr<void>
           }
@@ -1226,14 +1168,13 @@ it('prints all concrete instructions: nested-shape', () => {
           abi5 = (env: ptr<void>, L0) -> L3
       }
       wrappers {
-          wrap0 : abi3 env L6 = invoke set0 transfer-captures-and-free
+          wrap0 : abi4 env L6 = dispose () drop-captures-and-free
           wrap1 : abi4 env L6 = dispose () drop-captures-and-free
+          wrap2 : abi3 env L6 = invoke set0 transfer-captures-and-free
       }
       callables {
-          callable0 : L7 env L6 {
-              dispose wrap1
-              invoke0 = wrap0 : abi3
-          }
+          callable0 : L8 env L6 {dispose wrap0}
+          callable1 : L8 env L6 {dispose wrap1}
       }
       fn set0(lens $p0 ($p0.0, $p0.1): L9) : abi3 env L6 {
           %0: L5 = acquire $p0.0
@@ -1252,10 +1193,10 @@ it('prints all concrete instructions: nested-shape', () => {
               %5: L2 = scope {
                   bind $b = %4
                   %6: L5 = acquire $a
-                  %7: L8 = acquire $b
+                  %7: L7 = acquire $b
                   %8: L9 = lens-tuple(%6, %7)
-                  %9: L7 = make-callable callable0 {}
-                  %10: L4 = %9.invoke0(%8) via wrap0 : abi3
+                  %9: L8 = make-callable callable0 {}
+                  %10: L4 = %9(%8) via wrap2 : abi3
                   %11: L2 = scope {
                       bind _ = %10
                       %12: L0 = move $a
@@ -1283,7 +1224,7 @@ it('prints all concrete instructions: closure', () => {
       toolchain emscripten "test" features ()
       entries (entry0)
       forward {
-          layouts (L0, L1, L3, L2)
+          layouts (L0, L1, L2, L4, L3)
           abis (abi0, abi1, abi2)
           code (lambda0, entry0)
       }
@@ -1294,47 +1235,54 @@ it('prints all concrete instructions: closure', () => {
               invoke0: code<abi0>
           }
           L1 = unit
-          L2 = f64
-          L3 = record environment {capture0: L2}
+          L2 = record environment
+          L3 = f64
+          L4 = record environment {capture0: L3}
       }
       abis {
-          abi0 = (env: ptr<void>, L1) -> L2
+          abi0 = (env: ptr<void>, L1) -> L3
           abi1 = (env: ptr<void>) -> L1
-          abi2 = (env: ptr<void>) -> L2
+          abi2 = (env: ptr<void>) -> L3
       }
       wrappers {
-          wrap0 : abi0 env L3 = invoke lambda0 transfer-captures-and-free
-          wrap1 : abi1 env L3 = dispose (L2) drop-captures-and-free
+          wrap0 : abi0 env L4 = invoke lambda0 transfer-captures-and-free
+          wrap1 : abi0 env L2 = dispatch (callable0 wrap0) selected-environment
+          wrap2 : abi1 env L4 = dispose (L3) drop-captures-and-free
+          wrap3 : abi1 env L2 = dispose () drop-captures-and-free
       }
       callables {
-          callable0 : L0 env L3 {
-              dispose wrap1
+          callable0 : L0 env L4 {
+              dispose wrap2
               invoke0 = wrap0 : abi0
           }
+          callable1 : L0 env L2 {
+              dispose wrap3
+              invoke0 = wrap1 : abi0
+          }
       }
-      fn lambda0((): L1) : abi0 env L3 captures (capture0 $x: L2) {
-          %0: L2 = move $x
-          return %0 : L2
+      fn lambda0((): L1) : abi0 env L4 captures (capture0 $x: L3) {
+          %0: L3 = move $x
+          return %0 : L3
           cleanup {drop $x}
       }
       fn entry0() : abi2 env L1 {
-          %0: L2 = 1
-          %1: L2 = scope {
+          %0: L3 = 1
+          %1: L3 = scope {
               bind $x = %0
-              %2: L2 = move $x
+              %2: L3 = move $x
               %3: L0 = make-callable callable0 {capture0 <- %2}
-              %4: L2 = scope {
+              %4: L3 = scope {
                   bind $f = %3
                   %5: L0 = move $f
                   %6: L1 = ()
-                  %7: L2 = %5.invoke0(%6) via wrap0 : abi0
-                  return %7 : L2
+                  %7: L3 = %5.invoke0(%6) via wrap1 : abi0
+                  return %7 : L3
                   cleanup {drop $f}
               }
-              return %4 : L2
+              return %4 : L3
               cleanup {drop $x}
           }
-          return %1 : L2
+          return %1 : L3
       }"
     `);
     expect(JSON.stringify(p)).toBe(before);
@@ -1350,7 +1298,7 @@ it('prints all concrete instructions: capture-restore', () => {
       toolchain emscripten "test" features ()
       entries (entry0)
       forward {
-          layouts (L0, L1, L3, L4, L5, L2, L6)
+          layouts (L0, L1, L3, L4, L5, L6, L2, L7)
           abis (abi0, abi1, abi2, abi3)
           code (lambda0, entry0)
       }
@@ -1366,14 +1314,15 @@ it('prints all concrete instructions: capture-restore', () => {
               item0: L2
               item1: L2
           }
-          L4 = record thin {
+          L4 = record environment
+          L5 = record thin {
               read: ptr<L1>
               replacement: ptr<L2>
               restore: code<abi1>
               context: ptr<void>
           }
-          L5 = record environment {capture0: L2}
-          L6 = record thin {
+          L6 = record environment {capture0: L2}
+          L7 = record thin {
               read: ptr<L2>
               restore: code<abi1>
               context: ptr<void>
@@ -1386,16 +1335,22 @@ it('prints all concrete instructions: capture-restore', () => {
           abi3 = (env: ptr<void>) -> L1
       }
       wrappers {
-          wrap0 : abi3 env L5 = dispose (L2) drop-captures-and-free
-          wrap1 : abi0 env L5 = invoke lambda0 transfer-captures-and-free
+          wrap0 : abi0 env L4 = dispatch (callable0 wrap1) selected-environment
+          wrap1 : abi0 env L6 = invoke lambda0 transfer-captures-and-free
+          wrap2 : abi3 env L6 = dispose (L2) drop-captures-and-free
+          wrap3 : abi3 env L4 = dispose () drop-captures-and-free
       }
       callables {
-          callable0 : L0 env L5 {
-              dispose wrap0
+          callable0 : L0 env L6 {
+              dispose wrap2
               invoke0 = wrap1 : abi0
           }
+          callable1 : L0 env L4 {
+              dispose wrap3
+              invoke0 = wrap0 : abi0
+          }
       }
-      fn lambda0((): L1) : abi0 env L5 captures (capture0 $y: L2) {
+      fn lambda0((): L1) : abi0 env L6 captures (capture0 $y: L2) {
           %0: L2 = move $y
           return %0 : L2
           cleanup {drop $y}
@@ -1404,14 +1359,14 @@ it('prints all concrete instructions: capture-restore', () => {
           %0: L2 = 1
           %1: L3 = scope {
               bind $x = %0
-              %2: L6 = acquire $x
+              %2: L7 = acquire $x
               %3: L0 = scope {
                   borrow loan0 = %2
                   %4: L2 = move $x@loan0
                   %5: L0 = make-callable callable0 {capture0 <- %4}
                   %6: L0 = scope {
                       bind $f = %5
-                      %7: L4 = acquire $x@loan0
+                      %7: L5 = acquire $x@loan0
                       %8: L2 = 2
                       %9: L1 = swap(%7, %8)
                       %10: L0 = scope {
@@ -1429,7 +1384,7 @@ it('prints all concrete instructions: capture-restore', () => {
                   bind $f_1 = %3
                   %13: L0 = move $f_1
                   %14: L1 = ()
-                  %15: L2 = %13.invoke0(%14) via wrap1 : abi0
+                  %15: L2 = %13.invoke0(%14) via wrap0 : abi0
                   %16: L2 = move $x
                   %17: L3 = (%15, %16)
                   return %17 : L3
@@ -1561,7 +1516,7 @@ it('prints stable aliases after a JSON round trip', () => {
       toolchain emscripten "test" features ()
       entries (entry0)
       forward {
-          layouts (L0, L1, L2, L3, L4, L5, L6)
+          layouts (L0, L1, L2, L3, L4)
           abis (abi0, abi1, abi2, abi3, abi4, abi5)
           code (count0, entry0)
       }
@@ -1569,61 +1524,47 @@ it('prints stable aliases after a JSON round trip', () => {
           L0 = unit
           L1 = record environment
           L2 = f64
-          L3 = record callable {
-              environment: ptr<void>
-              dispose: code<abi4>
-              invoke0: code<abi2>
-          }
-          L4 = record callable {
-              environment: ptr<void>
-              dispose: code<abi4>
-              invoke0: code<abi0>
-          }
-          L5 = record thin {
+          L3 = record thin {
               read: ptr<L2>
               restore: code<abi1>
               context: ptr<void>
           }
-          L6 = record callable {
+          L4 = record callable {
               environment: ptr<void>
               dispose: code<abi4>
-              invoke0: code<abi3>
           }
       }
       abis {
           abi0 = (env: ptr<void>, L2) -> L2
           abi1 = (env: ptr<void>, L2) -> L0
           abi2 = (env: ptr<void>, L2, L2) -> L2
-          abi3 = (env: ptr<void>, L5) -> L2
+          abi3 = (env: ptr<void>, L3) -> L2
           abi4 = (env: ptr<void>) -> L0
           abi5 = (env: ptr<void>) -> L2
       }
       wrappers {
           wrap0 : abi4 env L1 = dispose () drop-captures-and-free
-          wrap1 : abi4 env L1 = dispose () drop-captures-and-free
+          wrap1 : abi3 env L1 = native "native/dup" no-environment
           wrap2 : abi0 env L1 = invoke count0 transfer-captures-and-free
-          wrap3 : abi4 env L1 = dispose () drop-captures-and-free
-          wrap4 : abi3 env L1 = native "native/dup" no-environment
-          wrap5 : abi2 env L1 = native "native/-" no-environment
+          wrap3 : abi2 env L1 = native "native/-" no-environment
+          wrap4 : abi4 env L1 = dispose () drop-captures-and-free
+          wrap5 : abi4 env L1 = dispose () drop-captures-and-free
+          wrap6 : abi4 env L1 = dispose () drop-captures-and-free
+          wrap7 : abi4 env L1 = dispose () drop-captures-and-free
+          wrap8 : abi4 env L1 = dispose () drop-captures-and-free
       }
       callables {
-          callable0 : L4 env L1 {
-              dispose wrap1
-              invoke0 = wrap2 : abi0
-          }
-          callable1 : L6 env L1 {
-              dispose wrap0
-              invoke0 = wrap4 : abi3
-          }
-          callable2 : L3 env L1 {
-              dispose wrap3
-              invoke0 = wrap5 : abi2
-          }
+          callable0 : L4 env L1 {dispose wrap0}
+          callable1 : L4 env L1 {dispose wrap5}
+          callable2 : L4 env L1 {dispose wrap7}
+          callable3 : L4 env L1 {dispose wrap6}
+          callable4 : L4 env L1 {dispose wrap8}
+          callable5 : L4 env L1 {dispose wrap4}
       }
       fn count0($n: L2) : abi0 env L1 {
-          %0: L5 = acquire $n
-          %1: L6 = make-callable callable1 {}
-          %2: L2 = %1.invoke0(%0) via wrap4 : abi3
+          %0: L3 = acquire $n
+          %1: L4 = make-callable callable2 {}
+          %2: L2 = %1(%0) via wrap1 : abi3
           %3: L2 = match %2 {
               0 -> {
                   %4: L2 = 0
@@ -1631,12 +1572,12 @@ it('prints stable aliases after a JSON round trip', () => {
                   cleanup {drop $n}
               }
               _ -> {
-                  %5: L4 = make-callable callable0 {}
-                  %6: L3 = make-callable callable2 {}
+                  %5: L4 = make-callable callable3 {}
+                  %6: L4 = make-callable callable0 {}
                   %7: L2 = move $n
                   %8: L2 = 1
-                  %9: L2 = %6.invoke0(%7, %8) via wrap5 : abi2
-                  %10: L2 = %5.invoke0(%9) via wrap2 : abi0
+                  %9: L2 = %6(%7, %8) via wrap3 : abi2
+                  %10: L2 = %5(%9) via wrap2 : abi0
                   return %10 : L2
               }
           }
@@ -1644,9 +1585,9 @@ it('prints stable aliases after a JSON round trip', () => {
           cleanup {drop $n}
       }
       fn entry0() : abi5 env L0 {
-          %0: L4 = make-callable callable0 {}
+          %0: L4 = make-callable callable3 {}
           %1: L2 = 3
-          %2: L2 = %0.invoke0(%1) via wrap2 : abi0
+          %2: L2 = %0(%1) via wrap2 : abi0
           return %2 : L2
       }"
     `);

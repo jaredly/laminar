@@ -261,8 +261,8 @@ it('prints complete manual staging around a selected branch', () => {
       struct L0 { unsigned char inhabitant; };
       struct L2 { unsigned char inhabitant; };
       struct L3 { L0 *read; L4 *replacement; A0 restore; void *context; };
-      struct L5 { void *environment; A2 dispose; A1 invoke0; };
-      struct L6 { L4 *read; A0 restore; void *context; };
+      struct L5 { L4 *read; A0 restore; void *context; };
+      struct L6 { void *environment; A2 dispose; };
       static size_t live_contexts = 0;
       void *allocate_context(size_t size);
       void release_context(void *context);

@@ -5,8 +5,11 @@ import type { SemanticType, SemanticFlow } from './elaborated.ts';
 import { BackendDiagnostic, targetKey } from './backend/target.ts';
 import { typeKey, irPlain, type IRBlock, type IRUnit, type IRPattern } from './typed-ir.ts';
 import { verifyTypedProgram } from './verify-ir.ts';
+import { memberKey } from './representation-key.ts';
+import { escapes } from './callable-escape.ts';
 import type { SpecializedProgram } from './specialize.ts';
 import type {
+    CallableMember,
     RepresentationAnalysis,
     RepresentationVariant,
     ValueRepresentation,
@@ -15,6 +18,8 @@ import type { Layout } from './layouts.ts';
 import type { LensRep } from './representations.ts';
 
 /** Independent validation of serialized analysis against semantic IR; never invokes inference. */
+/** A call target: known code, or every member of the callee's type. */
+type Callee = CallableMember | { kind: 'dispatch'; options: CallableMember[] };
 export function verifyRepresentations(
     source: SpecializedProgram,
     analysis: RepresentationAnalysis,
@@ -90,22 +95,9 @@ export function verifyRepresentations(
                 });
             case 'lens':
                 return JSON.stringify({ kind: 'lens', shape: v.shape });
-            case 'native':
-                return JSON.stringify({ kind: 'native', definition: v.definition });
-            case 'callable-choice':
-                if (!Array.isArray(v.options)) return fail('Missing callable alternatives');
-                return JSON.stringify({
-                    kind: v.kind,
-                    options: v.options.map((c) => JSON.parse(repKey(c))),
-                });
             case 'callable':
-                if (!Array.isArray(v.captures)) return fail('Missing callable captures');
-                return JSON.stringify({
-                    kind: 'callable',
-                    unit: v.unit,
-                    function: v.function,
-                    captures: v.captures.map((c) => JSON.parse(repKey(c))),
-                });
+                if (typeof v.type !== 'string') return fail('Missing callable type');
+                return JSON.stringify({ kind: 'callable', type: v.type });
             default:
                 return fail('Unknown value representation');
         }
@@ -122,6 +114,16 @@ export function verifyRepresentations(
         source.program.units.filter((u) => u.definition).map((u) => [u.definition!, u]),
     );
     const imports = new Map(source.program.imports.map((i) => [i.definition, i]));
+    // Callable member sets: the analysis lists them; verification derives every
+    // escaping member from the verified code and requires the same sets.
+    const callableTypes = new Map<string, CallableMember[]>();
+    const membersOf = (type: string): CallableMember[] => callableTypes.get(type) ?? [];
+    const derived = new Map<string, Set<string>>();
+    const derivedMember = (type: SemanticType, member: CallableMember): void => {
+        const k = typeKey(type);
+        if (!derived.has(k)) derived.set(k, new Set());
+        derived.get(k)!.add(memberKey(member));
+    };
     const layout = (id: string): Layout => layouts.get(id) ?? fail('Missing or foreign layout');
     const shape = (id: string): LensRep => shapes.get(id) ?? fail('Missing or foreign lens shape');
     const layoutId = (t: SemanticType): string =>
@@ -243,6 +245,19 @@ export function verifyRepresentations(
         units.get(unit)?.functions.find((f) => f.id === id) ?? fail('Unknown callable function');
     const containsCallable = (t: SemanticType): boolean =>
         t.tag === 'fn' || (t.tag === 'tuple' && t.items.some(containsCallable));
+    function fitMember(m: CallableMember, t: SemanticType): void {
+        if (!m || typeof m !== 'object' || t.tag !== 'fn') return fail('Invalid callable member');
+        if (m.kind === 'native') {
+            if (!imports.has(m.definition)) fail('Unknown native callable');
+            return;
+        }
+        if (m.kind !== 'closure' || !Array.isArray(m.captures))
+            return fail('Invalid callable member');
+        const fn = fnFor(m.unit, m.function);
+        typeEqual(fn.type, t);
+        if (fn.captures.length !== m.captures.length) fail('Callable capture arity mismatch');
+        fn.captures.forEach((c, i) => fit(m.captures[i]!, irPlain(c.type)));
+    }
     function fit(v: ValueRepresentation, t: SemanticFlow): void {
         if (!v || typeof v !== 'object') return fail('Missing value representation');
         if (t.tag === 'flow') {
@@ -303,29 +318,9 @@ export function verifyRepresentations(
             typeEqual(layout(v.layout).type, t.value);
             return;
         }
-        if (v.kind === 'callable-choice') {
-            if (
-                !Array.isArray(v.options) ||
-                v.options.length < 2 ||
-                v.options.some((o) => o.kind !== 'callable' && o.kind !== 'native')
-            )
-                return fail('Invalid callable alternatives');
-            const keys = v.options.map(repKey);
-            requireEqual(keys, [...new Set(keys)].sort(), 'Noncanonical callable alternatives');
-            v.options.forEach((o) => fit(o, t));
-            return;
-        }
         if (v.kind === 'callable') {
-            if (!Array.isArray(v.captures)) return fail('Missing callable captures');
-            const fn = fnFor(v.unit, v.function);
-            typeEqual(fn.type, t.value);
-            if (fn.captures.length !== v.captures.length) fail('Callable capture arity mismatch');
-            fn.captures.forEach((c, i) => fit(v.captures[i]!, irPlain(c.type)));
-            return;
-        }
-        if (v.kind === 'native') {
-            if (!imports.has(v.definition) || t.value.tag !== 'fn') fail('Unknown native callable');
-            // Generic import instantiation is checked by the semantic IR verifier at its global instruction.
+            if (t.value.tag !== 'fn' || v.type !== typeKey(t.value))
+                fail('Callable value type mismatch');
             return;
         }
         fail('Unknown or mismatched value representation');
@@ -356,6 +351,7 @@ export function verifyRepresentations(
         focusOwners: Map<string, { place: string; path: number[] }>;
         focusWrites: Map<string, SemanticType>;
         callResults: Map<string, FocusTarget>;
+        known: Map<string, CallableMember>;
         /** Focuses whose replacement is installed only by their own completion: callee-private returned backing and branch-selected focuses. */
         deferredFocuses: Set<string>;
         nativeProjections: Set<string>;
@@ -371,6 +367,7 @@ export function verifyRepresentations(
         focusOwners: new Map(),
         focusWrites: new Map(),
         callResults: new Map(),
+        known: new Map(),
         deferredFocuses: new Set(),
         nativeProjections: new Set(),
         focusTargets: new Map(),
@@ -385,6 +382,7 @@ export function verifyRepresentations(
         focusOwners: new Map(s.focusOwners),
         focusWrites: new Map(s.focusWrites),
         callResults: new Map(s.callResults),
+        known: new Map(s.known),
         deferredFocuses: new Set(s.deferredFocuses),
         nativeProjections: new Set(s.nativeProjections),
         focusTargets: new Map(s.focusTargets),
@@ -579,7 +577,7 @@ export function verifyRepresentations(
         }
     }
     function nativeResult(
-        callee: Extract<ValueRepresentation, { kind: 'native' }>,
+        callee: Extract<CallableMember, { kind: 'native' }>,
         args: ValueRepresentation[],
         result: ValueRepresentation,
     ): ValueRepresentation {
@@ -598,7 +596,7 @@ export function verifyRepresentations(
         return { kind: 'lens', shape: JSON.stringify(['thin', backing]) };
     }
     function nativeCall(
-        callee: Extract<ValueRepresentation, { kind: 'native' }>,
+        callee: Extract<CallableMember, { kind: 'native' }>,
         target: string,
         args: ValueRepresentation[],
         v: ValueRepresentation,
@@ -659,19 +657,6 @@ export function verifyRepresentations(
                     members.map((items) => items[n]!),
                 ),
             );
-        } else if (v.kind === 'callable-choice') {
-            const options = results.flatMap((r) =>
-                r.kind === 'callable-choice'
-                    ? r.options
-                    : r.kind === 'callable' || r.kind === 'native'
-                      ? [r]
-                      : fail('Non-callable join member'),
-            );
-            requireEqual(
-                v.options.map(repKey),
-                [...new Set(options.map(repKey))].sort(),
-                'Callable join alternatives changed',
-            );
         } else results.forEach((r) => requireEqual(v, r, 'Branch needs a representation adapter'));
     }
     const isFocus = (
@@ -727,9 +712,8 @@ export function verifyRepresentations(
                 const call =
                     variant.calls.find((c) => c.value === i.out.id) ??
                     fail('Missing result forwarding call');
-                const callee = variant.values.find((v) => v.value === i.callee)?.representation;
                 const inner =
-                    callee?.kind === 'native' && callee.definition === 'native/fst'
+                    call.callee?.kind === 'native' && call.callee.definition === 'native/fst'
                         ? { argument: 0, path: [0] }
                         : resultRoute(
                               variants.get(call.target) ??
@@ -1195,41 +1179,37 @@ export function verifyRepresentations(
                             });
                         break;
                     }
-                    case 'global': {
-                        const target = definitions.get(i.instance.definition);
-                        if (target) {
-                            const closure = target.entry.instructions[0];
-                            if (closure?.op !== 'closure') return fail('Invalid global entry');
-                            requireEqual(
-                                v,
-                                {
-                                    kind: 'callable',
-                                    unit: target.id,
-                                    function: closure.function,
-                                    captures: [],
-                                },
-                                'Global callable provenance changed',
-                            );
-                        } else
-                            requireEqual(
-                                v,
-                                { kind: 'native', definition: i.instance.definition },
-                                'Native callable provenance changed',
-                            );
-                        break;
-                    }
-                    case 'closure':
-                        requireEqual(
-                            v,
-                            {
-                                kind: 'callable',
+                    case 'global':
+                    case 'closure': {
+                        if (i.out.type.tag !== 'plain') return fail('Callable produced a lens');
+                        let member: CallableMember;
+                        if (i.op === 'closure')
+                            member = {
+                                kind: 'closure',
                                 unit: unit.id,
                                 function: i.function,
                                 captures: i.captures.map((c) => get(s, c.value)),
-                            },
-                            'Closure capture provenance changed',
-                        );
+                            };
+                        else {
+                            const target = definitions.get(i.instance.definition);
+                            if (!target)
+                                member = { kind: 'native', definition: i.instance.definition };
+                            else {
+                                const closure = target.entry.instructions[0];
+                                if (closure?.op !== 'closure') return fail('Invalid global entry');
+                                member = {
+                                    kind: 'closure',
+                                    unit: target.id,
+                                    function: closure.function,
+                                    captures: [],
+                                };
+                            }
+                        }
+                        fitMember(member, i.out.type.value);
+                        s.known.set(i.out.id, member);
+                        if (escapes(i.out.id, b)) derivedMember(i.out.type.value, member);
                         break;
+                    }
                     case 'scope': {
                         const retainedStorage: NonNullable<
                             RepresentationVariant['values'][number]['retainedStorage']
@@ -1516,8 +1496,26 @@ export function verifyRepresentations(
                     case 'call': {
                         const call = calls.get(i.out.id) ?? fail('Missing call annotation');
                         usedCalls.add(i.out.id);
-                        const callee = get(s, i.callee),
+                        const calleeValue = get(s, i.callee),
                             args = i.args.map((id) => get(s, id));
+                        if (calleeValue.kind !== 'callable')
+                            return fail('Call operand is not callable');
+                        // Known code is called directly; any other callee dispatches over
+                        // every member of its type, in the analysis's canonical order.
+                        // A native is lowered as an intrinsic: when it is its type's only member, a
+                        // call through the type can only reach it.
+                        const options = membersOf(calleeValue.type);
+                        const known =
+                            s.known.get(i.callee) ??
+                            (options.length === 1 && options[0]!.kind === 'native'
+                                ? options[0]
+                                : undefined);
+                        requireEqual(
+                            call.callee && memberKey(call.callee),
+                            known && memberKey(known),
+                            'Call callee provenance changed',
+                        );
+                        const callee: Callee = known ?? { kind: 'dispatch', options };
                         // Callable endpoints may cross this call only when verified
                         // callee provenance identifies the direct native projection.
                         if (
@@ -1528,8 +1526,8 @@ export function verifyRepresentations(
                                     arg.kind === 'focus-manual',
                             ) &&
                             !(
-                                callee.kind === 'callable' ||
-                                callee.kind === 'callable-choice' ||
+                                callee.kind === 'closure' ||
+                                callee.kind === 'dispatch' ||
                                 (callee.kind === 'native' &&
                                     callee.definition === 'native/fst' &&
                                     args.length === 1)
@@ -1540,14 +1538,13 @@ export function verifyRepresentations(
                             );
                         requireEqual(call.arguments, args, 'Call argument representations changed');
                         requireEqual(call.result, v, 'Call result annotation mismatch');
-                        if (callee.kind === 'callable' || callee.kind === 'callable-choice') {
-                            const options =
-                                callee.kind === 'callable-choice' ? callee.options : [callee];
+                        if (callee.kind === 'closure' || callee.kind === 'dispatch') {
+                            const options = callee.kind === 'dispatch' ? callee.options : [callee];
                             const targets =
-                                callee.kind === 'callable-choice' ? call.targets : [call.target];
+                                callee.kind === 'dispatch' ? call.targets : [call.target];
                             if (!Array.isArray(targets) || targets.length !== options.length)
                                 return fail('Dynamic call target coverage mismatch');
-                            if (callee.kind === 'callable-choice')
+                            if (callee.kind === 'dispatch')
                                 requireEqual(
                                     call.target,
                                     JSON.stringify(['dispatch', targets]),
@@ -1576,7 +1573,7 @@ export function verifyRepresentations(
                                     option.captures,
                                     'Call capture contract mismatch',
                                 );
-                                if (callee.kind === 'callable-choice' && args.some(isFocus))
+                                if (callee.kind === 'dispatch' && args.some(isFocus))
                                     // Alternatives agree on everything except the replacement
                                     // endpoint of a whole local focus, joined below.
                                     target.arguments.forEach((a, n) => {
@@ -1603,7 +1600,7 @@ export function verifyRepresentations(
                                 results.push(target.result);
                                 edges.get(owner)!.add(target.id);
                             });
-                            if (callee.kind === 'callable-choice' && args.some(isFocus))
+                            if (callee.kind === 'dispatch' && args.some(isFocus))
                                 args.forEach((arg, n) => {
                                     if (arg.kind !== 'local-focus') return;
                                     verifyJoin(
@@ -1616,28 +1613,9 @@ export function verifyRepresentations(
                                         }),
                                     );
                                 });
-                            if (callee.kind === 'callable-choice' && v.kind === 'callable-choice') {
-                                const members = results.flatMap((r) =>
-                                    r.kind === 'callable-choice'
-                                        ? r.options
-                                        : r.kind === 'callable' || r.kind === 'native'
-                                          ? [r]
-                                          : fail('Non-callable dynamic result'),
-                                );
-                                requireEqual(
-                                    v.options.map(repKey),
-                                    [...new Set(members.map(repKey))].sort(),
-                                    'Dynamic result alternatives changed',
-                                );
-                            } else if (
-                                callee.kind === 'callable-choice' &&
-                                v.kind === 'aggregate'
-                            ) {
+                            if (callee.kind === 'dispatch' && v.kind === 'aggregate') {
                                 verifyJoin(v, results);
-                            } else if (
-                                callee.kind === 'callable-choice' &&
-                                v.kind === 'local-focus'
-                            ) {
+                            } else if (callee.kind === 'dispatch' && v.kind === 'local-focus') {
                                 verifyJoin(
                                     v.read,
                                     results.map((r) =>
@@ -1654,7 +1632,7 @@ export function verifyRepresentations(
                                         'Dispatched focus result changed',
                                     ),
                                 );
-                            } else if (callee.kind === 'callable-choice' && v.kind === 'lens') {
+                            } else if (callee.kind === 'dispatch' && v.kind === 'lens') {
                                 const first = results[0]!;
                                 if (results.every((r) => same(r, first)))
                                     requireEqual(v, first, 'Uniform lens result changed');
@@ -1767,8 +1745,8 @@ export function verifyRepresentations(
                             });
                         }
                         if (
-                            (callee.kind === 'callable' ||
-                                (callee.kind === 'callable-choice' && args.some(isFocus))) &&
+                            (callee.kind === 'closure' ||
+                                (callee.kind === 'dispatch' && args.some(isFocus))) &&
                             (args.some(isFocus) ||
                                 (i.out.type.tag === 'flow' &&
                                     (containsCallable(i.out.type.read) ||
@@ -1777,7 +1755,7 @@ export function verifyRepresentations(
                             // Dispatch alternatives were checked to share these arguments.
                             const variant =
                                 variants.get(
-                                    callee.kind === 'callable'
+                                    callee.kind === 'closure'
                                         ? call.target
                                         : (call.targets?.[0] ?? ''),
                                 ) ?? fail('Missing demanded variant');
@@ -1788,7 +1766,7 @@ export function verifyRepresentations(
                                 if (!call.demand)
                                     return fail('Missing callable result replacement demand');
                                 // Every dispatched alternative completes on the same demand.
-                                for (const t of callee.kind === 'callable'
+                                for (const t of callee.kind === 'closure'
                                     ? [call.target]
                                     : (call.targets ?? []))
                                     requireEqual(
@@ -1805,7 +1783,7 @@ export function verifyRepresentations(
                                 );
                                 // Dispatched results route through joined parameter contracts.
                                 const route =
-                                    callee.kind === 'callable' ? resultRoute(variant) : undefined;
+                                    callee.kind === 'closure' ? resultRoute(variant) : undefined;
                                 if (route)
                                     s.callResults.set(
                                         i.out.id,
@@ -1825,7 +1803,7 @@ export function verifyRepresentations(
                                             writeTarget(
                                                 target,
                                                 (
-                                                    (callee.kind === 'callable-choice'
+                                                    (callee.kind === 'dispatch'
                                                         ? args[n]
                                                         : variant.arguments[n]) as Extract<
                                                         ValueRepresentation,
@@ -2010,9 +1988,35 @@ export function verifyRepresentations(
                     'Deferred callable storage replacement requires a completed restoration contract',
                 );
         }
+        if (
+            process.env.DBG &&
+            (usedValues.size !== annotations.size || usedCalls.size !== calls.size)
+        )
+            console.error(
+                'EXTRA',
+                [...annotations.keys()].filter((k) => !usedValues.has(k)),
+                [...calls.keys()].filter((k) => !usedCalls.has(k)),
+                annotations.size,
+                usedValues.size,
+            );
         if (usedValues.size !== annotations.size || usedCalls.size !== calls.size)
             fail('Extra value or call annotations');
         return result;
+    }
+    if (!Array.isArray(analysis.callables)) fail('Missing callable member sets');
+    requireEqual(
+        analysis.callables.map((c) => c.type),
+        [...new Set(analysis.callables.map((c) => c.type))].sort(),
+        'Noncanonical callable member sets',
+    );
+    for (const c of analysis.callables) {
+        if (c.signature?.tag !== 'fn' || typeKey(c.signature) !== c.type)
+            fail('Callable member set signature mismatch');
+        if (!Array.isArray(c.members)) fail('Missing callable members');
+        const keys = c.members.map(memberKey);
+        requireEqual(keys, [...new Set(keys)].sort(), 'Noncanonical callable members');
+        c.members.forEach((m) => fitMember(m, c.signature));
+        callableTypes.set(c.type, c.members);
     }
     for (const v of variants.values()) {
         if (!Array.isArray(v.arguments) || !Array.isArray(v.captures))
@@ -2085,26 +2089,28 @@ export function verifyRepresentations(
             unit = units.get(root.unit) ?? fail('Unknown analysis root');
         if (entry.unit !== root.unit) fail('Entry root mismatch');
         const exported = analysis.exports.filter((e) => e.entry === i);
-        if (root.result.kind === 'callable-choice')
-            fail('Dynamic callable entry roots require a host adapter');
-        if (root.result.kind === 'native') fail('Native entry roots require a host contract');
+        fit(root.result, irPlain(unit.signature.type));
+        const rootState = fresh();
+        requireEqual(
+            root.result,
+            verifyBody(unit, unit.entry, entry, rootState, `entry:${i}`),
+            'Root result differs from its entry',
+        );
         if (root.result.kind === 'callable') {
+            const member = rootState.known.get(unit.entry.result);
+            if (member?.kind === 'native') fail('Native entry roots require a host contract');
+            if (member?.kind !== 'closure')
+                return fail('Dynamic callable entry roots require a host adapter');
             if (exported.length !== 1)
                 fail('Callable root requires one incoming representation contract');
             const e = exported[0]!,
                 v = variants.get(e.variant) ?? fail('Missing exported variant');
-            if (v.unit !== root.result.unit || v.function !== root.result.function)
+            if (v.unit !== member.unit || v.function !== member.function)
                 fail('Exported callable provenance mismatch');
-            requireEqual(v.captures, root.result.captures, 'Exported capture contract mismatch');
+            requireEqual(v.captures, member.captures, 'Exported capture contract mismatch');
             requireEqual(v.arguments, e.arguments, 'Exported argument contract mismatch');
             requireEqual(v.result, e.result, 'Exported result contract mismatch');
         } else if (exported.length) fail('Expression root has an invocation contract');
-        fit(root.result, irPlain(unit.signature.type));
-        requireEqual(
-            root.result,
-            verifyBody(unit, unit.entry, entry, fresh(), `entry:${i}`),
-            'Root result differs from its entry',
-        );
         if (exported[0]) edges.get(`entry:${i}`)!.add(exported[0].variant);
     });
     if (
@@ -2113,6 +2119,15 @@ export function verifyRepresentations(
         )
     )
         fail('Unknown export entry');
+    // Every listed member is reachable from verified code through an escaping value,
+    // and every escaping value's code is listed for its type.
+    requireEqual(
+        [...derived.keys()].sort().map((k) => [k, [...derived.get(k)!].sort()]),
+        analysis.callables
+            .filter((c) => c.members.length)
+            .map((c) => [c.type, c.members.map(memberKey)]),
+        'Callable member sets changed',
+    );
     const reached = new Set<string>();
     const visit = (id: string): void => {
         if (reached.has(id)) return;

@@ -634,7 +634,17 @@ export function lowerGo(program: ConcreteProgram): GoFile {
                                 w.kind === 'adapt-result' ||
                                 w.kind === 'adapt-aggregate-result'
                             ) {
-                                expr = `(${value(i.callee)}).${identifier(i.field)}((${value(i.callee)}).environment${args.map((a) => `, ${a}`).join('')})`;
+                                // A direct call invokes its known member's wrapper itself.
+                                const direct =
+                                    i.field !== undefined
+                                        ? undefined
+                                        : w.kind === 'invoke'
+                                          ? codes.get(w.code)
+                                          : (resultAdapters.get(w.id) ??
+                                            unsupported(`Direct ${w.kind} call`));
+                                expr = direct
+                                    ? `${direct}((${value(i.callee)}).environment${args.map((a) => `, ${a}`).join('')})`
+                                    : `(${value(i.callee)}).${identifier(i.field!)}((${value(i.callee)}).environment${args.map((a) => `, ${a}`).join('')})`;
                             } else if (w.kind === 'native') {
                                 const op = w.definition.slice(7);
                                 if (['+', '-', '*', '/', '==', '>=', '<='].includes(op)) {

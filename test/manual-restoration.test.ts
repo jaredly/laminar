@@ -195,7 +195,7 @@ for (const corruption of ['temporary', 'call', 'provenance'] as const)
         else if (corruption === 'call')
             record.calls = record.calls.filter((c: { value: string }) => c.value !== call.out.id);
         else
-            record.values.find((v: { value: string }) => v.value === call.callee).representation = {
+            record.calls.find((c: { value: string }) => c.value === call.out.id).callee = {
                 kind: 'native',
                 definition: source.program.imports[0]!.definition,
             };
@@ -204,7 +204,7 @@ for (const corruption of ['temporary', 'call', 'provenance'] as const)
                 ? 'Missing temporary annotation'
                 : corruption === 'call'
                   ? 'Missing call annotation'
-                  : 'Global callable provenance changed',
+                  : 'Call callee provenance changed',
         );
     });
 

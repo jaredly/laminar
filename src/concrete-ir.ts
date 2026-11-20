@@ -1,6 +1,10 @@
 import type { TargetConfig } from './backend/target.ts';
 import type { SpecializedProgram } from './specialize.ts';
-import type { RepresentationAnalysis, ValueRepresentation } from './infer-representations.ts';
+import type {
+    CallableMember,
+    RepresentationAnalysis,
+    ValueRepresentation,
+} from './infer-representations.ts';
 import type { IRBlock, Instruction, IRPattern, Cleanup, SlotRef } from './typed-ir.ts';
 
 export type ConcreteField = { name: string } & (
@@ -78,7 +82,10 @@ export type ConcreteWrapper = {
 );
 export type CallableLayout = {
     id: string;
-    descriptor: ValueRepresentation;
+    /** The callable type's record (`{ kind: 'callable', type }`), or a member's code. */
+    descriptor: ValueRepresentation | CallableMember;
+    /** The semantic function type key every value of this record has. */
+    type: string;
     layout: string;
     environment: string;
     dispose: string;
@@ -186,7 +193,9 @@ export type ConcreteInstruction =
           args: string[];
           wrapper: string;
           abi: string;
-          field: string;
+          /** The callee record's entry for an indirect call; absent for a direct call
+           * of statically known code, which invokes `wrapper` itself. */
+          field?: string;
       } & ConcreteOutput)
     | ({
           op: 'make-callable';

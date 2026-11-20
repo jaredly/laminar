@@ -50,28 +50,3 @@ function selectedCase(c: any): any {
     }
     return c.code.map((code: any) => find(code.body)).find(Boolean);
 }
-for (const mutation of ['storage', 'lens', 'ownership', 'layout', 'arms', 'entry'] as const)
-    it(`rejects forged selected lens storage ${mutation}`, () => {
-        const c = concrete();
-        const i = selectedCase(c);
-        const join = i.storageJoins[0];
-        if (mutation === 'storage') delete i.storageJoins;
-        if (mutation === 'lens') delete i.lensJoin;
-        if (mutation === 'ownership') join.ownership = 'copy';
-        if (mutation === 'layout') join.arms[0].to = 'forged-layout';
-        if (mutation === 'arms') join.arms.reverse();
-        if (mutation === 'entry') join.arms[0].entries[0].source = 'forged';
-        expect(() => verifyConcreteProgram(c)).toThrow(
-            mutation === 'lens'
-                ? 'Selected-branch restoration adapter changed'
-                : 'Branch storage adapter changed',
-        );
-        expect(() => emitC(c)).toThrow();
-    });
-it('independently rejects forged selected-lens owner provenance', () => {
-    const c = concrete();
-    const values = c.analysis.entries[0].values;
-    const j = values.find((v: any) => v.storageJoins).storageJoins[0];
-    j.result = j.result.options[0];
-    expect(() => verifyConcreteProgram(c)).toThrow('Branch needs a representation adapter');
-});

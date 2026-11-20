@@ -77,9 +77,14 @@ it('propagates known higher-order callable arguments', () => {
     expect(r.variants).toHaveLength(2);
     expect(r.variants.some((v) => v.arguments[0]?.kind === 'callable')).toBe(true);
     const ids = new Set(r.variants.map((v) => v.id));
+    // Direct calls name a variant; `f(x)` dispatches over f's type members.
     expect(
         r.variants.every((v) =>
-            v.calls.every((c) => c.target.startsWith('native/') || ids.has(c.target)),
+            v.calls.every((c) =>
+                c.targets
+                    ? c.targets.every((t) => ids.has(t))
+                    : c.target.startsWith('native/') || ids.has(c.target),
+            ),
         ),
     ).toBe(true);
 });

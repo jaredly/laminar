@@ -11,8 +11,10 @@ import {
 } from './representations.ts';
 import type { SpecializedProgram } from './specialize.ts';
 import type { IRUnit, IRBlock, IRPattern } from './typed-ir.ts';
+import { typeKey } from './typed-ir.ts';
 import { verifyTypedProgram } from './verify-ir.ts';
-import { representationKey } from './representation-key.ts';
+import { memberKey, representationKey } from './representation-key.ts';
+import { escapes } from './callable-escape.ts';
 import { verifyRepresentations } from './verify-representations.ts';
 
 export type ValueRepresentation =
@@ -32,12 +34,18 @@ export type ValueRepresentation =
           replacement: ValueRepresentation;
           items: ValueRepresentation[];
       }
-    | { kind: 'callable'; unit: string; function: string; captures: ValueRepresentation[] }
-    | { kind: 'native'; definition: string }
-    | {
-          kind: 'callable-choice';
-          options: Extract<ValueRepresentation, { kind: 'callable' | 'native' }>[];
-      };
+    /** Any callable value of a semantic function type (its `typeKey`). Callable
+     * values are type-determined; which code may occupy them is the program-wide
+     * member set for that type (`RepresentationAnalysis.callables`). */
+    | { kind: 'callable'; type: string };
+/** Code that can occupy a callable value: a lambda or definition entry with its
+ * (type-determined) capture representations, or a native intrinsic. */
+export type CallableMember =
+    | { kind: 'closure'; unit: string; function: string; captures: ValueRepresentation[] }
+    | { kind: 'native'; definition: string };
+type ClosureMember = Extract<CallableMember, { kind: 'closure' }>;
+/** A call target: known code, or every member of the callee's type. */
+type Callee = CallableMember | { kind: 'dispatch'; type: string; options: CallableMember[] };
 export type RepresentationVariant = {
     id: string;
     key: string;
@@ -74,6 +82,9 @@ export type RepresentationVariant = {
         targets?: string[];
         arguments: ValueRepresentation[];
         result: ValueRepresentation;
+        /** The statically known callee of a direct call; absent for indirect calls,
+         * which dispatch over every member of the callee's type. */
+        callee?: CallableMember;
         demand?: {
             value?: string;
             loan?: string;
@@ -102,6 +113,8 @@ export type RepresentationAnalysis = {
         values: RepresentationVariant['values'];
         calls: RepresentationVariant['calls'];
     }[];
+    /** Callable types with the members that may occupy their values, in canonical order. */
+    callables: { type: string; signature: SemanticType; members: CallableMember[] }[];
     layouts: readonly Layout[];
     shapes: readonly LensRep[];
     backings: readonly Backing[];
@@ -117,6 +130,8 @@ type State = {
     focusOwners: Map<string, { place: string; path: number[] }>;
     focusWrites: Map<string, SemanticType>;
     callResults: Map<string, FocusTarget>;
+    /** SSA values produced by `global`/`closure` whose code is statically known. */
+    known: Map<string, CallableMember>;
     /** Focuses whose replacement is installed only by their own completion: callee-private returned backing and branch-selected focuses. */
     deferredFocuses: Set<string>;
     nativeProjections: Set<string>;
@@ -129,6 +144,12 @@ type State = {
 /** Infer representation variants from explicit expression roots. No physical callable ABI is selected. */
 /** Raised while seeding a recursive fixed point: the arm is treated as divergent. */
 class RecursionPending extends Error {}
+/** A recursive lens result still being computed in this whole-program pass. */
+class PendingResult extends Error {
+    constructor(readonly variant: string) {
+        super('Recursive returned representation requires a result constraint');
+    }
+}
 export function inferRepresentations(
     input: SpecializedProgram,
     options: {
@@ -179,6 +200,26 @@ export function inferRepresentations(
         string,
         Omit<RepresentationVariant, 'result'> & { result?: ValueRepresentation }
     >();
+    // Members of each callable type, persisted across whole-program passes. A member
+    // added during a pass reaches every indirect call of its type in the next pass.
+    const callableTypes = new Map<
+        string,
+        { signature: SemanticType; members: Map<string, CallableMember> }
+    >();
+    const addMember = (type: SemanticType, member: CallableMember): void => {
+        const k = typeKey(type);
+        let entry = callableTypes.get(k);
+        if (!entry) callableTypes.set(k, (entry = { signature: type, members: new Map() }));
+        entry.members.set(memberKey(member), member);
+    };
+    const membersSnapshot = (): string =>
+        JSON.stringify(
+            [...callableTypes.keys()].sort().map((k) => [k, membersOf(k).map(memberKey)]),
+        );
+    const membersOf = (type: string): CallableMember[] =>
+        [...(callableTypes.get(type)?.members ?? new Map<string, CallableMember>())]
+            .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
+            .map(([, m]) => m);
     // Returned callable focuses whose replacement demand awaits its consumer.
     const pendingDemands = new Set<RepresentationVariant['calls'][number]>();
     const entries: RepresentationAnalysis['entries'] = [];
@@ -191,6 +232,7 @@ export function inferRepresentations(
         focusOwners: new Map(),
         focusWrites: new Map(),
         callResults: new Map(),
+        known: new Map(),
         deferredFocuses: new Set(),
         nativeProjections: new Set(),
         focusTargets: new Map(),
@@ -205,6 +247,7 @@ export function inferRepresentations(
         focusOwners: new Map(s.focusOwners),
         focusWrites: new Map(s.focusWrites),
         callResults: new Map(s.callResults),
+        known: new Map(s.known),
         deferredFocuses: new Set(s.deferredFocuses),
         nativeProjections: new Set(s.nativeProjections),
         focusTargets: new Map(s.focusTargets),
@@ -221,6 +264,13 @@ export function inferRepresentations(
         kind: 'data',
         layout: layouts.intern(type),
     });
+    /** Value representations are determined by semantic type; callables by type key. */
+    const typeRep = (t: SemanticType): ValueRepresentation =>
+        t.tag === 'fn'
+            ? { kind: 'callable', type: typeKey(t) }
+            : t.tag === 'tuple' && t.items.some(containsCallable)
+              ? { kind: 'aggregate', items: t.items.map(typeRep) }
+              : data(t);
     const get = (s: State, id: string): ValueRepresentation =>
         s.values.get(id) ?? fail(`Missing representation for ${id}`);
     const shape = (v: ValueRepresentation): LensRepId =>
@@ -230,30 +280,6 @@ export function inferRepresentations(
     const join = (items: ValueRepresentation[], aggregate = false): ValueRepresentation => {
         const first = items[0] ?? fail('Empty representation join');
         if (items.every((v) => equal(first, v))) return first;
-        if (
-            items.every(
-                (v) => v.kind === 'callable' || v.kind === 'native' || v.kind === 'callable-choice',
-            )
-        ) {
-            const options = new Map<
-                string,
-                Extract<ValueRepresentation, { kind: 'callable' | 'native' }>
-            >();
-            for (const v of items) {
-                const members = v.kind === 'callable-choice' ? v.options : [v];
-                for (const member of members) {
-                    if (member.kind !== 'callable' && member.kind !== 'native')
-                        return fail('Invalid callable join member');
-                    options.set(key(member), member);
-                }
-            }
-            return {
-                kind: 'callable-choice',
-                options: [...options.entries()]
-                    .sort(([a], [b]) => (a < b ? -1 : 1))
-                    .map(([, v]) => v),
-            };
-        }
         if (
             aggregate &&
             first.kind === 'aggregate' &&
@@ -512,7 +538,7 @@ export function inferRepresentations(
         unit: IRUnit;
         fn: IRUnit['functions'][number];
         identity: string;
-        callee: Extract<ValueRepresentation, { kind: 'callable' }>;
+        callee: ClosureMember;
         inputArgs: ValueRepresentation[];
         args: ValueRepresentation[];
         state: State;
@@ -545,11 +571,7 @@ export function inferRepresentations(
     // parameter contracts and result are solved as a least fixed point.
     const hypotheses = new Map<string, RecursionHypothesis>();
     const activeRoots: RecursionHypothesis[] = [];
-    const setupKey = (
-        identity: string,
-        callee: Extract<ValueRepresentation, { kind: 'callable' }>,
-        args: ValueRepresentation[],
-    ) =>
+    const setupKey = (identity: string, callee: ClosureMember, args: ValueRepresentation[]) =>
         JSON.stringify([
             identity,
             callee.captures.map(key),
@@ -568,7 +590,7 @@ export function inferRepresentations(
         });
     }
     function setupFocusCall(
-        callee: Extract<ValueRepresentation, { kind: 'callable' }>,
+        callee: ClosureMember,
         inputArgs: ValueRepresentation[],
         chain: string[],
     ): FocusCallSetup {
@@ -664,7 +686,7 @@ export function inferRepresentations(
         unit: IRUnit,
         fn: IRUnit['functions'][number],
         identity: string,
-        callee: Extract<ValueRepresentation, { kind: 'callable' }>,
+        callee: ClosureMember,
         inputArgs: ValueRepresentation[],
         chain: string[],
     ): FocusCallSetup {
@@ -827,7 +849,7 @@ export function inferRepresentations(
         return call;
     }
     const invoke = (
-        callee: ValueRepresentation,
+        callee: Callee,
         args: ValueRepresentation[],
         chain: string[],
         resultType?: SemanticFlow,
@@ -846,22 +868,34 @@ export function inferRepresentations(
                     resultType ?? fail('Missing native result contract'),
                 ),
             };
-        if (callee.kind === 'callable-choice') {
-            const calls = callee.options.map((option) => invoke(option, args, chain, resultType));
-            const results = calls.map((call) => call.result);
+        if (callee.kind === 'dispatch') {
+            // Every member of the callee's type is specialized at this call's ABI. A
+            // member whose recursive lens result is still being computed contributes
+            // nothing to this pass; the next whole-program pass includes it.
+            const calls = callee.options.map(
+                (option): { target: string; result?: ValueRepresentation } => {
+                    try {
+                        return invoke(option, args, chain, resultType);
+                    } catch (error) {
+                        if (error instanceof PendingResult) return { target: error.variant };
+                        throw error;
+                    }
+                },
+            );
+            const results = calls.flatMap((call) => (call.result ? [call.result] : []));
             let result: ValueRepresentation;
-            if (
-                results.every((r) => r.kind === 'lens') &&
-                results.some((r) => !equal(r, results[0]!))
-            ) {
-                if (resultType?.tag !== 'flow') return fail('Missing dynamic lens result contract');
+            if (!resultType) return fail('Missing dynamic result contract');
+            if (resultType.tag === 'plain') result = typeRep(resultType.value);
+            else if (
+                !results.length ||
+                (results.every((r) => r.kind === 'lens') &&
+                    results.some((r) => !equal(r, results[0]!)))
+            )
                 result = { kind: 'lens', shape: reps.thin(resultType.read, resultType.write) };
-            } else result = join(results, true);
+            else result = join(results, true);
             const targets = calls.map((call) => call.target);
             return { target: JSON.stringify(['dispatch', targets]), targets, result };
         }
-        if (callee.kind !== 'callable')
-            return fail('Indirect call requires a known callable representation');
         if (args.some(isFocus)) {
             const setup = setupFocusCall(callee, args, chain);
             if (isFocus(setup.result))
@@ -880,13 +914,10 @@ export function inferRepresentations(
             args.map(key),
         ]);
         const cached = variants.get(variantKey);
-        if (cached)
-            return {
-                target: cached.id,
-                result:
-                    cached.result ??
-                    fail('Recursive returned representation requires a result constraint'),
-            };
+        if (cached) {
+            if (!cached.result) throw new PendingResult(cached.id);
+            return { target: cached.id, result: cached.result };
+        }
         if (chain.includes(identity))
             throw new BackendDiagnostic(
                 'changing-representation-recursion',
@@ -907,9 +938,8 @@ export function inferRepresentations(
             values: [],
             calls: [],
         };
-        // Scalar/tuple results have known layouts even before a recursive body is visited.
-        if (fn.type.result.tag === 'plain' && !containsCallable(fn.type.result.value))
-            variant.result = data(fn.type.result.value);
+        // Plain results are type-determined even before a recursive body is visited.
+        if (fn.type.result.tag === 'plain') variant.result = typeRep(fn.type.result.value);
         variants.set(variantKey, variant);
         const state = fresh();
         fn.captures.forEach((c, i) => state.places.set(c.place, callee.captures[i]!));
@@ -1329,34 +1359,60 @@ export function inferRepresentations(
                     s.finishes.get(i.lens)?.(s, true);
                     break;
                 }
-                case 'global': {
-                    const target = definitions.get(i.instance.definition);
-                    if (!target) {
-                        out = { kind: 'native', definition: i.instance.definition };
-                        break;
+                case 'global':
+                case 'closure': {
+                    if (i.out.type.tag !== 'plain') return fail('Callable produced a lens');
+                    let member: CallableMember;
+                    if (i.op === 'closure')
+                        member = {
+                            kind: 'closure',
+                            unit: unit.id,
+                            function: i.function,
+                            captures: i.captures.map((c) => get(s, c.value)),
+                        };
+                    else {
+                        const target = definitions.get(i.instance.definition);
+                        if (!target) member = { kind: 'native', definition: i.instance.definition };
+                        else {
+                            const closure = target.entry.instructions[0];
+                            if (closure?.op !== 'closure' || closure.captures.length)
+                                return fail('Reusable definition lacks a closed entry');
+                            member = {
+                                kind: 'closure',
+                                unit: target.id,
+                                function: closure.function,
+                                captures: [],
+                            };
+                        }
                     }
-                    const closure = target.entry.instructions[0];
-                    if (closure?.op !== 'closure' || closure.captures.length)
-                        return fail('Reusable definition lacks a closed entry');
-                    out = {
-                        kind: 'callable',
-                        unit: target.id,
-                        function: closure.function,
-                        captures: [],
-                    };
+                    out = typeRep(i.out.type.value);
+                    s.known.set(i.out.id, member);
+                    // A value used only as an immediate callee stays a direct call;
+                    // otherwise any indirect call of its type may reach it.
+                    if (escapes(i.out.id, body)) addMember(i.out.type.value, member);
                     break;
                 }
-                case 'closure':
-                    out = {
-                        kind: 'callable',
-                        unit: unit.id,
-                        function: i.function,
-                        captures: i.captures.map((c) => get(s, c.value)),
-                    };
-                    break;
                 case 'call': {
-                    const callee = get(s, i.callee),
+                    const calleeValue = get(s, i.callee),
                         args = i.args.map((id) => get(s, id));
+                    if (calleeValue.kind !== 'callable')
+                        return fail('Call operand is not callable');
+                    // Known code is called directly; otherwise the call dispatches over
+                    // every member of the callee's type at this call's ABI.
+                    const known = s.known.get(i.callee);
+                    // A native is lowered as an intrinsic: when it is its type's only member, a
+                    // call through the type can only reach it.
+                    const options = membersOf(calleeValue.type);
+                    const direct =
+                        known ??
+                        (options.length === 1 && options[0]!.kind === 'native'
+                            ? options[0]
+                            : undefined);
+                    const callee: Callee = direct ?? {
+                        kind: 'dispatch',
+                        type: calleeValue.type,
+                        options,
+                    };
                     // Callable endpoints may cross this call only when verified
                     // callee provenance identifies the direct native projection.
                     if (
@@ -1367,8 +1423,8 @@ export function inferRepresentations(
                                 arg.kind === 'focus-manual',
                         ) &&
                         !(
-                            callee.kind === 'callable' ||
-                            callee.kind === 'callable-choice' ||
+                            callee.kind === 'closure' ||
+                            callee.kind === 'dispatch' ||
                             (callee.kind === 'native' &&
                                 callee.definition === 'native/fst' &&
                                 args.length === 1)
@@ -1400,13 +1456,13 @@ export function inferRepresentations(
                             'Callable lens result needs a swap, alias or forwarded replacement demand',
                         );
                     };
-                    if (callee.kind === 'callable-choice' && args.some(isFocus)) {
+                    if (callee.kind === 'dispatch' && args.some(isFocus)) {
                         // Each alternative is specialized independently on the same
                         // demand; the caller's backing holds the join of their parameter
                         // contracts, and each option keeps its exact contract behind a
                         // dispatch argument adapter.
                         const setups = callee.options.map((option) =>
-                            option.kind === 'callable'
+                            option.kind === 'closure'
                                 ? setupFocusCall(option, args, chain)
                                 : fail('Native alternatives cannot receive callable focuses'),
                         );
@@ -1523,7 +1579,7 @@ export function inferRepresentations(
                             s.finishes.get(i.out.id)!(s, true);
                         }
                     } else if (
-                        callee.kind === 'callable' &&
+                        callee.kind === 'closure' &&
                         (args.some(isFocus) ||
                             (i.out.type.tag === 'flow' &&
                                 (containsCallable(i.out.type.read) ||
@@ -1537,6 +1593,7 @@ export function inferRepresentations(
                         const entry: RepresentationVariant['calls'][number] = {
                             value: i.out.id,
                             target: '',
+                            callee,
                             arguments: args,
                             result: out,
                         };
@@ -1601,6 +1658,7 @@ export function inferRepresentations(
                             value: i.out.id,
                             target: called.target,
                             ...('targets' in called ? { targets: called.targets } : {}),
+                            ...(direct ? { callee: direct } : {}),
                             arguments: args,
                             result: out,
                         });
@@ -2016,64 +2074,82 @@ export function inferRepresentations(
         for (const cleanup of deferred.reverse()) s.finishes.get(cleanup.value)!(s, false);
         return result;
     }
-    for (const [rootIndex, id] of source.roots.entries()) {
-        const unit = units.get(id) ?? fail('Unknown representation root');
-        const entry = {
-            unit: id,
-            values: [] as RepresentationVariant['values'],
-            calls: [] as RepresentationVariant['calls'],
-        };
-        const result = block(unit, unit.entry, fresh(), entry, []);
-        const incoming = options.entryArguments?.find(
-            (e) => e.unit === id && (e.entry === undefined || e.entry === rootIndex),
-        );
-        if (result.kind === 'callable-choice')
-            fail('Dynamic callable entry roots require a host adapter');
-        if (result.kind === 'native') fail('Native entry roots require a host contract');
-        if (result.kind === 'callable') {
-            const contract =
-                incoming ??
-                fail('Callable entry roots require an explicit argument representation contract');
-            const fn = units.get(result.unit)!.functions.find((f) => f.id === result.function)!;
-            if (contract.arguments.length !== fn.type.args.length)
-                fail('Entry representation argument arity mismatch');
-            const topology = (
-                t: LensTopology,
-                read: SemanticType,
-                write: SemanticType,
-            ): LensRepId => {
-                if (t.kind === 'thin') return reps.thin(read, write);
-                if (
-                    read.tag !== 'tuple' ||
-                    write.tag !== 'tuple' ||
-                    t.items.length !== read.items.length ||
-                    t.items.length !== write.items.length
-                )
-                    return fail('Entry lens topology does not match semantic endpoints');
-                return reps.tuple(
-                    t.items.map((child, i) => topology(child, read.items[i]!, write.items[i]!)),
-                );
+    // Whole-program passes: indirect calls reach every member known for their type,
+    // and members discovered during a pass are included by the next. Member sets only
+    // grow and are finite (the program's code), so the passes converge.
+    for (let pass = 0; ; pass++) {
+        if (pass > 64) fail('Callable member discovery did not converge');
+        const before = membersSnapshot();
+        variants.clear();
+        entries.length = 0;
+        roots.length = 0;
+        exports.length = 0;
+        pendingDemands.clear();
+        for (const [rootIndex, id] of source.roots.entries()) {
+            const unit = units.get(id) ?? fail('Unknown representation root');
+            const entry = {
+                unit: id,
+                values: [] as RepresentationVariant['values'],
+                calls: [] as RepresentationVariant['calls'],
             };
-            const args = contract.arguments.map((a, i): ValueRepresentation => {
-                const expected = fn.type.args[i]!;
-                if (a.kind === 'data' && expected.tag === 'plain') return data(expected.value);
-                if (a.kind === 'lens' && expected.tag === 'flow')
-                    return {
-                        kind: 'lens',
-                        shape: topology(a.topology, expected.read, expected.write),
-                    };
-                return fail('Entry argument representation mode mismatch');
-            });
-            const called = invoke(result, args, []);
-            exports.push({
-                entry: roots.length,
-                variant: called.target,
-                arguments: args,
-                result: called.result,
-            });
-        } else if (incoming) fail('Expression root cannot have incoming arguments');
-        entries.push(entry);
-        roots.push({ unit: id, result });
+            const rootState = fresh();
+            const result = block(unit, unit.entry, rootState, entry, []);
+            const incoming = options.entryArguments?.find(
+                (e) => e.unit === id && (e.entry === undefined || e.entry === rootIndex),
+            );
+            if (result.kind === 'callable') {
+                const member = rootState.known.get(unit.entry.result);
+                if (member?.kind === 'native') fail('Native entry roots require a host contract');
+                if (member?.kind !== 'closure')
+                    fail('Dynamic callable entry roots require a host adapter');
+                const root = member as ClosureMember;
+                const contract =
+                    incoming ??
+                    fail(
+                        'Callable entry roots require an explicit argument representation contract',
+                    );
+                const fn = units.get(root.unit)!.functions.find((f) => f.id === root.function)!;
+                if (contract.arguments.length !== fn.type.args.length)
+                    fail('Entry representation argument arity mismatch');
+                const topology = (
+                    t: LensTopology,
+                    read: SemanticType,
+                    write: SemanticType,
+                ): LensRepId => {
+                    if (t.kind === 'thin') return reps.thin(read, write);
+                    if (
+                        read.tag !== 'tuple' ||
+                        write.tag !== 'tuple' ||
+                        t.items.length !== read.items.length ||
+                        t.items.length !== write.items.length
+                    )
+                        return fail('Entry lens topology does not match semantic endpoints');
+                    return reps.tuple(
+                        t.items.map((child, i) => topology(child, read.items[i]!, write.items[i]!)),
+                    );
+                };
+                const args = contract.arguments.map((a, i): ValueRepresentation => {
+                    const expected = fn.type.args[i]!;
+                    if (a.kind === 'data' && expected.tag === 'plain') return data(expected.value);
+                    if (a.kind === 'lens' && expected.tag === 'flow')
+                        return {
+                            kind: 'lens',
+                            shape: topology(a.topology, expected.read, expected.write),
+                        };
+                    return fail('Entry argument representation mode mismatch');
+                });
+                const called = invoke(root, args, []);
+                exports.push({
+                    entry: roots.length,
+                    variant: called.target,
+                    arguments: args,
+                    result: called.result,
+                });
+            } else if (incoming) fail('Expression root cannot have incoming arguments');
+            entries.push(entry);
+            roots.push({ unit: id, result });
+        }
+        if (membersSnapshot() === before) break;
     }
     if (pendingDemands.size) fail('Callable lens result was never completed');
     const analysis: RepresentationAnalysis = {
@@ -2085,6 +2161,11 @@ export function inferRepresentations(
         variants: [...variants.values()]
             .map((v) => ({ ...v, result: v.result ?? fail('Unsolved variant result') }))
             .sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0)),
+        callables: [...callableTypes.keys()].sort().map((type) => ({
+            type,
+            signature: callableTypes.get(type)!.signature,
+            members: membersOf(type),
+        })),
         layouts: layouts.snapshot(),
         shapes: reps.snapshot(),
         backings: reps.backingSnapshot(),

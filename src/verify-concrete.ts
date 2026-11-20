@@ -2,11 +2,15 @@ import { layoutDefinitionsKey } from './layout-definitions.ts';
 import { mapSemantic } from './typed-ir.ts';
 import { BackendDiagnostic, targetKey } from './backend/target.ts';
 import { concreteName } from './concrete-layouts.ts';
-import { representationKey } from './representation-key.ts';
+import { memberKey, representationKey } from './representation-key.ts';
 import { verifyRepresentations } from './verify-representations.ts';
 import { typeKey, type IRBlock } from './typed-ir.ts';
 import type { SemanticType } from './elaborated.ts';
-import type { ValueRepresentation, RepresentationVariant } from './infer-representations.ts';
+import type {
+    CallableMember,
+    ValueRepresentation,
+    RepresentationVariant,
+} from './infer-representations.ts';
 import type {
     ConcreteProgram,
     ConcreteLayout,
@@ -14,6 +18,8 @@ import type {
     ConcreteBlock,
     ConcreteCode,
     ConcreteValueAdapter,
+    CallableLayout,
+    ConcreteWrapper,
 } from './concrete-ir.ts';
 
 /** Verify detached concrete records, their ABI references, and their correspondence to verified IR. */
@@ -146,11 +152,28 @@ export function verifyConcreteProgram(p: ConcreteProgram): void {
     const unitLayout = data(unitType),
         shapes = new Map(p.analysis.shapes.map((s) => [s.id, s])),
         semanticLayouts = new Map(p.analysis.layouts.map((l) => [l.id, l]));
-    const callableByDescriptor = unique(
-        p.callables,
-        (c) => representationKey(c.descriptor),
-        'callable descriptor',
-    );
+    // Callable records: one per callable type (`['type', T]`) and one per member and
+    // type (`['member', T, member]`), keyed exactly as concrete lowering groups them.
+    const groupKeyOf = (c: CallableLayout): string =>
+        c.descriptor.kind === 'callable'
+            ? JSON.stringify(['type', c.type])
+            : JSON.stringify(['member', c.type, memberKey(c.descriptor as CallableMember)]);
+    const memberGroupKey = (m: CallableMember, type: string): string =>
+        JSON.stringify(['member', type, memberKey(m)]);
+    const callableByGroup = unique(p.callables, groupKeyOf, 'callable descriptor');
+    const typeRecord = (type: string): CallableLayout =>
+        callableByGroup.get(JSON.stringify(['type', type])) ??
+        fail('Missing concrete callable descriptor');
+    const memberRecord = (m: CallableMember, type: string): CallableLayout =>
+        callableByGroup.get(memberGroupKey(m, type)) ?? fail('Missing concrete callable member');
+    const memberSets = new Map(p.analysis.callables.map((c) => [c.type, c.members]));
+    const membersOf = (type: string): CallableMember[] => memberSets.get(type) ?? [];
+    const fnTypeKey = (m: { unit: string; function: string }): string =>
+        typeKey(
+            p.semantic.program.units
+                .find((u) => u.id === m.unit)!
+                .functions.find((f) => f.id === m.function)!.type,
+        );
     const seenShapes = new Set<string>();
     function storage(v: ValueRepresentation): string {
         if (v.kind === 'aggregate') {
@@ -206,11 +229,7 @@ export function verifyConcreteProgram(p: ConcreteProgram): void {
             return id;
         }
         if (v.kind === 'data') return data(semanticLayouts.get(v.layout)!.type);
-        if (v.kind === 'native' || v.kind === 'callable' || v.kind === 'callable-choice')
-            return (
-                callableByDescriptor.get(representationKey(v))?.layout ??
-                fail('Missing concrete callable descriptor')
-            );
+        if (v.kind === 'callable') return typeRecord(v.type).layout;
         const id = lid(['lens', v.shape]);
         if (seenShapes.has(v.shape)) return id;
         seenShapes.add(v.shape);
@@ -266,7 +285,15 @@ export function verifyConcreteProgram(p: ConcreteProgram): void {
             }
         >
     >();
-    const descriptors = new Map<string, ValueRepresentation>();
+    // Derived callable groups: every discovered callable type with its listed members,
+    // and every member reified by code (variants and closure/global instructions).
+    const typeGroups = new Set<string>(),
+        descriptors = new Set<string>();
+    const discoverMember = (m: CallableMember, type: string): void => {
+        if (descriptors.has(memberGroupKey(m, type))) return;
+        descriptors.add(memberGroupKey(m, type));
+        if (m.kind === 'closure') m.captures.forEach(discover);
+    };
     function discover(v: ValueRepresentation): void {
         if (v.kind === 'aggregate' || v.kind === 'focus-tuple') v.items.forEach(discover);
         if (v.kind === 'focus-manual') discover(v.frontend);
@@ -274,14 +301,14 @@ export function verifyConcreteProgram(p: ConcreteProgram): void {
             discover(v.read);
             discover(v.replacement);
         }
-        if (v.kind === 'callable' || v.kind === 'native' || v.kind === 'callable-choice') {
-            descriptors.set(representationKey(v), v);
-            if (v.kind === 'callable') v.captures.forEach(discover);
-            if (v.kind === 'callable-choice') v.options.forEach(discover);
+        if (v.kind === 'callable' && !typeGroups.has(v.type)) {
+            typeGroups.add(v.type);
+            descriptors.add(JSON.stringify(['type', v.type]));
+            membersOf(v.type).forEach((m) => discoverMember(m, v.type));
         }
     }
     function rawResult(
-        descriptor: ValueRepresentation,
+        descriptor: ValueRepresentation | CallableMember,
         contract: { target: string; arguments: ValueRepresentation[]; result: ValueRepresentation },
     ): ValueRepresentation | undefined {
         const variant = p.analysis.variants.find((v) => v.id === contract.target);
@@ -304,33 +331,9 @@ export function verifyConcreteProgram(p: ConcreteProgram): void {
         const w = p.analysis.layouts.find((l) => typeKey(l.type) === typeKey(write.items[0]!))!.id;
         return { kind: 'lens', shape: JSON.stringify(['thin', JSON.stringify(['backing', r, w])]) };
     }
-    function addContract(
-        descriptor: ValueRepresentation,
-        c:
-            | RepresentationVariant['calls'][number]
-            | { target: string; arguments: ValueRepresentation[]; result: ValueRepresentation },
-    ): void {
-        const k = representationKey(descriptor);
-        if (!contracts.has(k)) contracts.set(k, new Map());
-        contracts.get(k)!.set(contractKey(c), c);
-        const raw = rawResult(descriptor, c);
-        if (
-            descriptor.kind !== 'callable-choice' &&
-            raw &&
-            representationKey(raw) !== representationKey(c.result)
-        )
-            addContract(descriptor, { ...c, result: raw });
-        if (descriptor.kind === 'callable-choice') {
-            if (!('targets' in c) || !Array.isArray(c.targets))
-                return fail('Missing dispatch targets');
-            descriptor.options.forEach((option, n) =>
-                addContract(option, {
-                    target: c.targets![n]!,
-                    arguments: c.arguments,
-                    result: c.result,
-                }),
-            );
-        }
+    function addContract(type: string, c: RepresentationVariant['calls'][number]): void {
+        if (!contracts.has(type)) contracts.set(type, new Map());
+        contracts.get(type)!.set(contractKey(c), c);
     }
     const units = new Map(p.semantic.program.units.map((u) => [u.id, u]));
     const index = (b: IRBlock, r: Pick<RepresentationVariant, 'values' | 'calls'>): void => {
@@ -351,7 +354,11 @@ export function verifyConcreteProgram(p: ConcreteProgram): void {
         const walk = (body: IRBlock): void => {
             for (const i of body.instructions) {
                 if (i.op === 'call') {
-                    addContract(values.get(i.callee)!, calls.get(i.out.id)!);
+                    const callee = values.get(i.callee)!,
+                        call = calls.get(i.out.id)!;
+                    if (callee.kind !== 'callable') return fail('Call operand is not callable');
+                    // Indirect calls are entries of the callee type's record.
+                    if (!call.callee) addContract(callee.type, call);
                 } else if (i.op === 'scope') walk(i.body);
                 else if (i.op === 'manual') walk(i.cleanup);
                 else if (i.op === 'case') i.cases.forEach((c) => walk(c.body));
@@ -366,86 +373,16 @@ export function verifyConcreteProgram(p: ConcreteProgram): void {
         index(units.get(v.unit)!.functions.find((f) => f.id === v.function)!.body, v);
     });
     p.analysis.entries.forEach((e) => index(units.get(e.unit)!.entry, e));
-    p.analysis.exports.forEach((e) => {
-        const k = representationKey(p.analysis.roots[e.entry]!.result),
-            contract = { target: e.variant, arguments: e.arguments, result: e.result };
-        if (!contracts.has(k)) contracts.set(k, new Map());
-        contracts.get(k)!.set(contractKey(contract), contract);
-    });
-    let changed = true;
-    while (changed) {
-        changed = false;
-        for (const descriptor of descriptors.values()) {
-            if (descriptor.kind !== 'callable-choice') continue;
-            const members = descriptor.options.map(representationKey);
-            for (const source of descriptors.values()) {
-                if (source === descriptor || source.kind !== 'callable-choice') continue;
-                const indices = source.options.map((o) => members.indexOf(representationKey(o)));
-                if (indices.some((n) => n < 0)) continue;
-                for (const contract of contracts.get(representationKey(descriptor))?.values() ??
-                    []) {
-                    const targets = indices.map((n) => contract.targets![n]!);
-                    const c = {
-                        target: JSON.stringify(['dispatch', targets]),
-                        targets,
-                        arguments: contract.arguments,
-                        result: contract.result,
-                    };
-                    if (!contracts.get(representationKey(source))?.has(contractKey(c))) {
-                        addContract(source, c);
-                        changed = true;
-                    }
-                }
-            }
-        }
-    }
-    eq(
-        [...callableByDescriptor.keys()].sort(),
-        [...descriptors.keys()].sort(),
-        'Concrete callable coverage mismatch',
-    );
     const graphKey = JSON.stringify([
         layoutDefinitionsKey(p.analysis.layoutDefinitions),
         p.analysis.variants.map((v) => v.key).sort(),
-        [...descriptors.keys()]
-            .map((k) => [k, [...(contracts.get(k)?.keys() ?? [])].sort()])
+        [...typeGroups]
+            .map((t) => [JSON.stringify(['type', t]), [...(contracts.get(t)?.keys() ?? [])].sort()])
             .sort((a, b) => (String(a[0]) < String(b[0]) ? -1 : 1)),
     ]);
     if (p.graphKey !== graphKey) fail('Concrete graph cache identity mismatch');
     const codeName = (variant: string) =>
         concreteName('code', JSON.stringify([target, graphKey, variant]));
-    function callableArm(from: ValueRepresentation, to: ValueRepresentation) {
-        const targetCallable = callableByDescriptor.get(representationKey(to))!;
-        const source = callableByDescriptor.get(representationKey(from))!;
-        return {
-            callable: source.id,
-            entries: targetCallable.entries.map((entry) => {
-                const dispatch = wrapper(entry.wrapper);
-                if (dispatch.kind !== 'dispatch')
-                    return fail('Join target lacks dispatch contract');
-                const from =
-                    source.entries.find((candidate) => {
-                        const w = wrapper(candidate.wrapper);
-                        return (
-                            candidate.abi === entry.abi &&
-                            (w.kind === 'dispatch'
-                                ? w.targets.every((t) =>
-                                      dispatch.targets.some(
-                                          (d) =>
-                                              d.callable === t.callable && d.wrapper === t.wrapper,
-                                      ),
-                                  )
-                                : dispatch.targets.some(
-                                      (t) =>
-                                          t.callable === source.id &&
-                                          t.wrapper === candidate.wrapper,
-                                  ))
-                        );
-                    }) ?? fail('Join source lacks compatible invocation entry');
-                return { source: from.field, target: entry.field };
-            }),
-        };
-    }
     function adapter(from: ValueRepresentation, to: ValueRepresentation): ConcreteValueAdapter {
         const endpoints = { from: storage(from), to: storage(to) };
         if (representationKey(from) === representationKey(to))
@@ -456,15 +393,239 @@ export function verifyConcreteProgram(p: ConcreteProgram): void {
                 kind: 'aggregate',
                 items: to.items.map((v, n) => adapter(from.items[n]!, v)),
             };
-        if (to.kind !== 'callable-choice') return fail('Unsupported aggregate member adapter');
-        const arm = callableArm(from, to);
-        return { ...endpoints, kind: 'callable', ...arm };
+        return fail('Unsupported aggregate member adapter');
     }
     const usedWrappers = new Set<string>();
+    type EntryContract = {
+        target: string;
+        targets?: string[];
+        arguments: ValueRepresentation[];
+        result: ValueRepresentation;
+    };
+    /** Checks one wrapper of record `c` for `contract`, including its sources. */
+    function checkEntry(c: CallableLayout, w: ConcreteWrapper, contract: EntryContract): void {
+        const k = groupKeyOf(c);
+        const expectedABI = aid(contract.arguments.map(storage), storage(contract.result));
+        const wk = JSON.stringify([
+            'wrapper',
+            target,
+            graphKey,
+            k,
+            contractKey(contract),
+            expectedABI,
+            c.environment,
+        ]);
+        if (
+            w.abi !== expectedABI ||
+            w.environment !== c.environment ||
+            w.key !== wk ||
+            w.id !== concreteName('wrapper', wk)
+        )
+            fail('Invalid concrete wrapper contract');
+        if (c.descriptor.kind === 'callable') {
+            if (w.kind !== 'dispatch' || w.ownership !== 'selected-environment')
+                return fail('Invalid dynamic invocation ownership');
+            const expected = membersOf(c.type).map((option, n) => {
+                const member = memberRecord(option, c.type);
+                const memberContract = {
+                    target: contract.targets![n]!,
+                    arguments: contract.arguments,
+                    result: contract.result,
+                };
+                const wrapperKey = JSON.stringify([
+                    'wrapper',
+                    target,
+                    graphKey,
+                    groupKeyOf(member),
+                    contractKey(memberContract),
+                    expectedABI,
+                    member.environment,
+                ]);
+                const memberWrapper = wrapper(concreteName('wrapper', wrapperKey));
+                if (
+                    ![
+                        'invoke',
+                        'native',
+                        'adapt-focus-arguments',
+                        'adapt-lens-result',
+                        'adapt-aggregate-result',
+                    ].includes(memberWrapper.kind) ||
+                    memberWrapper.abi !== w.abi
+                )
+                    return fail('Dynamic callable ABI mismatch');
+                usedWrappers.add(memberWrapper.id);
+                checkEntry(member, memberWrapper, memberContract);
+                return { callable: member.id, wrapper: memberWrapper.id };
+            });
+            eq(w.targets, expected, 'Dynamic callable dispatch coverage mismatch');
+        } else if (w.kind === 'adapt-lens-result') {
+            const raw = rawResult(c.descriptor, contract);
+            if (raw?.kind !== 'lens' || contract.result.kind !== 'lens')
+                return fail('Missing lens result contract');
+            const from = shapes.get(raw.shape)!,
+                to = shapes.get(contract.result.shape)!;
+            if (
+                to.kind !== 'thin' ||
+                from.read !== to.read ||
+                from.replacement !== to.replacement ||
+                from.id === to.id
+            )
+                fail('Invalid lens result normalization');
+            const rawABI = aid(contract.arguments.map(storage), storage(raw));
+            const rawContract = { ...contract, result: raw };
+            const rawKey = JSON.stringify([
+                'wrapper',
+                target,
+                graphKey,
+                k,
+                contractKey(rawContract),
+                rawABI,
+                c.environment,
+            ]);
+            const source = wrapper(concreteName('wrapper', rawKey));
+            if (
+                !['invoke', 'native'].includes(source.kind) ||
+                w.source !== source.id ||
+                w.from !== from.id ||
+                w.to !== to.id ||
+                w.ownership !== 'restore-source-and-release'
+            )
+                fail('Invalid lens result restoration adapter');
+            eq(w.order, ['restore-source', 'release'], 'Lens result restoration order changed');
+            usedWrappers.add(source.id);
+            checkEntry(c, source, rawContract);
+        } else if (w.kind === 'adapt-aggregate-result') {
+            const raw = rawResult(c.descriptor, contract);
+            if (
+                raw?.kind !== 'aggregate' ||
+                contract.result.kind !== 'aggregate' ||
+                representationKey(raw) === representationKey(contract.result)
+            )
+                return fail('Missing aggregate result contract');
+            const rawABI = aid(contract.arguments.map(storage), storage(raw));
+            const rawKey = JSON.stringify([
+                'wrapper',
+                target,
+                graphKey,
+                k,
+                contractKey({ ...contract, result: raw }),
+                rawABI,
+                c.environment,
+            ]);
+            const source = wrapper(concreteName('wrapper', rawKey));
+            if (
+                source.kind !== 'invoke' ||
+                w.source !== source.id ||
+                w.ownership !== 'transfer-result'
+            )
+                fail('Invalid aggregate result transfer adapter');
+            eq(w.adapter, adapter(raw, contract.result), 'Aggregate result adapter changed');
+            usedWrappers.add(source.id);
+            checkEntry(c, source, { ...contract, result: raw });
+        } else if (w.kind === 'adapt-focus-arguments') {
+            const exact =
+                p.analysis.variants.find((v) => v.id === contract.target) ??
+                fail('Missing adapted target');
+            const focusResult =
+                exact.result.kind === 'local-focus' && contract.result.kind === 'local-focus'
+                    ? { exact: exact.result, joined: contract.result }
+                    : undefined;
+            if (
+                c.descriptor.kind !== 'closure' ||
+                (!exact.arguments.some(
+                    (a, n) => representationKey(a) !== representationKey(contract.arguments[n]!),
+                ) &&
+                    !(
+                        focusResult &&
+                        representationKey(focusResult.exact) !==
+                            representationKey(focusResult.joined)
+                    ))
+            )
+                return fail('Invalid focus argument adapter');
+            const exactContract = {
+                ...contract,
+                arguments: exact.arguments,
+                ...(focusResult ? { result: exact.result } : {}),
+            };
+            const exactKey = JSON.stringify([
+                'wrapper',
+                target,
+                graphKey,
+                k,
+                contractKey(exactContract),
+                aid(exact.arguments.map(storage), storage(exactContract.result)),
+                c.environment,
+            ]);
+            const source = wrapper(concreteName('wrapper', exactKey));
+            if (
+                w.source !== source.id ||
+                w.ownership !==
+                    (focusResult ? 'stage-until-restoration' : 'stage-and-convert-replacements') ||
+                source.kind === 'adapt-focus-arguments' ||
+                source.kind === 'dispatch' ||
+                source.kind === 'dispose'
+            )
+                fail('Invalid focus argument adapter');
+            eq(
+                w.arguments,
+                contract.arguments.map((joined, n) => {
+                    const from = exact.arguments[n]!;
+                    if (representationKey(from) === representationKey(joined)) return null;
+                    if (from.kind !== 'local-focus' || joined.kind !== 'local-focus')
+                        return fail('Dispatch argument adapters require whole local focuses');
+                    return {
+                        from: storage(from),
+                        to: storage(joined),
+                        replacement: adapter(from.replacement, joined.replacement),
+                    };
+                }),
+                'Focus argument adapter changed',
+            );
+            eq(
+                w.result,
+                focusResult
+                    ? {
+                          from: storage(focusResult.exact),
+                          to: storage(focusResult.joined),
+                          read: adapter(focusResult.exact.read, focusResult.joined.read),
+                      }
+                    : undefined,
+                'Focus result adapter changed',
+            );
+            // The staged source is not a callable entry: check it as one here.
+            usedWrappers.add(source.id);
+            checkEntry(c, source, exactContract);
+        } else if (w.kind === 'invoke') {
+            const callee = code.get(w.code) ?? fail('Wrapper references absent code');
+            const exact = p.analysis.variants.find((v) => v.id === contract.target);
+            // Exact variants receive exactly their analyzed argument representations.
+            if (
+                exact &&
+                exact.arguments.some(
+                    (a, n) => representationKey(a) !== representationKey(contract.arguments[n]!),
+                )
+            )
+                fail('Invoke wrapper argument contract mismatch');
+            if (
+                w.code !== codeName(contract.target) ||
+                callee.abi !== w.abi ||
+                callee.environment !== w.environment ||
+                w.ownership !== 'transfer-captures-and-free'
+            )
+                fail('Invoke wrapper/code ABI mismatch');
+        } else if (w.kind === 'native') {
+            if (
+                w.definition !== contract.target ||
+                !p.semantic.program.imports.some((x) => x.definition === w.definition) ||
+                w.ownership !== 'no-environment'
+            )
+                fail('Native wrapper contract mismatch');
+        } else fail('Invocation uses a disposer');
+    }
     for (const c of cs.values()) {
-        const k = representationKey(c.descriptor),
-            caps = c.descriptor.kind === 'callable' ? c.descriptor.captures : [];
-        if (c.id !== concreteName('callable', JSON.stringify([k, c.layout])))
+        const k = groupKeyOf(c),
+            caps = c.descriptor.kind === 'closure' ? c.descriptor.captures : [];
+        if (c.id !== concreteName('callable', JSON.stringify([k])))
             fail('Noncanonical callable ID');
         if (c.environment !== lid(['environment', caps.map(storage)]))
             fail('Incorrect environment identity');
@@ -486,310 +647,65 @@ export function verifyConcreteProgram(p: ConcreteProgram): void {
         const dk = JSON.stringify(['dispose', target, k, c.environment, caps.map(storage)]);
         if (dispose.key !== dk || dispose.id !== concreteName('wrapper', dk))
             fail('Invalid disposer name');
-        const expectedContracts = [...(contracts.get(k)?.values() ?? [])].sort((a, b) =>
-            contractKey(a) < contractKey(b) ? -1 : 1,
-        );
-        if (c.entries.length !== expectedContracts.length) fail('Callable entry coverage mismatch');
-        const checkEntry = (
-            w: ReturnType<typeof wrapper>,
-            contract: (typeof expectedContracts)[number],
-        ): void => {
-            const expectedABI = aid(contract.arguments.map(storage), storage(contract.result));
-            const wk = JSON.stringify([
-                'wrapper',
-                target,
-                graphKey,
-                k,
-                contractKey(contract),
-                expectedABI,
-                c.environment,
+        if (c.descriptor.kind === 'callable') {
+            // A callable type's record: one dispatch entry per indirect-call contract.
+            if (c.type !== c.descriptor.type) fail('Callable record type mismatch');
+            const expectedContracts = [...(contracts.get(c.type)?.values() ?? [])].sort((a, b) =>
+                contractKey(a) < contractKey(b) ? -1 : 1,
+            );
+            if (c.entries.length !== expectedContracts.length)
+                fail('Callable entry coverage mismatch');
+            c.entries.forEach((e, i) => {
+                const contract = expectedContracts[i]!,
+                    w = wrapper(e.wrapper);
+                usedWrappers.add(w.id);
+                if (
+                    e.abi !== aid(contract.arguments.map(storage), storage(contract.result)) ||
+                    w.abi !== e.abi ||
+                    e.field !== `invoke${i}`
+                )
+                    fail('Invalid concrete wrapper contract');
+                checkEntry(c, w, contract);
+            });
+            const expectedLayout = lid(['callable', c.entries.map((e) => e.abi)]);
+            if (c.layout !== expectedLayout) fail('Callable layout identity mismatch');
+            concreteFields(c.layout, 'record', [
+                { name: 'environment', kind: 'pointer' },
+                { name: 'dispose', kind: 'code', abi: dispose.abi },
+                ...c.entries.map((e) => ({ name: e.field, kind: 'code' as const, abi: e.abi })),
             ]);
-            if (
-                w.abi !== expectedABI ||
-                w.environment !== c.environment ||
-                w.key !== wk ||
-                w.id !== concreteName('wrapper', wk)
-            )
-                fail('Invalid concrete wrapper contract');
-            if (c.descriptor.kind === 'callable-choice') {
-                if (w.kind !== 'dispatch' || w.ownership !== 'selected-environment')
-                    return fail('Invalid dynamic invocation ownership');
-                const expected = c.descriptor.options.map((option, n) => {
-                    const member =
-                        callableByDescriptor.get(representationKey(option)) ??
-                        fail('Missing dynamic callable member');
-                    const memberContract = {
-                        target: contract.targets![n]!,
-                        arguments: contract.arguments,
-                        result: contract.result,
-                    };
-                    const memberKey = JSON.stringify([
-                        'wrapper',
-                        target,
-                        graphKey,
-                        representationKey(option),
-                        contractKey(memberContract),
-                        expectedABI,
-                        member.environment,
-                    ]);
-                    const memberWrapper = wrapper(concreteName('wrapper', memberKey));
-                    if (
-                        ![
-                            'invoke',
-                            'native',
-                            'adapt-focus-arguments',
-                            'adapt-result',
-                            'adapt-lens-result',
-                            'adapt-aggregate-result',
-                        ].includes(memberWrapper.kind) ||
-                        memberWrapper.abi !== w.abi
-                    )
-                        return fail('Dynamic callable ABI mismatch');
-                    return { callable: member.id, wrapper: memberWrapper.id };
-                });
-                eq(w.targets, expected, 'Dynamic callable dispatch coverage mismatch');
-            } else if (w.kind === 'adapt-lens-result') {
-                const raw = rawResult(c.descriptor, contract);
-                if (raw?.kind !== 'lens' || contract.result.kind !== 'lens')
-                    return fail('Missing lens result contract');
-                const from = shapes.get(raw.shape)!,
-                    to = shapes.get(contract.result.shape)!;
-                if (
-                    to.kind !== 'thin' ||
-                    from.read !== to.read ||
-                    from.replacement !== to.replacement ||
-                    from.id === to.id
-                )
-                    fail('Invalid lens result normalization');
-                const rawABI = aid(contract.arguments.map(storage), storage(raw));
-                const rawContract = { ...contract, result: raw };
-                const rawKey = JSON.stringify([
-                    'wrapper',
-                    target,
-                    graphKey,
-                    k,
-                    contractKey(rawContract),
-                    rawABI,
-                    c.environment,
-                ]);
-                const source = wrapper(concreteName('wrapper', rawKey));
-                if (
-                    !['invoke', 'native'].includes(source.kind) ||
-                    w.source !== source.id ||
-                    w.from !== from.id ||
-                    w.to !== to.id ||
-                    w.ownership !== 'restore-source-and-release'
-                )
-                    fail('Invalid lens result restoration adapter');
-                eq(w.order, ['restore-source', 'release'], 'Lens result restoration order changed');
-            } else if (w.kind === 'adapt-aggregate-result') {
-                const raw = rawResult(c.descriptor, contract);
-                if (
-                    raw?.kind !== 'aggregate' ||
-                    contract.result.kind !== 'aggregate' ||
-                    representationKey(raw) === representationKey(contract.result)
-                )
-                    return fail('Missing aggregate result contract');
-                const rawABI = aid(contract.arguments.map(storage), storage(raw));
-                const rawKey = JSON.stringify([
-                    'wrapper',
-                    target,
-                    graphKey,
-                    k,
-                    contractKey({ ...contract, result: raw }),
-                    rawABI,
-                    c.environment,
-                ]);
-                const source = wrapper(concreteName('wrapper', rawKey));
-                if (
-                    source.kind !== 'invoke' ||
-                    w.source !== source.id ||
-                    w.ownership !== 'transfer-result'
-                )
-                    fail('Invalid aggregate result transfer adapter');
-                eq(w.adapter, adapter(raw, contract.result), 'Aggregate result adapter changed');
-            } else if (w.kind === 'adapt-result') {
-                const variant =
-                    p.analysis.variants.find((v) => v.id === contract.target) ??
-                    fail('Missing adapted target');
-                const rawContract = { ...contract, result: variant.result };
-                const rawABI = aid(contract.arguments.map(storage), storage(variant.result));
-                const rawKey = JSON.stringify([
-                    'wrapper',
-                    target,
-                    graphKey,
-                    k,
-                    contractKey(rawContract),
-                    rawABI,
-                    c.environment,
-                ]);
-                const source = wrapper(concreteName('wrapper', rawKey));
-                const from =
-                    callableByDescriptor.get(representationKey(variant.result)) ??
-                    fail('Missing result source');
-                const to =
-                    callableByDescriptor.get(representationKey(contract.result)) ??
-                    fail('Missing result target');
-                if (
-                    source.kind !== 'invoke' ||
-                    w.source !== source.id ||
-                    w.from !== from.id ||
-                    w.to !== to.id ||
-                    w.ownership !== 'transfer-result' ||
-                    to.descriptor.kind !== 'callable-choice'
-                )
-                    fail('Invalid result transfer adapter');
-                const entries = to.entries.map((entry) => {
-                    const dispatch = wrapper(entry.wrapper);
-                    if (dispatch.kind !== 'dispatch')
-                        return fail('Result target lacks dispatch contract');
-                    const candidate =
-                        from.entries.find((e) => {
-                            const member = wrapper(e.wrapper);
-                            return (
-                                e.abi === entry.abi &&
-                                (member.kind === 'dispatch'
-                                    ? member.targets.every((t) =>
-                                          dispatch.targets.some(
-                                              (d) =>
-                                                  d.callable === t.callable &&
-                                                  d.wrapper === t.wrapper,
-                                          ),
-                                      )
-                                    : dispatch.targets.some(
-                                          (t) => t.callable === from.id && t.wrapper === e.wrapper,
-                                      ))
-                            );
-                        }) ?? fail('Result source lacks compatible invocation entry');
-                    return { source: candidate.field, target: entry.field };
-                });
-                eq(w.entries, entries, 'Result invocation entry mapping changed');
-            } else if (w.kind === 'adapt-focus-arguments') {
-                const exact =
-                    p.analysis.variants.find((v) => v.id === contract.target) ??
-                    fail('Missing adapted target');
-                const focusResult =
-                    exact.result.kind === 'local-focus' && contract.result.kind === 'local-focus'
-                        ? { exact: exact.result, joined: contract.result }
-                        : undefined;
-                if (
-                    c.descriptor.kind !== 'callable' ||
-                    (!exact.arguments.some(
-                        (a, n) =>
-                            representationKey(a) !== representationKey(contract.arguments[n]!),
-                    ) &&
-                        !(
-                            focusResult &&
-                            representationKey(focusResult.exact) !==
-                                representationKey(focusResult.joined)
-                        ))
-                )
-                    return fail('Invalid focus argument adapter');
-                const exactContract = {
-                    ...contract,
-                    arguments: exact.arguments,
-                    ...(focusResult ? { result: exact.result } : {}),
-                };
-                const exactKey = JSON.stringify([
-                    'wrapper',
-                    target,
-                    graphKey,
-                    k,
-                    contractKey(exactContract),
-                    aid(exact.arguments.map(storage), storage(exactContract.result)),
-                    c.environment,
-                ]);
-                const source = wrapper(concreteName('wrapper', exactKey));
-                if (
-                    w.source !== source.id ||
-                    w.ownership !==
-                        (focusResult
-                            ? 'stage-until-restoration'
-                            : 'stage-and-convert-replacements') ||
-                    source.kind === 'adapt-focus-arguments' ||
-                    source.kind === 'dispatch' ||
-                    source.kind === 'dispose'
-                )
-                    fail('Invalid focus argument adapter');
-                eq(
-                    w.arguments,
-                    contract.arguments.map((joined, n) => {
-                        const from = exact.arguments[n]!;
-                        if (representationKey(from) === representationKey(joined)) return null;
-                        if (from.kind !== 'local-focus' || joined.kind !== 'local-focus')
-                            return fail('Dispatch argument adapters require whole local focuses');
-                        return {
-                            from: storage(from),
-                            to: storage(joined),
-                            replacement: adapter(from.replacement, joined.replacement),
-                        };
-                    }),
-                    'Focus argument adapter changed',
-                );
-                eq(
-                    w.result,
-                    focusResult
-                        ? {
-                              from: storage(focusResult.exact),
-                              to: storage(focusResult.joined),
-                              read: adapter(focusResult.exact.read, focusResult.joined.read),
-                          }
-                        : undefined,
-                    'Focus result adapter changed',
-                );
-                // The staged source is not a callable entry: check it as one here.
-                usedWrappers.add(source.id);
-                checkEntry(source, exactContract);
-            } else if (w.kind === 'invoke') {
-                const callee = code.get(w.code) ?? fail('Wrapper references absent code');
-                const exact = p.analysis.variants.find((v) => v.id === contract.target);
-                // Exact variants receive exactly their analyzed argument representations.
-                if (
-                    exact &&
-                    exact.arguments.some(
-                        (a, n) =>
-                            representationKey(a) !== representationKey(contract.arguments[n]!),
-                    )
-                )
-                    fail('Invoke wrapper argument contract mismatch');
-                if (
-                    w.code !== codeName(contract.target) ||
-                    callee.abi !== w.abi ||
-                    callee.environment !== w.environment ||
-                    w.ownership !== 'transfer-captures-and-free'
-                )
-                    fail('Invoke wrapper/code ABI mismatch');
-            } else if (w.kind === 'native') {
-                if (
-                    w.definition !== contract.target ||
-                    !p.semantic.program.imports.some((x) => x.definition === w.definition) ||
-                    w.ownership !== 'no-environment'
-                )
-                    fail('Native wrapper contract mismatch');
-            } else fail('Invocation uses a disposer');
-        };
-        c.entries.forEach((e, i) => {
-            const contract = expectedContracts[i]!,
-                w = wrapper(e.wrapper);
-            usedWrappers.add(w.id);
-            if (
-                e.abi !== aid(contract.arguments.map(storage), storage(contract.result)) ||
-                w.abi !== e.abi ||
-                e.field !== `invoke${i}`
-            )
-                fail('Invalid concrete wrapper contract');
-            checkEntry(w, contract);
-        });
-        const expectedLayout = lid(['callable', c.entries.map((e) => e.abi)]);
-        if (c.layout !== expectedLayout) fail('Callable layout identity mismatch');
-        concreteFields(c.layout, 'record', [
-            { name: 'environment', kind: 'pointer' },
-            { name: 'dispose', kind: 'code', abi: dispose.abi },
-            ...c.entries.map((e) => ({ name: e.field, kind: 'code' as const, abi: e.abi })),
-        ]);
+        } else {
+            // A member's record is its type's record; a listed member fills each entry
+            // with its own dispatch target, an unlisted (direct-only) one with none.
+            const owner = typeRecord(c.type);
+            if (c.layout !== owner.layout) fail('Member callable layout mismatch');
+            if (c.descriptor.kind === 'closure' && fnTypeKey(c.descriptor) !== c.type)
+                fail('Member callable type mismatch');
+            const listed = membersOf(c.type).findIndex(
+                (m) => memberKey(m) === memberKey(c.descriptor as CallableMember),
+            );
+            eq(
+                c.entries,
+                listed < 0
+                    ? []
+                    : owner.entries.map((entry) => {
+                          const dispatch = wrapper(entry.wrapper);
+                          if (dispatch.kind !== 'dispatch')
+                              return fail('Callable type entry lacks dispatch contract');
+                          if (dispatch.targets[listed]?.callable !== c.id)
+                              fail('Dispatch target names the wrong member');
+                          return {
+                              wrapper: dispatch.targets[listed]!.wrapper,
+                              abi: entry.abi,
+                              field: entry.field,
+                          };
+                      }),
+                'Member callable entries changed',
+            );
+        }
     }
-    if (usedWrappers.size !== ws.size) fail('Unreferenced concrete wrapper');
     const verifyBody = (
+        unitId: string,
         original: IRBlock,
         body: ConcreteBlock,
         r: Pick<RepresentationVariant, 'values' | 'calls'>,
@@ -986,20 +902,8 @@ export function verifyConcreteProgram(p: ConcreteProgram): void {
                             : undefined,
                         'Aggregate join adapter changed',
                     );
-                    let callableJoin;
-                    if (reps.get(i.out.id)!.kind === 'callable-choice') {
-                        const targetCallable = callableByDescriptor.get(
-                            representationKey(reps.get(i.out.id)!),
-                        )!;
-                        callableJoin = {
-                            kind: 'erased-environment',
-                            result: targetCallable.id,
-                            arms: i.cases.map((arm) =>
-                                callableArm(reps.get(arm.body.result)!, reps.get(i.out.id)!),
-                            ),
-                        };
-                    }
-                    eq(o.callableJoin, callableJoin, 'Callable join adapter changed');
+                    // Callable values share their type's record: joins are moves.
+                    eq(o.callableJoin, undefined, 'Callable join adapter changed');
                     i.cases.forEach((c, j) => {
                         eq(o.cases[j]!.setup, c.setup, 'Case setup normalization changed');
                         eq(
@@ -1011,7 +915,33 @@ export function verifyConcreteProgram(p: ConcreteProgram): void {
                         walk(c.body, o.cases[j]!.body);
                     });
                 } else if (i.op === 'global' || i.op === 'closure') {
-                    const c = callableByDescriptor.get(representationKey(reps.get(i.out.id)!))!;
+                    if (i.out.type.tag !== 'plain') return fail('Callable produced a lens');
+                    let member: CallableMember;
+                    if (i.op === 'closure')
+                        member = {
+                            kind: 'closure',
+                            unit: unitId,
+                            function: i.function,
+                            captures: i.captures.map((c) => reps.get(c.value)!),
+                        };
+                    else {
+                        const target = p.semantic.program.units.find(
+                            (u) => u.definition === i.instance.definition,
+                        );
+                        const entry = target?.entry.instructions[0];
+                        member =
+                            target && entry?.op === 'closure'
+                                ? {
+                                      kind: 'closure',
+                                      unit: target.id,
+                                      function: entry.function,
+                                      captures: [],
+                                  }
+                                : { kind: 'native', definition: i.instance.definition };
+                    }
+                    const type = typeKey(i.out.type.value);
+                    discoverMember(member, type);
+                    const c = memberRecord(member, type);
                     eq(
                         o,
                         {
@@ -1025,37 +955,52 @@ export function verifyConcreteProgram(p: ConcreteProgram): void {
                     );
                 } else if (i.op === 'call') {
                     if (o.op !== 'invoke') return fail('Call was not concretized');
-                    const c = callableByDescriptor.get(representationKey(reps.get(i.callee)!))!,
+                    const callee = reps.get(i.callee)!,
                         contract = calls.get(i.out.id)!;
-                    const entry =
-                        c.entries.find((e) => {
-                            const w = wrapper(e.wrapper);
-                            if (
-                                e.abi !==
-                                aid(contract.arguments.map(storage), storage(contract.result))
-                            )
-                                return false;
-                            const matchesTarget = (id: string, target: string): boolean => {
-                                let candidate = wrapper(id);
-                                // Argument adapters may stage a result adapter's source.
-                                while (
-                                    candidate.kind === 'adapt-focus-arguments' ||
-                                    candidate.kind === 'adapt-result' ||
-                                    candidate.kind === 'adapt-aggregate-result' ||
-                                    candidate.kind === 'adapt-lens-result'
-                                )
-                                    candidate = wrapper(candidate.source);
-                                return candidate.kind === 'invoke'
-                                    ? candidate.code === codeName(target)
-                                    : candidate.kind === 'native' &&
-                                          candidate.definition === target;
-                            };
-                            return w.kind === 'dispatch'
-                                ? w.targets.every((t, n) =>
-                                      matchesTarget(t.wrapper, contract.targets![n]!),
-                                  )
-                                : matchesTarget(w.id, contract.target);
-                        }) ?? fail('Missing invocation slot');
+                    if (callee.kind !== 'callable') return fail('Call operand is not callable');
+                    const expectedABI = aid(
+                        contract.arguments.map(storage),
+                        storage(contract.result),
+                    );
+                    if (contract.callee) {
+                        // A direct call invokes its known member's exact wrapper.
+                        const member = memberRecord(contract.callee, callee.type);
+                        const wrapperKey = JSON.stringify([
+                            'wrapper',
+                            target,
+                            graphKey,
+                            groupKeyOf(member),
+                            contractKey(contract),
+                            expectedABI,
+                            member.environment,
+                        ]);
+                        const w = wrapper(concreteName('wrapper', wrapperKey));
+                        usedWrappers.add(w.id);
+                        checkEntry(member, w, contract);
+                        eq(
+                            o,
+                            {
+                                op: 'invoke',
+                                origin: i.origin,
+                                out: o.out,
+                                callee: i.callee,
+                                args: i.args,
+                                wrapper: w.id,
+                                abi: w.abi,
+                            },
+                            'Concrete invocation target/ABI changed',
+                        );
+                        return;
+                    }
+                    // An indirect call invokes its type record's entry for this contract.
+                    const c = typeRecord(callee.type);
+                    const entries = [...(contracts.get(callee.type)?.values() ?? [])].sort(
+                        (a, b) => (contractKey(a) < contractKey(b) ? -1 : 1),
+                    );
+                    const index = entries.findIndex(
+                        (e) => contractKey(e) === contractKey(contract),
+                    );
+                    const entry = c.entries[index] ?? fail('Missing invocation slot');
                     eq(
                         o,
                         {
@@ -1080,14 +1025,14 @@ export function verifyConcreteProgram(p: ConcreteProgram): void {
         const c = code.get(codeName(v.id)) ?? fail('Missing representation-specialized code');
         expectedCode.add(c.id);
         const fn = units.get(v.unit)!.functions.find((f) => f.id === v.function)!,
-            callable = callableByDescriptor.get(
-                representationKey({
-                    kind: 'callable',
-                    unit: v.unit,
-                    function: v.function,
-                    captures: v.captures,
-                }),
-            )!;
+            member: CallableMember = {
+                kind: 'closure',
+                unit: v.unit,
+                function: v.function,
+                captures: v.captures,
+            };
+        discoverMember(member, fnTypeKey(v));
+        const callable = memberRecord(member, fnTypeKey(v));
         eq(
             {
                 unit: c.unit,
@@ -1113,7 +1058,7 @@ export function verifyConcreteProgram(p: ConcreteProgram): void {
             },
             'Concrete function ABI/storage contract mismatch',
         );
-        verifyBody(fn.body, c.body, v);
+        verifyBody(v.unit, fn.body, c.body, v);
     }
     const expectedEntries: string[] = [];
     p.analysis.entries.forEach((e, i) => {
@@ -1145,9 +1090,15 @@ export function verifyConcreteProgram(p: ConcreteProgram): void {
             },
             'Concrete entry ABI mismatch',
         );
-        verifyBody(units.get(e.unit)!.entry, c.body, e);
+        verifyBody(e.unit, units.get(e.unit)!.entry, c.body, e);
     });
     eq(p.entries, expectedEntries, 'Entry code coverage mismatch');
+    eq(
+        [...callableByGroup.keys()].sort(),
+        [...descriptors].sort(),
+        'Concrete callable coverage mismatch',
+    );
+    if (usedWrappers.size !== ws.size) fail('Unreferenced concrete wrapper');
     if (expectedCode.size !== code.size) fail('Unreferenced concrete code');
     eq(
         p.forward,

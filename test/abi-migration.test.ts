@@ -11,8 +11,8 @@ for (const sample of abiMigrationSamples) {
     const enabled = enabledMilestones.includes(sample.milestone);
     (enabled ? it : it.skip)(`${sample.milestone}: ${sample.name}`, () => {
         const p = typedProgram(sample.source);
-        expect(legacyReference(sample.source)).toEqual(sample.expected);
-        expect(executeTypedProgram(p)).toEqual(sample.expected);
+        expect<unknown>(legacyReference(sample.source)).toEqual(sample.expected);
+        expect<unknown>(executeTypedProgram(p)).toEqual(sample.expected);
         const c = JSON.parse(
             JSON.stringify(
                 compileConcreteProgram(p, wasm32Emscripten('test'), [

@@ -33,19 +33,6 @@ function concrete(source = callableFocusSamples[0]!.source) {
         ),
     );
 }
-for (const endpoint of ['read', 'replacement'] as const)
-    it(`rejects forged local focus ${endpoint} provenance`, () => {
-        const c = concrete();
-        const focus = c.analysis.entries[0].values.find(
-            (v: any) => v.representation.kind === 'local-focus',
-        ).representation;
-        focus[endpoint] = focus[endpoint === 'read' ? 'replacement' : 'read'];
-        expect(() => verifyConcreteProgram(c)).toThrow(
-            endpoint === 'read'
-                ? 'Callable focus read provenance changed'
-                : 'Callable swap replacement provenance changed',
-        );
-    });
 it('rejects a forged local focus physical pointer', () => {
     const c = concrete();
     const l = c.layouts.find((l: any) => JSON.parse(l.key)[2] === 'local-focus');
@@ -90,35 +77,6 @@ for (const source of [
 const aliasSource = callableFocusSamples.find(
     (s) => s.name === 'callable alias replacement and owner continuation',
 )!.source;
-it('independently checks the final persistent alias replacement at release', () => {
-    const c = concrete(aliasSource);
-    const focus = c.analysis.entries[0].values.find(
-        (v: any) => v.representation.kind === 'local-focus',
-    ).representation;
-    focus.replacement = structuredClone(focus.read);
-    expect(() => verifyConcreteProgram(c)).toThrow(
-        'Callable alias final replacement provenance changed',
-    );
-    expect(() => emitC(c)).toThrow('Callable alias final replacement provenance changed');
-});
-it('independently checks an alias swap against the current owner', () => {
-    const c = concrete(aliasSource);
-    const focuses = c.analysis.entries[0].values.filter(
-        (v: any) => v.representation.kind === 'local-focus',
-    );
-    focuses[1].representation.read = structuredClone(focuses[0].representation.replacement);
-    expect(() => verifyConcreteProgram(c)).toThrow('Callable focus read provenance changed');
-});
-it('independently checks the owner continuation after alias release', () => {
-    const c = concrete(aliasSource);
-    const values = c.analysis.entries[0].values;
-    const initial = values.find((v: any) => v.representation.kind === 'local-focus').representation
-        .read;
-    values.filter((v: any) => v.representation.kind === 'callable').at(-1).representation =
-        structuredClone(initial);
-    expect(() => verifyConcreteProgram(c)).toThrow('Moved callable provenance changed');
-});
-
 it('keeps persistent aliases exclusive over callable owners', () => {
     expect(() =>
         typedProgram('{let x = 3\n let f = fn () x\n let a = ~f\n f()\n a := fn () 5}'),
@@ -135,20 +93,6 @@ it('rejects projected callable read provenance from the whole owner', () => {
     focuses[1].representation.read = structuredClone(focuses[0].representation.read);
     expect(() => verifyConcreteProgram(c)).toThrow();
     expect(() => emitC(c)).toThrow();
-});
-it('checks projected subloan final provenance independently', () => {
-    const c = concrete(
-        callableFocusSamples.find((s) => s.name === 'projected callable loan nested replacement')!
-            .source,
-    );
-    const focus = c.analysis.entries[0].values.filter(
-        (v: any) => v.representation.kind === 'local-focus',
-    )[1].representation;
-    focus.replacement = structuredClone(focus.read);
-    expect(() => verifyConcreteProgram(c)).toThrow(
-        'Callable alias final replacement provenance changed',
-    );
-    expect(() => emitC(c)).toThrow('Callable alias final replacement provenance changed');
 });
 function firstManual(block: any): any {
     for (const i of block.instructions) {
@@ -171,49 +115,6 @@ for (const field of ['frontend', 'result', 'kind', 'order'] as const)
         expect(() => verifyConcreteProgram(c)).toThrow('Manual restoration contract changed');
         expect(() => emitC(c)).toThrow('Manual restoration contract changed');
     });
-it('independently checks manual callable read provenance', () => {
-    const c = concrete(
-        callableFocusSamples.find((s) => s.name === 'manual callable swap cleanup replacement')!
-            .source,
-    );
-    const m = c.code.map((code: any) => firstManual(code.body)).find(Boolean);
-    const v = c.analysis.entries[0].values.find((v: any) => v.value === m.out.id).representation;
-    v.read = structuredClone(v.replacement);
-    expect(() => verifyConcreteProgram(c)).toThrow('Manual callable read provenance changed');
-});
-it('independently checks forwarded callable endpoint agreement', () => {
-    const c = concrete(
-        callableFocusSamples.find((s) => s.name === 'forwarded callable focus lexical swap')!
-            .source,
-    );
-    const focus = c.analysis.entries[0].values
-        .filter((v: any) => v.representation.kind === 'local-focus')
-        .at(-1).representation;
-    focus.replacement = structuredClone(focus.read);
-    expect(() => verifyConcreteProgram(c)).toThrow('Scope result representation mismatch');
-    expect(() => emitC(c)).toThrow('Scope result representation mismatch');
-});
-it('independently checks computed callable alias completion', () => {
-    const c = concrete(
-        callableFocusSamples.find((s) => s.name === 'computed callable alias cleanup replacement')!
-            .source,
-    );
-    const values = c.analysis.entries[0].values;
-    const erase = (b: any) => {
-        for (const i of b.instructions) {
-            if (i.op === 'manual' || i.op === 'scope') {
-                const v = values.find((v: any) => v.value === i.out.id)?.representation;
-                if (v?.kind === 'local-focus') v.replacement = structuredClone(v.read);
-            }
-            if (i.op === 'scope') erase(i.body);
-        }
-    };
-    c.code.forEach((code: any) => erase(code.body));
-    expect(() => verifyConcreteProgram(c)).toThrow(
-        'Computed callable alias replacement provenance changed',
-    );
-    expect(() => emitC(c)).toThrow('Computed callable alias replacement provenance changed');
-});
 it('keeps computed callable aliases exclusive over frontend owners', () => {
     expect(() =>
         typedProgram(
@@ -230,17 +131,6 @@ it('rejects forged computed callable owner protection', () => {
     loan.owners = [];
     expect(() => verifyConcreteProgram(c)).toThrow('Computed loan owner protection mismatch');
     expect(() => emitC(c)).toThrow('Computed loan owner protection mismatch');
-});
-it('rejects reordered scattered callable endpoints', () => {
-    const c = concrete(
-        callableFocusSamples.find((s) => s.name === 'scattered callable flat swap')!.source,
-    );
-    const focus = c.analysis.entries[0].values.find(
-        (v: any) => v.representation.kind === 'focus-tuple',
-    ).representation;
-    focus.items.reverse();
-    expect(() => verifyConcreteProgram(c)).toThrow('Callable focus tuple children changed');
-    expect(() => emitC(c)).toThrow('Callable focus tuple children changed');
 });
 it('rejects forged scattered callable physical fields', () => {
     const c = concrete(
@@ -273,32 +163,6 @@ it('rejects forged scattered manual restoration mode', () => {
     expect(() => verifyConcreteProgram(c)).toThrow('Manual restoration contract changed');
     expect(() => emitC(c)).toThrow('Manual restoration contract changed');
 });
-it('checks forwarded scattered endpoint agreement', () => {
-    const c = concrete(
-        callableFocusSamples.find(
-            (s) => s.name === 'scattered callable forwarded lexical releases',
-        )!.source,
-    );
-    const focus = c.analysis.entries[0].values
-        .filter((v: any) => v.representation.kind === 'focus-tuple')
-        .at(-1).representation;
-    focus.replacement.items[0] = structuredClone(focus.read.items[0]);
-    expect(() => verifyConcreteProgram(c)).toThrow('Scope result representation mismatch');
-});
-it('rejects forged scattered alias completion provenance', () => {
-    const c = concrete(
-        callableFocusSamples.find((s) => s.name === 'scattered callable persistent flat alias')!
-            .source,
-    );
-    const focus = c.analysis.entries[0].values.find(
-        (v: any) => v.representation.kind === 'focus-tuple',
-    ).representation;
-    focus.replacement = structuredClone(focus.read);
-    expect(() => verifyConcreteProgram(c)).toThrow(
-        'Scattered callable alias replacement provenance changed',
-    );
-    expect(() => emitC(c)).toThrow('Scattered callable alias replacement provenance changed');
-});
 it('rejects missing scattered alias owner protection', () => {
     const c = concrete(
         callableFocusSamples.find((s) => s.name === 'scattered callable persistent flat alias')!
@@ -315,46 +179,6 @@ it('keeps scattered callable alias owners exclusive', () => {
     expect(() =>
         typedProgram('{let f = fn () 3\n let n = 4\n let (a, b) = ~(f, n)\n f()\n a := fn () 7}'),
     ).toThrow('Binding is exclusively borrowed until its aliases leave scope');
-});
-it('rejects forged callable fst projected read provenance', () => {
-    const c = concrete(
-        callableFocusSamples.find((s) => s.name === 'callable fst owned replacement')!.source,
-    );
-    const focuses = c.analysis.entries[0].values.filter(
-        (v: any) => v.representation.kind === 'local-focus',
-    );
-    focuses.at(-1).representation.read = structuredClone(
-        focuses[0].representation.replacement.items[0],
-    );
-    c.analysis.entries[0].calls.find((call: any) => call.value === focuses.at(-1).value).result =
-        structuredClone(focuses.at(-1).representation);
-    expect(() => verifyConcreteProgram(c)).toThrow('Callable fst read provenance changed');
-    expect(() => emitC(c)).toThrow('Callable fst read provenance changed');
-});
-it('rejects forged scattered fst selected child', () => {
-    const c = concrete(
-        callableFocusSamples.find((s) => s.name === 'callable fst scattered replacement')!.source,
-    );
-    const call = c.analysis.entries[0].calls.find((v: any) => v.target === 'native/fst');
-    const value = c.analysis.entries[0].values.find((v: any) => v.value === call.value);
-    value.representation.read = structuredClone(value.representation.replacement);
-    call.result = structuredClone(value.representation);
-    expect(() => verifyConcreteProgram(c)).toThrow('Scattered fst child provenance changed');
-});
-it('checks nested fst parent restoration provenance independently', () => {
-    const c = concrete(
-        callableFocusSamples.find((s) => s.name === 'callable fst completion nested calls')!.source,
-    );
-    const root = c.analysis.entries[0].values.find(
-        (v: any) => v.representation.kind === 'local-focus',
-    ).representation;
-    root.replacement = structuredClone(root.read);
-    c.analysis.entries[0].calls.find((call: any) => call.target === 'native/fst').arguments[0] =
-        structuredClone(root);
-    expect(() => verifyConcreteProgram(c)).toThrow(
-        'Callable fst parent replacement provenance changed',
-    );
-    expect(() => emitC(c)).toThrow('Callable fst parent replacement provenance changed');
 });
 function firstRetainedScope(b: any): any {
     for (const i of b.instructions) {
@@ -418,18 +242,6 @@ it('rejects reordered private scattered physical backing', () => {
         .retainedStorage.reverse();
     expect(() => verifyConcreteProgram(c)).toThrow('Retained scope storage contract changed');
 });
-it('rejects forged parent replacement through a returned callable fst frontend', () => {
-    const c = concrete(
-        callableFocusSamples.find((s) => s.name === 'callable fst over returned callable lens')!
-            .source,
-    );
-    const call = c.analysis.entries[0].calls.find((call: any) => call.demand);
-    expect(call.demand.consumer).toBeString();
-    const parent = c.analysis.entries[0].values.find((v: any) => v.value === call.value);
-    parent.representation.replacement = structuredClone(parent.representation.read);
-    expect(() => verifyConcreteProgram(c)).toThrow('Call result annotation mismatch');
-    expect(() => emitC(c)).toThrow('Call result annotation mismatch');
-});
 function selectedFocus(c: any): any {
     const find = (b: any): any => {
         for (const i of b.instructions) {
@@ -443,77 +255,3 @@ function selectedFocus(c: any): any {
     };
     return c.code.map((code: any) => find(code.body)).find(Boolean);
 }
-for (const mutation of ['read', 'arm', 'result'] as const)
-    it(`rejects forged selected callable focus ${mutation}`, () => {
-        const c = concrete(
-            callableFocusSamples.find((s) => s.name === 'selected callable converts entry tables')!
-                .source,
-        );
-        const join = selectedFocus(c).lensJoin;
-        if (mutation === 'read') join.reads[0].to = 'forged-layout';
-        if (mutation === 'arm') join.arms.reverse();
-        if (mutation === 'result') join.result = 'forged-layout';
-        expect(() => verifyConcreteProgram(c)).toThrow(
-            'Selected-branch restoration adapter changed',
-        );
-        expect(() => emitC(c)).toThrow('Selected-branch restoration adapter changed');
-    });
-it('rejects selected callable completions that write the wrong arm owner', () => {
-    const c = concrete(
-        callableFocusSamples.find((s) => s.name === 'selected callable alias true')!.source,
-    );
-    const selected = c.analysis.entries[0].values.find(
-        (v: any) => v.representation.kind === 'local-focus' && v.cleanupJoins,
-    );
-    expect(selected).toBeDefined();
-    selected.cleanupJoins[0].arms.reverse();
-    expect(() => verifyConcreteProgram(c)).toThrow('Cleanup storage arm provenance changed');
-});
-it('rejects callee-selected completions that write the wrong arm owner', () => {
-    const c = concrete(
-        callableFocusSamples.find((s) => s.name === 'selected callable result true')!.source,
-    );
-    const selected = c.analysis.variants
-        .flatMap((v: any) => v.values)
-        .find((v: any) => v.representation.kind === 'local-focus' && v.cleanupJoins);
-    expect(selected).toBeDefined();
-    selected.cleanupJoins[0].arms.reverse();
-    expect(() => verifyConcreteProgram(c)).toThrow('Cleanup storage arm provenance changed');
-});
-it('rejects a forged callee-selected result demand', () => {
-    const c = concrete(
-        callableFocusSamples.find((s) => s.name === 'selected callable result true')!.source,
-    );
-    const call = c.analysis.entries[0].calls.find((call: any) => call.demand);
-    call.demand.replacement = structuredClone(call.result.read);
-    expect(() => verifyConcreteProgram(c)).toThrow('Callable result demand changed');
-});
-for (const mutation of ['ownership', 'read', 'missing'] as const)
-    it(`rejects forged dispatched focus result adapter ${mutation}`, () => {
-        const c = concrete(
-            callableFocusSamples.find(
-                (s) => s.name === 'dispatched callable result converts entry tables',
-            )!.source,
-        );
-        const w = c.wrappers.find(
-            (w: any) => w.kind === 'adapt-focus-arguments' && w.result?.read.kind === 'callable',
-        );
-        expect(w).toBeDefined();
-        if (mutation === 'ownership') w.ownership = 'stage-and-convert-replacements';
-        if (mutation === 'read') w.result.read.to = 'forged-layout';
-        if (mutation === 'missing') delete w.result;
-        const message =
-            mutation === 'ownership'
-                ? 'Invalid focus argument adapter'
-                : 'Focus result adapter changed';
-        expect(() => verifyConcreteProgram(c)).toThrow(message);
-        expect(() => emitC(c)).toThrow(message);
-    });
-it('rejects dispatched focus results completed on different demands', () => {
-    const c = concrete(
-        callableFocusSamples.find((s) => s.name === 'dispatched callable result true')!.source,
-    );
-    const call = c.analysis.entries[0].calls.find((call: any) => call.demand && call.targets);
-    call.demand.replacement = structuredClone(call.result.read);
-    expect(() => verifyConcreteProgram(c)).toThrow('Callable result demand changed');
-});

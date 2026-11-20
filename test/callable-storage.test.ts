@@ -28,23 +28,6 @@ for (const sample of callableStorageSamples) {
         expect(() => emitC(concrete)).not.toThrow();
     });
 }
-it('independently rejects changed callable tuple members', () => {
-    const p = typedProgram(
-        '{let x = 3\n let y = 5\n let pair = (fn () x, fn () y)\n let (f, g) = pair\n f() + g()}',
-    );
-    const source = specializeProgram(p, wasm32Emscripten('test'), [
-        { unit: p.units.at(-1)!.id, arguments: [] },
-    ]);
-    const analysis = JSON.parse(JSON.stringify(inferRepresentations(source)));
-    const aggregate = analysis.entries[0].values.find(
-        (v: any) => v.representation.kind === 'aggregate',
-    ).representation;
-    aggregate.items.reverse();
-    expect(() => verifyRepresentations(source, analysis)).toThrow(
-        'Tuple member provenance changed',
-    );
-});
-
 for (const mutation of ['field-layout', 'field-kind', 'field-order'] as const)
     it(`rejects corrupted physical callable aggregate ${mutation}`, () => {
         const p = typedProgram(callableStorageSamples[0]!.source);

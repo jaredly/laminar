@@ -186,9 +186,9 @@ reject('changed global callable provenance', (a) => {
 reject(
     'changed capture provenance',
     (a) => {
-        const closure = a.entries[0]!.values.find((v) => v.representation.kind === 'callable')!;
-        if (closure.representation.kind !== 'callable') throw Error('Expected closure');
-        closure.representation.captures = [];
+        const member = a.callables.flatMap((c) => c.members).find((m) => m.kind === 'closure')!;
+        if (member.kind !== 'closure') throw Error('Expected closure member');
+        member.captures = [];
     },
     '{let x = 1\n let f = fn (()) x\n f(())}',
 );
@@ -258,7 +258,7 @@ it('rejects a coherent thin substitute for an explicit scattered lens tuple', ()
     annotation.representation = { kind: 'lens', shape: thin.id };
     expect(() => verifyRepresentations(source, analysis)).toThrow('Lens tuple lost its topology');
 });
-it('rejects a forged same-type callable branch join independently of inference', () => {
+it('rejects a same-type branch whose code is not a listed member', () => {
     const text =
         'fn id(x) x\nfn other(x) x\n(other(1), {let f = match true {true -> id; false -> id}\n f(1)})';
     const { source: original, analysis } = fixture(text);
@@ -284,14 +284,7 @@ it('rejects a forged same-type callable branch join independently of inference',
     const otherUnit = source.program.units.find((u) => u.id === other.id)!;
     const closure = otherUnit.entry.instructions[0]!;
     if (closure.op !== 'closure') throw Error('Expected closure');
-    const annotation = analysis.entries[0]!.values.find((v) => v.value === global.out.id)!;
-    annotation.representation = {
-        kind: 'callable',
-        unit: other.id,
-        function: closure.function,
-        captures: [],
-    };
-    expect(() => verifyRepresentations(source, analysis)).toThrow(
-        'Branch needs a representation adapter',
-    );
+    // Callable values are type-determined; the arm's code is a member the analysis
+    // never listed for that type.
+    expect(() => verifyRepresentations(source, analysis)).toThrow('Callable member sets changed');
 });

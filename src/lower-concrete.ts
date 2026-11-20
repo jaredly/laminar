@@ -5,9 +5,10 @@ import {
     type RepresentationAnalysis,
     type RepresentationVariant,
     type ValueRepresentation,
+    type CallableMember,
 } from './infer-representations.ts';
 import { verifyRepresentations } from './verify-representations.ts';
-import { representationKey } from './representation-key.ts';
+import { memberKey, representationKey } from './representation-key.ts';
 import { ConcreteLayoutTable, concreteName } from './concrete-layouts.ts';
 import {
     specializeProgram,
@@ -38,7 +39,9 @@ type Contract = {
     result: ValueRepresentation;
 };
 type Group = {
-    descriptor: ValueRepresentation;
+    descriptor: ValueRepresentation | CallableMember;
+    /** The semantic function type key of every value of this record. */
+    type: string;
     key: string;
     contracts: Map<string, Contract>;
     building?: boolean;
@@ -65,19 +68,34 @@ export function lowerConcreteProgram(
     const fail = (message: string): never => {
         throw new BackendDiagnostic('unsolved-concrete-abi', message);
     };
-    const group = (v: ValueRepresentation): Group => {
-        if (v.kind !== 'callable' && v.kind !== 'native' && v.kind !== 'callable-choice')
-            return fail('A callable layout requires a callable descriptor');
-        const key = representationKey(v);
+    // Callable records: one per callable type, whose entries dispatch over the
+    // type's members; and one per member, sharing the type's record layout and entry
+    // order, so a member's value already is a value of its type.
+    const members = new Map(analysis.callables.map((c) => [c.type, c.members]));
+    const typeGroup = (type: string): Group => {
+        const key = JSON.stringify(['type', type]);
         let g = groups.get(key);
         if (!g) {
-            g = { descriptor: v, key, contracts: new Map() };
+            g = { descriptor: { kind: 'callable', type }, type, key, contracts: new Map() };
             groups.set(key, g);
-            if (v.kind === 'callable') v.captures.forEach(discover);
-            if (v.kind === 'callable-choice') v.options.forEach(discover);
+            (members.get(type) ?? []).forEach((m) => memberGroup(m, type));
         }
         return g;
     };
+    const memberGroup = (m: CallableMember, type: string): Group => {
+        const key = JSON.stringify(['member', type, memberKey(m)]);
+        let g = groups.get(key);
+        if (!g) {
+            g = { descriptor: m, type, key, contracts: new Map() };
+            groups.set(key, g);
+            if (m.kind === 'closure') m.captures.forEach(discover);
+        }
+        return g;
+    };
+    const memberOf = (code: { unit: string; function: string }, captures: ValueRepresentation[]) =>
+        ({ kind: 'closure', unit: code.unit, function: code.function, captures }) as const;
+    const fnTypeKey = (unit: string, fn: string): string =>
+        typeKey(units.get(unit)!.functions.find((f) => f.id === fn)!.type);
     function discover(v: ValueRepresentation): void {
         if (v.kind === 'focus-manual') discover(v.frontend);
         if (v.kind === 'local-focus' || v.kind === 'focus-tuple' || v.kind === 'focus-manual') {
@@ -85,7 +103,7 @@ export function lowerConcreteProgram(
             discover(v.replacement);
         }
         if (v.kind === 'aggregate' || v.kind === 'focus-tuple') v.items.forEach(discover);
-        if (v.kind === 'callable' || v.kind === 'native' || v.kind === 'callable-choice') group(v);
+        if (v.kind === 'callable') typeGroup(v.type);
     }
     const contractKey = (c: Contract): string =>
         JSON.stringify([c.target, c.arguments.map(representationKey), representationKey(c.result)]);
@@ -107,21 +125,6 @@ export function lowerConcreteProgram(
     }
     function addContract(g: Group, call: Contract): void {
         g.contracts.set(contractKey(call), call);
-        const raw = rawResult(g, call);
-        if (
-            g.descriptor.kind !== 'callable-choice' &&
-            raw &&
-            representationKey(raw) !== representationKey(call.result)
-        )
-            addContract(g, { ...call, result: raw });
-        if (g.descriptor.kind === 'callable-choice')
-            g.descriptor.options.forEach((option, n) =>
-                addContract(group(option), {
-                    target: call.targets![n]!,
-                    arguments: call.arguments,
-                    result: call.result,
-                }),
-            );
     }
     function index(body: IRBlock, record: Pick<RepresentationVariant, 'values' | 'calls'>): void {
         const values = new Map(record.values.map((v) => [v.value, v.representation]));
@@ -143,8 +146,10 @@ export function lowerConcreteProgram(
                 if (i.op === 'call') {
                     const callee = values.get(i.callee) ?? fail('Missing callable annotation'),
                         call = calls.get(i.out.id)!;
-                    const g = group(callee);
-                    addContract(g, call);
+                    if (callee.kind !== 'callable') return fail('Call operand is not callable');
+                    // Indirect calls are entries of the callee type's record; direct
+                    // calls use their member's exact wrapper.
+                    if (!call.callee) addContract(typeGroup(callee.type), call);
                 } else if (i.op === 'scope') walk(i.body);
                 else if (i.op === 'manual') walk(i.cleanup);
                 else if (i.op === 'case') i.cases.forEach((c) => walk(c.body));
@@ -160,45 +165,11 @@ export function lowerConcreteProgram(
         index(fn.body, v);
     }
     analysis.entries.forEach((e) => index(units.get(e.unit)!.entry, e));
-    analysis.exports.forEach((e) => {
-        const g = group(analysis.roots[e.entry]!.result),
-            contract = { target: e.variant, arguments: e.arguments, result: e.result };
-        g.contracts.set(contractKey(contract), contract);
-    });
-    // A nested branch may already expose a narrower erased wrapper. Give that
-    // wrapper the entries needed when it is moved into a larger runtime join.
-    let changed = true;
-    while (changed) {
-        changed = false;
-        for (const g of groups.values()) {
-            if (g.descriptor.kind !== 'callable-choice') continue;
-            const members = g.descriptor.options.map(representationKey);
-            for (const source of groups.values()) {
-                if (source === g || source.descriptor.kind !== 'callable-choice') continue;
-                const indices = source.descriptor.options.map((o) =>
-                    members.indexOf(representationKey(o)),
-                );
-                if (indices.some((n) => n < 0)) continue;
-                for (const contract of g.contracts.values()) {
-                    const targets = indices.map((n) => contract.targets![n]!);
-                    const c = {
-                        target: JSON.stringify(['dispatch', targets]),
-                        targets,
-                        arguments: contract.arguments,
-                        result: contract.result,
-                    };
-                    if (!source.contracts.has(contractKey(c))) {
-                        addContract(source, c);
-                        changed = true;
-                    }
-                }
-            }
-        }
-    }
     const graphKey = JSON.stringify([
         layoutDefinitionsKey(analysis.layoutDefinitions),
         analysis.variants.map((v) => v.key).sort(),
         [...groups.values()]
+            .filter((g) => g.descriptor.kind === 'callable')
             .map((g) => [g.key, [...g.contracts.keys()].sort()])
             .sort((a, b) => (String(a[0]) < String(b[0]) ? -1 : 1)),
     ]);
@@ -257,8 +228,7 @@ export function lowerConcreteProgram(
             return table.record(['local-focus', read, replacement], 'record', fields);
         }
         if (v.kind === 'data') return table.data(dataLayouts.get(v.layout)!.type);
-        if (v.kind === 'callable' || v.kind === 'native' || v.kind === 'callable-choice')
-            return callable(group(v)).layout;
+        if (v.kind === 'callable') return typeLayout(typeGroup(v.type));
         const prior = shapeLayouts.get(v.shape);
         if (prior) return prior;
         const s = shapes.get(v.shape)!;
@@ -309,18 +279,22 @@ export function lowerConcreteProgram(
         const id = concreteName('wrapper', key);
         const prior = wrappers.get(id);
         if (prior) return prior;
-        if (g.descriptor.kind === 'callable-choice') {
-            const targets = g.descriptor.options.map((option, n) => {
-                const member = group(option),
-                    physical = callable(member);
+        if (g.descriptor.kind === 'callable') {
+            const options = members.get(g.type) ?? [];
+            const targets = options.map((option, n) => {
+                const member = memberGroup(option, g.type);
                 const memberContract = {
                     target: c.targets![n]!,
                     arguments: c.arguments,
                     result: c.result,
                 };
-                const entry = wrapper(member, memberContract, physical.environment);
+                const entry = wrapper(
+                    member,
+                    memberContract,
+                    memberEnvironment(member).environment,
+                );
                 if (entry.abi !== abi) return fail('Dynamic callable ABI mismatch');
-                return { callable: physical.id, wrapper: entry.id };
+                return { callable: callableId(member), wrapper: entry.id };
             });
             const w: ConcreteWrapper = {
                 id,
@@ -424,25 +398,7 @@ export function lowerConcreteProgram(
                 wrappers.set(id, w);
                 return w;
             }
-            if (c.result.kind !== 'callable-choice') return fail('Unsupported result adapter');
-            const source = wrapper(g, { ...c, result: raw }, environment);
-            const from = callable(group(raw)),
-                to = callable(group(c.result));
-            const adapter = joinArm(from, to);
-            const w: ConcreteWrapper = {
-                id,
-                key,
-                kind: 'adapt-result',
-                abi,
-                environment,
-                source: source.id,
-                from: from.id,
-                to: to.id,
-                entries: adapter.entries,
-                ownership: 'transfer-result',
-            };
-            wrappers.set(id, w);
-            return w;
+            return fail('Unsupported result adapter');
         }
         const w: ConcreteWrapper = variants.has(c.target)
             ? {
@@ -466,18 +422,19 @@ export function lowerConcreteProgram(
         wrappers.set(id, w);
         return w;
     }
-    function callable(g: Group): CallableLayout {
-        if (g.record) return g.record;
-        if (g.building) return fail('Recursive callable ABI needs an explicit recursive signature');
-        g.building = true;
-        const captures = g.descriptor.kind === 'callable' ? g.descriptor.captures : [];
+    // A group's environment record and disposer, without its entries: dispatch
+    // wrappers need member environments while the type's record is being built.
+    const environments = new Map<string, { environment: string; dispose: string }>();
+    function memberEnvironment(g: Group): { environment: string; dispose: string } {
+        const prior = environments.get(g.key);
+        if (prior) return prior;
+        const captures = g.descriptor.kind === 'closure' ? g.descriptor.captures : [];
         const environment = table.record(
             // Environments are keyed by capture layouts, like callable storage.
             ['environment', captures.map(layout)],
             'record',
             captures.map((v, i) => ({ name: `capture${i}`, kind: 'value', layout: layout(v) })),
         );
-        const disposeABI = table.abi([], unitLayout);
         const disposeKey = JSON.stringify([
             'dispose',
             targetKey(semantic.target),
@@ -490,31 +447,79 @@ export function lowerConcreteProgram(
             id: dispose,
             key: disposeKey,
             kind: 'dispose',
-            abi: disposeABI,
+            abi: table.abi([], unitLayout),
             environment,
             captures: captures.map(layout),
             ownership: 'drop-captures-and-free',
         });
-        const contracts = [...g.contracts.values()].sort((a, b) =>
-            contractKey(a) < contractKey(b) ? -1 : 1,
+        const result = { environment, dispose };
+        environments.set(g.key, result);
+        return result;
+    }
+    // A callable type's physical record follows from its entry ABIs alone, so member
+    // environments (which may capture values of the same type) can name it while the
+    // type's dispatch wrappers are still being built.
+    const typeLayouts = new Map<string, string>();
+    const sortedContracts = (g: Group): Contract[] =>
+        [...g.contracts.values()].sort((a, b) => (contractKey(a) < contractKey(b) ? -1 : 1));
+    function typeLayout(g: Group): string {
+        const prior = typeLayouts.get(g.key);
+        if (prior) return prior;
+        const abis = sortedContracts(g).map((c) =>
+            table.abi(c.arguments.map(layout), layout(c.result)),
         );
-        const entries = contracts.map((c, index) => {
-            const w = wrapper(g, c, environment);
-            return { wrapper: w.id, abi: w.abi, field: `invoke${index}` };
-        });
-        // Physical storage is structural: callables with the same ordered entry ABIs
-        // share one record, and the environment stays an erased pointer (bodies and
-        // disposers already receive `void *`). Representation identity remains in the
-        // analysis and callable descriptor, so specialization is unaffected.
-        const fields: ConcreteField[] = [
+        const physical = table.record(['callable', abis], 'record', [
             { name: 'environment', kind: 'pointer' },
-            { name: 'dispose', kind: 'code', abi: disposeABI },
-            ...entries.map((e) => ({ name: e.field, kind: 'code' as const, abi: e.abi })),
-        ];
-        const physical = table.record(['callable', entries.map((e) => e.abi)], 'record', fields);
+            { name: 'dispose', kind: 'code', abi: table.abi([], unitLayout) },
+            ...abis.map((abi, n) => ({ name: `invoke${n}`, kind: 'code' as const, abi })),
+        ]);
+        typeLayouts.set(g.key, physical);
+        return physical;
+    }
+    // Group keys are unique, so record identities need not wait for layouts.
+    const callableId = (g: Group): string => concreteName('callable', JSON.stringify([g.key]));
+    function callable(g: Group): CallableLayout {
+        if (g.record) return g.record;
+        if (g.building) return fail('Recursive callable ABI needs an explicit recursive signature');
+        g.building = true;
+        const { environment, dispose } = memberEnvironment(g);
+        let entries: CallableLayout['entries'];
+        let physical: string;
+        if (g.descriptor.kind === 'callable') {
+            // The type's record: one entry per indirect-call contract (ABI), each a
+            // dispatch over the type's members.
+            physical = typeLayout(g);
+            entries = sortedContracts(g).map((c, index) => {
+                const w = wrapper(g, c, environment);
+                return { wrapper: w.id, abi: w.abi, field: `invoke${index}` };
+            });
+        } else {
+            // A member's record is its type's record. Members that may reach indirect
+            // calls fill every entry with their own wrapper for that contract; a value
+            // used only as a direct callee carries no entries.
+            physical = typeLayout(typeGroup(g.type));
+            const owner = callable(typeGroup(g.type));
+            const listed = (members.get(g.type) ?? []).findIndex(
+                (m) => memberKey(m) === memberKey(g.descriptor as CallableMember),
+            );
+            entries =
+                listed < 0
+                    ? []
+                    : owner.entries.map((entry) => {
+                          const dispatch = wrappers.get(entry.wrapper)!;
+                          if (dispatch.kind !== 'dispatch')
+                              return fail('Callable type entry lacks dispatch contract');
+                          return {
+                              wrapper: dispatch.targets[listed]!.wrapper,
+                              abi: entry.abi,
+                              field: entry.field,
+                          };
+                      });
+        }
         g.record = {
-            id: concreteName('callable', JSON.stringify([g.key, physical])),
+            id: callableId(g),
             descriptor: g.descriptor,
+            type: g.type,
             layout: physical,
             environment,
             dispose,
@@ -525,31 +530,6 @@ export function lowerConcreteProgram(
     }
     const sorted = <T extends { id: string }>(xs: T[]): T[] =>
         xs.sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
-    const joinArm = (source: CallableLayout, target: CallableLayout) => ({
-        callable: source.id,
-        entries: target.entries.map((entry) => {
-            const dispatch = wrappers.get(entry.wrapper)!;
-            if (dispatch.kind !== 'dispatch') return fail('Join target lacks dispatch contract');
-            const from =
-                source.entries.find((candidate) => {
-                    const w = wrappers.get(candidate.wrapper)!;
-                    return (
-                        candidate.abi === entry.abi &&
-                        (w.kind === 'dispatch'
-                            ? w.targets.every((t) =>
-                                  dispatch.targets.some(
-                                      (d) => d.callable === t.callable && d.wrapper === t.wrapper,
-                                  ),
-                              )
-                            : dispatch.targets.some(
-                                  (t) =>
-                                      t.callable === source.id && t.wrapper === candidate.wrapper,
-                              ))
-                    );
-                }) ?? fail('Join source lacks compatible invocation entry');
-            return { source: from.field, target: entry.field };
-        }),
-    });
     const focusRead = (v: ValueRepresentation): ValueRepresentation =>
         v.kind === 'local-focus' ? v.read : fail('Selected callable arm is not a local focus');
     const valueAdapter = (
@@ -565,15 +545,10 @@ export function lowerConcreteProgram(
                 kind: 'aggregate',
                 items: to.items.map((v, n) => valueAdapter(from.items[n]!, v)),
             };
-        if (to.kind === 'callable-choice')
-            return {
-                ...endpoints,
-                kind: 'callable',
-                ...joinArm(callable(group(from)), callable(group(to))),
-            };
         return fail('Unsupported aggregate member adapter');
     };
     const lowerBody = (
+        currentUnit: string,
         body: IRBlock,
         record: Pick<RepresentationVariant, 'values' | 'calls'>,
     ): ConcreteBlock => {
@@ -716,20 +691,6 @@ export function lowerConcreteProgram(
                                   },
                               }
                             : {}),
-                        ...(values.get(i.out.id)!.kind === 'callable-choice'
-                            ? {
-                                  callableJoin: {
-                                      kind: 'erased-environment' as const,
-                                      result: callable(group(values.get(i.out.id)!)).id,
-                                      arms: i.cases.map((arm) =>
-                                          joinArm(
-                                              callable(group(values.get(arm.body.result)!)),
-                                              callable(group(values.get(i.out.id)!)),
-                                          ),
-                                      ),
-                                  },
-                              }
-                            : {}),
                         ...(values.get(i.out.id)!.kind === 'local-focus'
                             ? {
                                   lensJoin: {
@@ -765,7 +726,25 @@ export function lowerConcreteProgram(
                               : {}),
                     };
                 if (i.op === 'global' || i.op === 'closure') {
-                    const c = callable(group(values.get(i.out.id)!));
+                    if (i.out.type.tag !== 'plain') return fail('Callable produced a lens');
+                    const type = typeKey(i.out.type.value);
+                    let member: CallableMember;
+                    if (i.op === 'closure')
+                        member = memberOf(
+                            { unit: currentUnit, function: i.function },
+                            i.captures.map((c) => values.get(c.value)!),
+                        );
+                    else {
+                        const target = semantic.program.units.find(
+                            (u) => u.definition === i.instance.definition,
+                        );
+                        const entry = target?.entry.instructions[0];
+                        member =
+                            target && entry?.op === 'closure'
+                                ? memberOf({ unit: target.id, function: entry.function }, [])
+                                : { kind: 'native', definition: i.instance.definition };
+                    }
+                    const c = callable(memberGroup(member, type));
                     return {
                         op: 'make-callable',
                         origin: i.origin,
@@ -775,9 +754,26 @@ export function lowerConcreteProgram(
                     };
                 }
                 if (i.op === 'call') {
-                    const g = group(values.get(i.callee)!),
-                        c = callable(g),
-                        contract = calls.get(i.out.id)!;
+                    const contract = calls.get(i.out.id)!;
+                    const calleeValue = values.get(i.callee)!;
+                    if (calleeValue.kind !== 'callable')
+                        return fail('Call operand is not callable');
+                    if (contract.callee) {
+                        // A direct call: the member's exact wrapper, not a record entry.
+                        const g = memberGroup(contract.callee, calleeValue.type);
+                        const w = wrapper(g, contract, memberEnvironment(g).environment);
+                        return {
+                            op: 'invoke',
+                            origin: i.origin,
+                            out,
+                            callee: i.callee,
+                            args: i.args,
+                            wrapper: w.id,
+                            abi: w.abi,
+                        };
+                    }
+                    const g = typeGroup(calleeValue.type),
+                        c = callable(g);
                     const w = wrapper(g, contract, c.environment),
                         entry = c.entries.find((e) => e.wrapper === w.id)!;
                     return {
@@ -799,8 +795,8 @@ export function lowerConcreteProgram(
     const code: ConcreteCode[] = analysis.variants.map((v) => {
         const u = units.get(v.unit)!,
             fn = u.functions.find((f) => f.id === v.function)!;
-        const c = callable(
-            group({ kind: 'callable', unit: u.id, function: fn.id, captures: v.captures }),
+        const c = memberEnvironment(
+            memberGroup(memberOf({ unit: u.id, function: fn.id }, v.captures), typeKey(fn.type)),
         );
         return {
             id: codeName(v.id),
@@ -813,7 +809,7 @@ export function lowerConcreteProgram(
                 layout: layout(v.captures[i]!),
             })),
             parameters: fn.parameters.map((p, i) => ({ ...p, layout: layout(v.arguments[i]!) })),
-            body: lowerBody(fn.body, v),
+            body: lowerBody(u.id, fn.body, v),
         };
     });
     const entries: string[] = [];
@@ -835,7 +831,7 @@ export function lowerConcreteProgram(
             environment: unitLayout,
             captures: [],
             parameters: [],
-            body: lowerBody(units.get(e.unit)!.entry, e),
+            body: lowerBody(e.unit, units.get(e.unit)!.entry, e),
         });
     });
     groups.forEach(callable);

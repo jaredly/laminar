@@ -378,7 +378,12 @@ export function lconcrete(program: ConcreteProgram, options: ConcretePrintOption
                     break;
                 case 'invoke':
                     expression = words(
-                        call(l.l('', [value(i.callee), '.', i.field]), i.args.map(value)),
+                        call(
+                            i.field === undefined
+                                ? value(i.callee)
+                                : l.l('', [value(i.callee), '.', i.field]),
+                            i.args.map(value),
+                        ),
                         'via',
                         name(i.wrapper),
                         ':',
