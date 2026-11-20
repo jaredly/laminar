@@ -1026,4 +1026,34 @@ export const callableFocusSamples = [
         source: 'fn mk() {fn (h) h()}\nfn first(~(x, y)) ~x\nfn second(~(x, y)) ~y\n{let a = mk()\n let one = a(fn () 1)\n let p = (mk(), fn (h) h())\n let e = match true {true -> first\n false -> second}\n let old = e(~p) := fn (h) 7\n let (f, g) = p\n (one, old(fn () 5), f(fn () 0), g(fn () 2))}',
         expected: [1, 5, 7, 2],
     },
+    {
+        name: 'recursive callable lens result',
+        source: 'fn walk(k, ~x) ~{match k {0 -> x\n j -> walk(j - 1, ~x)}}\n{let f = fn () 3\n let old = walk(2, ~f) := fn () 7\n (old(), f())}',
+        expected: [3, 7],
+    },
+    {
+        name: 'recursive callable lens result alias',
+        source: 'fn walk(k, ~x) ~{match k {0 -> x\n j -> walk(j - 1, ~x)}}\n{let f = fn () 3\n let r = {let l = ~walk(3, ~f)\n let o = l := fn () 7\n o()}\n (r, f())}',
+        expected: [3, 7],
+    },
+    {
+        name: 'recursive callable lens result selecting arms',
+        source: 'fn seek(k, ~(x, y)) ~{match k {0 -> x\n 1 -> y\n j -> seek(j - 1, ~(x, y))}}\n{let p = (fn () 3, fn () 4)\n let old = seek(3, ~p) := fn () 7\n let (f, g) = p\n (old(), f(), g())}',
+        expected: [4, 3, 7],
+    },
+    {
+        name: 'recursive callable lens result consumed by focus call',
+        source: 'fn walk(k, ~x) ~{match k {0 -> x\n j -> walk(j - 1, ~x)}}\nfn ex(new, ~x) {x := new}\n{let f = fn () 3\n let old = ex(fn () 7, ~walk(2, ~f))\n (old(), f())}',
+        expected: [3, 7],
+    },
+    {
+        name: 'recursive callable lens result captured replacement',
+        source: 'fn walk(k, ~x) ~{match k {0 -> x\n j -> walk(j - 1, ~x)}}\n{let f = fn () 3\n let k = 5\n let old = walk(0, ~f) := fn () k\n (old(), f())}',
+        expected: [3, 5],
+    },
+    {
+        name: 'selected callable call arms',
+        source: 'fn first(~(x, y)) ~x\nfn second(~(x, y)) ~y\n{let p = (fn () 3, fn () 4)\n let r = {let l = ~{match false {true -> first(~p); false -> second(~p)}}\n let o = l := fn () 7\n o()}\n let (f, g) = p\n (r, f(), g())}',
+        expected: [4, 3, 7],
+    },
 ];

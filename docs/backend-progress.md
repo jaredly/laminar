@@ -1751,3 +1751,49 @@ need a demand-dependent fixed point. Phase 6 remains incomplete.
 Validation: 1570 non-execution passes with only the existing source-identity
 snapshot failure; the full `LAMINAR_EXEC=1` execution file passed 1236 native/Wasm
 cases in 437.42 seconds without retries. TypeScript checks pass. Remote CI was not run.
+
+
+## Phase 6: recursive callable lens results
+
+Recursive callees returning branch-selected callable focuses now specialize, for
+example `fn walk(k, ~x) ~{match k {0 -> x; j -> walk(j - 1, ~x)}}`. Their
+parameter contracts depend on the replacement demand, which is known only when the
+returned focus completes, so the fixed point is split in two:
+
+- Setup: the existing least fixed point now lets a lens-valued selected `case`
+  treat an arm reaching the unsolved recursive call as divergent. The returned
+  focus's read converges from the base arms.
+- Completion: once the demand is known, the solved variant re-completes fresh
+  copies of its setup state. The seed pass treats the recursive arm's completion
+  as divergent and the selected-focus finish excludes it; later passes answer the
+  recursive call with the current contract, until the contract is stable. The
+  stable pass's storage is kept, and recursive call entries name the solved
+  variant. For `walk` the contract is exactly the demanded closure.
+
+Verification needs no fixed point: the self-call is checked against the variant's
+declared contract and demand, and the body against its own completion. A
+lens-valued selected `case` now gives each arm the selected focus's replacement as
+its forwarded demand, and call-result arms verify their endpoints at their own
+completion. This also fixes non-recursive selected cases whose arms are
+lens-returning calls (`~{match c {true -> first(~p); false -> second(~p)}}`),
+which previously failed with `Unbound forwarded replacement demand`.
+
+Recursion whose inputs change once and then stabilize, such as re-forming
+`~(x, y)` as a scattered tuple, solves as a nested fixed point. A hypothesis
+answering a call inside a different nested fixed point (for example alternating
+`~(y, x)`) would interleave completion-time passes, so it reports
+`Recursive callable lens results require stable recursive inputs`.
+
+Six shared samples cover recursive swaps and aliases, recursion that selects
+between arms, a recursive result consumed by a focus call, captured replacements
+and selected call arms. Tests check the exact solved contract and reject forged
+recursive contracts.
+
+This completes the branch-selected, callee-selected, dispatched and recursive
+callable lens-result plan. Remaining phase-6 boundaries are scattered dispatch
+arguments with differing contracts and recursion with alternating inputs. Phase 6
+remains incomplete.
+
+Validation: 1578 non-execution passes with only the existing source-identity
+snapshot failure; the full `LAMINAR_EXEC=1` execution file passed 1248 native/Wasm
+cases in 468.82 seconds without retries. TypeScript checks pass. Remote CI was not run.

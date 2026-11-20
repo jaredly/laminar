@@ -535,10 +535,16 @@ export function inferRepresentations(
         contract: (ValueRepresentation | undefined)[];
         result?: ValueRepresentation;
         entries: RepresentationVariant['calls'][number][];
+        /** For lens results, the parameter contract under the current demand: solved at
+         * completion, because it depends on the replacement the consumer installs. */
+        completionContract?: (ValueRepresentation | undefined)[];
+        /** Recursive call setups answered by this hypothesis, reset per completion pass. */
+        inner: FocusCallSetup[];
     };
     // Recursive focus calls with identical setup inputs share one variant whose
     // parameter contracts and result are solved as a least fixed point.
     const hypotheses = new Map<string, RecursionHypothesis>();
+    const activeRoots: RecursionHypothesis[] = [];
     const setupKey = (
         identity: string,
         callee: Extract<ValueRepresentation, { kind: 'callable' }>,
@@ -576,11 +582,21 @@ export function inferRepresentations(
         // per function so changing representations cannot expand indefinitely.
         if (!hypothesisFor && chain.filter((c) => c === identity).length >= 4)
             return fail('Recursive callable endpoint demands require stable recursive inputs');
+        // A lens result's contracts are solved at completion. A hypothesis answering a
+        // call inside a different (nested) fixed point would interleave those
+        // completions, so such cycles between changing inputs are rejected.
+        if (
+            hypothesisFor &&
+            hypothesisFor !== activeRoots.at(-1) &&
+            fn.type.result.tag === 'flow' &&
+            (containsCallable(fn.type.result.read) || containsCallable(fn.type.result.write))
+        )
+            return fail('Recursive callable lens results require stable recursive inputs');
         if (hypothesisFor) {
             const hypothesis = hypothesisFor;
             hypothesis.used = true;
             if (hypothesis.seeding) throw new RecursionPending();
-            return {
+            const inner: FocusCallSetup = {
                 unit,
                 fn,
                 identity,
@@ -592,14 +608,18 @@ export function inferRepresentations(
                 result: structuredClone(hypothesis.result!),
                 hypothesis,
             };
+            hypothesis.inner.push(inner);
+            return inner;
         }
         const hypothesis: RecursionHypothesis = {
             seeding: true,
             used: false,
             contract: [],
             entries: [],
+            inner: [],
         };
         hypotheses.set(sk, hypothesis);
+        activeRoots.push(hypothesis);
         try {
             for (let iteration = 0; ; iteration++) {
                 if (iteration > 16)
@@ -608,6 +628,7 @@ export function inferRepresentations(
                     pendingBefore = new Set(pendingDemands);
                 hypothesis.used = false;
                 hypothesis.entries = [];
+                hypothesis.inner = [];
                 let setup: FocusCallSetup;
                 try {
                     setup = analyzeFocusSetup(unit, fn, identity, callee, inputArgs, chain);
@@ -617,8 +638,6 @@ export function inferRepresentations(
                     throw error;
                 }
                 if (!hypothesis.used) return setup;
-                if (isFocus(setup.result))
-                    return fail('Recursive callable lens results require a result route contract');
                 const contract = focusContract(fn, setup.args, setup.state);
                 if (
                     !hypothesis.seeding &&
@@ -638,6 +657,7 @@ export function inferRepresentations(
             }
         } finally {
             hypotheses.delete(sk);
+            activeRoots.pop();
         }
     }
     function analyzeFocusSetup(
@@ -710,22 +730,62 @@ export function inferRepresentations(
         }
         const { unit, fn, identity, callee, args, state, record, result } = setup;
         if (setup.hypothesis) {
-            // The enclosing fixed point names this call's variant once solved.
-            setup.hypothesis.contract.forEach((replacement, i) => {
+            // The enclosing fixed point names this call's variant once solved. A lens
+            // result answers with the contract under the current demand, or is
+            // divergent while the completion-time fixed point is being seeded.
+            let contract = setup.hypothesis.contract;
+            if (isFocus(result)) {
+                if (!resultDemand)
+                    return fail('Callable lens result requires a replacement demand');
+                if (!setup.hypothesis.completionContract) throw new RecursionPending();
+                contract = setup.hypothesis.completionContract;
+                result.replacement = resultDemand;
+            }
+            contract.forEach((replacement, i) => {
                 if (!replacement) return;
                 setContract(args[i]!, replacement);
                 setContract(setup.inputArgs[i]!, replacement);
             });
             const call = { target: '', result, writes: args };
-            setup.completed = { call };
+            setup.completed = { demand: resultDemand, call };
             return call;
         }
         if (isFocus(result)) {
             if (!resultDemand) return fail('Callable lens result requires a replacement demand');
             result.replacement = resultDemand;
-            // A forwarded private result is installed by its own call's completion.
-            if (setup.target) writeTarget(setup.target, resultDemand, state);
-            state.finishes.get(fn.body.result)?.(state, true);
+            const complete = (into: State) => {
+                // A forwarded private result is installed by its own call's completion.
+                if (setup.target) writeTarget(setup.target, resultDemand, into);
+                into.finishes.get(fn.body.result)?.(into, true);
+            };
+            const solved = setup.solved;
+            if (!solved) complete(state);
+            else {
+                // Recursive lens result: the parameter contract depends on this demand.
+                // Seed with recursive arms divergent, then re-complete fresh copies of
+                // the setup state until the contract is stable.
+                solved.completionContract = undefined;
+                for (let iteration = 0; ; iteration++) {
+                    if (iteration > 16)
+                        return fail('Recursive callable lens contract did not converge');
+                    solved.inner.forEach((inner) => delete inner.completed);
+                    const trial = clone(state);
+                    try {
+                        complete(trial);
+                    } catch (error) {
+                        if (error instanceof RecursionPending)
+                            return fail('Recursive callable endpoint demands require a base case');
+                        throw error;
+                    }
+                    const contract = focusContract(fn, args, trial);
+                    const previous = solved.completionContract;
+                    solved.completionContract = contract;
+                    if (previous && contract.every((c, i) => (c ? equal(c, previous[i]!) : true))) {
+                        trial.places.forEach((v, place) => state.places.set(place, v));
+                        break;
+                    }
+                }
+            }
         }
         focusContract(fn, args, state).forEach((replacement, i) => {
             if (!replacement) return;
@@ -1520,6 +1580,8 @@ export function inferRepresentations(
                             pendingDemands.add(entry);
                             s.finishes.set(i.out.id, (state, apply) => {
                                 const done = completeFocusCall(setup, focus.replacement);
+                                if (setup.hypothesis && !setup.hypothesis.entries.includes(entry))
+                                    setup.hypothesis.entries.push(entry);
                                 entry.target = done.target;
                                 entry.demand!.replacement = focus.replacement;
                                 pendingDemands.delete(entry);
@@ -1695,6 +1757,8 @@ export function inferRepresentations(
                         i.out.type.tag === 'flow' &&
                         (containsCallable(i.out.type.read) || containsCallable(i.out.type.write));
                     let pending: RecursionPending | undefined;
+                    // Arms that did not reach an unsolved recursive call.
+                    const alive: typeof i.cases = [];
                     const branches = i.cases.flatMap((arm) => {
                         const state = clone(s);
                         bind(arm.pattern, get(s, i.value), state);
@@ -1708,18 +1772,15 @@ export function inferRepresentations(
                                 selectedCallable,
                             );
                             states.push(state);
+                            alive.push(arm);
                             return [result];
                         } catch (error) {
                             // A seeding pass treats an arm that reaches an unsolved
                             // recursive call as divergent: the least fixed point
                             // starts from the remaining (base) arms.
                             if (!(error instanceof RecursionPending)) throw error;
-                            // A recursive lens result's parameter contracts depend on the
-                            // replacement demand, known only at completion.
-                            if (i.out.type.tag === 'flow')
-                                return fail(
-                                    'Recursive callable lens results require a demand-dependent fixed point',
-                                );
+                            if (i.out.type.tag === 'flow' && !selectedCallable)
+                                return fail('Recursive data lens results require a fixed point');
                             pending = error;
                             return [];
                         }
@@ -1767,10 +1828,10 @@ export function inferRepresentations(
                           )
                         : [];
                     const armTargets = armFocuses.map((_, n) =>
-                        targetFor(states[n]!, i.cases[n]!.body.result),
+                        targetFor(states[n]!, alive[n]!.body.result),
                     );
                     armTargets.forEach((target, n) => {
-                        if (!target && !states[n]!.deferredFocuses.has(i.cases[n]!.body.result))
+                        if (!target && !states[n]!.deferredFocuses.has(alive[n]!.body.result))
                             fail('Selected callable focus arm lacks a logical target');
                     });
                     if (selectedCallable) {
@@ -1790,11 +1851,11 @@ export function inferRepresentations(
                                 : join(branches, true);
                     const selected = out;
                     if (i.out.type.tag === 'flow') {
-                        const finishes = i.cases.map((arm, n) =>
+                        const finishes = alive.map((arm, n) =>
                             states[n]!.finishes.get(arm.body.result),
                         );
                         if (storageJoins.some((j) => j.restoration === 'replace'))
-                            i.cases.forEach((arm, n) => {
+                            alive.forEach((arm, n) => {
                                 if (
                                     !finishes[n] &&
                                     storageJoins.some(
@@ -1825,30 +1886,44 @@ export function inferRepresentations(
                         if (finishes.some(Boolean) || selectedCallable)
                             s.finishes.set(i.out.id, (current, apply) => {
                                 if (!apply) return;
-                                const completed = states.map((setup, n) => {
-                                    const restored = clone(setup);
-                                    places.forEach((place) =>
-                                        restored.places.set(place, current.places.get(place)!),
-                                    );
-                                    storageJoins
-                                        .filter((j) => j.restoration === 'replace')
-                                        .forEach((j) =>
-                                            restored.places.set(
-                                                j.place,
-                                                setup.places.get(j.place)!,
-                                            ),
+                                let divergent: RecursionPending | undefined;
+                                const completed = states.flatMap((setup, n) => {
+                                    try {
+                                        const restored = clone(setup);
+                                        places.forEach((place) =>
+                                            restored.places.set(place, current.places.get(place)!),
                                         );
-                                    if (selectedCallable && selected.kind === 'local-focus') {
-                                        // Only this arm's owner receives the replacement
-                                        // when it is selected; the union below joins arms.
-                                        armFocuses[n]!.replacement = selected.replacement;
-                                        const target = armTargets[n];
-                                        if (target)
-                                            writeTarget(target, selected.replacement, restored);
+                                        storageJoins
+                                            .filter((j) => j.restoration === 'replace')
+                                            .forEach((j) =>
+                                                restored.places.set(
+                                                    j.place,
+                                                    setup.places.get(j.place)!,
+                                                ),
+                                            );
+                                        if (selectedCallable && selected.kind === 'local-focus') {
+                                            // Only this arm's owner receives the replacement
+                                            // when it is selected; the union below joins arms.
+                                            armFocuses[n]!.replacement = selected.replacement;
+                                            const target = armTargets[n];
+                                            if (target)
+                                                writeTarget(target, selected.replacement, restored);
+                                        }
+                                        finishes[n]?.(restored, true);
+                                        return [restored];
+                                    } catch (error) {
+                                        // A completion-time seed: an arm completing an
+                                        // unsolved recursive lens result is divergent.
+                                        if (
+                                            !(error instanceof RecursionPending) ||
+                                            !selectedCallable
+                                        )
+                                            throw error;
+                                        divergent = error;
+                                        return [];
                                     }
-                                    finishes[n]?.(restored, true);
-                                    return restored;
                                 });
+                                if (divergent && !completed.length) throw divergent;
                                 const joins: NonNullable<
                                     RepresentationVariant['values'][number]['cleanupJoins']
                                 > = [];

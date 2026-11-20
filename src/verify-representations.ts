@@ -1321,7 +1321,15 @@ export function verifyRepresentations(
                         const results = i.cases.map((arm) => {
                             const branch = clone(s);
                             bind(arm.pattern, get(s, i.value), branch);
-                            const result = block(arm.body, branch, selectedCallable);
+                            // A selected arm forwards the selected focus's replacement demand.
+                            const result = block(
+                                arm.body,
+                                branch,
+                                selectedCallable,
+                                selectedCallable && v.kind === 'local-focus'
+                                    ? v.replacement
+                                    : undefined,
+                            );
                             states.push(branch);
                             return result;
                         });
@@ -1450,8 +1458,17 @@ export function verifyRepresentations(
                                                 'Selected callable arm replacement changed',
                                             );
                                             const target = armTargets[n];
+                                            // Call-result arms verify their endpoints at
+                                            // their own completion.
                                             if (target)
-                                                writeTarget(target, v.replacement, restored);
+                                                writeTarget(
+                                                    target,
+                                                    v.replacement,
+                                                    restored,
+                                                    !states[n]!.callResults.has(
+                                                        i.cases[n]!.body.result,
+                                                    ),
+                                                );
                                         }
                                         finishes[n]?.(restored, true);
                                         return restored;

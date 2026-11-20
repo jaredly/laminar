@@ -1,5 +1,6 @@
 import { expect, it } from 'bun:test';
 import { demandSamples } from './backend/demand-samples.ts';
+import { callableFocusSamples } from './backend/callable-focus-samples.ts';
 import { typedProgram } from './backend/typed-program.ts';
 import { legacyReference } from './backend/legacy-reference.ts';
 import { executeTypedProgram } from '../src/eval-typed.ts';
@@ -112,9 +113,9 @@ it('routes callee-private result backing through the residual context', () => {
 });
 for (const [name, source, message] of [
     [
-        'recursive branch-selected lens result',
-        'fn walk(k, ~x) ~{match k {0 -> x\n j -> walk(j - 1, ~x)}}\n{let f = fn () 3\n let old = walk(2, ~f) := fn () 7\n (old(), f())}',
-        'Recursive callable lens results require a demand-dependent fixed point',
+        'recursive lens result with changing inputs',
+        'fn deep(k, ~(x, y)) ~{match k {0 -> x\n j -> deep(j - 1, ~(y, x))}}\n{let p = (fn () 3, fn () 4)\n let old = deep(1, ~p) := fn () 7\n let (f, g) = p\n (old(), f(), g())}',
+        'Recursive callable lens results require stable recursive inputs',
     ],
     [
         'branch-selected scattered differing contracts',
@@ -176,4 +177,25 @@ it('rejects dispatch replacements that are not the join of their alternatives', 
     const focus = call.arguments.find((a: any) => a.kind === 'local-focus');
     focus.replacement = focus.replacement.options[0];
     expect(() => verifyConcreteProgram(c)).toThrow('Call argument representations changed');
+});
+it('solves recursive lens result contracts on their demand', () => {
+    const c = concrete(
+        callableFocusSamples.find((s) => s.name === 'recursive callable lens result')!.source,
+    );
+    const variant = c.analysis.variants.find(
+        (v: any) => v.resultDemand && v.calls.some((call: any) => call.target === v.id),
+    );
+    expect(variant).toBeDefined();
+    // Seeded with the recursive arm divergent: the contract is exactly the demand.
+    expect(variant.arguments[1].replacement).toEqual(variant.resultDemand);
+});
+it('rejects forged recursive lens result contracts', () => {
+    const c = concrete(
+        callableFocusSamples.find((s) => s.name === 'recursive callable lens result')!.source,
+    );
+    const variant = c.analysis.variants.find(
+        (v: any) => v.resultDemand && v.calls.some((call: any) => call.target === v.id),
+    );
+    variant.arguments[1].replacement = structuredClone(variant.arguments[1].read);
+    expect(() => verifyConcreteProgram(c)).toThrow('Noncanonical variant key or name');
 });
