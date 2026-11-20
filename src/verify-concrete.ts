@@ -490,10 +490,10 @@ export function verifyConcreteProgram(p: ConcreteProgram): void {
             contractKey(a) < contractKey(b) ? -1 : 1,
         );
         if (c.entries.length !== expectedContracts.length) fail('Callable entry coverage mismatch');
-        c.entries.forEach((e, i) => {
-            const contract = expectedContracts[i]!,
-                w = wrapper(e.wrapper);
-            usedWrappers.add(w.id);
+        const checkEntry = (
+            w: ReturnType<typeof wrapper>,
+            contract: (typeof expectedContracts)[number],
+        ): void => {
             const expectedABI = aid(contract.arguments.map(storage), storage(contract.result));
             const wk = JSON.stringify([
                 'wrapper',
@@ -505,12 +505,10 @@ export function verifyConcreteProgram(p: ConcreteProgram): void {
                 c.environment,
             ]);
             if (
-                e.abi !== expectedABI ||
-                w.abi !== e.abi ||
+                w.abi !== expectedABI ||
                 w.environment !== c.environment ||
                 w.key !== wk ||
-                w.id !== concreteName('wrapper', wk) ||
-                e.field !== `invoke${i}`
+                w.id !== concreteName('wrapper', wk)
             )
                 fail('Invalid concrete wrapper contract');
             if (c.descriptor.kind === 'callable-choice') {
@@ -539,6 +537,7 @@ export function verifyConcreteProgram(p: ConcreteProgram): void {
                         ![
                             'invoke',
                             'native',
+                            'adapt-focus-arguments',
                             'adapt-result',
                             'adapt-lens-result',
                             'adapt-aggregate-result',
@@ -665,8 +664,67 @@ export function verifyConcreteProgram(p: ConcreteProgram): void {
                     return { source: candidate.field, target: entry.field };
                 });
                 eq(w.entries, entries, 'Result invocation entry mapping changed');
+            } else if (w.kind === 'adapt-focus-arguments') {
+                const exact =
+                    p.analysis.variants.find((v) => v.id === contract.target) ??
+                    fail('Missing adapted target');
+                if (
+                    c.descriptor.kind !== 'callable' ||
+                    !exact.arguments.some(
+                        (a, n) =>
+                            representationKey(a) !== representationKey(contract.arguments[n]!),
+                    )
+                )
+                    return fail('Invalid focus argument adapter');
+                const exactContract = { ...contract, arguments: exact.arguments };
+                const exactKey = JSON.stringify([
+                    'wrapper',
+                    target,
+                    graphKey,
+                    k,
+                    contractKey(exactContract),
+                    aid(exact.arguments.map(storage), storage(contract.result)),
+                    c.environment,
+                ]);
+                const source = wrapper(concreteName('wrapper', exactKey));
+                if (
+                    w.source !== source.id ||
+                    w.ownership !== 'stage-and-convert-replacements' ||
+                    source.kind === 'adapt-focus-arguments' ||
+                    source.kind === 'dispatch' ||
+                    source.kind === 'dispose'
+                )
+                    fail('Invalid focus argument adapter');
+                eq(
+                    w.arguments,
+                    contract.arguments.map((joined, n) => {
+                        const from = exact.arguments[n]!;
+                        if (representationKey(from) === representationKey(joined)) return null;
+                        if (from.kind !== 'local-focus' || joined.kind !== 'local-focus')
+                            return fail('Dispatch argument adapters require whole local focuses');
+                        return {
+                            from: storage(from),
+                            to: storage(joined),
+                            replacement: adapter(from.replacement, joined.replacement),
+                        };
+                    }),
+                    'Focus argument adapter changed',
+                );
+                // The staged source is not a callable entry: check it as one here.
+                usedWrappers.add(source.id);
+                checkEntry(source, exactContract);
             } else if (w.kind === 'invoke') {
                 const callee = code.get(w.code) ?? fail('Wrapper references absent code');
+                const exact = p.analysis.variants.find((v) => v.id === contract.target);
+                // Exact variants receive exactly their analyzed argument representations.
+                if (
+                    exact &&
+                    exact.arguments.some(
+                        (a, n) =>
+                            representationKey(a) !== representationKey(contract.arguments[n]!),
+                    )
+                )
+                    fail('Invoke wrapper argument contract mismatch');
                 if (
                     w.code !== codeName(contract.target) ||
                     callee.abi !== w.abi ||
@@ -682,6 +740,18 @@ export function verifyConcreteProgram(p: ConcreteProgram): void {
                 )
                     fail('Native wrapper contract mismatch');
             } else fail('Invocation uses a disposer');
+        };
+        c.entries.forEach((e, i) => {
+            const contract = expectedContracts[i]!,
+                w = wrapper(e.wrapper);
+            usedWrappers.add(w.id);
+            if (
+                e.abi !== aid(contract.arguments.map(storage), storage(contract.result)) ||
+                w.abi !== e.abi ||
+                e.field !== `invoke${i}`
+            )
+                fail('Invalid concrete wrapper contract');
+            checkEntry(w, contract);
         });
         const expectedLayout = lid(['callable', c.entries.map((e) => e.abi)]);
         if (c.layout !== expectedLayout) fail('Callable layout identity mismatch');
@@ -925,7 +995,9 @@ export function verifyConcreteProgram(p: ConcreteProgram): void {
                                 return false;
                             const matchesTarget = (id: string, target: string): boolean => {
                                 let candidate = wrapper(id);
-                                if (
+                                // Argument adapters may stage a result adapter's source.
+                                while (
+                                    candidate.kind === 'adapt-focus-arguments' ||
                                     candidate.kind === 'adapt-result' ||
                                     candidate.kind === 'adapt-aggregate-result' ||
                                     candidate.kind === 'adapt-lens-result'

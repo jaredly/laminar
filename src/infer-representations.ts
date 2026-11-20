@@ -1324,16 +1324,32 @@ export function inferRepresentations(
                                 ? completeFocusCall(setupFocusCall(option, args, chain))
                                 : fail('Native alternatives cannot receive callable focuses'),
                         );
-                        if (
-                            calls.some(
-                                (call) =>
-                                    !calls[0]!.writes.every((w, n) => equal(w, call.writes[n]!)),
+                        // Alternatives may install different replacements: the
+                        // caller's backing holds their join, and each option keeps its
+                        // exact contract behind a dispatch argument adapter.
+                        const writes = args.map((arg, n) => {
+                            const options = calls.map((call) => call.writes[n]!);
+                            if (options.every((o) => equal(o, options[0]!))) return options[0]!;
+                            if (
+                                arg.kind !== 'local-focus' ||
+                                options.some(
+                                    (o) => o.kind !== 'local-focus' || !equal(o.read, arg.read),
+                                )
                             )
-                        )
-                            return fail(
-                                'Branch-selected callable focus callees require a common parameter contract',
+                                return fail(
+                                    'Branch-selected scattered focus callees require a common parameter contract',
+                                );
+                            const replacement = join(
+                                options.map(
+                                    (o) =>
+                                        (o as Extract<ValueRepresentation, { kind: 'local-focus' }>)
+                                            .replacement,
+                                ),
+                                true,
                             );
-                        const writes = calls[0]!.writes;
+                            setContract(arg, replacement);
+                            return { ...arg, replacement };
+                        });
                         out = join(
                             calls.map((call) => call.result),
                             true,

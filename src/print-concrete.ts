@@ -202,16 +202,35 @@ export function lconcrete(program: ConcreteProgram, options: ConcretePrintOption
                                               v.entries.map((e) => words(e.source, '->', e.target)),
                                           ),
                                       )
-                                    : v.kind === 'dispatch'
+                                    : v.kind === 'adapt-focus-arguments'
                                       ? words(
-                                            'dispatch',
+                                            'adapt-focus-arguments',
+                                            name(v.source),
                                             tuple(
-                                                v.targets.map((t) =>
-                                                    words(name(t.callable), name(t.wrapper)),
+                                                v.arguments.map((a) =>
+                                                    a
+                                                        ? words(
+                                                              name(a.from),
+                                                              '->',
+                                                              name(a.to),
+                                                              name(a.replacement.from),
+                                                              '->',
+                                                              name(a.replacement.to),
+                                                          )
+                                                        : 'exact',
                                                 ),
                                             ),
                                         )
-                                      : words('dispose', tuple(v.captures.map(name))),
+                                      : v.kind === 'dispatch'
+                                        ? words(
+                                              'dispatch',
+                                              tuple(
+                                                  v.targets.map((t) =>
+                                                      words(name(t.callable), name(t.wrapper)),
+                                                  ),
+                                              ),
+                                          )
+                                        : words('dispose', tuple(v.captures.map(name))),
                         v.ownership,
                     ),
                 ),

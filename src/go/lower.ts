@@ -155,7 +155,8 @@ export function lowerGo(program: ConcreteProgram): GoFile {
         } else if (l.kind === 'record') {
             const fields = l.fields.map((f) => {
                 if (f.kind === 'value') return `\t${identifier(f.name)} ${type(f.layout)}`;
-                if (f.kind === 'pointer') return `\t${identifier(f.name)} *${f.layout ? type(f.layout) : 'any'}`;
+                if (f.kind === 'pointer')
+                    return `\t${identifier(f.name)} *${f.layout ? type(f.layout) : 'any'}`;
                 return `\t${identifier(f.name)} ${abiNames.get(f.abi)}`;
             });
             declarations.push(`type ${type(l.id)} struct {\n${fields.join('\n')}\n}`);
@@ -207,6 +208,8 @@ export function lowerGo(program: ConcreteProgram): GoFile {
         helpers.push({ signature, body });
     }
 
+    if (program.wrappers.some((w) => w.kind === 'adapt-focus-arguments'))
+        return unsupported('Dispatch focus argument adapters are not yet lowered to Go');
     const resultAdapters = new Map(
         program.wrappers
             .filter(
@@ -315,7 +318,9 @@ export function lowerGo(program: ConcreteProgram): GoFile {
             if (!Array.isArray(data) && data.layout === unit.id) return data;
             if (a.kind === 'move') return data;
             if (a.kind === 'aggregate')
-                return storage.parts(data).map((child, n) => adaptStorage(a.items[n]!, child, output));
+                return storage
+                    .parts(data)
+                    .map((child, n) => adaptStorage(a.items[n]!, child, output));
             const name = fresh();
             declare(a.to, adaptValue(a, read(data, a.from)), output, name);
             return { expression: name, layout: a.to };
@@ -333,8 +338,7 @@ export function lowerGo(program: ConcreteProgram): GoFile {
         const ref = (s: SlotRef) =>
             storage.project(places.get(s.place) ?? unsupported('Unavailable Go place'), s.path);
 
-        const value = (id: string) =>
-            values.get(id) ?? unsupported('Missing value in Go lowering');
+        const value = (id: string) => values.get(id) ?? unsupported('Missing value in Go lowering');
 
         // Adapt input/output backing at calls.
         const adapt = (
@@ -367,15 +371,13 @@ export function lowerGo(program: ConcreteProgram): GoFile {
                     }
                     return `${type(id)}{read: &${name}.${r}${output ? `, replacement: &${name}.${w}` : ''}}`;
                 }
-                return `${type(id)}{${
-                    l.fields
-                        .filter((f) => f.name.startsWith('item'))
-                        .map(
-                            (f, i) =>
-                                `${identifier(f.name)}: ${build((f as { layout: string }).layout, path ? path + '.' + i : String(i))}`,
-                        )
-                        .join(', ')
-                }}`;
+                return `${type(id)}{${l.fields
+                    .filter((f) => f.name.startsWith('item'))
+                    .map(
+                        (f, i) =>
+                            `${identifier(f.name)}: ${build((f as { layout: string }).layout, path ? path + '.' + i : String(i))}`,
+                    )
+                    .join(', ')}}`;
             };
 
             const expression = build(id, '');
@@ -402,7 +404,12 @@ export function lowerGo(program: ConcreteProgram): GoFile {
                     return { expression: `*(${expr}).${identifier(f.name)}`, layout: f.layout };
                 return l.fields
                     .filter((f) => f.name.startsWith('item'))
-                    .map((f) => outputs(`(${expr}).${identifier(f.name)}`, (f as { layout: string }).layout));
+                    .map((f) =>
+                        outputs(
+                            `(${expr}).${identifier(f.name)}`,
+                            (f as { layout: string }).layout,
+                        ),
+                    );
             };
 
             return {
@@ -644,7 +651,9 @@ export function lowerGo(program: ConcreteProgram): GoFile {
                         if (isLens) {
                             lenses.set(
                                 i.out.id,
-                                runtimeLens(name, id, (body) => adapters.forEach((a) => a.finish(body))),
+                                runtimeLens(name, id, (body) =>
+                                    adapters.forEach((a) => a.finish(body)),
+                                ),
                             );
                         } else {
                             adapters.forEach((a) => a.finish(body));
@@ -684,19 +693,29 @@ export function lowerGo(program: ConcreteProgram): GoFile {
                             );
                             const result = block(arm.body, nested);
                             if (i.aggregateJoin)
-                                nested.push(`${name} = ${adaptValue(i.aggregateJoin.arms[armIndex]!, result)}`);
+                                nested.push(
+                                    `${name} = ${adaptValue(i.aggregateJoin.arms[armIndex]!, result)}`,
+                                );
                             else if (i.callableJoin) {
                                 const adapter = i.callableJoin.arms[armIndex]!;
                                 const entries = adapter.entries
-                                    .map((e) => `, ${identifier(e.target)}: (${result}).${identifier(e.source)}`)
+                                    .map(
+                                        (e) =>
+                                            `, ${identifier(e.target)}: (${result}).${identifier(e.source)}`,
+                                    )
                                     .join('');
-                                nested.push(`${name} = ${type(id)}{environment: (${result}).environment, dispose: (${result}).dispose${entries}}`);
+                                nested.push(
+                                    `${name} = ${type(id)}{environment: (${result}).environment, dispose: (${result}).dispose${entries}}`,
+                                );
                             } else nested.push(`${name} = ${result}`);
                             i.storageJoins?.forEach((join) => {
                                 const view =
                                     places.get(join.place) ??
                                     unsupported('Missing branch storage owner');
-                                storage.put(view, adaptStorage(join.arms[armIndex]!, storage.get(view), nested));
+                                storage.put(
+                                    view,
+                                    adaptStorage(join.arms[armIndex]!, storage.get(view), nested),
+                                );
                             });
                             return { nested, state: storage.snapshot() };
                         });
@@ -705,24 +724,42 @@ export function lowerGo(program: ConcreteProgram): GoFile {
                         const merge = (data: Data[], previous?: Data): Data => {
                             if (
                                 data.every((d) => JSON.stringify(d) === JSON.stringify(data[0])) &&
-                                (arms.length > 1 || JSON.stringify(data[0]) === JSON.stringify(previous))
+                                (arms.length > 1 ||
+                                    JSON.stringify(data[0]) === JSON.stringify(previous))
                             )
                                 return data[0]!;
                             const first = data[0]!;
-                            if (!Array.isArray(first) && data.every((d) => !Array.isArray(d) && d.layout === first.layout)) {
+                            if (
+                                !Array.isArray(first) &&
+                                data.every((d) => !Array.isArray(d) && d.layout === first.layout)
+                            ) {
                                 const phi = fresh();
                                 declare(first.layout, zero(first.layout), body, phi);
-                                arms.forEach((arm, n) => arm.nested.push(`${phi} = ${read(data[n]!, first.layout)}`));
+                                arms.forEach((arm, n) =>
+                                    arm.nested.push(`${phi} = ${read(data[n]!, first.layout)}`),
+                                );
                                 return { expression: phi, layout: first.layout };
                             }
                             const parts = data.map((d) => storage.parts(d));
-                            if (!parts[0]?.length || parts.some((p) => p.length !== parts[0]!.length))
+                            if (
+                                !parts[0]?.length ||
+                                parts.some((p) => p.length !== parts[0]!.length)
+                            )
                                 return unsupported('Storage version join requires an adapter');
                             return parts[0].map((_, n) =>
-                                merge(parts.map((p) => p[n]!), previous && storage.parts(previous)[n]),
+                                merge(
+                                    parts.map((p) => p[n]!),
+                                    previous && storage.parts(previous)[n],
+                                ),
                             );
                         };
-                        before.forEach((previous, cell) => (cell.data = merge(arms.map((a) => a.state.get(cell)!), previous)));
+                        before.forEach(
+                            (previous, cell) =>
+                                (cell.data = merge(
+                                    arms.map((a) => a.state.get(cell)!),
+                                    previous,
+                                )),
+                        );
                         i.cases.forEach((arm, n) =>
                             body.push({
                                 head: `${n ? 'else if' : 'if'} ${matches(arm.pattern, value(i.value))}`,
@@ -813,7 +850,7 @@ export function lowerGo(program: ConcreteProgram): GoFile {
             },
             {
                 head: 'else',
-                body: ['fmt.Print(strconv.FormatFloat(x, \'g\', -1, 64))'],
+                body: ["fmt.Print(strconv.FormatFloat(x, 'g', -1, 64))"],
             },
         ],
     });

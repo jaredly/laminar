@@ -1591,3 +1591,45 @@ snapshot failure; the full `LAMINAR_EXEC=1` execution file passed 1178 native/Wa
 cases (strict and optimized native, supported sanitizers, both Emscripten/Node
 optimization levels) in 310.17 seconds without retries. TypeScript checks pass.
 Remote CI was not run.
+
+
+## Phase 6: dispatch focus argument adapters
+
+Branch-selected callees may now receive a whole callable focus when their
+alternatives install different replacements. Each alternative keeps its exact
+variant. The call-site argument carries the same read and the join of the
+alternatives' replacements, which becomes the caller's storage after the call.
+Representation verification allows dispatch alternatives to differ from the call
+site only in that replacement endpoint and checks it with `verifyJoin`.
+
+Concrete IR adds an `adapt-focus-arguments` wrapper: a dispatch member entry whose
+exact variant arguments differ from the joined contract. It names the exact
+invocation as its source (which may itself be a result adapter) and, per argument,
+the variant and joined focus layouts plus a value adapter from the variant's
+replacement to the joined replacement. The concrete verifier re-derives the source
+key, adapters and ownership (`stage-and-convert-replacements`), checks the staged
+source as an entry, and unwraps adapter chains when matching invocation slots.
+`invoke` wrappers now also require their contract's argument representations to
+match the exact variant, so differing contracts cannot pass merely because their
+structural layouts coincide.
+
+C emits each adapter as a function with the joined ABI. It stages a slot in the
+variant's replacement layout, passing the caller's read pointer when the variant
+has a separate replacement endpoint, and otherwise moving the read into the slot.
+It calls the source, then converts the staged value into the caller's replacement
+(or read) endpoint. With structural callable storage most conversions are moves.
+When entry tables differ, the existing callable join adapter repacks the fields.
+The Go backend reports this wrapper as explicitly unsupported.
+
+Seven shared dispatch samples (33 demand samples total) cover common and joined
+contracts on both arms, captured environments, aggregate replacements, and a
+two-entry to one-entry callable conversion. Corruption tests reject forged
+adapter sources, ownership, exactness and replacement layouts.
+
+Remaining explicit boundaries: dispatch alternatives over scattered focuses with
+differing contracts, and branch-selected or dispatched callable lens results,
+whose conversion must run inside restoration. Phase 6 remains incomplete.
+
+Validation: 1536 non-execution passes with only the existing source-identity
+snapshot failure; the full `LAMINAR_EXEC=1` execution file passed 1188 native/Wasm
+cases in 411.71 seconds without retries. TypeScript checks pass. Remote CI was not run.

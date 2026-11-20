@@ -117,9 +117,9 @@ for (const [name, source, message] of [
         'Callable focuses require a direct whole-owned-local swap',
     ],
     [
-        'branch-selected differing contracts',
-        'fn ex1(new, ~x) {x := new}\nfn ex2(new, ~x) {let o = x := fn () 9\n new}\n{let f = fn () 3\n let e = match true {true -> ex1\n false -> ex2}\n let old = e(fn () 7, ~f)\n (old(), f())}',
-        'Branch-selected callable focus callees require a common parameter contract',
+        'branch-selected scattered differing contracts',
+        'fn ex1(new, ~(x, y)) {x := new}\nfn ex2(new, ~(x, y)) {let o = x := fn () 9\n new}\n{let f = fn () 3\n let n = 4\n let e = match true {true -> ex1\n false -> ex2}\n let old = e(fn () 7, ~(f, n))\n (old(), f(), n)}',
+        'Branch-selected scattered focus callees require a common parameter contract',
     ],
 ])
     it(`keeps ${name} callable focus callees explicit`, () => {
@@ -130,3 +130,50 @@ for (const [name, source, message] of [
             ]),
         ).toThrow(message!);
     });
+function dispatchAdapter(c: any) {
+    return c.wrappers.find(
+        (w: any) =>
+            w.kind === 'adapt-focus-arguments' &&
+            w.arguments.some((a: any) => a && a.replacement.kind === 'callable'),
+    );
+}
+it('converts differing dispatch entry tables through a focus argument adapter', () => {
+    const c = concrete(
+        demandSamples.find((s) => s.name === 'demand callable dispatch converts entry tables')!
+            .source,
+    );
+    const w = dispatchAdapter(c);
+    expect(w).toBeDefined();
+    const staged = w.arguments.find(Boolean);
+    expect(staged.replacement.from).not.toBe(staged.replacement.to);
+});
+for (const mutation of ['source', 'ownership', 'exact', 'replacement'] as const)
+    it(`rejects forged focus argument adapter ${mutation}`, () => {
+        const c = concrete(
+            demandSamples.find((s) => s.name === 'demand callable dispatch converts entry tables')!
+                .source,
+        );
+        const w = dispatchAdapter(c);
+        const n = w.arguments.findIndex(Boolean);
+        if (mutation === 'source') w.source = w.id;
+        if (mutation === 'ownership') w.ownership = 'copy-replacements';
+        if (mutation === 'exact') w.arguments[n] = null;
+        if (mutation === 'replacement') w.arguments[n].replacement.to = 'forged-layout';
+        const message =
+            mutation === 'source' || mutation === 'ownership'
+                ? 'Invalid focus argument adapter'
+                : 'Focus argument adapter changed';
+        expect(() => verifyConcreteProgram(c)).toThrow(message);
+        expect(() => emitC(c)).toThrow(message);
+    });
+it('rejects dispatch replacements that are not the join of their alternatives', () => {
+    const c = concrete(
+        demandSamples.find((s) => s.name === 'demand callable dispatch joined contract')!.source,
+    );
+    const call = c.analysis.entries[0].calls.find(
+        (call: any) => call.targets && call.arguments.some((a: any) => a.kind === 'local-focus'),
+    );
+    const focus = call.arguments.find((a: any) => a.kind === 'local-focus');
+    focus.replacement = focus.replacement.options[0];
+    expect(() => verifyConcreteProgram(c)).toThrow('Call argument representations changed');
+});

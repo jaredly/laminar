@@ -334,6 +334,37 @@ export function lowerConcreteProgram(
             wrappers.set(id, w);
             return w;
         }
+        const exact = variants.get(c.target);
+        if (
+            exact &&
+            exact.arguments.some(
+                (a, n) => representationKey(a) !== representationKey(c.arguments[n]!),
+            )
+        ) {
+            const source = wrapper(g, { ...c, arguments: exact.arguments }, environment);
+            const w: ConcreteWrapper = {
+                id,
+                key,
+                kind: 'adapt-focus-arguments',
+                abi,
+                environment,
+                source: source.id,
+                arguments: c.arguments.map((joined, n) => {
+                    const from = exact.arguments[n]!;
+                    if (representationKey(from) === representationKey(joined)) return null;
+                    if (from.kind !== 'local-focus' || joined.kind !== 'local-focus')
+                        return fail('Dispatch argument adapters require whole local focuses');
+                    return {
+                        from: layout(from),
+                        to: layout(joined),
+                        replacement: valueAdapter(from.replacement, joined.replacement),
+                    };
+                }),
+                ownership: 'stage-and-convert-replacements',
+            };
+            wrappers.set(id, w);
+            return w;
+        }
         const raw = rawResult(g, c);
         if (raw && representationKey(raw) !== representationKey(c.result)) {
             if (raw.kind === 'lens' && c.result.kind === 'lens') {

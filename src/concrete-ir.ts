@@ -52,6 +52,19 @@ export type ConcreteWrapper = {
           ownership: 'restore-source-and-release';
           order: ['restore-source', 'release'];
       }
+    | {
+          /** A dispatch alternative whose exact variant installs a different
+           * replacement than the caller's joined focus argument: the variant writes
+           * into a staged slot, converted into the caller's backing on return. */
+          kind: 'adapt-focus-arguments';
+          source: string;
+          arguments: ({
+              from: string;
+              to: string;
+              replacement: ConcreteValueAdapter;
+          } | null)[];
+          ownership: 'stage-and-convert-replacements';
+      }
     | { kind: 'dispose'; captures: string[]; ownership: 'drop-captures-and-free' }
     | {
           kind: 'dispatch';

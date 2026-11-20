@@ -1518,14 +1518,46 @@ export function verifyRepresentations(
                                     option.captures,
                                     'Call capture contract mismatch',
                                 );
-                                requireEqual(
-                                    target.arguments,
-                                    args,
-                                    'Call variant argument contract mismatch',
-                                );
+                                if (callee.kind === 'callable-choice' && args.some(isFocus))
+                                    // Alternatives agree on everything except the replacement
+                                    // endpoint of a whole local focus, joined below.
+                                    target.arguments.forEach((a, n) => {
+                                        const arg = args[n]!;
+                                        if (arg.kind === 'local-focus' && a.kind === 'local-focus')
+                                            requireEqual(
+                                                a.read,
+                                                arg.read,
+                                                'Call variant argument contract mismatch',
+                                            );
+                                        else
+                                            requireEqual(
+                                                a,
+                                                arg,
+                                                'Call variant argument contract mismatch',
+                                            );
+                                    });
+                                else
+                                    requireEqual(
+                                        target.arguments,
+                                        args,
+                                        'Call variant argument contract mismatch',
+                                    );
                                 results.push(target.result);
                                 edges.get(owner)!.add(target.id);
                             });
+                            if (callee.kind === 'callable-choice' && args.some(isFocus))
+                                args.forEach((arg, n) => {
+                                    if (arg.kind !== 'local-focus') return;
+                                    verifyJoin(
+                                        arg.replacement,
+                                        targets.map((t) => {
+                                            const a = variants.get(t!)?.arguments[n];
+                                            return a?.kind === 'local-focus'
+                                                ? a.replacement
+                                                : fail('Dispatch argument contract changed');
+                                        }),
+                                    );
+                                });
                             if (callee.kind === 'callable-choice' && v.kind === 'callable-choice') {
                                 const members = results.flatMap((r) =>
                                     r.kind === 'callable-choice'
@@ -1713,7 +1745,9 @@ export function verifyRepresentations(
                                             writeTarget(
                                                 target,
                                                 (
-                                                    variant.arguments[n] as Extract<
+                                                    (callee.kind === 'callable-choice'
+                                                        ? args[n]
+                                                        : variant.arguments[n]) as Extract<
                                                         ValueRepresentation,
                                                         { kind: 'local-focus' }
                                                     >

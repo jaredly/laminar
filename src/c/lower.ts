@@ -312,6 +312,57 @@ export function lowerC(program: ConcreteProgram): TranslationUnit {
             ],
         });
     }
+    // Dispatch alternatives whose exact variant installs a different replacement
+    // than the caller's joined focus: stage the variant's write, then convert it.
+    const argumentAdapters = new Map(
+        program.wrappers
+            .filter((w) => w.kind === 'adapt-focus-arguments')
+            .map((w, n) => [w.id, `argument_adapter${n}`]),
+    );
+    const wrapperFunction = (id: string): string => {
+        const w = program.wrappers.find((w) => w.id === id)!;
+        return (
+            (w.kind === 'invoke' ? codes.get(w.code) : undefined) ??
+            resultAdapters.get(w.id) ??
+            argumentAdapters.get(w.id) ??
+            nativeCodes.get(w.id) ??
+            unsupported('Argument adapter source has no function')
+        );
+    };
+    for (const w of program.wrappers) {
+        if (w.kind !== 'adapt-focus-arguments') continue;
+        const abi = program.abis.find((a) => a.id === w.abi)!;
+        const signature = `${type(abi.result)} ${argumentAdapters.get(w.id)}(void *environment${abi.arguments.map((id, n) => `, ${type(id)} arg${n}`).join('')})`;
+        declarations.push(signature + ';');
+        const body: Statement[] = [];
+        const passed = abi.arguments.map((_, n) => {
+            const a = w.arguments[n];
+            if (!a) return `arg${n}`;
+            const replacement = endpoint(a.from, 'replacement');
+            const separate = layout(a.from).fields.some((f) => f.name === 'replacement');
+            body.push(
+                `${type(replacement)} staged${n} = ${separate ? zero(replacement) : `*arg${n}.read`};`,
+            );
+            body.push(`${type(a.from)} source${n} = ${zero(a.from)};`);
+            body.push(
+                separate ? `source${n}.read = arg${n}.read;` : `source${n}.read = &staged${n};`,
+            );
+            if (separate) body.push(`source${n}.replacement = &staged${n};`);
+            return `source${n}`;
+        });
+        body.push(
+            `${type(abi.result)} result = ${wrapperFunction(w.source)}(environment${passed.map((a) => `, ${a}`).join('')});`,
+        );
+        w.arguments.forEach((a, n) => {
+            if (!a) return;
+            const field = layout(a.to).fields.some((f) => f.name === 'replacement')
+                ? 'replacement'
+                : 'read';
+            body.push(`*arg${n}.${field} = ${adaptValue(a.replacement, `staged${n}`)};`);
+        });
+        body.push('return result;');
+        helpers.push({ signature, body });
+    }
     const functions = program.code.map((c) => {
         const values = new Map<string, string>(),
             lenses = new Map<string, Lens>(),
@@ -568,9 +619,11 @@ export function lowerC(program: ConcreteProgram): TranslationUnit {
                                         w.kind === 'adapt-lens-result' ||
                                         w.kind === 'adapt-aggregate-result'
                                       ? `, .${e.field}=${resultAdapters.get(w.id)}`
-                                      : w.kind === 'native' && nativeCodes.has(w.id)
-                                        ? `, .${e.field}=${nativeCodes.get(w.id)}`
-                                        : '';
+                                      : w.kind === 'adapt-focus-arguments'
+                                        ? `, .${e.field}=${argumentAdapters.get(w.id)}`
+                                        : w.kind === 'native' && nativeCodes.has(w.id)
+                                          ? `, .${e.field}=${nativeCodes.get(w.id)}`
+                                          : '';
                             })
                             .join('');
                         if (!i.captures.length && !entries) {
@@ -1058,6 +1111,7 @@ export function lowerC(program: ConcreteProgram): TranslationUnit {
                             if (
                                 w.kind === 'invoke' ||
                                 w.kind === 'dispatch' ||
+                                w.kind === 'adapt-focus-arguments' ||
                                 w.kind === 'adapt-result' ||
                                 w.kind === 'adapt-aggregate-result' ||
                                 w.kind === 'adapt-lens-result'

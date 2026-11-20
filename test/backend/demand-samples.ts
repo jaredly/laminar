@@ -148,4 +148,29 @@ fn finish(~x) ~{@(x, {let installed = x := fn () 9
         source: 'fn ex1(new, ~x) {x := new}\n{let f = fn () 3\n let k = 5\n let e = match false {true -> ex1\n false -> fn (new, ~x) {let z = k\n x := new}}\n let old = e(fn () 7, ~f)\n (old(), f())}',
         expected: [3, 7],
     },
+    {
+        name: 'demand callable dispatch joined contract',
+        source: 'fn ex1(new, ~x) {x := new}\nfn ex2(new, ~x) {let o = x := fn () 9\n new}\n{let f = fn () 3\n let e = match true {true -> ex1\n false -> ex2}\n let old = e(fn () 7, ~f)\n (old(), f())}',
+        expected: [3, 7],
+    },
+    {
+        name: 'demand callable dispatch joined contract other arm',
+        source: 'fn ex1(new, ~x) {x := new}\nfn ex2(new, ~x) {let o = x := fn () 9\n new}\n{let f = fn () 3\n let e = match false {true -> ex1\n false -> ex2}\n let old = e(fn () 7, ~f)\n (old(), f())}',
+        expected: [7, 9],
+    },
+    {
+        name: 'demand callable dispatch joined captured contract',
+        source: 'fn ex1(new, ~x) {x := new}\nfn ex2(new, ~x) {let o = x := fn () 9\n new}\n{let f = fn () 3\n let k = 40\n let e = match false {true -> ex1\n false -> ex2}\n let old = e(fn () k, ~f)\n (old(), f())}',
+        expected: [40, 9],
+    },
+    {
+        name: 'demand callable dispatch joined aggregate contract',
+        source: 'fn ex1(new, ~x) {x := new}\nfn ex2(new, ~x) {let o = x := (fn () 9, 1)\n new}\n{let f = (fn () 3, 0)\n let e = match false {true -> ex1\n false -> ex2}\n let old = e((fn () 7, 2), ~f)\n let (g, n) = f\n let (h, m) = old\n (h(), m, g(), n)}',
+        expected: [7, 2, 9, 1],
+    },
+    {
+        name: 'demand callable dispatch converts entry tables',
+        source: 'fn ex1(new, ~x) {x := new}\nfn ex2(new, ~x) {let o = x := fn (h) {let r = h()\n r + 100}\n new}\n{let f = fn (h) {let r = h()\n r + 10}\n let e = match true {true -> ex1\n false -> ex2}\n let old = e(fn (h) {let r = h()\n r + 1000}, ~f)\n (old(fn () 2), f(fn () 1))}',
+        expected: [12, 1001],
+    },
 ];
