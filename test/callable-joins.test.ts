@@ -9,8 +9,7 @@ import { executeTypedProgram } from '../src/eval-typed.ts';
 import { compileConcreteProgram } from '../src/lower-concrete.ts';
 import { verifyConcreteProgram } from '../src/verify-concrete.ts';
 import { wasm32Emscripten } from '../src/backend/target.ts';
-import { BackendDiagnostic } from '../src/backend/target.ts';
-import type { ConcreteBlock, ConcreteProgram } from '../src/concrete-ir.ts';
+import type { ConcreteBlock, ConcreteInstruction, ConcreteProgram } from '../src/concrete-ir.ts';
 import { verifyRepresentations } from '../src/verify-representations.ts';
 import { printConcreteProgram } from '../src/print-concrete.ts';
 import { emitC } from '../src/c/emit.ts';
@@ -45,30 +44,6 @@ function compile(source = callableJoinSamples[0]!.source): ConcreteProgram {
             ]),
         ),
     );
-}
-function joins(c: ConcreteProgram) {
-    const cases: Extract<ConcreteBlock['instructions'][number], { op: 'case' }>[] = [];
-    const walk = (body: ConcreteBlock) => {
-        for (const i of body.instructions) {
-            if (i.op === 'scope') walk(i.body);
-            if (i.op === 'manual') walk(i.cleanup);
-            if (i.op === 'case') {
-                if (i.callableJoin) cases.push(i);
-                i.cases.forEach((arm) => walk(arm.body));
-            }
-        }
-    };
-    c.code.forEach((code) => walk(code.body));
-    return cases;
-}
-function rejects(action: () => void, code: string) {
-    try {
-        action();
-        throw Error('Verifier accepted malformed join');
-    } catch (e) {
-        expect(e).toBeInstanceOf(BackendDiagnostic);
-        expect((e as BackendDiagnostic).code).toBe(code);
-    }
 }
 it('normalizes differing callable result representations', () => {
     expect(() =>
@@ -213,4 +188,74 @@ it('rejects an analysis which keeps one dynamic result topology', () => {
     expect(() => verifyRepresentations(c.semantic, c.analysis)).toThrow(
         'Dynamic lens adapter must expose a thin focus',
     );
+});
+
+function instructions(body: ConcreteBlock): ConcreteInstruction[] {
+    return body.instructions.flatMap((i) => [
+        i,
+        ...(i.op === 'scope'
+            ? instructions(i.body)
+            : i.op === 'manual'
+              ? instructions(i.cleanup)
+              : i.op === 'case'
+                ? i.cases.flatMap((arm) => instructions(arm.body))
+                : []),
+    ]);
+}
+it('invokes callable ABI slots without dispatch wrappers or callable joins', () => {
+    const c = compile();
+    const types = c.callables.filter((r) => r.descriptor.kind === 'callable');
+    expect(types.some((r) => r.entries.length > 0)).toBe(true);
+    expect(types.every((r) => r.entries.every((e) => e.wrapper === undefined))).toBe(true);
+    const calls = c.code
+        .flatMap((code) => instructions(code.body))
+        .filter((i) => i.op === 'invoke' && i.field !== undefined);
+    expect(calls.length).toBeGreaterThan(0);
+    expect(calls.every((i) => i.op === 'invoke' && i.wrapper === undefined)).toBe(true);
+    expect(
+        c.wrappers.every((w) =>
+            ['invoke', 'native', 'dispose', 'adapt-lens-result', 'adapt-aggregate-result'].includes(
+                w.kind,
+            ),
+        ),
+    ).toBe(true);
+});
+for (const mutation of ['missing', 'abi', 'field', 'wrapper'] as const)
+    it(`rejects corrupt callable type ABI slot ${mutation}`, () => {
+        const c = compile();
+        const record = c.callables.find(
+            (r) => r.descriptor.kind === 'callable' && r.entries.length,
+        )!;
+        if (mutation === 'missing') record.entries.pop();
+        if (mutation === 'abi') record.entries[0]!.abi = 'forged';
+        if (mutation === 'field') record.entries[0]!.field = 'dispose';
+        if (mutation === 'wrapper') record.entries[0]!.wrapper = record.dispose;
+        expect(() => verifyConcreteProgram(c)).toThrow();
+    });
+for (const mutation of ['missing', 'wrapper', 'abi'] as const)
+    it(`rejects corrupt callable member entry ${mutation}`, () => {
+        const c = compile();
+        const record = c.callables.find(
+            (r) => r.descriptor.kind === 'closure' && r.entries.length,
+        )!;
+        if (mutation === 'missing') record.entries.pop();
+        if (mutation === 'wrapper') record.entries[0]!.wrapper = record.dispose;
+        if (mutation === 'abi') record.entries[0]!.abi = 'forged';
+        expect(() => verifyConcreteProgram(c)).toThrow();
+    });
+for (const mutation of ['wrapper', 'field', 'abi'] as const)
+    it(`rejects corrupt indirect callable invocation ${mutation}`, () => {
+        const c = compile();
+        const call = c.code
+            .flatMap((code) => instructions(code.body))
+            .find((i) => i.op === 'invoke' && i.field !== undefined)!;
+        if (call.op !== 'invoke') throw Error('Missing indirect invocation');
+        (call as any)[mutation] = 'forged';
+        expect(() => verifyConcreteProgram(c)).toThrow('Concrete invocation target/ABI changed');
+    });
+it('rejects obsolete callable join metadata on a plain branch move', () => {
+    const c = compile();
+    const branch = c.code.flatMap((code) => instructions(code.body)).find((i) => i.op === 'case')!;
+    (branch as any).callableJoin = { kind: 'erased-environment', arms: [] };
+    expect(() => verifyConcreteProgram(c)).toThrow('Obsolete callable join adapter');
 });

@@ -23,19 +23,9 @@ export function lowerC(program: ConcreteProgram): TranslationUnit {
     const codes = new Map(program.code.map((c, i) => [c.id, `fn${i}`]));
     const abiNames = new Map(program.abis.map((a, i) => [a.id, `A${i}`]));
     const type = (id: string) => names.get(id)!;
-    // Structural callable layouts make many joins identities: same record, same fields.
-    const identityEntries = (entries: { source: string; target: string }[]) =>
-        entries.every((e) => e.source === e.target);
     const adaptValue = (a: ConcreteValueAdapter, expression: string): string => {
         if (a.kind === 'move') return expression;
-        if (a.kind === 'callable' && a.from === a.to && identityEntries(a.entries))
-            return expression;
-        if (a.kind === 'aggregate')
-            return `(${type(a.to)}){${a.items.map((child, n) => `.item${n}=${adaptValue(child, `(${expression}).item${n}`)}`).join(', ')}}`;
-        const entries = a.entries
-            .map((e) => `, .${identifier(e.target)}=(${expression}).${identifier(e.source)}`)
-            .join('');
-        return `(${type(a.to)}){.environment=(${expression}).environment, .dispose=(${expression}).dispose${entries}}`;
+        return `(${type(a.to)}){${a.items.map((child, n) => `.item${n}=${adaptValue(child, `(${expression}).item${n}`)}`).join(', ')}}`;
     };
     const layout = (id: string) => layouts.get(id)!;
     const unit = program.layouts.find((l) => l.kind === 'unit')!;
@@ -174,18 +164,13 @@ export function lowerC(program: ConcreteProgram): TranslationUnit {
         body.push('release_context(captured);', `return ${zero(unit.id)};`);
         helpers.push({ signature, body });
     }
-    // Only reify native code when a runtime join needs it. Ordinary intrinsic
-    // calls keep their explicit storage lowering and allocation-free fast path.
-    const nativeMembers = new Set(
-        program.wrappers.flatMap((w) =>
-            w.kind === 'dispatch' ? w.targets.map((t) => t.callable) : [],
-        ),
-    );
+    // Native values fill their type's ABI entries; direct intrinsics retain the
+    // explicit storage lowering below.
     const nativeEntries = new Set([
         ...program.callables
-            .filter((c) => nativeMembers.has(c.id) && c.descriptor.kind === 'native')
+            .filter((c) => c.descriptor.kind === 'native')
             .flatMap((c) => c.entries.map((e) => e.wrapper)),
-        // Adapters (result or argument staging) call their native source directly.
+        // Result normalization calls its native source directly.
         ...program.wrappers.flatMap((w) =>
             'source' in w && program.wrappers.some((x) => x.id === w.source && x.kind === 'native')
                 ? [w.source]
@@ -241,21 +226,11 @@ export function lowerC(program: ConcreteProgram): TranslationUnit {
     }
     const resultAdapters = new Map(
         program.wrappers
-            .filter(
-                (w) =>
-                    w.kind === 'adapt-result' ||
-                    w.kind === 'adapt-lens-result' ||
-                    w.kind === 'adapt-aggregate-result',
-            )
+            .filter((w) => w.kind === 'adapt-lens-result' || w.kind === 'adapt-aggregate-result')
             .map((w, n) => [w.id, `result_adapter${n}`]),
     );
     for (const w of program.wrappers) {
-        if (
-            w.kind !== 'adapt-result' &&
-            w.kind !== 'adapt-lens-result' &&
-            w.kind !== 'adapt-aggregate-result'
-        )
-            continue;
+        if (w.kind !== 'adapt-lens-result' && w.kind !== 'adapt-aggregate-result') continue;
         const abi = program.abis.find((a) => a.id === w.abi)!;
         const source = program.wrappers.find((source) => source.id === w.source)!;
         if (source.kind !== 'invoke' && source.kind !== 'native')
@@ -312,146 +287,19 @@ export function lowerC(program: ConcreteProgram): TranslationUnit {
             signature,
             body: [
                 `${type(raw.result)} result = ${sourceCode}(environment${abi.arguments.map((_, n) => `, arg${n}`).join('')});`,
-                w.kind === 'adapt-aggregate-result'
-                    ? `return ${adaptValue(w.adapter, 'result')};`
-                    : `return (${type(abi.result)}){.environment=result.environment, .dispose=result.dispose${w.entries.map((e) => `, .${identifier(e.target)}=result.${identifier(e.source)}`).join('')}};`,
+                `return ${adaptValue(w.adapter, 'result')};`,
             ],
         });
     }
-    // Dispatch alternatives whose exact variant installs a different replacement
-    // than the caller's joined focus: stage the variant's write, then convert it.
-    const argumentAdapters = new Map(
-        program.wrappers
-            .filter((w) => w.kind === 'adapt-focus-arguments')
-            .map((w, n) => [w.id, `argument_adapter${n}`]),
-    );
     const wrapperFunction = (id: string): string => {
         const w = program.wrappers.find((w) => w.id === id)!;
         return (
             (w.kind === 'invoke' ? codes.get(w.code) : undefined) ??
-            resultAdapters.get(w.id) ??
-            argumentAdapters.get(w.id) ??
-            nativeCodes.get(w.id) ??
-            unsupported('Argument adapter source has no function')
+            resultAdapters.get(id) ??
+            nativeCodes.get(id) ??
+            unsupported('Wrapper has no callable function')
         );
     };
-    for (const w of program.wrappers) {
-        if (w.kind !== 'adapt-focus-arguments' || !w.result) continue;
-        // A dispatched lens result: the variant restores into staged parameter slots
-        // after this call returns, so staging lives in a heap context and argument
-        // conversion runs inside the adapter's own restoration.
-        const abi = program.abis.find((a) => a.id === w.abi)!;
-        const source = program.wrappers.find((x) => x.id === w.source)!;
-        const sourceABI = program.abis.find((a) => a.id === source.abi)!;
-        const name = argumentAdapters.get(w.id)!;
-        const context = `FocusResult${name}`,
-            restore = `restore_${name}`;
-        const replacement = endpoint(w.result.to, 'replacement');
-        const separate = layout(w.result.to).fields.some((f) => f.name === 'replacement');
-        const fields: string[] = [
-            `${type(w.result.from)} source;`,
-            `${type(w.result.read.to)} read;`,
-        ];
-        if (separate) fields.push(`${type(replacement)} write;`);
-        w.arguments.forEach((a, n) => {
-            if (!a) return;
-            fields.push(
-                `${type(abi.arguments[n]!)} arg${n};`,
-                `${type(endpoint(a.from, 'replacement'))} staged${n};`,
-                `${type(a.from)} source${n};`,
-            );
-        });
-        declarations.push(`typedef struct { ${fields.join(' ')} } ${context};`);
-        const signature = `${type(abi.result)} ${name}(void *environment${abi.arguments.map((id, n) => `, ${type(id)} arg${n}`).join('')})`;
-        const restoreSignature = `${type(unit.id)} ${restore}(void *environment, ${type(replacement)} replacement)`;
-        declarations.push(signature + ';', restoreSignature + ';');
-        const body: Statement[] = [
-            `${context} *ctx = allocate_context(sizeof *ctx);`,
-            { head: 'if (!ctx)', body: ['abort();'] },
-        ];
-        const passed = abi.arguments.map((_, n) => {
-            const a = w.arguments[n];
-            if (!a) return `arg${n}`;
-            const staged = endpoint(a.from, 'replacement');
-            const own = layout(a.from).fields.some((f) => f.name === 'replacement');
-            body.push(
-                `ctx->arg${n} = arg${n};`,
-                `ctx->staged${n} = ${own ? zero(staged) : `*arg${n}.read`};`,
-                `ctx->source${n} = ${zero(a.from)};`,
-                own
-                    ? `ctx->source${n}.read = arg${n}.read;`
-                    : `ctx->source${n}.read = &ctx->staged${n};`,
-            );
-            if (own) body.push(`ctx->source${n}.replacement = &ctx->staged${n};`);
-            return `ctx->source${n}`;
-        });
-        body.push(
-            `ctx->source = ${wrapperFunction(w.source)}(environment${passed.map((a) => `, ${a}`).join('')});`,
-            `ctx->read = ${adaptValue(w.result.read, read(storage.get(incoming('ctx->source', sourceABI.result)), w.result.read.from))};`,
-            `return (${type(abi.result)}){.read=&ctx->read${separate ? ', .replacement=&ctx->write' : ''}, .restore=${restore}, .context=ctx};`,
-        );
-        helpers.push({ signature, body });
-        const fallback: Statement[] = [];
-        flush(
-            'ctx->source',
-            w.result.from,
-            { expression: 'replacement', layout: replacement },
-            fallback,
-        );
-        const restoreBody: Statement[] = [
-            `${context} *ctx = environment;`,
-            {
-                head: 'if (ctx->source.restore)',
-                body: ['ctx->source.restore(ctx->source.context, replacement);'],
-            },
-            { head: 'else', body: fallback },
-        ];
-        w.arguments.forEach((a, n) => {
-            if (!a) return;
-            const field = layout(a.to).fields.some((f) => f.name === 'replacement')
-                ? 'replacement'
-                : 'read';
-            restoreBody.push(
-                `*ctx->arg${n}.${field} = ${adaptValue(a.replacement, `ctx->staged${n}`)};`,
-            );
-        });
-        restoreBody.push('release_context(ctx);', `return ${zero(unit.id)};`);
-        helpers.push({ signature: restoreSignature, body: restoreBody });
-    }
-    for (const w of program.wrappers) {
-        if (w.kind !== 'adapt-focus-arguments' || w.result) continue;
-        const abi = program.abis.find((a) => a.id === w.abi)!;
-        const signature = `${type(abi.result)} ${argumentAdapters.get(w.id)}(void *environment${abi.arguments.map((id, n) => `, ${type(id)} arg${n}`).join('')})`;
-        declarations.push(signature + ';');
-        const body: Statement[] = [];
-        const passed = abi.arguments.map((_, n) => {
-            const a = w.arguments[n];
-            if (!a) return `arg${n}`;
-            const replacement = endpoint(a.from, 'replacement');
-            const separate = layout(a.from).fields.some((f) => f.name === 'replacement');
-            body.push(
-                `${type(replacement)} staged${n} = ${separate ? zero(replacement) : `*arg${n}.read`};`,
-            );
-            body.push(`${type(a.from)} source${n} = ${zero(a.from)};`);
-            body.push(
-                separate ? `source${n}.read = arg${n}.read;` : `source${n}.read = &staged${n};`,
-            );
-            if (separate) body.push(`source${n}.replacement = &staged${n};`);
-            return `source${n}`;
-        });
-        body.push(
-            `${type(abi.result)} result = ${wrapperFunction(w.source)}(environment${passed.map((a) => `, ${a}`).join('')});`,
-        );
-        w.arguments.forEach((a, n) => {
-            if (!a) return;
-            const field = layout(a.to).fields.some((f) => f.name === 'replacement')
-                ? 'replacement'
-                : 'read';
-            body.push(`*arg${n}.${field} = ${adaptValue(a.replacement, `staged${n}`)};`);
-        });
-        body.push('return result;');
-        helpers.push({ signature, body });
-    }
     const functions = program.code.map((c) => {
         const values = new Map<string, string>(),
             lenses = new Map<string, Lens>(),
@@ -690,15 +538,12 @@ export function lowerC(program: ConcreteProgram): TranslationUnit {
                                 // Runtime joins reify native entries; ordinary intrinsics keep their storage lowering.
                                 return w.kind === 'invoke'
                                     ? `, .${e.field}=${codes.get(w.code)}`
-                                    : w.kind === 'adapt-result' ||
-                                        w.kind === 'adapt-lens-result' ||
+                                    : w.kind === 'adapt-lens-result' ||
                                         w.kind === 'adapt-aggregate-result'
                                       ? `, .${e.field}=${resultAdapters.get(w.id)}`
-                                      : w.kind === 'adapt-focus-arguments'
-                                        ? `, .${e.field}=${argumentAdapters.get(w.id)}`
-                                        : w.kind === 'native' && nativeCodes.has(w.id)
-                                          ? `, .${e.field}=${nativeCodes.get(w.id)}`
-                                          : '';
+                                      : w.kind === 'native' && nativeCodes.has(w.id)
+                                        ? `, .${e.field}=${nativeCodes.get(w.id)}`
+                                        : '';
                             })
                             .join('');
                         if (!i.captures.length && !entries) {
@@ -1010,26 +855,7 @@ export function lowerC(program: ConcreteProgram): TranslationUnit {
                                 nested.push(
                                     `${name} = ${adaptValue(i.aggregateJoin.arms[armIndex]!, result)};`,
                                 );
-                            else if (
-                                i.callableJoin &&
-                                program.callables.find(
-                                    (c) => c.id === i.callableJoin!.arms[armIndex]!.callable,
-                                )?.layout === id &&
-                                identityEntries(i.callableJoin.arms[armIndex]!.entries)
-                            )
-                                nested.push(`${name} = ${result};`);
-                            else if (i.callableJoin) {
-                                const adapter = i.callableJoin.arms[armIndex]!;
-                                const entries = adapter.entries
-                                    .map(
-                                        (e) =>
-                                            `, .${identifier(e.target)}=(${result}).${identifier(e.source)}`,
-                                    )
-                                    .join('');
-                                nested.push(
-                                    `${name} = (${type(id)}){.environment=(${result}).environment, .dispose=(${result}).dispose${entries}};`,
-                                );
-                            } else nested.push(`${name} = ${result};`);
+                            else nested.push(`${name} = ${result};`);
                             const state = storage.snapshot();
                             variables.length = outerVariables;
                             return { nested, state };
@@ -1092,7 +918,7 @@ export function lowerC(program: ConcreteProgram): TranslationUnit {
                             !program.callables.some(
                                 (x) =>
                                     x.layout === outputLayouts.get(i.callee) &&
-                                    x.entries.some((e) => e.wrapper === i.wrapper),
+                                    x.entries.some((e) => e.field === i.field && e.abi === i.abi),
                             )
                         )
                             unsupported('Missing callable storage contract');
@@ -1101,11 +927,11 @@ export function lowerC(program: ConcreteProgram): TranslationUnit {
                         const isLens = layout(id).fields.some((f) => f.name === 'restore');
                         const adapters: { finish: (body: Statement[]) => void }[] = [];
                         let args: string[] = [];
-                        if (w.kind === 'native' && w.definition === 'native/dup') {
+                        if (w?.kind === 'native' && w.definition === 'native/dup') {
                             const lens = lenses.get(i.args[0]!)!;
                             expr = read(storage.get(lens.view), id);
                             adapters.push({ finish: lens.finish });
-                        } else if (w.kind === 'native' && w.definition === 'native/fst') {
+                        } else if (w?.kind === 'native' && w.definition === 'native/fst') {
                             const parent = lenses.get(i.args[0]!)!;
                             lenses.set(i.out.id, {
                                 view: storage.project(parent.view, [0]),
@@ -1121,18 +947,16 @@ export function lowerC(program: ConcreteProgram): TranslationUnit {
                                 return a.expression;
                             });
                             if (
-                                w.kind === 'invoke' ||
-                                w.kind === 'dispatch' ||
-                                w.kind === 'adapt-focus-arguments' ||
-                                w.kind === 'adapt-result' ||
-                                w.kind === 'adapt-aggregate-result' ||
-                                w.kind === 'adapt-lens-result'
+                                i.field !== undefined ||
+                                w?.kind === 'invoke' ||
+                                w?.kind === 'adapt-aggregate-result' ||
+                                w?.kind === 'adapt-lens-result'
                             )
                                 expr =
                                     i.field === undefined
-                                        ? `${wrapperFunction(i.wrapper)}((${value(i.callee)}).environment${args.map((a) => `, ${a}`).join('')})`
+                                        ? `${wrapperFunction(i.wrapper!)}((${value(i.callee)}).environment${args.map((a) => `, ${a}`).join('')})`
                                         : `(${value(i.callee)}).${identifier(i.field)}((${value(i.callee)}).environment${args.map((a) => `, ${a}`).join('')})`;
-                            else if (w.kind === 'native') {
+                            else if (w?.kind === 'native') {
                                 const op = w.definition.slice(7);
                                 if (['+', '-', '*', '/', '==', '>=', '<='].includes(op))
                                     expr = `(${args[0]} ${op} ${args[1]})`;

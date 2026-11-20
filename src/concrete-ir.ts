@@ -35,14 +35,6 @@ export type ConcreteWrapper = {
     | { kind: 'invoke'; code: string; ownership: 'transfer-captures-and-free' }
     | { kind: 'native'; definition: string; ownership: 'no-environment' }
     | {
-          kind: 'adapt-result';
-          source: string;
-          from: string;
-          to: string;
-          entries: { source: string; target: string }[];
-          ownership: 'transfer-result';
-      }
-    | {
           kind: 'adapt-aggregate-result';
           source: string;
           adapter: ConcreteValueAdapter;
@@ -56,29 +48,7 @@ export type ConcreteWrapper = {
           ownership: 'restore-source-and-release';
           order: ['restore-source', 'release'];
       }
-    | {
-          /** A dispatch alternative whose exact variant installs a different
-           * replacement than the caller's joined focus argument: the variant writes
-           * into a staged slot, converted into the caller's backing on return. */
-          kind: 'adapt-focus-arguments';
-          source: string;
-          arguments: ({
-              from: string;
-              to: string;
-              replacement: ConcreteValueAdapter;
-          } | null)[];
-          /** A returned focus: the variant's lens result (`from`) is exposed as the
-           * joined focus (`to`) whose read is converted; staged arguments are converted
-           * only after the variant's own restoration. */
-          result?: { from: string; to: string; read: ConcreteValueAdapter };
-          ownership: 'stage-and-convert-replacements' | 'stage-until-restoration';
-      }
     | { kind: 'dispose'; captures: string[]; ownership: 'drop-captures-and-free' }
-    | {
-          kind: 'dispatch';
-          targets: { callable: string; wrapper: string }[];
-          ownership: 'selected-environment';
-      }
 );
 export type CallableLayout = {
     id: string;
@@ -89,7 +59,8 @@ export type CallableLayout = {
     layout: string;
     environment: string;
     dispose: string;
-    entries: { wrapper: string; abi: string; field: string }[];
+    /** Type records declare ABI slots; member records also supply each slot's code. */
+    entries: { wrapper?: string; abi: string; field: string }[];
 };
 type ConcreteOutput = {
     out: Instruction extends infer I
@@ -102,7 +73,6 @@ type ConcreteOutput = {
 export type ConcreteValueAdapter = { from: string; to: string } & (
     | { kind: 'move' }
     | { kind: 'aggregate'; items: ConcreteValueAdapter[] }
-    | { kind: 'callable'; callable: string; entries: { source: string; target: string }[] }
 );
 export type ConcreteInstruction =
     | Extract<Instruction, { op: 'bind' | 'borrow' }>
@@ -143,23 +113,17 @@ export type ConcreteInstruction =
           }[];
           aggregateJoin?: { ownership: 'transfer-selected-result'; arms: ConcreteValueAdapter[] };
           lensJoin?: { kind: 'selected'; arms: string[]; result: string };
-          callableJoin?: {
-              kind: 'erased-environment';
-              result: string;
-              arms: { callable: string; entries: { source: string; target: string }[] }[];
-          };
       } & ConcreteOutput)
     | ({
           op: 'invoke';
           origin: string;
           callee: string;
           args: string[];
-          wrapper: string;
           abi: string;
           /** The callee record's entry for an indirect call; absent for a direct call
-           * of statically known code, which invokes `wrapper` itself. */
-          field?: string;
-      } & ConcreteOutput)
+           * of statically known code, which alone names a `wrapper`. */
+      } & ({ wrapper: string; field?: never } | { field: string; wrapper?: never }) &
+          ConcreteOutput)
     | ({
           op: 'make-callable';
           origin: string;

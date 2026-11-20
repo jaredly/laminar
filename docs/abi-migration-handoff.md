@@ -12,8 +12,8 @@ requested.
 | --- | --- |
 | M0: corpus freeze | **Committed** (`67b5781`) |
 | M1: type-determined callables, whole-program member sets | **Verified and committed** (`b77a37e`) |
-| M2: callable lenses as phase-5 lenses (delete focus machinery) | **Verified and committed** (the M2 commit containing this update) |
-| M3: remove callable joins and dispatch leftovers | Not started; mostly dead code after M1 |
+| M2: callable lenses as phase-5 lenses (delete focus machinery) | **Verified and committed** (`ecfdea1`) |
+| M3: remove callable joins and dispatch leftovers | **Verified and committed** (the M3 commit containing this update) |
 | M4: recursion via the worklist; budgets as resource limits | Demand recursion machinery removed in M2; worklist and resource limits remain |
 | M5: concrete verifier, C and Go cleanup | Not started |
 
@@ -33,7 +33,7 @@ Never update that snapshot with `-u`. When regenerating printed snapshots, filte
 - `git diff --check`: clean.
 
 The C fix includes native wrappers used as adapter sources in `nativeEntries`.
-M2 is implemented below; M3–M5 remain.
+M2 and M3 are implemented below; M4–M5 remain.
 
 ## What M1 changed (orientation for M2+)
 
@@ -113,15 +113,34 @@ Validation: TypeScript clean; `bun test` reports **1422 pass / 1293 skip /
 `LAMINAR_EXEC=1 bun test test/c/execute.test.ts` run reports **1254 pass / 0 fail**,
 4379 assertions, 476.82 seconds. `git diff --check` is clean. The design doc lists
 the retired and rewritten internal tests. Shared execution samples are unchanged.
-The next implementation milestone is **M3**.
+M3 is implemented below.
 
-## Next steps (M3–M5)
+## M3 implementation (2026-11-20)
 
-- **M3.** Remove leftover dead paths:
-  - `adapt-result` and `adapt-focus-arguments` wrapper kinds (lowering no longer
-    produces them for differing contracts, since contracts are equal);
-  - `callableJoin` in concrete IR, C and Go;
-  - `ConcreteValueAdapter` `kind: 'callable'`.
+- `ConcreteWrapper` no longer has `dispatch`, `adapt-result` or
+  `adapt-focus-arguments`. `callableJoin` and callable `ConcreteValueAdapter`s
+  are deleted, including their C, Go and printing paths.
+- Type records contain `{ abi, field }` entries without wrappers. Member records
+  fill each slot directly with an exact invoke/native wrapper or lens-result
+  normalizer. Generic aggregate move/result descriptors remain for M5 cleanup.
+- Indirect `invoke` has `{ abi, field }`; a direct invocation has `{ abi, wrapper }`.
+  The concrete IR union makes the field and wrapper mutually exclusive.
+- `verify-concrete.ts` derives member entry wrappers from the type's contracts and
+  member set, replacing dispatch-target validation. Type entry coverage/ABIs,
+  member wrappers and indirect invocations have 12 new corruption/coverage tests.
+- Native wrapper emission follows member entries and result-adapter sources. The
+  representation analysis still enumerates members internally (its `dispatch`
+  callee kind); no concrete/runtime dispatch wrapper is produced.
+- Three printed IR expectations were updated with `-t prints`. The known source
+  identity snapshot is unchanged. No tests or shared execution samples were retired.
+
+TypeScript is clean. The regular suite reports **1434 pass / 1293 skip / 1 fail**
+(the known snapshot, 4622 assertions). Full native/Wasm validation reports
+**1254 pass / 0 fail**, 4379 assertions, 475.36 seconds. `git diff --check` is clean.
+The next implementation milestone is **M4**.
+
+## Next steps (M4–M5)
+
 - **M4.** Replace the whole-program result-shape rescan with the finite worklist
   and resource-limit diagnostics. The old `RecursionHypothesis`, `RecursionPending`,
   `activeRoots`, setup/completion fixed points and changing-input guard were removed

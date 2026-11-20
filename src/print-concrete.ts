@@ -191,46 +191,7 @@ export function lconcrete(program: ConcreteProgram, options: ConcretePrintOption
                                         quote(v.to),
                                         tuple(v.order),
                                     )
-                                  : v.kind === 'adapt-result'
-                                    ? words(
-                                          'adapt-result',
-                                          name(v.source),
-                                          name(v.from),
-                                          '->',
-                                          name(v.to),
-                                          tuple(
-                                              v.entries.map((e) => words(e.source, '->', e.target)),
-                                          ),
-                                      )
-                                    : v.kind === 'adapt-focus-arguments'
-                                      ? words(
-                                            'adapt-focus-arguments',
-                                            name(v.source),
-                                            tuple(
-                                                v.arguments.map((a) =>
-                                                    a
-                                                        ? words(
-                                                              name(a.from),
-                                                              '->',
-                                                              name(a.to),
-                                                              name(a.replacement.from),
-                                                              '->',
-                                                              name(a.replacement.to),
-                                                          )
-                                                        : 'exact',
-                                                ),
-                                            ),
-                                        )
-                                      : v.kind === 'dispatch'
-                                        ? words(
-                                              'dispatch',
-                                              tuple(
-                                                  v.targets.map((t) =>
-                                                      words(name(t.callable), name(t.wrapper)),
-                                                  ),
-                                              ),
-                                          )
-                                        : words('dispose', tuple(v.captures.map(name))),
+                                  : words('dispose', tuple(v.captures.map(name))),
                         v.ownership,
                     ),
                 ),
@@ -249,7 +210,12 @@ export function lconcrete(program: ConcreteProgram, options: ConcretePrintOption
                         braces([
                             words('dispose', name(v.dispose)),
                             ...v.entries.map((e) =>
-                                words(e.field, '=', name(e.wrapper), ':', name(e.abi)),
+                                words(
+                                    e.field,
+                                    ...(e.wrapper ? ['=', name(e.wrapper)] : []),
+                                    ':',
+                                    name(e.abi),
+                                ),
                             ),
                         ]),
                     ),
@@ -384,8 +350,7 @@ export function lconcrete(program: ConcreteProgram, options: ConcretePrintOption
                                 : l.l('', [value(i.callee), '.', i.field]),
                             i.args.map(value),
                         ),
-                        'via',
-                        name(i.wrapper),
+                        ...(i.wrapper ? ['via', name(i.wrapper)] : []),
                         ':',
                         name(i.abi),
                     );
@@ -418,26 +383,6 @@ export function lconcrete(program: ConcreteProgram, options: ConcretePrintOption
                         'match',
                         value(i.value),
                         ...(i.aggregateJoin ? ['selected-aggregate'] : []),
-                        ...(i.callableJoin
-                            ? [
-                                  words(
-                                      'selected-callable',
-                                      name(i.callableJoin.result),
-                                      tuple(
-                                          i.callableJoin.arms.map((arm) =>
-                                              words(
-                                                  name(arm.callable),
-                                                  tuple(
-                                                      arm.entries.map((e) =>
-                                                          words(e.source, '->', e.target),
-                                                      ),
-                                                  ),
-                                              ),
-                                          ),
-                                      ),
-                                  ),
-                              ]
-                            : []),
                         ...(i.lensJoin
                             ? [
                                   call('selected-focus', i.lensJoin.arms.map(topology)),

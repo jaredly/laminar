@@ -382,43 +382,8 @@ export function verifyConcreteProgram(p: ConcreteProgram): void {
             w.id !== concreteName('wrapper', wk)
         )
             fail('Invalid concrete wrapper contract');
-        if (c.descriptor.kind === 'callable') {
-            if (w.kind !== 'dispatch' || w.ownership !== 'selected-environment')
-                return fail('Invalid dynamic invocation ownership');
-            const expected = membersOf(c.type).map((option, n) => {
-                const member = memberRecord(option, c.type);
-                const memberContract = {
-                    target: contract.targets![n]!,
-                    arguments: contract.arguments,
-                    result: contract.result,
-                };
-                const wrapperKey = JSON.stringify([
-                    'wrapper',
-                    target,
-                    graphKey,
-                    groupKeyOf(member),
-                    contractKey(memberContract),
-                    expectedABI,
-                    member.environment,
-                ]);
-                const memberWrapper = wrapper(concreteName('wrapper', wrapperKey));
-                if (
-                    ![
-                        'invoke',
-                        'native',
-                        'adapt-focus-arguments',
-                        'adapt-lens-result',
-                        'adapt-aggregate-result',
-                    ].includes(memberWrapper.kind) ||
-                    memberWrapper.abi !== w.abi
-                )
-                    return fail('Dynamic callable ABI mismatch');
-                usedWrappers.add(memberWrapper.id);
-                checkEntry(member, memberWrapper, memberContract);
-                return { callable: member.id, wrapper: memberWrapper.id };
-            });
-            eq(w.targets, expected, 'Dynamic callable dispatch coverage mismatch');
-        } else if (w.kind === 'adapt-lens-result') {
+        if (c.descriptor.kind === 'callable') return fail('Type entries cannot name code wrappers');
+        if (w.kind === 'adapt-lens-result') {
             const raw = rawResult(c.descriptor, contract);
             if (raw?.kind !== 'lens' || contract.result.kind !== 'lens')
                 return fail('Missing lens result contract');
@@ -482,8 +447,6 @@ export function verifyConcreteProgram(p: ConcreteProgram): void {
             eq(w.adapter, adapter(raw, contract.result), 'Aggregate result adapter changed');
             usedWrappers.add(source.id);
             checkEntry(c, source, { ...contract, result: raw });
-        } else if (w.kind === 'adapt-focus-arguments') {
-            return fail('Obsolete focus argument adapter');
         } else if (w.kind === 'invoke') {
             const callee = code.get(w.code) ?? fail('Wrapper references absent code');
             const exact = p.analysis.variants.find((v) => v.id === contract.target);
@@ -537,25 +500,21 @@ export function verifyConcreteProgram(p: ConcreteProgram): void {
         if (dispose.key !== dk || dispose.id !== concreteName('wrapper', dk))
             fail('Invalid disposer name');
         if (c.descriptor.kind === 'callable') {
-            // A callable type's record: one dispatch entry per indirect-call contract.
+            // A callable type's record declares one ABI per indirect-call contract.
             if (c.type !== c.descriptor.type) fail('Callable record type mismatch');
             const expectedContracts = [...(contracts.get(c.type)?.values() ?? [])].sort((a, b) =>
                 contractKey(a) < contractKey(b) ? -1 : 1,
             );
             if (c.entries.length !== expectedContracts.length)
                 fail('Callable entry coverage mismatch');
-            c.entries.forEach((e, i) => {
-                const contract = expectedContracts[i]!,
-                    w = wrapper(e.wrapper);
-                usedWrappers.add(w.id);
-                if (
-                    e.abi !== aid(contract.arguments.map(storage), storage(contract.result)) ||
-                    w.abi !== e.abi ||
-                    e.field !== `invoke${i}`
-                )
-                    fail('Invalid concrete wrapper contract');
-                checkEntry(c, w, contract);
-            });
+            eq(
+                c.entries,
+                expectedContracts.map((contract, i) => ({
+                    abi: aid(contract.arguments.map(storage), storage(contract.result)),
+                    field: `invoke${i}`,
+                })),
+                'Callable entry coverage or ABI changed',
+            );
             const expectedLayout = lid(['callable', c.entries.map((e) => e.abi)]);
             if (c.layout !== expectedLayout) fail('Callable layout identity mismatch');
             concreteFields(c.layout, 'record', [
@@ -565,7 +524,7 @@ export function verifyConcreteProgram(p: ConcreteProgram): void {
             ]);
         } else {
             // A member's record is its type's record; a listed member fills each entry
-            // with its own dispatch target, an unlisted (direct-only) one with none.
+            // with its own wrapper, an unlisted (direct-only) one with none.
             const owner = typeRecord(c.type);
             if (c.layout !== owner.layout) fail('Member callable layout mismatch');
             if (c.descriptor.kind === 'closure' && fnTypeKey(c.descriptor) !== c.type)
@@ -577,17 +536,28 @@ export function verifyConcreteProgram(p: ConcreteProgram): void {
                 c.entries,
                 listed < 0
                     ? []
-                    : owner.entries.map((entry) => {
-                          const dispatch = wrapper(entry.wrapper);
-                          if (dispatch.kind !== 'dispatch')
-                              return fail('Callable type entry lacks dispatch contract');
-                          if (dispatch.targets[listed]?.callable !== c.id)
-                              fail('Dispatch target names the wrong member');
-                          return {
-                              wrapper: dispatch.targets[listed]!.wrapper,
-                              abi: entry.abi,
-                              field: entry.field,
+                    : owner.entries.map((entry, index) => {
+                          const contract = [...(contracts.get(c.type)?.values() ?? [])].sort(
+                              (a, b) => (contractKey(a) < contractKey(b) ? -1 : 1),
+                          )[index]!;
+                          const memberContract = {
+                              target: contract.targets![listed]!,
+                              arguments: contract.arguments,
+                              result: contract.result,
                           };
+                          const key = JSON.stringify([
+                              'wrapper',
+                              target,
+                              graphKey,
+                              k,
+                              contractKey(memberContract),
+                              entry.abi,
+                              c.environment,
+                          ]);
+                          const w = wrapper(concreteName('wrapper', key));
+                          usedWrappers.add(w.id);
+                          checkEntry(c, w, memberContract);
+                          return { wrapper: w.id, abi: entry.abi, field: entry.field };
                       }),
                 'Member callable entries changed',
             );
@@ -708,7 +678,7 @@ export function verifyConcreteProgram(p: ConcreteProgram): void {
                         'Aggregate join adapter changed',
                     );
                     // Callable values share their type's record: joins are moves.
-                    eq(o.callableJoin, undefined, 'Callable join adapter changed');
+                    if ('callableJoin' in o) fail('Obsolete callable join adapter');
                     i.cases.forEach((c, j) => {
                         eq(o.cases[j]!.setup, c.setup, 'Case setup normalization changed');
                         eq(
@@ -814,7 +784,6 @@ export function verifyConcreteProgram(p: ConcreteProgram): void {
                             out: o.out,
                             callee: i.callee,
                             args: i.args,
-                            wrapper: entry.wrapper,
                             abi: entry.abi,
                             field: entry.field,
                         },

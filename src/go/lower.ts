@@ -52,10 +52,7 @@ export function lowerGo(program: ConcreteProgram): GoFile {
                 )
                 .join('\n')}\n}`;
         }
-        const entries = a.entries
-            .map((e) => `\t${identifier(e.target)}: (${expression}).${identifier(e.source)},\n`)
-            .join('');
-        return `${type(a.to)}{\n\tenvironment: (${expression}).environment,\n\tdispose: (${expression}).dispose,\n${entries}}`;
+        return unsupported('Unknown value adapter');
     };
 
     const storage = new Storage((s) =>
@@ -174,14 +171,9 @@ export function lowerGo(program: ConcreteProgram): GoFile {
     }
 
     const helpers: GoFunction[] = [];
-    const nativeMembers = new Set(
-        program.wrappers.flatMap((w) =>
-            w.kind === 'dispatch' ? w.targets.map((t) => t.callable) : [],
-        ),
-    );
     const nativeEntries = new Set(
         program.callables
-            .filter((c) => nativeMembers.has(c.id) && c.descriptor.kind === 'native')
+            .filter((c) => c.descriptor.kind === 'native')
             .flatMap((c) => c.entries.map((e) => e.wrapper)),
     );
     const nativeCodes = new Map<string, string>();
@@ -208,25 +200,14 @@ export function lowerGo(program: ConcreteProgram): GoFile {
         helpers.push({ signature, body });
     }
 
-    if (program.wrappers.some((w) => w.kind === 'adapt-focus-arguments'))
-        return unsupported('Dispatch focus argument adapters are not yet lowered to Go');
     const resultAdapters = new Map(
         program.wrappers
-            .filter(
-                (w) =>
-                    w.kind === 'adapt-result' ||
-                    w.kind === 'adapt-lens-result' ||
-                    w.kind === 'adapt-aggregate-result',
-            )
+            .filter((w) => w.kind === 'adapt-lens-result' || w.kind === 'adapt-aggregate-result')
             .map((w, n) => [w.id, `result_adapter${n}`]),
     );
 
     for (const w of program.wrappers) {
-        if (
-            w.kind !== 'adapt-result' &&
-            w.kind !== 'adapt-lens-result' &&
-            w.kind !== 'adapt-aggregate-result'
-        ) {
+        if (w.kind !== 'adapt-lens-result' && w.kind !== 'adapt-aggregate-result') {
             continue;
         }
         const abi = program.abis.find((a) => a.id === w.abi)!;
@@ -245,17 +226,6 @@ export function lowerGo(program: ConcreteProgram): GoFile {
                 body: [
                     `result := ${sourceCode}(environment${abi.arguments.map((_, n) => `, arg${n}`).join('')})`,
                     `return ${adaptValue(w.adapter, 'result')}`,
-                ],
-            });
-        } else if (w.kind === 'adapt-result') {
-            const entries = w.entries
-                .map((e) => `\t${identifier(e.target)}: result.${identifier(e.source)},\n`)
-                .join('');
-            helpers.push({
-                signature,
-                body: [
-                    `result := ${sourceCode}(environment${abi.arguments.map((_, n) => `, arg${n}`).join('')})`,
-                    `return ${type(abi.result)}{\n\tenvironment: result.environment,\n\tdispose: result.dispose,\n${entries}}`,
                 ],
             });
         } else {
@@ -569,10 +539,7 @@ export function lowerGo(program: ConcreteProgram): GoFile {
                                 if (w.kind === 'invoke') {
                                     return `, ${identifier(e.field)}: ${codes.get(w.code)}`;
                                 }
-                                if (
-                                    w.kind === 'adapt-result' ||
-                                    w.kind === 'adapt-aggregate-result'
-                                ) {
+                                if (w?.kind === 'adapt-aggregate-result') {
                                     return `, ${identifier(e.field)}: ${resultAdapters.get(w.id)}`;
                                 }
                                 if (w.kind === 'native' && nativeCodes.has(w.id)) {
@@ -597,11 +564,11 @@ export function lowerGo(program: ConcreteProgram): GoFile {
                         const isLens = layout(id).fields.some((f) => f.name === 'restore');
                         const adapters: { finish: (body: Statement[]) => void }[] = [];
                         let args: string[] = [];
-                        if (w.kind === 'native' && w.definition === 'native/dup') {
+                        if (w?.kind === 'native' && w.definition === 'native/dup') {
                             const lens = lenses.get(i.args[0]!)!;
                             expr = read(storage.get(lens.view), id);
                             adapters.push({ finish: lens.finish });
-                        } else if (w.kind === 'native' && w.definition === 'native/fst') {
+                        } else if (w?.kind === 'native' && w.definition === 'native/fst') {
                             const parent = lenses.get(i.args[0]!)!;
                             lenses.set(i.out.id, {
                                 view: storage.project(parent.view, [0]),
@@ -617,10 +584,9 @@ export function lowerGo(program: ConcreteProgram): GoFile {
                                 return a.expression;
                             });
                             if (
-                                w.kind === 'invoke' ||
-                                w.kind === 'dispatch' ||
-                                w.kind === 'adapt-result' ||
-                                w.kind === 'adapt-aggregate-result'
+                                i.field !== undefined ||
+                                w?.kind === 'invoke' ||
+                                w?.kind === 'adapt-aggregate-result'
                             ) {
                                 // A direct call invokes its known member's wrapper itself.
                                 const direct =
@@ -633,7 +599,7 @@ export function lowerGo(program: ConcreteProgram): GoFile {
                                 expr = direct
                                     ? `${direct}((${value(i.callee)}).environment${args.map((a) => `, ${a}`).join('')})`
                                     : `(${value(i.callee)}).${identifier(i.field!)}((${value(i.callee)}).environment${args.map((a) => `, ${a}`).join('')})`;
-                            } else if (w.kind === 'native') {
+                            } else if (w?.kind === 'native') {
                                 const op = w.definition.slice(7);
                                 if (['+', '-', '*', '/', '==', '>=', '<='].includes(op)) {
                                     expr = `(${args[0]} ${op} ${args[1]})`;
@@ -641,7 +607,7 @@ export function lowerGo(program: ConcreteProgram): GoFile {
                                     return unsupported(`Native import ${w.definition}`);
                                 }
                             } else {
-                                return unsupported(`Wrapper kind ${w.kind}`);
+                                return unsupported(`Wrapper kind ${w?.kind}`);
                             }
                         }
                         declare(id, expr, body, name);
@@ -694,18 +660,7 @@ export function lowerGo(program: ConcreteProgram): GoFile {
                                 nested.push(
                                     `${name} = ${adaptValue(i.aggregateJoin.arms[armIndex]!, result)}`,
                                 );
-                            else if (i.callableJoin) {
-                                const adapter = i.callableJoin.arms[armIndex]!;
-                                const entries = adapter.entries
-                                    .map(
-                                        (e) =>
-                                            `, ${identifier(e.target)}: (${result}).${identifier(e.source)}`,
-                                    )
-                                    .join('');
-                                nested.push(
-                                    `${name} = ${type(id)}{environment: (${result}).environment, dispose: (${result}).dispose${entries}}`,
-                                );
-                            } else nested.push(`${name} = ${result}`);
+                            else nested.push(`${name} = ${result}`);
                             return { nested, state: storage.snapshot() };
                         });
                         storage.reset(before);

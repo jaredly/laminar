@@ -70,8 +70,8 @@ export function lowerConcreteProgram(
     const fail = (message: string): never => {
         throw new BackendDiagnostic('unsolved-concrete-abi', message);
     };
-    // Callable records: one per callable type, whose entries dispatch over the
-    // type's members; and one per member, sharing the type's record layout and entry
+    // Callable records: one ABI table per callable type and one per member,
+    // sharing the type's record layout and entry
     // order, so a member's value already is a value of its type.
     const members = new Map(analysis.callables.map((c) => [c.type, c.members]));
     const typeGroup = (type: string): Group => {
@@ -229,35 +229,7 @@ export function lowerConcreteProgram(
         const id = concreteName('wrapper', key);
         const prior = wrappers.get(id);
         if (prior) return prior;
-        if (g.descriptor.kind === 'callable') {
-            const options = members.get(g.type) ?? [];
-            const targets = options.map((option, n) => {
-                const member = memberGroup(option, g.type);
-                const memberContract = {
-                    target: c.targets![n]!,
-                    arguments: c.arguments,
-                    result: c.result,
-                };
-                const entry = wrapper(
-                    member,
-                    memberContract,
-                    memberEnvironment(member).environment,
-                );
-                if (entry.abi !== abi) return fail('Dynamic callable ABI mismatch');
-                return { callable: callableId(member), wrapper: entry.id };
-            });
-            const w: ConcreteWrapper = {
-                id,
-                key,
-                kind: 'dispatch',
-                abi,
-                environment,
-                targets,
-                ownership: 'selected-environment',
-            };
-            wrappers.set(id, w);
-            return w;
-        }
+        if (g.descriptor.kind === 'callable') return fail('Type entries have no code wrapper');
         const raw = rawResult(g, c);
         if (raw && representationKey(raw) !== representationKey(c.result)) {
             if (raw.kind === 'lens' && c.result.kind === 'lens') {
@@ -316,8 +288,8 @@ export function lowerConcreteProgram(
         wrappers.set(id, w);
         return w;
     }
-    // A group's environment record and disposer, without its entries: dispatch
-    // wrappers need member environments while the type's record is being built.
+    // Build environments independently of entries so member captures may refer
+    // to their own callable type.
     const environments = new Map<string, { environment: string; dispose: string }>();
     function memberEnvironment(g: Group): { environment: string; dispose: string } {
         const prior = environments.get(g.key);
@@ -352,7 +324,7 @@ export function lowerConcreteProgram(
     }
     // A callable type's physical record follows from its entry ABIs alone, so member
     // environments (which may capture values of the same type) can name it while the
-    // type's dispatch wrappers are still being built.
+    // type's member entries are still being built.
     const typeLayouts = new Map<string, string>();
     const sortedContracts = (g: Group): Contract[] =>
         [...g.contracts.values()].sort((a, b) => (contractKey(a) < contractKey(b) ? -1 : 1));
@@ -380,13 +352,12 @@ export function lowerConcreteProgram(
         let entries: CallableLayout['entries'];
         let physical: string;
         if (g.descriptor.kind === 'callable') {
-            // The type's record: one entry per indirect-call contract (ABI), each a
-            // dispatch over the type's members.
+            // The type record declares its indirect-call ABIs without naming code.
             physical = typeLayout(g);
-            entries = sortedContracts(g).map((c, index) => {
-                const w = wrapper(g, c, environment);
-                return { wrapper: w.id, abi: w.abi, field: `invoke${index}` };
-            });
+            entries = sortedContracts(g).map((c, index) => ({
+                abi: table.abi(c.arguments.map(layout), layout(c.result)),
+                field: `invoke${index}`,
+            }));
         } else {
             // A member's record is its type's record. Members that may reach indirect
             // calls fill every entry with their own wrapper for that contract; a value
@@ -399,15 +370,19 @@ export function lowerConcreteProgram(
             entries =
                 listed < 0
                     ? []
-                    : owner.entries.map((entry) => {
-                          const dispatch = wrappers.get(entry.wrapper)!;
-                          if (dispatch.kind !== 'dispatch')
-                              return fail('Callable type entry lacks dispatch contract');
-                          return {
-                              wrapper: dispatch.targets[listed]!.wrapper,
-                              abi: entry.abi,
-                              field: entry.field,
-                          };
+                    : owner.entries.map((entry, index) => {
+                          const contract = sortedContracts(typeGroup(g.type))[index]!;
+                          const w = wrapper(
+                              g,
+                              {
+                                  target: contract.targets![listed]!,
+                                  arguments: contract.arguments,
+                                  result: contract.result,
+                              },
+                              environment,
+                          );
+                          if (w.abi !== entry.abi) return fail('Callable member ABI mismatch');
+                          return { wrapper: w.id, abi: entry.abi, field: entry.field };
                       });
         }
         g.record = {
@@ -565,16 +540,17 @@ export function lowerConcreteProgram(
                     }
                     const g = typeGroup(calleeValue.type),
                         c = callable(g);
-                    const w = wrapper(g, contract, c.environment),
-                        entry = c.entries.find((e) => e.wrapper === w.id)!;
+                    const index = sortedContracts(g).findIndex(
+                        (candidate) => contractKey(candidate) === contractKey(contract),
+                    );
+                    const entry = c.entries[index] ?? fail('Missing invocation slot');
                     return {
                         op: 'invoke',
                         origin: i.origin,
                         out,
                         callee: i.callee,
                         args: i.args,
-                        wrapper: w.id,
-                        abi: w.abi,
+                        abi: entry.abi,
                         field: entry.field,
                     };
                 }

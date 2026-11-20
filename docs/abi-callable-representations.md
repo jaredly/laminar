@@ -1,6 +1,6 @@
 # Design: ABI-keyed callable representations
 
-Status: **migration in progress; M0–M2 implemented** (2026-11-20). This replaces
+Status: **migration in progress; M0–M3 implemented** (2026-11-20). This replaces
 the identity-precise callable model that phase 6 of the
 [C codegen plan](c-codegen-plan.md) has been extending. The migration plan and
 progress notes below track the remaining work.
@@ -507,3 +507,37 @@ execution samples and their expected results are unchanged.
 failure (4,606 assertions; 37 other snapshots pass); no snapshot was updated.
 `LAMINAR_EXEC=1 bun test test/c/execute.test.ts` passes all 1,254 native/Wasm
 cases (4,379 assertions, 476.82 seconds). `git diff --check` is clean.
+
+### M3: ABI-slot invocation without callable dispatch adapters
+
+- **Concrete calls.** A callable type's entries declare only the canonical ABI and
+  field name. Each listed member fills those slots with its own exact wrapper,
+  including `adapt-lens-result` when its body returns a different lens shape.
+  Indirect `invoke` instructions contain the ABI and field, without a synthetic
+  wrapper reference. Direct calls still name their exact wrapper. The concrete IR
+  makes these two forms mutually exclusive.
+- **Deleted paths.** Removed concrete `dispatch`, `adapt-result` and
+  `adapt-focus-arguments` wrapper kinds, `callableJoin`, and callable value adapters,
+  together with their C/Go emission and concrete printing. Callable branch joins
+  remain ordinary record moves. Native reification follows member entries and
+  native result-adapter sources directly, without a dispatch wrapper table.
+- **Independent verification.** Type slots are checked against the indirect-call
+  contracts; member entries are derived independently from the member set and
+  their exact contracts. Missing entries, wrong ABIs/fields, incorrect member
+  wrappers and wrapper references on indirect invokes are rejected. The analysis's
+  internal member enumeration still specializes every member at each call ABI;
+  it does not create runtime dispatch helpers.
+
+**Tests.** Added 12 ABI-slot/member/invocation coverage and corruption tests. No
+execution samples or tests were retired. Three printed-IR expectations were
+regenerated with the `prints` filter; the pre-existing source-identity snapshot
+was left untouched. Generic aggregate move descriptors remain for the subsequent
+concrete cleanup; differing lens results retain ordinary lens-result normalization.
+
+**Validation (2026-11-20).** `npx tsc --noEmit -p .` passes. `bun test` reports
+1,434 passed, 1,293 skipped and the one pre-existing source-identity snapshot
+failure (4,622 assertions; 37 other snapshots pass).
+`LAMINAR_EXEC=1 bun test test/c/execute.test.ts` passes all 1,254 native/Wasm
+cases (4,379 assertions, 475.36 seconds), including scattered dispatch with
+differing installed closures and native dynamic lens-result normalization.
+`git diff --check` is clean.

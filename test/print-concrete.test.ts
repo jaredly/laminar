@@ -265,18 +265,17 @@ it('prints captures and disposer contracts for affine closures', () => {
       }
       wrappers {
           wrap0 : abi0 env L4 = invoke lambda0 transfer-captures-and-free
-          wrap1 : abi0 env L2 = dispatch (callable0 wrap0) selected-environment
-          wrap2 : abi1 env L4 = dispose (L3) drop-captures-and-free
-          wrap3 : abi1 env L2 = dispose () drop-captures-and-free
+          wrap1 : abi1 env L4 = dispose (L3) drop-captures-and-free
+          wrap2 : abi1 env L2 = dispose () drop-captures-and-free
       }
       callables {
           callable0 : L0 env L4 {
-              dispose wrap2
+              dispose wrap1
               invoke0 = wrap0 : abi0
           }
           callable1 : L0 env L2 {
-              dispose wrap3
-              invoke0 = wrap1 : abi0
+              dispose wrap2
+              invoke0 : abi0
           }
       }
       fn lambda0((): L1) : abi0 env L4 captures (capture0 $x: L3) {
@@ -294,7 +293,7 @@ it('prints captures and disposer contracts for affine closures', () => {
                   bind $f = %3
                   %5: L0 = move $f
                   %6: L1 = ()
-                  %7: L3 = %5.invoke0(%6) via wrap1 : abi0
+                  %7: L3 = %5.invoke0(%6) : abi0
                   return %7 : L3
                   cleanup {drop $f}
               }
@@ -1246,18 +1245,17 @@ it('prints all concrete instructions: closure', () => {
       }
       wrappers {
           wrap0 : abi0 env L4 = invoke lambda0 transfer-captures-and-free
-          wrap1 : abi0 env L2 = dispatch (callable0 wrap0) selected-environment
-          wrap2 : abi1 env L4 = dispose (L3) drop-captures-and-free
-          wrap3 : abi1 env L2 = dispose () drop-captures-and-free
+          wrap1 : abi1 env L4 = dispose (L3) drop-captures-and-free
+          wrap2 : abi1 env L2 = dispose () drop-captures-and-free
       }
       callables {
           callable0 : L0 env L4 {
-              dispose wrap2
+              dispose wrap1
               invoke0 = wrap0 : abi0
           }
           callable1 : L0 env L2 {
-              dispose wrap3
-              invoke0 = wrap1 : abi0
+              dispose wrap2
+              invoke0 : abi0
           }
       }
       fn lambda0((): L1) : abi0 env L4 captures (capture0 $x: L3) {
@@ -1275,7 +1273,7 @@ it('prints all concrete instructions: closure', () => {
                   bind $f = %3
                   %5: L0 = move $f
                   %6: L1 = ()
-                  %7: L3 = %5.invoke0(%6) via wrap1 : abi0
+                  %7: L3 = %5.invoke0(%6) : abi0
                   return %7 : L3
                   cleanup {drop $f}
               }
@@ -1335,19 +1333,18 @@ it('prints all concrete instructions: capture-restore', () => {
           abi3 = (env: ptr<void>) -> L1
       }
       wrappers {
-          wrap0 : abi0 env L4 = dispatch (callable0 wrap1) selected-environment
-          wrap1 : abi0 env L6 = invoke lambda0 transfer-captures-and-free
-          wrap2 : abi3 env L6 = dispose (L2) drop-captures-and-free
-          wrap3 : abi3 env L4 = dispose () drop-captures-and-free
+          wrap0 : abi0 env L6 = invoke lambda0 transfer-captures-and-free
+          wrap1 : abi3 env L6 = dispose (L2) drop-captures-and-free
+          wrap2 : abi3 env L4 = dispose () drop-captures-and-free
       }
       callables {
           callable0 : L0 env L6 {
-              dispose wrap2
-              invoke0 = wrap1 : abi0
+              dispose wrap1
+              invoke0 = wrap0 : abi0
           }
           callable1 : L0 env L4 {
-              dispose wrap3
-              invoke0 = wrap0 : abi0
+              dispose wrap2
+              invoke0 : abi0
           }
       }
       fn lambda0((): L1) : abi0 env L6 captures (capture0 $y: L2) {
@@ -1384,7 +1381,7 @@ it('prints all concrete instructions: capture-restore', () => {
                   bind $f_1 = %3
                   %13: L0 = move $f_1
                   %14: L1 = ()
-                  %15: L2 = %13.invoke0(%14) via wrap0 : abi0
+                  %15: L2 = %13.invoke0(%14) : abi0
                   %16: L2 = move $x
                   %17: L3 = (%15, %16)
                   return %17 : L3
