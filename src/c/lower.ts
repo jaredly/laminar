@@ -472,20 +472,6 @@ export function lowerC(program: ConcreteProgram): TranslationUnit {
             body.push(`${type(id)} ${name} = ${expression};`, `(void)${name};`);
             return name;
         };
-        const adaptStorage = (a: ConcreteValueAdapter, data: Data, output: Statement[]): Data => {
-            // Typed IR normalizes branch availability. Empty projections own no
-            // environment and must never be reconstructed as initialized values.
-            if (!Array.isArray(data) && data.layout === unit.id) return data;
-            if (a.kind === 'move') return data;
-            if (a.kind === 'aggregate')
-                return storage
-                    .parts(data)
-                    .map((child, n) => adaptStorage(a.items[n]!, child, output));
-            return {
-                expression: declare(a.to, adaptValue(a, read(data, a.from)), output),
-                layout: a.to,
-            };
-        };
         const setup: Statement[] = [];
         const bind = (p: IRPattern, data: Data, body: Statement[] = setup) => {
             if (p.kind === 'bind') places.set(p.slot.place, storage.own(data));
@@ -783,8 +769,6 @@ export function lowerC(program: ConcreteProgram): TranslationUnit {
                     }
                     case 'case': {
                         if (i.lensJoin) {
-                            const focusReads =
-                                i.lensJoin.kind === 'selected-focus' ? i.lensJoin.reads : undefined;
                             const before = storage.snapshot();
                             const selected = fresh();
                             variables.push({ name: selected, type: 'int' });
@@ -861,42 +845,6 @@ export function lowerC(program: ConcreteProgram): TranslationUnit {
                                         )),
                                 );
                             };
-                            const retainedStorage = () =>
-                                new Map(
-                                    i.storageJoins
-                                        ?.filter((j) => j.restoration)
-                                        .map((j) => [j.place, storage.get(places.get(j.place)!)]),
-                                );
-                            const restoreStorage = (retained: Map<string, Data>) =>
-                                retained.forEach((data, place) =>
-                                    storage.put(places.get(place)!, data),
-                                );
-                            const normalizeCleanup = (arm: number, output: Statement[]) =>
-                                i.cleanupJoins?.forEach((j) => {
-                                    const view = places.get(j.place)!;
-                                    storage.put(
-                                        view,
-                                        adaptStorage(j.arms[arm]!, storage.get(view), output),
-                                    );
-                                });
-                            const normalizeStorage = (
-                                arm: number,
-                                output: Statement[],
-                                afterCleanup = false,
-                            ) =>
-                                i.storageJoins?.forEach((j) => {
-                                    if (
-                                        !j.restoration ||
-                                        (afterCleanup &&
-                                            j.restoration.normalization === 'post-cleanup')
-                                    )
-                                        return;
-                                    const view = places.get(j.place)!;
-                                    storage.put(
-                                        view,
-                                        adaptStorage(j.arms[arm]!, storage.get(view), output),
-                                    );
-                                });
                             const arms = i.cases.map((arm, n) => {
                                 storage.reset(before);
                                 const start = variables.length;
@@ -911,22 +859,10 @@ export function lowerC(program: ConcreteProgram): TranslationUnit {
                                 );
                                 block(arm.body, nested);
                                 normalize(arm.setup, nested);
-                                const retained = retainedStorage();
-                                i.storageJoins?.forEach((join) => {
-                                    const view =
-                                        places.get(join.place) ??
-                                        unsupported('Missing branch storage owner');
-                                    storage.put(
-                                        view,
-                                        adaptStorage(join.arms[n]!, storage.get(view), nested),
-                                    );
-                                });
                                 const lens = lenses.get(arm.body.result)!;
                                 nested.push(
                                     `${selected} = ${n};`,
-                                    focusReads
-                                        ? `${focus} = ${adaptValue(focusReads[n]!, read(storage.get(lens.view), focusReads[n]!.from))};`
-                                        : `${focus} = ${read(storage.get(lens.view), input)};`,
+                                    `${focus} = ${read(storage.get(lens.view), input)};`,
                                 );
                                 // Lift setup storage out of the conditional so deferred cleanup can
                                 // retain it. Only the selected arm assigns or allocates its backing.
@@ -960,7 +896,6 @@ export function lowerC(program: ConcreteProgram): TranslationUnit {
                                     state: storage.snapshot(),
                                     lens,
                                     arm,
-                                    retained,
                                     index: n,
                                 };
                             });
@@ -987,16 +922,12 @@ export function lowerC(program: ConcreteProgram): TranslationUnit {
                                         );
                                         storage.put(arm.lens.view, replacement);
                                         const nested: Statement[] = [];
-                                        restoreStorage(arm.retained);
                                         const complete = stage(arm.lens, nested);
-                                        const retained = retainedStorage();
-                                        normalizeStorage(arm.index, nested);
                                         return {
                                             nested,
                                             complete,
                                             state: storage.snapshot(),
                                             arm,
-                                            retained,
                                         };
                                     });
                                     storage.reset(current);
@@ -1018,11 +949,8 @@ export function lowerC(program: ConcreteProgram): TranslationUnit {
                                                 (_, cell) => (cell.data = cleaned.get(cell)!),
                                             );
                                             const nested: Statement[] = [];
-                                            restoreStorage(entry.retained);
                                             entry.complete(nested);
                                             normalize(entry.arm.arm.restored, nested);
-                                            normalizeStorage(entry.arm.index, nested, true);
-                                            normalizeCleanup(entry.arm.index, nested);
                                             return { nested, state: storage.snapshot() };
                                         });
                                         storage.reset(cleaned);
@@ -1046,11 +974,8 @@ export function lowerC(program: ConcreteProgram): TranslationUnit {
                                         );
                                         storage.put(arm.lens.view, replacement);
                                         const nested: Statement[] = [];
-                                        restoreStorage(arm.retained);
                                         arm.lens.finish(nested);
                                         normalize(arm.arm.restored, nested);
-                                        normalizeStorage(arm.index, nested, true);
-                                        normalizeCleanup(arm.index, nested);
                                         return { nested, state: storage.snapshot() };
                                     });
                                     storage.reset(current);
@@ -1105,15 +1030,6 @@ export function lowerC(program: ConcreteProgram): TranslationUnit {
                                     `${name} = (${type(id)}){.environment=(${result}).environment, .dispose=(${result}).dispose${entries}};`,
                                 );
                             } else nested.push(`${name} = ${result};`);
-                            i.storageJoins?.forEach((join) => {
-                                const view =
-                                    places.get(join.place) ??
-                                    unsupported('Missing branch storage owner');
-                                storage.put(
-                                    view,
-                                    adaptStorage(join.arms[armIndex]!, storage.get(view), nested),
-                                );
-                            });
                             const state = storage.snapshot();
                             variables.length = outerVariables;
                             return { nested, state };

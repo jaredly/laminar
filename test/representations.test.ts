@@ -92,10 +92,25 @@ it('rejects unresolved or unsupported storage and foreign references', () => {
         'type variable',
     );
     expect(() => l.intern(irCon('List', num))).toThrow('No storage definition');
-    expect(() => l.intern({ tag: 'fn', args: [], result: irPlain(num) })).toThrow(
-        'closure representation',
-    );
     expect(() => l.get('foreign')).toThrow('Unknown layout');
     expect(() => r.tuple(['foreign'])).toThrow('Unknown lens');
     expect(() => r.join([])).toThrow('Empty');
+});
+
+it('interns callable storage in ordinary thin and scattered lens shapes', () => {
+    const l = new LayoutTable(native),
+        r = new RepresentationTable(l);
+    const f: SemanticType = { tag: 'fn', args: [], result: irPlain(num) };
+    const g: SemanticType = { tag: 'fn', args: [], result: irPlain(bool) };
+    const id = l.intern(f);
+    expect(l.intern(structuredClone(f))).toBe(id);
+    expect(l.get(id).storage).toBe('callable');
+    expect(l.get(id).dependencies).toEqual([]);
+    const thin = r.get(r.thin(f, g));
+    expect(thin.kind).toBe('thin');
+    expect(thin.read).toBe(id);
+    expect(thin.replacement).toBe(l.intern(g));
+    const scattered = r.get(r.tuple([thin.id, r.thin(num, num)]));
+    expect(scattered.kind).toBe('tuple');
+    expect(l.get(scattered.read).dependencies[0]).toBe(id);
 });

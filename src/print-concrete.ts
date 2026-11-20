@@ -394,67 +394,18 @@ export function lconcrete(program: ConcreteProgram, options: ConcretePrintOption
                     expression = words(
                         'manual',
                         value(i.lens),
-                        ...(i.restoration.kind !== 'deferred'
-                            ? [
-                                  words(
-                                      'callable-endpoints',
-                                      name(i.restoration.frontend),
-                                      '->',
-                                      name(i.restoration.result),
-                                  ),
-                              ]
-                            : []),
                         'holds',
                         tuple(i.holds.map(slot)),
                         'order',
                         tuple(i.restoration.order.map((phase) => l.i(phase))),
                         'retain',
                         i.restoration.retention,
-                        ...(i.restoration.storageTransitions
-                            ? [
-                                  words(
-                                      'storage-transitions',
-                                      tuple(
-                                          i.restoration.storageTransitions.map((t) =>
-                                              words(
-                                                  ref(t.place, 'place'),
-                                                  ':',
-                                                  name(t.before),
-                                                  '->',
-                                                  name(t.after),
-                                                  t.ownership,
-                                              ),
-                                          ),
-                                      ),
-                                  ),
-                              ]
-                            : []),
                         'deferred',
                         block(i.cleanup),
                     );
                     break;
                 case 'scope':
-                    expression = words(
-                        'scope',
-                        ...(i.retainedStorage
-                            ? [
-                                  words(
-                                      'retain-storage',
-                                      tuple(
-                                          i.retainedStorage.map((t) =>
-                                              words(
-                                                  ref(t.place, 'place'),
-                                                  ':',
-                                                  name(t.layout),
-                                                  t.ownership,
-                                              ),
-                                          ),
-                                      ),
-                                  ),
-                              ]
-                            : []),
-                        block(i.body),
-                    );
+                    expression = words('scope', block(i.body));
                     break;
                 case 'case': {
                     const topology = (id: string): Node => {
@@ -467,16 +418,6 @@ export function lconcrete(program: ConcreteProgram, options: ConcretePrintOption
                         'match',
                         value(i.value),
                         ...(i.aggregateJoin ? ['selected-aggregate'] : []),
-                        ...(i.cleanupJoins ? ['selected-cleanup-storage'] : []),
-                        ...(i.storageJoins?.some((j) => j.restoration) ? ['retained-storage'] : []),
-                        ...(i.storageJoins
-                            ? [
-                                  words(
-                                      'selected-storage',
-                                      tuple(i.storageJoins.map((j) => ref(j.place, 'place'))),
-                                  ),
-                              ]
-                            : []),
                         ...(i.callableJoin
                             ? [
                                   words(
@@ -497,19 +438,13 @@ export function lconcrete(program: ConcreteProgram, options: ConcretePrintOption
                                   ),
                               ]
                             : []),
-                        ...(i.lensJoin?.kind === 'selected-focus'
+                        ...(i.lensJoin
                             ? [
-                                  call('selected-callable-focus', i.lensJoin.arms.map(name)),
+                                  call('selected-focus', i.lensJoin.arms.map(topology)),
                                   '->',
-                                  name(i.lensJoin.result),
+                                  topology(i.lensJoin.result),
                               ]
-                            : i.lensJoin
-                              ? [
-                                    call('selected-focus', i.lensJoin.arms.map(topology)),
-                                    '->',
-                                    topology(i.lensJoin.result),
-                                ]
-                              : []),
+                            : []),
                         braces(
                             i.cases.map((c) =>
                                 words(

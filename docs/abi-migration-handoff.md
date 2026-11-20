@@ -11,10 +11,10 @@ requested.
 | Milestone | State |
 | --- | --- |
 | M0: corpus freeze | **Committed** (`67b5781`) |
-| M1: type-determined callables, whole-program member sets | **Verified and committed** (the M1 commit containing this hand-off) |
-| M2: callable lenses as phase-5 lenses (delete focus machinery) | Not started |
+| M1: type-determined callables, whole-program member sets | **Verified and committed** (`b77a37e`) |
+| M2: callable lenses as phase-5 lenses (delete focus machinery) | **Verified and committed** (the M2 commit containing this update) |
 | M3: remove callable joins and dispatch leftovers | Not started; mostly dead code after M1 |
-| M4: recursion via the worklist; budgets as resource limits | Not started |
+| M4: recursion via the worklist; budgets as resource limits | Demand recursion machinery removed in M2; worklist and resource limits remain |
 | M5: concrete verifier, C and Go cleanup | Not started |
 
 Unrelated, existing failure, not ours: `can show original identities and source
@@ -33,7 +33,7 @@ Never update that snapshot with `-u`. When regenerating printed snapshots, filte
 - `git diff --check`: clean.
 
 The C fix includes native wrappers used as adapter sources in `nativeEntries`.
-The next implementation milestone is **M2**; M2–M5 have not been implemented.
+M2 is implemented below; M3–M5 remain.
 
 ## What M1 changed (orientation for M2+)
 
@@ -89,34 +89,44 @@ The next implementation milestone is **M2**; M2–M5 have not been implemented.
   (`enabledMilestones = ['M1']`) and pass through typed IR, the legacy reference,
   verification and C emission. They also run in the native/Wasm corpus.
 
-## Next steps (M2–M5)
+## M2 implementation (2026-11-20)
 
-- **M2.** Delete `local-focus` / `focus-tuple` / `focus-manual`, replacement demands
-  (`demand`, `resultDemand`, `pendingDemands`, `setupFocusCall` / `completeFocusCall`
-  lazy completion), `callResults` / `deferredFocuses` routing, `selected-focus`
-  `lensJoin` and the callable `fst` endpoint rules. These now run on type-determined
-  representations and are redundant.
-  - Callable lenses become ordinary `lens` shapes with type layouts. `LayoutTable.intern`
-    (`src/layouts.ts`) currently throws for `fn` types ("Callable storage requires an
-    explicit closure representation"). It needs a callable-record layout, and the
-    concrete side must map that data layout to the type's record.
-  - Concrete `local-focus` layouts and manual restoration modes
-    (`local-focus` / `scattered-focus`) go too.
-  - Expect another round of internal-test retirement in `callable-focus.test.ts` and
-    `representation-demands.test.ts`.
+Callable lenses are ordinary `lens` representations with thin/scattered shapes.
+`LayoutTable` has callable storage leaves, resolved to type records by concrete
+lowering and independently by the concrete verifier. Aggregate callable backing
+uses the same physical layout as aggregate values.
+
+Removed focus endpoint forms, demands, lazy setup/completion, endpoint owners and
+result routing, retained callable storage annotations, selected callable-focus joins,
+and special manual restoration modes. Analysis state now holds only SSA value
+representations, incoming/borrowed lens topology and statically known code.
+Manual cleanup is analyzed directly from its restoration-time typed IR.
+
+The demand-specific recursion hypotheses disappeared with setup/completion.
+Recursive results use the previous pass's shape approximation; whole-program
+passes stabilize both member sets and variant results. The pass loop is still
+capped at 64 and `maxVariants` still defaults to 256. M4 must finish the worklist
+and resource-limit diagnostics; do not reintroduce endpoint-demand recursion.
+
+Validation: TypeScript clean; `bun test` reports **1422 pass / 1293 skip /
+1 fail** (the known source-identity snapshot, unchanged; 4606 assertions). The final
+`LAMINAR_EXEC=1 bun test test/c/execute.test.ts` run reports **1254 pass / 0 fail**,
+4379 assertions, 476.82 seconds. `git diff --check` is clean. The design doc lists
+the retired and rewritten internal tests. Shared execution samples are unchanged.
+The next implementation milestone is **M3**.
+
+## Next steps (M3–M5)
+
 - **M3.** Remove leftover dead paths:
   - `adapt-result` and `adapt-focus-arguments` wrapper kinds (lowering no longer
     produces them for differing contracts, since contracts are equal);
   - `callableJoin` in concrete IR, C and Go;
   - `ConcreteValueAdapter` `kind: 'callable'`.
-- **M4.**
-  - Replace the recursion hypothesis machinery (`RecursionHypothesis`,
-    `RecursionPending`, `activeRoots`, completion-time fixed point) with the
-    pass-based result-shape fixed point.
-  - Recursive member results already contribute in the next pass via `PendingResult`;
-    direct recursive lens results still use the hypothesis code.
-  - Turn the 256-variant / 16-iteration / 4-nesting limits into resource-limit
-    diagnostics.
+- **M4.** Replace the whole-program result-shape rescan with the finite worklist
+  and resource-limit diagnostics. The old `RecursionHypothesis`, `RecursionPending`,
+  `activeRoots`, setup/completion fixed points and changing-input guard were removed
+  as part of M2's focus machinery deletion. The remaining limits are the variant
+  budget and whole-program pass cap.
 - **M5.**
   - Simplify the concrete verifier and C now that only type and member records exist.
   - Possibly emit `NULL` instead of `((Lk){0}).environment` for direct calls of

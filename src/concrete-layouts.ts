@@ -21,6 +21,7 @@ export class ConcreteLayoutTable {
         target: TargetConfig,
         definitions: readonly NominalLayoutDefinition[] = [],
         readonly maxLayouts = 512,
+        readonly callableLayout?: (type: SemanticType) => string,
     ) {
         if (!Number.isSafeInteger(maxLayouts) || maxLayouts < 1)
             throw new BackendDiagnostic(
@@ -104,6 +105,24 @@ export class ConcreteLayoutTable {
         }
     }
     private dataType(type: SemanticType): string {
+        if (type.tag === 'fn') {
+            if (!this.callableLayout)
+                throw new BackendDiagnostic(
+                    'unsupported-layout',
+                    'Missing callable type layout resolver',
+                );
+            return this.callableLayout(type);
+        }
+        const containsCallable = (t: SemanticType): boolean =>
+            t.tag === 'fn' || (t.tag === 'tuple' && t.items.some(containsCallable));
+        if (type.tag === 'tuple' && containsCallable(type)) {
+            const items = type.items.map((t) => this.dataType(t));
+            return this.record(
+                ['aggregate', items],
+                'record',
+                items.map((layout, i) => ({ name: `item${i}`, kind: 'value', layout })),
+            );
+        }
         mapSemantic(type, (id) => {
             throw new BackendDiagnostic('unsolved-layout', `Unsolved concrete data type ${id}`);
         });

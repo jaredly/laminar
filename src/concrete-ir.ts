@@ -119,28 +119,17 @@ export type ConcreteInstruction =
           holds: SlotRef[];
           cleanup: ConcreteBlock;
           restoration: {
-              kind: 'deferred' | 'local-focus' | 'scattered-focus';
+              kind: 'deferred';
               frontend: string;
               result: string;
               order: ['stage', 'cleanup', 'dispose-result', 'restore', 'release'];
               retention: 'through-enclosing-cleanup';
-              storageTransitions?: {
-                  place: string;
-                  before: string;
-                  after: string;
-                  ownership: 'transfer-cleanup-storage';
-              }[];
           };
       } & ConcreteOutput)
     | ({
           op: 'scope';
           origin: string;
           body: ConcreteBlock;
-          retainedStorage?: {
-              place: string;
-              layout: string;
-              ownership: 'retain-through-completion';
-          }[];
       } & ConcreteOutput)
     | ({
           op: 'case';
@@ -152,34 +141,8 @@ export type ConcreteInstruction =
               setup?: Cleanup[];
               restored?: Cleanup[];
           }[];
-          cleanupJoins?: {
-              place: string;
-              ownership: 'transfer-selected-cleanup-storage';
-              order: ['cleanup', 'normalize', 'merge'];
-              arms: ConcreteValueAdapter[];
-          }[];
-          storageJoins?: {
-              place: string;
-              ownership: 'transfer-selected-storage';
-              arms: ConcreteValueAdapter[];
-              restoration?: {
-                  ownership: 'retain-selected-storage';
-                  normalization?: 'post-cleanup';
-                  order: ['restore-retained', 'cleanup', 'normalize'];
-                  retained: string[];
-              };
-          }[];
           aggregateJoin?: { ownership: 'transfer-selected-result'; arms: ConcreteValueAdapter[] };
-          lensJoin?:
-              | { kind: 'selected'; arms: string[]; result: string }
-              | {
-                    /** A branch-selected callable focus: arm focus layouts, the joined
-                     * focus layout, and per-arm conversions into the joined read. */
-                    kind: 'selected-focus';
-                    arms: string[];
-                    result: string;
-                    reads: ConcreteValueAdapter[];
-                };
+          lensJoin?: { kind: 'selected'; arms: string[]; result: string };
           callableJoin?: {
               kind: 'erased-environment';
               result: string;

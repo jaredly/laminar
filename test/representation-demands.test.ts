@@ -24,64 +24,53 @@ for (const s of demandSamples)
         expect(legacyReference(s.source)).toEqual(s.expected);
         expect(() => emitC(concrete(s.source))).not.toThrow();
     });
-it('rejects missing callable replacement demands', () => {
+it('uses ordinary lens contracts without replacement demands', () => {
+    for (const sample of demandSamples) {
+        const c = concrete(sample.source);
+        for (const record of [...c.analysis.entries, ...c.analysis.variants]) {
+            expect(record.resultDemand).toBeUndefined();
+            for (const call of record.calls) expect(call.demand).toBeUndefined();
+            for (const value of record.values)
+                expect(['data', 'aggregate', 'callable', 'lens']).toContain(
+                    value.representation.kind,
+                );
+        }
+    }
+});
+it('rejects obsolete replacement demand annotations', () => {
     const c = concrete(demandSamples[1]!.source);
-    delete c.analysis.entries[0].calls.find((call: any) => call.demand).demand;
-    expect(() => verifyConcreteProgram(c)).toThrow('Missing callable result replacement demand');
-    expect(() => emitC(c)).toThrow('Missing callable result replacement demand');
+    c.analysis.entries[0].calls[0].demand = { value: 'forged-source' };
+    expect(() => verifyConcreteProgram(c)).toThrow('Unexpected call annotation');
 });
-it('rejects forged replacement demand source', () => {
-    const c = concrete(demandSamples[1]!.source);
-    c.analysis.entries[0].calls.find((call: any) => call.demand).demand.value = 'forged-source';
-    expect(() => verifyConcreteProgram(c)).toThrow('Callable replacement demand source changed');
-});
-function demandOf(name: string) {
-    const c = concrete(demandSamples.find((s) => s.name === name)!.source);
-    const call = c.analysis.entries[0].calls.find((call: any) => call.demand);
-    return { c, call };
-}
-it('rejects forged alias demand sources', () => {
-    const { c, call } = demandOf('demand callable persistent result alias');
-    expect(call.demand.loan).toBeString();
-    call.demand.loan = 'forged-loan';
-    expect(() => verifyConcreteProgram(c)).toThrow('Callable replacement demand source changed');
-});
-it('rejects forged consuming-call demand sources', () => {
-    const { c, call } = demandOf('demand callable result consumed by focus call');
-    expect(call.demand.consumer).toBeString();
-    call.demand.consumer = 'forged-call';
-    expect(() => verifyConcreteProgram(c)).toThrow('Callable replacement demand source changed');
-});
-it('solves recursive callable contracts as a least fixed point', () => {
+it('represents recursive callable parameters with ordinary lens shapes', () => {
     const c = concrete(
         demandSamples.find((s) => s.name === 'demand callable recursive exchange')!.source,
     );
-    const [variant] = c.analysis.variants.filter((v: any) =>
+    const variant = c.analysis.variants.find((v: any) =>
         v.calls.some((call: any) => call.target === v.id),
     );
-    // The seed excludes the recursive arm, so the contract is only the installed closure.
-    expect(variant.arguments[2].replacement.kind).toBe('callable');
-    expect(variant.arguments[2].replacement).toEqual(variant.arguments[1]);
+    expect(variant).toBeDefined();
+    expect(variant.arguments[2].kind).toBe('lens');
+    const shape = c.analysis.shapes.find((s: any) => s.id === variant.arguments[2].shape);
+    expect(c.analysis.layouts.find((l: any) => l.id === shape.replacement).storage).toBe(
+        'callable',
+    );
 });
-it('routes callee-private result backing through the residual context', () => {
-    const { c, call } = demandOf('demand callable private redirect');
-    const variant = c.analysis.variants.find((v: any) => v.id === call.target);
-    expect(variant.resultDemand).toEqual(call.demand.replacement);
-    const retained = c.analysis.variants
-        .flatMap((v: any) => v.values)
-        .find((v: any) => v.retainedStorage);
-    expect(retained).toBeDefined();
-    delete retained.retainedStorage;
-    expect(() => verifyConcreteProgram(c)).toThrow('Retained scope storage provenance changed');
+it('returns a callee-private lens through the ordinary residual context', () => {
+    const c = concrete(
+        demandSamples.find((s) => s.name === 'demand callable private redirect')!.source,
+    );
+    expect(c.analysis.variants.some((v: any) => v.result.kind === 'lens')).toBe(true);
+    expect(() => emitC(c)).not.toThrow();
 });
-it('solves recursive lens result contracts on their demand', () => {
+it('checks recursive lens result contracts without a replacement demand', () => {
     const c = concrete(
         callableFocusSamples.find((s) => s.name === 'recursive callable lens result')!.source,
     );
     const variant = c.analysis.variants.find(
-        (v: any) => v.resultDemand && v.calls.some((call: any) => call.target === v.id),
+        (v: any) => v.result.kind === 'lens' && v.calls.some((call: any) => call.target === v.id),
     );
     expect(variant).toBeDefined();
-    // Seeded with the recursive arm divergent: the contract is exactly the demand.
-    expect(variant.arguments[1].replacement).toEqual(variant.resultDemand);
+    expect(variant.resultDemand).toBeUndefined();
+    expect(variant.arguments[1].kind).toBe('lens');
 });

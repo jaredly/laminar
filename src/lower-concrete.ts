@@ -1,4 +1,4 @@
-import { freezeTree } from './elaborated.ts';
+import { freezeTree, type SemanticType } from './elaborated.ts';
 import { BackendDiagnostic, targetKey } from './backend/target.ts';
 import {
     inferRepresentations,
@@ -56,7 +56,9 @@ export function lowerConcreteProgram(
     const semantic = freezeTree(structuredClone(input));
     const analysis = freezeTree(structuredClone(provided ?? inferRepresentations(semantic)));
     verifyRepresentations(semantic, analysis);
-    const table = new ConcreteLayoutTable(semantic.target, analysis.layoutDefinitions),
+    const table = new ConcreteLayoutTable(semantic.target, analysis.layoutDefinitions, 512, (t) =>
+            typeLayout(typeGroup(typeKey(t))),
+        ),
         unitType = { tag: 'tuple' as const, items: [] };
     const unitLayout = table.data(unitType),
         groups = new Map<string, Group>(),
@@ -97,12 +99,7 @@ export function lowerConcreteProgram(
     const fnTypeKey = (unit: string, fn: string): string =>
         typeKey(units.get(unit)!.functions.find((f) => f.id === fn)!.type);
     function discover(v: ValueRepresentation): void {
-        if (v.kind === 'focus-manual') discover(v.frontend);
-        if (v.kind === 'local-focus' || v.kind === 'focus-tuple' || v.kind === 'focus-manual') {
-            discover(v.read);
-            discover(v.replacement);
-        }
-        if (v.kind === 'aggregate' || v.kind === 'focus-tuple') v.items.forEach(discover);
+        if (v.kind === 'aggregate') v.items.forEach(discover);
         if (v.kind === 'callable') typeGroup(v.type);
     }
     const contractKey = (c: Contract): string =>
@@ -129,18 +126,7 @@ export function lowerConcreteProgram(
     function index(body: IRBlock, record: Pick<RepresentationVariant, 'values' | 'calls'>): void {
         const values = new Map(record.values.map((v) => [v.value, v.representation]));
         const calls = new Map(record.calls.map((c) => [c.value, c]));
-        record.values.forEach((v) => {
-            discover(v.representation);
-            v.cleanupJoins?.forEach((j) => {
-                j.arms.forEach(discover);
-                discover(j.result);
-            });
-            v.retainedStorage?.forEach((t) => discover(t.representation));
-            v.storageJoins?.forEach((j) => {
-                j.arms.forEach(discover);
-                discover(j.result);
-            });
-        });
+        record.values.forEach((v) => discover(v.representation));
         const walk = (b: IRBlock) => {
             for (const i of b.instructions) {
                 if (i.op === 'call') {
@@ -165,6 +151,11 @@ export function lowerConcreteProgram(
         index(fn.body, v);
     }
     analysis.entries.forEach((e) => index(units.get(e.unit)!.entry, e));
+    const discoverType = (t: SemanticType): void => {
+        if (t.tag === 'fn') typeGroup(typeKey(t));
+        else if (t.tag === 'tuple') t.items.forEach(discoverType);
+    };
+    analysis.layouts.forEach((l) => discoverType(l.type));
     const graphKey = JSON.stringify([
         layoutDefinitionsKey(analysis.layoutDefinitions),
         analysis.variants.map((v) => v.key).sort(),
@@ -185,47 +176,6 @@ export function lowerConcreteProgram(
                 'record',
                 items.map((id, i) => ({ name: `item${i}`, kind: 'value', layout: id })),
             );
-        }
-        if (v.kind === 'focus-manual') {
-            const frontend = layout(v.frontend),
-                replacement = layout(v.replacement),
-                restore = table.abi([replacement], unitLayout);
-            return table.record(['focus-manual', frontend, layout(v.read), replacement], 'record', [
-                { name: 'frontend', kind: 'value', layout: frontend },
-                { name: 'restore', kind: 'code', abi: restore },
-                { name: 'context', kind: 'pointer' },
-            ]);
-        }
-        if (v.kind === 'focus-tuple') {
-            const items = v.items.map(layout),
-                restore = table.abi([layout(v.replacement)], unitLayout);
-            return table.record(
-                ['focus-tuple', items, layout(v.read), layout(v.replacement)],
-                'record',
-                [
-                    ...items.map((id, i) => ({
-                        name: `item${i}`,
-                        kind: 'value' as const,
-                        layout: id,
-                    })),
-                    { name: 'restore', kind: 'code', abi: restore },
-                    { name: 'context', kind: 'pointer' },
-                ],
-            );
-        }
-        if (v.kind === 'local-focus') {
-            const read = layout(v.read),
-                replacement = layout(v.replacement);
-            const restore = table.abi([replacement], unitLayout);
-            const fields: ConcreteField[] = [
-                { name: 'read', kind: 'pointer', layout: read },
-                ...(read === replacement
-                    ? []
-                    : [{ name: 'replacement', kind: 'pointer' as const, layout: replacement }]),
-                { name: 'restore', kind: 'code', abi: restore },
-                { name: 'context', kind: 'pointer' },
-            ];
-            return table.record(['local-focus', read, replacement], 'record', fields);
         }
         if (v.kind === 'data') return table.data(dataLayouts.get(v.layout)!.type);
         if (v.kind === 'callable') return typeLayout(typeGroup(v.type));
@@ -304,62 +254,6 @@ export function lowerConcreteProgram(
                 environment,
                 targets,
                 ownership: 'selected-environment',
-            };
-            wrappers.set(id, w);
-            return w;
-        }
-        const exact = variants.get(c.target);
-        const focusResult =
-            exact?.result.kind === 'local-focus' && c.result.kind === 'local-focus'
-                ? { exact: exact.result, joined: c.result }
-                : undefined;
-        if (
-            exact &&
-            (exact.arguments.some(
-                (a, n) => representationKey(a) !== representationKey(c.arguments[n]!),
-            ) ||
-                (focusResult &&
-                    representationKey(focusResult.exact) !== representationKey(focusResult.joined)))
-        ) {
-            const source = wrapper(
-                g,
-                {
-                    ...c,
-                    arguments: exact.arguments,
-                    ...(focusResult ? { result: exact.result } : {}),
-                },
-                environment,
-            );
-            const w: ConcreteWrapper = {
-                id,
-                key,
-                kind: 'adapt-focus-arguments',
-                abi,
-                environment,
-                source: source.id,
-                arguments: c.arguments.map((joined, n) => {
-                    const from = exact.arguments[n]!;
-                    if (representationKey(from) === representationKey(joined)) return null;
-                    if (from.kind !== 'local-focus' || joined.kind !== 'local-focus')
-                        return fail('Dispatch argument adapters require whole local focuses');
-                    return {
-                        from: layout(from),
-                        to: layout(joined),
-                        replacement: valueAdapter(from.replacement, joined.replacement),
-                    };
-                }),
-                ...(focusResult
-                    ? {
-                          result: {
-                              from: layout(focusResult.exact),
-                              to: layout(focusResult.joined),
-                              read: valueAdapter(focusResult.exact.read, focusResult.joined.read),
-                          },
-                      }
-                    : {}),
-                ownership: focusResult
-                    ? 'stage-until-restoration'
-                    : 'stage-and-convert-replacements',
             };
             wrappers.set(id, w);
             return w;
@@ -530,8 +424,6 @@ export function lowerConcreteProgram(
     }
     const sorted = <T extends { id: string }>(xs: T[]): T[] =>
         xs.sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
-    const focusRead = (v: ValueRepresentation): ValueRepresentation =>
-        v.kind === 'local-focus' ? v.read : fail('Selected callable arm is not a local focus');
     const valueAdapter = (
         from: ValueRepresentation,
         to: ValueRepresentation,
@@ -565,43 +457,18 @@ export function lowerConcreteProgram(
                 if (i.op === 'manual') {
                     const frontend = values.get(i.lens)!,
                         result = values.get(i.out.id)!;
-                    if (
-                        !(
-                            (frontend.kind === 'lens' && result.kind === 'lens') ||
-                            (frontend.kind === 'local-focus' && result.kind === 'local-focus') ||
-                            ((frontend.kind === 'focus-tuple' ||
-                                frontend.kind === 'focus-manual') &&
-                                result.kind === 'focus-manual')
-                        )
-                    )
+                    if (frontend.kind !== 'lens' || result.kind !== 'lens')
                         return fail('Manual restoration requires lens representations');
                     return {
                         ...i,
                         out,
                         cleanup: lower(i.cleanup),
                         restoration: {
-                            kind:
-                                result.kind === 'focus-manual'
-                                    ? 'scattered-focus'
-                                    : frontend.kind === 'local-focus'
-                                      ? 'local-focus'
-                                      : 'deferred',
-                            frontend: frontend.kind === 'lens' ? frontend.shape : layout(frontend),
-                            result: result.kind === 'lens' ? result.shape : layout(result),
+                            kind: 'deferred',
+                            frontend: frontend.shape,
+                            result: result.shape,
                             order: ['stage', 'cleanup', 'dispose-result', 'restore', 'release'],
                             retention: 'through-enclosing-cleanup',
-                            ...(record.values.find((v) => v.value === i.out.id)!.cleanupStorage
-                                ? {
-                                      storageTransitions: record.values
-                                          .find((v) => v.value === i.out.id)!
-                                          .cleanupStorage!.map((t) => ({
-                                              place: t.place,
-                                              before: layout(t.before),
-                                              after: layout(t.after),
-                                              ownership: 'transfer-cleanup-storage' as const,
-                                          })),
-                                  }
-                                : {}),
                         },
                     };
                 }
@@ -610,74 +477,12 @@ export function lowerConcreteProgram(
                         ...i,
                         out,
                         body: lower(i.body),
-                        ...(record.values.find((v) => v.value === i.out.id)!.retainedStorage
-                            ? {
-                                  retainedStorage: record.values
-                                      .find((v) => v.value === i.out.id)!
-                                      .retainedStorage!.map((t) => ({
-                                          place: t.place,
-                                          layout: layout(t.representation),
-                                          ownership: 'retain-through-completion' as const,
-                                      })),
-                              }
-                            : {}),
                     };
                 if (i.op === 'case')
                     return {
                         ...i,
                         out,
                         cases: i.cases.map((c) => ({ ...c, body: lower(c.body) })),
-                        ...(record.values.find((v) => v.value === i.out.id)!.cleanupJoins
-                            ? {
-                                  cleanupJoins: record.values
-                                      .find((v) => v.value === i.out.id)!
-                                      .cleanupJoins!.map((j) => ({
-                                          place: j.place,
-                                          ownership: 'transfer-selected-cleanup-storage' as const,
-                                          order: ['cleanup', 'normalize', 'merge'] as [
-                                              'cleanup',
-                                              'normalize',
-                                              'merge',
-                                          ],
-                                          arms: j.arms.map((from) => valueAdapter(from, j.result)),
-                                      })),
-                              }
-                            : {}),
-                        ...(record.values.find((v) => v.value === i.out.id)!.storageJoins
-                            ? {
-                                  storageJoins: record.values
-                                      .find((v) => v.value === i.out.id)!
-                                      .storageJoins!.map((j) => ({
-                                          place: j.place,
-                                          ownership: 'transfer-selected-storage' as const,
-                                          arms: j.arms.map((from) => valueAdapter(from, j.result)),
-                                          ...(j.restoration
-                                              ? {
-                                                    restoration: {
-                                                        ownership:
-                                                            'retain-selected-storage' as const,
-                                                        order: [
-                                                            'restore-retained',
-                                                            'cleanup',
-                                                            'normalize',
-                                                        ] as [
-                                                            'restore-retained',
-                                                            'cleanup',
-                                                            'normalize',
-                                                        ],
-                                                        retained: j.arms.map(layout),
-                                                        ...(j.restoration === 'replace'
-                                                            ? {
-                                                                  normalization:
-                                                                      'post-cleanup' as const,
-                                                              }
-                                                            : {}),
-                                                    },
-                                                }
-                                              : {}),
-                                      })),
-                              }
-                            : {}),
                         ...(values.get(i.out.id)!.kind === 'aggregate'
                             ? {
                                   aggregateJoin: {
@@ -691,39 +496,25 @@ export function lowerConcreteProgram(
                                   },
                               }
                             : {}),
-                        ...(values.get(i.out.id)!.kind === 'local-focus'
+                        ...(i.out.type.tag === 'flow'
                             ? {
                                   lensJoin: {
-                                      kind: 'selected-focus' as const,
-                                      arms: i.cases.map((c) => layout(values.get(c.body.result)!)),
-                                      result: layout(values.get(i.out.id)!),
-                                      reads: i.cases.map((c) =>
-                                          valueAdapter(
-                                              focusRead(values.get(c.body.result)!),
-                                              focusRead(values.get(i.out.id)!),
-                                          ),
+                                      kind: 'selected' as const,
+                                      arms: i.cases.map(
+                                          (c) =>
+                                              (
+                                                  values.get(c.body.result)! as {
+                                                      kind: 'lens';
+                                                      shape: string;
+                                                  }
+                                              ).shape,
                                       ),
+                                      result: (
+                                          values.get(i.out.id)! as { kind: 'lens'; shape: string }
+                                      ).shape,
                                   },
                               }
-                            : i.out.type.tag === 'flow'
-                              ? {
-                                    lensJoin: {
-                                        kind: 'selected' as const,
-                                        arms: i.cases.map(
-                                            (c) =>
-                                                (
-                                                    values.get(c.body.result)! as {
-                                                        kind: 'lens';
-                                                        shape: string;
-                                                    }
-                                                ).shape,
-                                        ),
-                                        result: (
-                                            values.get(i.out.id)! as { kind: 'lens'; shape: string }
-                                        ).shape,
-                                    },
-                                }
-                              : {}),
+                            : {}),
                     };
                 if (i.op === 'global' || i.op === 'closure') {
                     if (i.out.type.tag !== 'plain') return fail('Callable produced a lens');

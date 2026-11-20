@@ -1,6 +1,6 @@
 # Design: ABI-keyed callable representations
 
-Status: **migration in progress; M0 and M1 implemented** (2026-11-20). This replaces
+Status: **migration in progress; M0–M2 implemented** (2026-11-20). This replaces
 the identity-precise callable model that phase 6 of the
 [C codegen plan](c-codegen-plan.md) has been extending. The migration plan and
 progress notes below track the remaining work.
@@ -452,8 +452,8 @@ record, direct versus record calls, member-set provenance, and forged native mem
 Printed IR and C expectations were regenerated; known calls now name their code
 directly.
 
-The focus endpoint machinery (`local-focus`, demands and routing) still runs on
-type-determined representations; M2 removes it.
+M1 retained the focus endpoint machinery (`local-focus`, demands and routing) on
+type-determined representations; M2 below removes it.
 
 **Validation (2026-11-20).** `npx tsc --noEmit -p .` passes. `bun test` reports
 1,429 passed, 1,293 skipped and the one pre-existing source-identity snapshot
@@ -462,3 +462,48 @@ snapshot was not updated. `LAMINAR_EXEC=1 bun test test/c/execute.test.ts` passe
 all 1,254 native/Wasm cases (4,379 assertions, 479.43 seconds), including the four
 native dynamic lens result cases fixed by reifying native adapter sources in C.
 `git diff --check` is clean.
+
+### M2: callable lenses use ordinary phase-5 shapes
+
+- **Storage and shapes.** `LayoutTable` interns function types as callable storage.
+  Concrete data layouts resolve those leaves through the callable type's record;
+  tuples containing callables share the same aggregate layout for values and lens
+  backing. Thin, scattered and nested callable lenses now use `RepresentationTable`
+  exactly like other lenses, including native `fst` projection.
+- **Analysis.** Removed `local-focus`, `focus-tuple`, `focus-manual`, replacement
+  demands, focus owners/targets, private and deferred result routing, and retained
+  callable storage/cleanup join annotations. Plain values follow semantic types;
+  only lens topology needs representation state. Manual cleanup is analyzed using
+  its restoration-time typed IR, without replaying representation effects.
+- **Independent verification.** The representation verifier checks semantic value
+  representations, ordinary lens topology, call targets and member-set coverage.
+  It no longer tracks callable endpoints or cleanup-time descriptor transitions.
+  Forged physical callable-lens fields, foreign shapes and changed projection
+  topology remain independently rejected.
+- **Concrete lowering.** Deleted callable-focus layouts, `selected-focus` joins,
+  special manual restoration modes and backing-retention/conversion metadata.
+  C and Go no longer carry the unused storage conversion paths. Ordinary selected
+  lenses and residual contexts preserve the existing restoration order.
+- **Recursion overlap with M4.** Removing demand-driven setup/completion also removes
+  its recursion hypotheses. Recursive calls now read a declared result-shape
+  approximation, and whole-program passes continue until both member sets and
+  results stabilize. The old changing-input recursion guard is unnecessary over
+  finite lens shapes; its thin-to-scattered boundary test now expects success.
+  M4 still owns replacing pass rescans with a worklist, formalizing result-shape
+  propagation and turning the remaining variant/pass budgets into resource limits.
+
+**Retired internal tests (10).** Six callable-focus tests depended on same-type
+identity provenance or retained callable scope descriptors (one branch provenance
+forgery and five retained-backing forgeries). Four demand-source tests depended on
+replacement demands that no longer exist. Two replacements check that the complete
+shared demand corpus has ordinary contracts without demands, and that obsolete
+call-demand annotations are rejected. Eight endpoint/physical forgeries and three
+recursive/private-result contract tests were restated in terms of ordinary lens
+shapes. Callable storage interning has a new thin/scattered layout test. All shared
+execution samples and their expected results are unchanged.
+
+**Validation (2026-11-20).** `npx tsc --noEmit -p .` passes. `bun test` reports
+1,422 passed, 1,293 skipped and the one pre-existing source-identity snapshot
+failure (4,606 assertions; 37 other snapshots pass); no snapshot was updated.
+`LAMINAR_EXEC=1 bun test test/c/execute.test.ts` passes all 1,254 native/Wasm
+cases (4,379 assertions, 476.82 seconds). `git diff --check` is clean.

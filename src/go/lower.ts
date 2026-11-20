@@ -314,18 +314,6 @@ export function lowerGo(program: ConcreteProgram): GoFile {
         const flushParameters = (body: Statement[]) =>
             parameters.forEach((p) => flush(p.expression, p.layout, storage.get(p.view), body));
 
-        const adaptStorage = (a: ConcreteValueAdapter, data: Data, output: Statement[]): Data => {
-            if (!Array.isArray(data) && data.layout === unit.id) return data;
-            if (a.kind === 'move') return data;
-            if (a.kind === 'aggregate')
-                return storage
-                    .parts(data)
-                    .map((child, n) => adaptStorage(a.items[n]!, child, output));
-            const name = fresh();
-            declare(a.to, adaptValue(a, read(data, a.from)), output, name);
-            return { expression: name, layout: a.to };
-        };
-
         const matches = (p: IRPattern, expr: string): string =>
             p.kind === 'literal'
                 ? `${expr} == ${literal(p.value, unit.id)}`
@@ -718,15 +706,6 @@ export function lowerGo(program: ConcreteProgram): GoFile {
                                     `${name} = ${type(id)}{environment: (${result}).environment, dispose: (${result}).dispose${entries}}`,
                                 );
                             } else nested.push(`${name} = ${result}`);
-                            i.storageJoins?.forEach((join) => {
-                                const view =
-                                    places.get(join.place) ??
-                                    unsupported('Missing branch storage owner');
-                                storage.put(
-                                    view,
-                                    adaptStorage(join.arms[armIndex]!, storage.get(view), nested),
-                                );
-                            });
                             return { nested, state: storage.snapshot() };
                         });
                         storage.reset(before);

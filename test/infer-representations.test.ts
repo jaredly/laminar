@@ -128,10 +128,10 @@ it('propagates user returned-lens representations to callers', () => {
     const call = r.entries[0]!.calls[0]!;
     expect(call.result).toEqual(r.variants[0]!.result);
 });
-it('diagnoses recursive changes from thin to scattered arguments', () => {
+it('specializes recursive changes from thin to scattered arguments', () => {
     expect(() =>
         analyze(
             'fn rec(n, ~(x, y)) (match dup(~n) {0 -> (); _ -> rec(n - 1, ~(x, y))})\n{let pair = (1, 2)\n rec(2, ~pair)}',
         ),
-    ).toThrow('Changing representation recursion');
+    ).not.toThrow();
 });

@@ -6,7 +6,7 @@ export type LayoutId = string;
 export type Layout = {
     id: LayoutId;
     type: SemanticType;
-    storage: 'f64' | 'bool' | 'unit' | 'tuple' | 'nominal';
+    storage: 'f64' | 'bool' | 'unit' | 'tuple' | 'nominal' | 'callable';
     dependencies: LayoutId[];
     indirect?: boolean[];
 };
@@ -60,15 +60,11 @@ export class LayoutTable {
                 'unsolved-layout',
                 `Reachable layout contains type variable ${type.id}`,
             );
-        if (type.tag === 'fn')
-            throw new BackendDiagnostic(
-                'unsupported-callable-layout',
-                'Callable storage requires an explicit closure representation',
-            );
         let storage: Layout['storage'];
         let dependencies: SemanticType[] = [];
         let indirect: boolean[] | undefined;
-        if (type.tag === 'tuple') {
+        if (type.tag === 'fn') storage = 'callable';
+        else if (type.tag === 'tuple') {
             storage = type.items.length ? 'tuple' : 'unit';
             dependencies = type.items;
         } else if (!type.args.length && type.name === 'Number') storage = 'f64';
