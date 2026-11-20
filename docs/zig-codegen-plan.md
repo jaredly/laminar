@@ -226,19 +226,68 @@ against `executeTypedProgram`. Notes:
     `zig <version>`, and feature `zig-stopgap`. Concrete IR uses the target only
     for layout-table identity and cache keys, so this is enough for lowering.
     Replace it once `target.ts` accepts `abi: 'zig'`.
-  - **Storage:** `Storage` is imported from `src/c/storage.ts` instead of being
-    moved to `src/backend/`.
-- Each IR value gets its own fresh `var` (`v0`, `v1`, ...). So the only
-  assignments into existing variables will be the phi and flush assignments
-  added in later phases, and only those need to watch for the aliasing hazard.
-- Capture-free code always emits `_ = environment;`. Direct calls pass the
-  callee record's `.environment` field, never the caller's own environment, so
-  that discard is never pointless.
-- Callable records give their pointer and code fields `= null` defaults, so a
-  capture-free value is just `L6{}`. Indirect calls unwrap the entry with `.?`.
-- Native arithmetic is inlined at direct calls. It is also emitted as `nativeN`
-  helpers for use as callable entries; Zig skips analysis of unreferenced
-  functions, so unused helpers are free.
+  - **Storage:** `src/zig/storage.ts` is a copy of `src/c/storage.ts` that holds
+    expression trees instead of strings. Merge the two once the shared one can
+    be made generic.
+- Callable records give their pointer and code fields `= null` defaults.
+  Indirect calls unwrap the entry with `.?`.
+
+### Readable output
+
+Lowering builds a small expression and statement tree (`src/zig/ast.ts`) rather
+than strings. The printer runs a readability pass, `tidy`, over each function
+body. The phase-0 idiom (`var x = e; _ = &x;`) is no longer emitted at all.
+Today's output for `fn swap(p) {let (a, b) = p\n (b, a)}\nswap((1, true))`:
+
+```zig
+fn swap(p: Tuple_f64_bool) Tuple_bool_f64 {
+    const a = p.item0;
+    const b = p.item1;
+    return .{ .item0 = b, .item1 = a };
+}
+
+fn entry() Tuple_bool_f64 {
+    return swap(.{ .item0 = 1, .item1 = true });
+}
+```
+
+- **Names:**
+  - Functions, parameters, and locals use their source names. These come from
+    `unit/definition/<name>/…` IDs and each IR unit's `bindings`, so no IR
+    change was needed.
+  - Shadowed bindings get suffixes (`x`, `x_1`), because Zig forbids shadowing.
+  - A generic with several specializations gets parameter-type suffixes
+    (`id_f64`, `id_bool`).
+  - Types are `f64`, `bool`, `Unit`, `Tuple_f64_bool`, `Callable`, and `Abi`.
+  - Locals avoid every top-level name.
+- **Signatures:** capture-free code gets a plain signature. A separate
+  `<name>_entry(environment, ...)` adapter carries the opaque-environment ABI
+  for callable records.
+- **Pruning:** only declarations reachable from `main` are printed, so unused
+  layouts, ABIs, adapters, and native helpers disappear.
+- **`tidy`:** values are never reassigned in phase 1, so every binding is
+  `const`. Unused parameters print as `_`. The pass inlines unnamed temporaries
+  without reordering effects:
+  - A call result used once is inlined only past pure lets.
+  - It is not inlined if a sibling call in the using expression could run
+    before it. A call that encloses the use is fine, because arguments run
+    first.
+  - Unused call results become `_ = call;`.
+  - Projections of struct literals fold to the field's value.
+- **Literal arithmetic:** when both operands of an operator are bare number
+  literals, the left one is wrapped in `@as(f64, …)` (e.g. `@as(f64, 1) / 0`).
+  Untyped `1 / 0` would be a comptime_int error, while `f64` division by zero
+  gives IEEE results even at comptime.
+- `test/zig/readable.test.ts` pins the golden output and the pass's
+  order-preservation rules.
+
+Remaining readability work for later phases:
+- `tidy` handles flat function bodies only. Phase 3 needs it to recurse into
+  `if` arms and to treat phi assignments as `var`.
+- Phase 2 should emit homogeneous thin lenses as plain `*T`.
+- Field names are still `item0`/`item1`. Zig tuple types
+  (`struct { f64, bool }` with `t[0]`) would read better, but they are
+  anonymous, so equal layouts would need deduplicated declarations.
 
 ### Phase 2: Lenses, swaps, aliases
 Shared `Storage`, thin lenses (`read: *R, replacement: *W`), scattered lenses,
