@@ -63,7 +63,11 @@ export type ConcreteWrapper = {
               to: string;
               replacement: ConcreteValueAdapter;
           } | null)[];
-          ownership: 'stage-and-convert-replacements';
+          /** A returned focus: the variant's lens result (`from`) is exposed as the
+           * joined focus (`to`) whose read is converted; staged arguments are converted
+           * only after the variant's own restoration. */
+          result?: { from: string; to: string; read: ConcreteValueAdapter };
+          ownership: 'stage-and-convert-replacements' | 'stage-until-restoration';
       }
     | { kind: 'dispose'; captures: string[]; ownership: 'drop-captures-and-free' }
     | {

@@ -335,13 +335,27 @@ export function lowerConcreteProgram(
             return w;
         }
         const exact = variants.get(c.target);
+        const focusResult =
+            exact?.result.kind === 'local-focus' && c.result.kind === 'local-focus'
+                ? { exact: exact.result, joined: c.result }
+                : undefined;
         if (
             exact &&
-            exact.arguments.some(
+            (exact.arguments.some(
                 (a, n) => representationKey(a) !== representationKey(c.arguments[n]!),
-            )
+            ) ||
+                (focusResult &&
+                    representationKey(focusResult.exact) !== representationKey(focusResult.joined)))
         ) {
-            const source = wrapper(g, { ...c, arguments: exact.arguments }, environment);
+            const source = wrapper(
+                g,
+                {
+                    ...c,
+                    arguments: exact.arguments,
+                    ...(focusResult ? { result: exact.result } : {}),
+                },
+                environment,
+            );
             const w: ConcreteWrapper = {
                 id,
                 key,
@@ -360,7 +374,18 @@ export function lowerConcreteProgram(
                         replacement: valueAdapter(from.replacement, joined.replacement),
                     };
                 }),
-                ownership: 'stage-and-convert-replacements',
+                ...(focusResult
+                    ? {
+                          result: {
+                              from: layout(focusResult.exact),
+                              to: layout(focusResult.joined),
+                              read: valueAdapter(focusResult.exact.read, focusResult.joined.read),
+                          },
+                      }
+                    : {}),
+                ownership: focusResult
+                    ? 'stage-until-restoration'
+                    : 'stage-and-convert-replacements',
             };
             wrappers.set(id, w);
             return w;

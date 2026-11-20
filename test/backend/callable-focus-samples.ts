@@ -996,4 +996,34 @@ export const callableFocusSamples = [
         source: 'fn mk() {fn (h) h()}\nfn pick(c, ~(x, y)) ~{match c {true -> x\n false -> y}}\n{let a = mk()\n let one = a(fn () 1)\n let p = (mk(), fn (h) h())\n let old = pick(true, ~p) := fn (h) 7\n let (f, g) = p\n (one, old(fn () 5), f(fn () 0), g(fn () 2))}',
         expected: [1, 5, 7, 2],
     },
+    {
+        name: 'dispatched callable result true',
+        source: 'fn first(~(x, y)) ~x\nfn second(~(x, y)) ~y\n{let p = (fn () 3, fn () 4)\n let e = match true {true -> first\n false -> second}\n let old = e(~p) := fn () 7\n let (f, g) = p\n (old(), f(), g())}',
+        expected: [3, 7, 4],
+    },
+    {
+        name: 'dispatched callable result false',
+        source: 'fn first(~(x, y)) ~x\nfn second(~(x, y)) ~y\n{let p = (fn () 3, fn () 4)\n let e = match false {true -> first\n false -> second}\n let old = e(~p) := fn () 7\n let (f, g) = p\n (old(), f(), g())}',
+        expected: [4, 3, 7],
+    },
+    {
+        name: 'dispatched callable result alias',
+        source: 'fn first(~(x, y)) ~x\nfn second(~(x, y)) ~y\n{let p = (fn () 3, fn () 4)\n let e = match false {true -> first\n false -> second}\n let r = {let l = ~e(~p)\n let o = l := fn () 7\n o()}\n let (f, g) = p\n (r, f(), g())}',
+        expected: [4, 3, 7],
+    },
+    {
+        name: 'dispatched callable result private option',
+        source: 'fn first(~(x, y)) ~x\nfn temp(~(x, y)) ~{lens v <- fn () 0\n {let o = x := v\n ()}}\n{let p = (fn () 3, fn () 4)\n let e = match false {true -> first\n false -> temp}\n let old = e(~p) := fn () 7\n let (f, g) = p\n (old(), f(), g())}',
+        expected: [0, 7, 4],
+    },
+    {
+        name: 'dispatched callable result captured',
+        source: 'fn first(~(x, y)) ~x\nfn second(~(x, y)) ~y\n{let k = 9\n let p = (fn () 3, fn () k)\n let e = match false {true -> first\n false -> second}\n let old = e(~p) := fn () 7\n let (f, g) = p\n (old(), f(), g())}',
+        expected: [9, 3, 7],
+    },
+    {
+        name: 'dispatched callable result converts entry tables',
+        source: 'fn mk() {fn (h) h()}\nfn first(~(x, y)) ~x\nfn second(~(x, y)) ~y\n{let a = mk()\n let one = a(fn () 1)\n let p = (mk(), fn (h) h())\n let e = match true {true -> first\n false -> second}\n let old = e(~p) := fn (h) 7\n let (f, g) = p\n (one, old(fn () 5), f(fn () 0), g(fn () 2))}',
+        expected: [1, 5, 7, 2],
+    },
 ];

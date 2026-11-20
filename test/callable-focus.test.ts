@@ -488,3 +488,32 @@ it('rejects a forged callee-selected result demand', () => {
     call.demand.replacement = structuredClone(call.result.read);
     expect(() => verifyConcreteProgram(c)).toThrow('Callable result demand changed');
 });
+for (const mutation of ['ownership', 'read', 'missing'] as const)
+    it(`rejects forged dispatched focus result adapter ${mutation}`, () => {
+        const c = concrete(
+            callableFocusSamples.find(
+                (s) => s.name === 'dispatched callable result converts entry tables',
+            )!.source,
+        );
+        const w = c.wrappers.find(
+            (w: any) => w.kind === 'adapt-focus-arguments' && w.result?.read.kind === 'callable',
+        );
+        expect(w).toBeDefined();
+        if (mutation === 'ownership') w.ownership = 'stage-and-convert-replacements';
+        if (mutation === 'read') w.result.read.to = 'forged-layout';
+        if (mutation === 'missing') delete w.result;
+        const message =
+            mutation === 'ownership'
+                ? 'Invalid focus argument adapter'
+                : 'Focus result adapter changed';
+        expect(() => verifyConcreteProgram(c)).toThrow(message);
+        expect(() => emitC(c)).toThrow(message);
+    });
+it('rejects dispatched focus results completed on different demands', () => {
+    const c = concrete(
+        callableFocusSamples.find((s) => s.name === 'dispatched callable result true')!.source,
+    );
+    const call = c.analysis.entries[0].calls.find((call: any) => call.demand && call.targets);
+    call.demand.replacement = structuredClone(call.result.read);
+    expect(() => verifyConcreteProgram(c)).toThrow('Callable result demand changed');
+});

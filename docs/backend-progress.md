@@ -1715,3 +1715,39 @@ Dispatched callable lens results remain separate work. Phase 6 remains incomplet
 Validation: 1557 non-execution passes with only the existing source-identity
 snapshot failure; the full `LAMINAR_EXEC=1` execution file passed 1224 native/Wasm
 cases in 451.77 seconds without retries. TypeScript checks pass. Remote CI was not run.
+
+
+## Phase 6: dispatched callable lens results
+
+Branch-selected callees may now return callable focuses, for example
+`let e = match c {true -> first; false -> second}; e(~p) := r`. Analysis sets up
+every alternative, exposes a deferred `local-focus` whose read joins the
+alternatives' reads, and records the consumer's demand source (shared with
+single-callee calls). On completion every alternative is specialized on the same
+demand, and the caller writes back the join of their parameter contracts, as for
+plain dispatch. Representation verification checks every alternative's demand,
+the joined read and each alternative's replacement endpoint, and treats the
+dispatched result as deferred.
+
+The member wrapper extends `adapt-focus-arguments` with a `result` part (the
+variant's and the joined focus layouts and a read adapter) and ownership
+`stage-until-restoration`, which the concrete verifier derives independently.
+A lens-returning callee writes its parameters during restoration, after the call
+has returned, so the C adapter stages arguments in a heap context. It calls the
+variant, converts the variant's read into the joined focus, and returns a lens
+whose restore runs the variant's own restore before converting staged parameters
+into the caller's backing and releasing the context. Reads usually move. Differing
+entry tables repack through the callable join adapter.
+
+Six shared samples cover both alternatives, persistent aliases, a callee-private
+alternative, captured contents and an entry-table read conversion. Corruption
+tests reject forged result adapters, ownership and demands. Scattered arguments
+whose alternatives install differing contracts keep the existing explicit
+diagnostic.
+
+The remaining callable lens-result boundary is recursive selected results, which
+need a demand-dependent fixed point. Phase 6 remains incomplete.
+
+Validation: 1570 non-execution passes with only the existing source-identity
+snapshot failure; the full `LAMINAR_EXEC=1` execution file passed 1236 native/Wasm
+cases in 437.42 seconds without retries. TypeScript checks pass. Remote CI was not run.

@@ -668,28 +668,44 @@ export function verifyConcreteProgram(p: ConcreteProgram): void {
                 const exact =
                     p.analysis.variants.find((v) => v.id === contract.target) ??
                     fail('Missing adapted target');
+                const focusResult =
+                    exact.result.kind === 'local-focus' && contract.result.kind === 'local-focus'
+                        ? { exact: exact.result, joined: contract.result }
+                        : undefined;
                 if (
                     c.descriptor.kind !== 'callable' ||
-                    !exact.arguments.some(
+                    (!exact.arguments.some(
                         (a, n) =>
                             representationKey(a) !== representationKey(contract.arguments[n]!),
-                    )
+                    ) &&
+                        !(
+                            focusResult &&
+                            representationKey(focusResult.exact) !==
+                                representationKey(focusResult.joined)
+                        ))
                 )
                     return fail('Invalid focus argument adapter');
-                const exactContract = { ...contract, arguments: exact.arguments };
+                const exactContract = {
+                    ...contract,
+                    arguments: exact.arguments,
+                    ...(focusResult ? { result: exact.result } : {}),
+                };
                 const exactKey = JSON.stringify([
                     'wrapper',
                     target,
                     graphKey,
                     k,
                     contractKey(exactContract),
-                    aid(exact.arguments.map(storage), storage(contract.result)),
+                    aid(exact.arguments.map(storage), storage(exactContract.result)),
                     c.environment,
                 ]);
                 const source = wrapper(concreteName('wrapper', exactKey));
                 if (
                     w.source !== source.id ||
-                    w.ownership !== 'stage-and-convert-replacements' ||
+                    w.ownership !==
+                        (focusResult
+                            ? 'stage-until-restoration'
+                            : 'stage-and-convert-replacements') ||
                     source.kind === 'adapt-focus-arguments' ||
                     source.kind === 'dispatch' ||
                     source.kind === 'dispose'
@@ -709,6 +725,17 @@ export function verifyConcreteProgram(p: ConcreteProgram): void {
                         };
                     }),
                     'Focus argument adapter changed',
+                );
+                eq(
+                    w.result,
+                    focusResult
+                        ? {
+                              from: storage(focusResult.exact),
+                              to: storage(focusResult.joined),
+                              read: adapter(focusResult.exact.read, focusResult.joined.read),
+                          }
+                        : undefined,
+                    'Focus result adapter changed',
                 );
                 // The staged source is not a callable entry: check it as one here.
                 usedWrappers.add(source.id);

@@ -1617,6 +1617,26 @@ export function verifyRepresentations(
                                 v.kind === 'aggregate'
                             ) {
                                 verifyJoin(v, results);
+                            } else if (
+                                callee.kind === 'callable-choice' &&
+                                v.kind === 'local-focus'
+                            ) {
+                                verifyJoin(
+                                    v.read,
+                                    results.map((r) =>
+                                        r.kind === 'local-focus'
+                                            ? r.read
+                                            : fail('Dispatched focus result changed'),
+                                    ),
+                                );
+                                results.forEach((r) =>
+                                    requireEqual(
+                                        (r as Extract<ValueRepresentation, { kind: 'local-focus' }>)
+                                            .replacement,
+                                        v.replacement,
+                                        'Dispatched focus result changed',
+                                    ),
+                                );
                             } else if (callee.kind === 'callable-choice' && v.kind === 'lens') {
                                 const first = results[0]!;
                                 if (results.every((r) => same(r, first)))
@@ -1744,21 +1764,21 @@ export function verifyRepresentations(
                                         ? call.target
                                         : (call.targets?.[0] ?? ''),
                                 ) ?? fail('Missing demanded variant');
-                            if (callee.kind === 'callable-choice' && isFocus(v))
-                                return fail(
-                                    'Branch-selected callable lens results require a dispatch completion adapter',
-                                );
                             const targets = i.args.map((id, n) =>
                                 isFocus(args[n]!) ? targetFor(s, id) : undefined,
                             );
                             if (isFocus(v)) {
                                 if (!call.demand)
                                     return fail('Missing callable result replacement demand');
-                                requireEqual(
-                                    variant.resultDemand,
-                                    call.demand.replacement,
-                                    'Callable result demand changed',
-                                );
+                                // Every dispatched alternative completes on the same demand.
+                                for (const t of callee.kind === 'callable'
+                                    ? [call.target]
+                                    : (call.targets ?? []))
+                                    requireEqual(
+                                        variants.get(t)?.resultDemand,
+                                        call.demand.replacement,
+                                        'Callable result demand changed',
+                                    );
                                 // The consumer installs the annotated replacement; its
                                 // source (swap, alias or forwarding) is checked separately.
                                 requireEqual(
@@ -1766,7 +1786,9 @@ export function verifyRepresentations(
                                     call.demand.replacement,
                                     'Callable result demand changed',
                                 );
-                                const route = resultRoute(variant);
+                                // Dispatched results route through joined parameter contracts.
+                                const route =
+                                    callee.kind === 'callable' ? resultRoute(variant) : undefined;
                                 if (route)
                                     s.callResults.set(
                                         i.out.id,

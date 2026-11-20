@@ -330,7 +330,90 @@ export function lowerC(program: ConcreteProgram): TranslationUnit {
         );
     };
     for (const w of program.wrappers) {
-        if (w.kind !== 'adapt-focus-arguments') continue;
+        if (w.kind !== 'adapt-focus-arguments' || !w.result) continue;
+        // A dispatched lens result: the variant restores into staged parameter slots
+        // after this call returns, so staging lives in a heap context and argument
+        // conversion runs inside the adapter's own restoration.
+        const abi = program.abis.find((a) => a.id === w.abi)!;
+        const source = program.wrappers.find((x) => x.id === w.source)!;
+        const sourceABI = program.abis.find((a) => a.id === source.abi)!;
+        const name = argumentAdapters.get(w.id)!;
+        const context = `FocusResult${name}`,
+            restore = `restore_${name}`;
+        const replacement = endpoint(w.result.to, 'replacement');
+        const separate = layout(w.result.to).fields.some((f) => f.name === 'replacement');
+        const fields: string[] = [
+            `${type(w.result.from)} source;`,
+            `${type(w.result.read.to)} read;`,
+        ];
+        if (separate) fields.push(`${type(replacement)} write;`);
+        w.arguments.forEach((a, n) => {
+            if (!a) return;
+            fields.push(
+                `${type(abi.arguments[n]!)} arg${n};`,
+                `${type(endpoint(a.from, 'replacement'))} staged${n};`,
+                `${type(a.from)} source${n};`,
+            );
+        });
+        declarations.push(`typedef struct { ${fields.join(' ')} } ${context};`);
+        const signature = `${type(abi.result)} ${name}(void *environment${abi.arguments.map((id, n) => `, ${type(id)} arg${n}`).join('')})`;
+        const restoreSignature = `${type(unit.id)} ${restore}(void *environment, ${type(replacement)} replacement)`;
+        declarations.push(signature + ';', restoreSignature + ';');
+        const body: Statement[] = [
+            `${context} *ctx = allocate_context(sizeof *ctx);`,
+            { head: 'if (!ctx)', body: ['abort();'] },
+        ];
+        const passed = abi.arguments.map((_, n) => {
+            const a = w.arguments[n];
+            if (!a) return `arg${n}`;
+            const staged = endpoint(a.from, 'replacement');
+            const own = layout(a.from).fields.some((f) => f.name === 'replacement');
+            body.push(
+                `ctx->arg${n} = arg${n};`,
+                `ctx->staged${n} = ${own ? zero(staged) : `*arg${n}.read`};`,
+                `ctx->source${n} = ${zero(a.from)};`,
+                own
+                    ? `ctx->source${n}.read = arg${n}.read;`
+                    : `ctx->source${n}.read = &ctx->staged${n};`,
+            );
+            if (own) body.push(`ctx->source${n}.replacement = &ctx->staged${n};`);
+            return `ctx->source${n}`;
+        });
+        body.push(
+            `ctx->source = ${wrapperFunction(w.source)}(environment${passed.map((a) => `, ${a}`).join('')});`,
+            `ctx->read = ${adaptValue(w.result.read, read(storage.get(incoming('ctx->source', sourceABI.result)), w.result.read.from))};`,
+            `return (${type(abi.result)}){.read=&ctx->read${separate ? ', .replacement=&ctx->write' : ''}, .restore=${restore}, .context=ctx};`,
+        );
+        helpers.push({ signature, body });
+        const fallback: Statement[] = [];
+        flush(
+            'ctx->source',
+            w.result.from,
+            { expression: 'replacement', layout: replacement },
+            fallback,
+        );
+        const restoreBody: Statement[] = [
+            `${context} *ctx = environment;`,
+            {
+                head: 'if (ctx->source.restore)',
+                body: ['ctx->source.restore(ctx->source.context, replacement);'],
+            },
+            { head: 'else', body: fallback },
+        ];
+        w.arguments.forEach((a, n) => {
+            if (!a) return;
+            const field = layout(a.to).fields.some((f) => f.name === 'replacement')
+                ? 'replacement'
+                : 'read';
+            restoreBody.push(
+                `*ctx->arg${n}.${field} = ${adaptValue(a.replacement, `ctx->staged${n}`)};`,
+            );
+        });
+        restoreBody.push('release_context(ctx);', `return ${zero(unit.id)};`);
+        helpers.push({ signature: restoreSignature, body: restoreBody });
+    }
+    for (const w of program.wrappers) {
+        if (w.kind !== 'adapt-focus-arguments' || w.result) continue;
         const abi = program.abis.find((a) => a.id === w.abi)!;
         const signature = `${type(abi.result)} ${argumentAdapters.get(w.id)}(void *environment${abi.arguments.map((id, n) => `, ${type(id)} arg${n}`).join('')})`;
         declarations.push(signature + ';');

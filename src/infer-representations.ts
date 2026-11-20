@@ -1315,76 +1315,153 @@ export function inferRepresentations(
                         )
                     )
                         return fail('Callable focus calls require verified native fst provenance');
+                    // The consumer that installs a returned focus's replacement: an
+                    // immediate swap, a persistent alias release, a consuming focus call,
+                    // or a forwarding caller's own completion.
+                    const demandSource = (
+                        read: ValueRepresentation,
+                    ): NonNullable<RepresentationVariant['calls'][number]['demand']> => {
+                        const swap = body.instructions.find(
+                            (use) => use.op === 'swap' && use.lens === i.out.id,
+                        );
+                        const loan = borrows(i.out.id, body);
+                        const consumer = body.instructions.find(
+                            (use) => use.op === 'call' && use.args.includes(i.out.id),
+                        );
+                        if (swap?.op === 'swap') return { value: swap.value, replacement: read };
+                        if (loan.length === 1) return { loan: loan[0]!, replacement: read };
+                        // The consuming call's completion sets this focus's parameter
+                        // contract before argument finishes run.
+                        if (consumer?.op === 'call')
+                            return { consumer: consumer.out.id, replacement: read };
+                        if (body.result === i.out.id && allowLocalFocusResult)
+                            return { replacement: read };
+                        return fail(
+                            'Callable lens result needs a swap, alias or forwarded replacement demand',
+                        );
+                    };
                     if (callee.kind === 'callable-choice' && args.some(isFocus)) {
-                        // Each alternative is specialized independently; they share one
-                        // caller backing, so every option must reach the same contract.
-                        if (i.out.type.tag === 'flow')
-                            return fail(
-                                'Branch-selected callable lens results require a dispatch completion adapter',
-                            );
-                        const calls = callee.options.map((option) =>
+                        // Each alternative is specialized independently on the same
+                        // demand; the caller's backing holds the join of their parameter
+                        // contracts, and each option keeps its exact contract behind a
+                        // dispatch argument adapter.
+                        const setups = callee.options.map((option) =>
                             option.kind === 'callable'
-                                ? completeFocusCall(setupFocusCall(option, args, chain))
+                                ? setupFocusCall(option, args, chain)
                                 : fail('Native alternatives cannot receive callable focuses'),
                         );
-                        // Alternatives may install different replacements: the
-                        // caller's backing holds their join, and each option keeps its
-                        // exact contract behind a dispatch argument adapter.
-                        const writes = args.map((arg, n) => {
-                            const options = calls.map((call) => call.writes[n]!);
-                            if (options.every((o) => equal(o, options[0]!))) return options[0]!;
-                            if (
-                                arg.kind !== 'local-focus' ||
-                                options.some(
-                                    (o) => o.kind !== 'local-focus' || !equal(o.read, arg.read),
+                        const joinWrites = (
+                            calls: { writes: ValueRepresentation[] }[],
+                        ): ValueRepresentation[] =>
+                            args.map((arg, n) => {
+                                const options = calls.map((call) => call.writes[n]!);
+                                if (options.every((o) => equal(o, options[0]!))) {
+                                    if (
+                                        arg.kind === 'local-focus' &&
+                                        options[0]!.kind === 'local-focus'
+                                    )
+                                        setContract(arg, options[0]!.replacement);
+                                    return options[0]!;
+                                }
+                                if (
+                                    arg.kind !== 'local-focus' ||
+                                    options.some(
+                                        (o) => o.kind !== 'local-focus' || !equal(o.read, arg.read),
+                                    )
                                 )
-                            )
-                                return fail(
-                                    'Branch-selected scattered focus callees require a common parameter contract',
-                                );
-                            const replacement = join(
-                                options.map(
-                                    (o) =>
-                                        (o as Extract<ValueRepresentation, { kind: 'local-focus' }>)
-                                            .replacement,
-                                ),
-                                true,
-                            );
-                            setContract(arg, replacement);
-                            return { ...arg, replacement };
-                        });
-                        out = join(
-                            calls.map((call) => call.result),
-                            true,
-                        );
-                        const targets = calls.map((call) => call.target);
-                        record.calls.push({
-                            value: i.out.id,
-                            target: JSON.stringify(['dispatch', targets]),
-                            targets,
-                            arguments: args,
-                            result: out,
-                        });
-                        const backing = i.args.map((id, n) =>
-                            isFocus(args[n]!) ? targetFor(s, id) : undefined,
-                        );
-                        s.finishes.set(i.out.id, (state, apply) => {
-                            if (apply)
-                                backing.forEach((target, n) => {
-                                    if (target)
-                                        writeTarget(
-                                            target,
+                                    return fail(
+                                        'Branch-selected scattered focus callees require a common parameter contract',
+                                    );
+                                const replacement = join(
+                                    options.map(
+                                        (o) =>
                                             (
-                                                writes[n] as Extract<
+                                                o as Extract<
                                                     ValueRepresentation,
                                                     { kind: 'local-focus' }
                                                 >
                                             ).replacement,
-                                            state,
-                                        );
-                                });
-                        });
-                        s.finishes.get(i.out.id)!(s, true);
+                                    ),
+                                    true,
+                                );
+                                setContract(arg, replacement);
+                                return { ...arg, replacement };
+                            });
+                        const backing = i.args.map((id, n) =>
+                            isFocus(args[n]!) ? targetFor(s, id) : undefined,
+                        );
+                        const writeBack = (state: State, writes: ValueRepresentation[]): void =>
+                            backing.forEach((target, n) => {
+                                if (target)
+                                    writeTarget(
+                                        target,
+                                        (
+                                            writes[n] as Extract<
+                                                ValueRepresentation,
+                                                { kind: 'local-focus' }
+                                            >
+                                        ).replacement,
+                                        state,
+                                    );
+                            });
+                        const results = setups.map((setup) => setup.result);
+                        const entry: RepresentationVariant['calls'][number] = {
+                            value: i.out.id,
+                            target: '',
+                            targets: [],
+                            arguments: args,
+                            result: results[0]!,
+                        };
+                        record.calls.push(entry);
+                        if (results.some(isFocus)) {
+                            // Dispatched lens result: its read joins the options' reads,
+                            // and every option completes on the consumer's demand. Options
+                            // route through their parameter contracts, so the result is
+                            // deferred like a callee-private one.
+                            const reads = results.map((r) =>
+                                r.kind === 'local-focus'
+                                    ? r.read
+                                    : fail(
+                                          'Dispatched scattered callable lens results require arm targets',
+                                      ),
+                            );
+                            const read = join(reads, true);
+                            const focus: Extract<ValueRepresentation, { kind: 'local-focus' }> = {
+                                kind: 'local-focus',
+                                read,
+                                replacement: read,
+                            };
+                            out = focus;
+                            entry.result = focus;
+                            entry.demand = demandSource(read);
+                            s.deferredFocuses.add(i.out.id);
+                            pendingDemands.add(entry);
+                            s.finishes.set(i.out.id, (state, apply) => {
+                                const calls = setups.map((setup) =>
+                                    completeFocusCall(setup, focus.replacement),
+                                );
+                                const writes = joinWrites(calls);
+                                entry.targets = calls.map((call) => call.target);
+                                entry.target = JSON.stringify(['dispatch', entry.targets]);
+                                entry.demand!.replacement = focus.replacement;
+                                pendingDemands.delete(entry);
+                                if (apply) writeBack(state, writes);
+                            });
+                        } else {
+                            const calls = setups.map((setup) => completeFocusCall(setup));
+                            const writes = joinWrites(calls);
+                            out = join(
+                                calls.map((call) => call.result),
+                                true,
+                            );
+                            entry.result = out;
+                            entry.targets = calls.map((call) => call.target);
+                            entry.target = JSON.stringify(['dispatch', entry.targets]);
+                            s.finishes.set(i.out.id, (state, apply) => {
+                                if (apply) writeBack(state, writes);
+                            });
+                            s.finishes.get(i.out.id)!(s, true);
+                        }
                     } else if (
                         callee.kind === 'callable' &&
                         (args.some(isFocus) ||
@@ -1429,27 +1506,7 @@ export function inferRepresentations(
                             // The returned focus is completed by whichever consumer
                             // installs its replacement: an immediate swap, a persistent
                             // alias release, or a forwarding caller's own completion.
-                            const swap = body.instructions.find(
-                                (use) => use.op === 'swap' && use.lens === i.out.id,
-                            );
-                            const loan = borrows(i.out.id, body);
-                            const consumer = body.instructions.find(
-                                (use) => use.op === 'call' && use.args.includes(i.out.id),
-                            );
-                            if (swap?.op === 'swap')
-                                entry.demand = { value: swap.value, replacement: out.read };
-                            else if (loan.length === 1)
-                                entry.demand = { loan: loan[0]!, replacement: out.read };
-                            else if (consumer?.op === 'call')
-                                // The consuming call's completion sets this focus's
-                                // parameter contract before argument finishes run.
-                                entry.demand = { consumer: consumer.out.id, replacement: out.read };
-                            else if (body.result === i.out.id && allowLocalFocusResult)
-                                entry.demand = { replacement: out.read };
-                            else
-                                return fail(
-                                    'Callable lens result needs a swap, alias or forwarded replacement demand',
-                                );
+                            entry.demand = demandSource(out.read);
                             if (setup.route) {
                                 const target =
                                     targets[setup.route.argument] ??
