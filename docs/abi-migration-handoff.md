@@ -17,10 +17,11 @@ requested.
 | M4: recursion via the worklist; budgets as resource limits | **Verified and committed** (`bb87846`) |
 | M5: concrete verifier, C and Go cleanup | **Verified and committed** (the M5 commit containing this update) |
 
-Unrelated, existing failure, not ours: `can show original identities and source
-origins for debugging` (source-identity snapshot in `test/print-concrete.test.ts`).
-Never update that snapshot with `-u`. When regenerating printed snapshots, filter with
-`-t "prints"`, which doesn't match it.
+The previously known source-identity snapshot failure in
+`test/print-concrete.test.ts` was resolved in a post-migration follow-up at the
+user's request. The snapshot now reflects opaque environments, direct calls and
+current identities, with explicit checks for full code IDs and source origins.
+Historical validation numbers below retain the failure reported at each milestone.
 
 ## M1 validation complete (2026-11-20)
 

@@ -598,3 +598,15 @@ migration.
 3.97 seconds). The regular suite was rerun after the corpus runs finished to avoid
 compiler contention; its only remaining failure is the pre-existing snapshot.
 `git diff --check` is clean. **The required M0–M5 migration is complete.**
+
+### Post-migration: debugging snapshot refresh
+
+At the user's request, refreshed the previously known source-identity snapshot to
+reflect opaque environments, direct calls and current generated identities. Added
+explicit assertions that full code IDs and source origins remain visible. No
+compiler behavior changed; historical milestone validation totals above are kept
+as recorded.
+
+Validation: `bun test` passes with 2,062 passed, 1,295 skipped, no failures and
+all 38 snapshots passing (4,631 assertions). TypeScript and `git diff --check`
+pass.

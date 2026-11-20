@@ -1397,39 +1397,38 @@ it('prints all concrete instructions: capture-restore', () => {
 });
 it('can show original identities and source origins for debugging', () => {
     const p = compile('fn id(x) x\nid(1)');
-    expect(printConcreteProgram(p, { ids: 'full', origins: true })).toMatchInlineSnapshot(`
+    const text = printConcreteProgram(p, { ids: 'full', origins: true });
+    for (const code of p.code) expect(text).toContain(`fn ${code.id}(`);
+    expect(text).toContain('@ "unit/expression/0/n0"');
+    expect(text).toContain('"unit/definition/id/n0/function"');
+    expect(text).toMatchInlineSnapshot(`
       "concrete-ir 1
       target "wasm32-unknown-emscripten" 32bit little c11 emscripten-node
       toolchain emscripten "test" features ()
       entries (
-          entry_7dfb509f12917c9aa0fe195a923417473519bf568f68224079da7483ae7adfb3
+          entry_bafc42f7f8fe2aaa54cc755da38b0f3c1b5a8b1ccf580d4828a58caaaf938947
       )
       forward {
           layouts (
-              layout_54e87936ddd855ff180315156315fc921450e51b98e0d46cf360ab9ec1d5d689, layout_5bbd9dcda6322b402fdd702f13ac2628a5b55cbd4b536bba4917e34754201327, layout_88fc96595525ef5086de4658706bcd430cfff1b985823d74d195e9b5ee374143, layout_904fe785e425170c4753ac2aa280cc140492f2ed8514768a8c28db5073e1d5ef
+              layout_54e87936ddd855ff180315156315fc921450e51b98e0d46cf360ab9ec1d5d689, layout_6db1d02aec1cc65d90f5d6656a50ee58b5631a7b539f2b11b9c73b2b85457630, layout_904fe785e425170c4753ac2aa280cc140492f2ed8514768a8c28db5073e1d5ef, layout_d6f73c1cdebbfa4611cc66982a17c2177dc898a537cf0ce826a7280eb869398e
           )
           abis (
               abi_2557b72183a4607daa242bcd749d5491ea66af8382ee7a15f6d4a8d67514f350, abi_b3b0e1262582d3fe4865774f76f20845d5fec9e992f12fabd3c1bf3fb00dd01b, abi_f62d6b85c2ffd15b1c966622fd997fe6516449f10c80481db4d6a77e4f895394
           )
           code (
-              code_879d6dbaf0d774be7f3d33b55f80df6f70d86174eed5dcf89c1d1a6ce458d315, entry_7dfb509f12917c9aa0fe195a923417473519bf568f68224079da7483ae7adfb3
+              code_9ed092d8f8c2275f59ec3a7887e96e7eacfc3b8304ae9710053c46a0c6a23d59, entry_bafc42f7f8fe2aaa54cc755da38b0f3c1b5a8b1ccf580d4828a58caaaf938947
           )
       }
       layouts {
           layout_54e87936ddd855ff180315156315fc921450e51b98e0d46cf360ab9ec1d5d689 = unit
-          layout_5bbd9dcda6322b402fdd702f13ac2628a5b55cbd4b536bba4917e34754201327 = record environment
-          layout_88fc96595525ef5086de4658706bcd430cfff1b985823d74d195e9b5ee374143 = record callable {
-              environment: ptr<
-                  layout_5bbd9dcda6322b402fdd702f13ac2628a5b55cbd4b536bba4917e34754201327
-              >
+          layout_6db1d02aec1cc65d90f5d6656a50ee58b5631a7b539f2b11b9c73b2b85457630 = record environment
+          layout_904fe785e425170c4753ac2aa280cc140492f2ed8514768a8c28db5073e1d5ef = f64
+          layout_d6f73c1cdebbfa4611cc66982a17c2177dc898a537cf0ce826a7280eb869398e = record callable {
+              environment: ptr<void>
               dispose: code<
                   abi_b3b0e1262582d3fe4865774f76f20845d5fec9e992f12fabd3c1bf3fb00dd01b
               >
-              invoke0: code<
-                  abi_2557b72183a4607daa242bcd749d5491ea66af8382ee7a15f6d4a8d67514f350
-              >
           }
-          layout_904fe785e425170c4753ac2aa280cc140492f2ed8514768a8c28db5073e1d5ef = f64
       }
       abis {
           abi_2557b72183a4607daa242bcd749d5491ea66af8382ee7a15f6d4a8d67514f350 = (
@@ -1439,26 +1438,29 @@ it('can show original identities and source origins for debugging', () => {
           abi_f62d6b85c2ffd15b1c966622fd997fe6516449f10c80481db4d6a77e4f895394 = (env: ptr<void>) -> layout_904fe785e425170c4753ac2aa280cc140492f2ed8514768a8c28db5073e1d5ef
       }
       wrappers {
-          wrapper_21e57a56b996331d95517c27258f4a3221b1114c0ec86c2a55e5fdc6700ec451 : abi_2557b72183a4607daa242bcd749d5491ea66af8382ee7a15f6d4a8d67514f350 env layout_5bbd9dcda6322b402fdd702f13ac2628a5b55cbd4b536bba4917e34754201327 = invoke code_879d6dbaf0d774be7f3d33b55f80df6f70d86174eed5dcf89c1d1a6ce458d315 transfer-captures-and-free
-          wrapper_717a36fc95e85eaeb41e40aea6fdb4b9e12ba1486a81fdf89e9a1b6dd25ecbab : abi_b3b0e1262582d3fe4865774f76f20845d5fec9e992f12fabd3c1bf3fb00dd01b env layout_5bbd9dcda6322b402fdd702f13ac2628a5b55cbd4b536bba4917e34754201327 = dispose () drop-captures-and-free
+          wrapper_1c7738306914f9afef49264ccb0220321fd7a79aff5f364c16fabfa3d1d23087 : abi_b3b0e1262582d3fe4865774f76f20845d5fec9e992f12fabd3c1bf3fb00dd01b env layout_6db1d02aec1cc65d90f5d6656a50ee58b5631a7b539f2b11b9c73b2b85457630 = dispose () drop-captures-and-free
+          wrapper_602a899e0a3f0058bfb4404f187795dc2b13d585f3a364f7ce4b06d9d8d37bd3 : abi_2557b72183a4607daa242bcd749d5491ea66af8382ee7a15f6d4a8d67514f350 env layout_6db1d02aec1cc65d90f5d6656a50ee58b5631a7b539f2b11b9c73b2b85457630 = invoke code_9ed092d8f8c2275f59ec3a7887e96e7eacfc3b8304ae9710053c46a0c6a23d59 transfer-captures-and-free
+          wrapper_91dd94c1bba01bc2ead6ac3060e5e622601c9a327e8ba555629a4655795e2384 : abi_b3b0e1262582d3fe4865774f76f20845d5fec9e992f12fabd3c1bf3fb00dd01b env layout_6db1d02aec1cc65d90f5d6656a50ee58b5631a7b539f2b11b9c73b2b85457630 = dispose () drop-captures-and-free
       }
       callables {
-          callable_0d32274247cc9fe33a86d16ae7b14da38e0de339ea1354fc17f3942de58a44a0 : layout_88fc96595525ef5086de4658706bcd430cfff1b985823d74d195e9b5ee374143 env layout_5bbd9dcda6322b402fdd702f13ac2628a5b55cbd4b536bba4917e34754201327 {
-              dispose wrapper_717a36fc95e85eaeb41e40aea6fdb4b9e12ba1486a81fdf89e9a1b6dd25ecbab
-              invoke0 = wrapper_21e57a56b996331d95517c27258f4a3221b1114c0ec86c2a55e5fdc6700ec451 : abi_2557b72183a4607daa242bcd749d5491ea66af8382ee7a15f6d4a8d67514f350
+          callable_05614e43da3daacb7c8f9b386624391cdd42a0c2987e7918da5a388d0f6904d6 : layout_d6f73c1cdebbfa4611cc66982a17c2177dc898a537cf0ce826a7280eb869398e env layout_6db1d02aec1cc65d90f5d6656a50ee58b5631a7b539f2b11b9c73b2b85457630 {
+              dispose wrapper_1c7738306914f9afef49264ccb0220321fd7a79aff5f364c16fabfa3d1d23087
+          }
+          callable_c519662d83332ff99d43c291ee48a09ba5439a3ab1ec359c558f812332ed8744 : layout_d6f73c1cdebbfa4611cc66982a17c2177dc898a537cf0ce826a7280eb869398e env layout_6db1d02aec1cc65d90f5d6656a50ee58b5631a7b539f2b11b9c73b2b85457630 {
+              dispose wrapper_91dd94c1bba01bc2ead6ac3060e5e622601c9a327e8ba555629a4655795e2384
           }
       }
-      fn code_879d6dbaf0d774be7f3d33b55f80df6f70d86174eed5dcf89c1d1a6ce458d315(
-          unit/definition/id/p13: layout_904fe785e425170c4753ac2aa280cc140492f2ed8514768a8c28db5073e1d5ef
-      ) : abi_2557b72183a4607daa242bcd749d5491ea66af8382ee7a15f6d4a8d67514f350 env layout_5bbd9dcda6322b402fdd702f13ac2628a5b55cbd4b536bba4917e34754201327 source "spec_f5355660216bf78b6186f353f3b32788d36c13d88a6cc9b3f63d4e3e06219f7a" "unit/definition/id/n0/function" {
-          unit/definition/id/v0: layout_904fe785e425170c4753ac2aa280cc140492f2ed8514768a8c28db5073e1d5ef = move unit/definition/id/p13 @ "unit/definition/id/n2"
+      fn code_9ed092d8f8c2275f59ec3a7887e96e7eacfc3b8304ae9710053c46a0c6a23d59(
+          unit/definition/id/p15: layout_904fe785e425170c4753ac2aa280cc140492f2ed8514768a8c28db5073e1d5ef
+      ) : abi_2557b72183a4607daa242bcd749d5491ea66af8382ee7a15f6d4a8d67514f350 env layout_6db1d02aec1cc65d90f5d6656a50ee58b5631a7b539f2b11b9c73b2b85457630 source "spec_f5355660216bf78b6186f353f3b32788d36c13d88a6cc9b3f63d4e3e06219f7a" "unit/definition/id/n0/function" {
+          unit/definition/id/v0: layout_904fe785e425170c4753ac2aa280cc140492f2ed8514768a8c28db5073e1d5ef = move unit/definition/id/p15 @ "unit/definition/id/n2"
           return unit/definition/id/v0 : layout_904fe785e425170c4753ac2aa280cc140492f2ed8514768a8c28db5073e1d5ef
-          cleanup {drop unit/definition/id/p13}
+          cleanup {drop unit/definition/id/p15}
       }
-      fn entry_7dfb509f12917c9aa0fe195a923417473519bf568f68224079da7483ae7adfb3() : abi_f62d6b85c2ffd15b1c966622fd997fe6516449f10c80481db4d6a77e4f895394 env layout_54e87936ddd855ff180315156315fc921450e51b98e0d46cf360ab9ec1d5d689 source "spec_3bc84350fdb5ea443a5bdc1ea3eb9d8eff9afa2f0506c0534811199c08f3821b" {
-          unit/expression/0/v0: layout_88fc96595525ef5086de4658706bcd430cfff1b985823d74d195e9b5ee374143 = make-callable callable_0d32274247cc9fe33a86d16ae7b14da38e0de339ea1354fc17f3942de58a44a0 {} @ "unit/expression/0/n2"
+      fn entry_bafc42f7f8fe2aaa54cc755da38b0f3c1b5a8b1ccf580d4828a58caaaf938947() : abi_f62d6b85c2ffd15b1c966622fd997fe6516449f10c80481db4d6a77e4f895394 env layout_54e87936ddd855ff180315156315fc921450e51b98e0d46cf360ab9ec1d5d689 source "spec_3bc84350fdb5ea443a5bdc1ea3eb9d8eff9afa2f0506c0534811199c08f3821b" {
+          unit/expression/0/v0: layout_d6f73c1cdebbfa4611cc66982a17c2177dc898a537cf0ce826a7280eb869398e = make-callable callable_05614e43da3daacb7c8f9b386624391cdd42a0c2987e7918da5a388d0f6904d6 {} @ "unit/expression/0/n2"
           unit/expression/0/v1: layout_904fe785e425170c4753ac2aa280cc140492f2ed8514768a8c28db5073e1d5ef = 1 @ "unit/expression/0/n1"
-          unit/expression/0/v2: layout_904fe785e425170c4753ac2aa280cc140492f2ed8514768a8c28db5073e1d5ef = unit/expression/0/v0.invoke0(unit/expression/0/v1) via wrapper_21e57a56b996331d95517c27258f4a3221b1114c0ec86c2a55e5fdc6700ec451 : abi_2557b72183a4607daa242bcd749d5491ea66af8382ee7a15f6d4a8d67514f350 @ "unit/expression/0/n0"
+          unit/expression/0/v2: layout_904fe785e425170c4753ac2aa280cc140492f2ed8514768a8c28db5073e1d5ef = unit/expression/0/v0(unit/expression/0/v1) via wrapper_602a899e0a3f0058bfb4404f187795dc2b13d585f3a364f7ce4b06d9d8d37bd3 : abi_2557b72183a4607daa242bcd749d5491ea66af8382ee7a15f6d4a8d67514f350 @ "unit/expression/0/n0"
           return unit/expression/0/v2 : layout_904fe785e425170c4753ac2aa280cc140492f2ed8514768a8c28db5073e1d5ef
       }"
     `);
