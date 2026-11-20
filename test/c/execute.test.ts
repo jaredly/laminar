@@ -1,15 +1,4 @@
-import { demandSamples } from '../backend/demand-samples.ts';
-import { enabledMigrationSamples } from '../backend/abi-migration-samples.ts';
-import { deferredStorageSamples } from '../backend/deferred-storage-samples.ts';
-import { lensStorageJoinSamples } from '../backend/lens-storage-join-samples.ts';
-import { storageJoinSamples } from '../backend/storage-join-samples.ts';
-import { aggregateResultSamples } from '../backend/aggregate-result-samples.ts';
-import { aggregateJoinSamples } from '../backend/aggregate-join-samples.ts';
-import { callableFocusSamples } from '../backend/callable-focus-samples.ts';
-import { callableStorageSamples } from '../backend/callable-storage-samples.ts';
-import { lensResultSamples } from '../backend/lens-result-samples.ts';
-import { callableResultSamples } from '../backend/callable-result-samples.ts';
-import { nativeJoinSamples } from '../backend/native-join-samples.ts';
+import { samples } from '../backend/execution-samples.ts';
 import { cp, mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -17,16 +6,6 @@ import { afterAll } from 'bun:test';
 import { it, expect } from 'bun:test';
 import { spawnSync } from 'node:child_process';
 import { typedProgram } from '../backend/typed-program.ts';
-import { borrowedPatternSamples } from '../backend/borrowed-pattern-samples.ts';
-import { aslensSamples } from '../backend/aslens-samples.ts';
-import { manualRestorationSamples } from '../backend/manual-restoration-samples.ts';
-import { lensBranchSamples } from '../backend/lens-branch-samples.ts';
-import { computedAliases } from '../backend/computed-alias-samples.ts';
-import { capturedCleanupSamples } from '../backend/captured-cleanup-samples.ts';
-import { callableJoinSamples } from '../backend/callable-join-samples.ts';
-import { indirectCallSamples } from '../backend/indirect-call-samples.ts';
-import { phase5Samples } from './phase5-samples.ts';
-import { backendCorpus } from '../backend/corpus.ts';
 import { compileConcreteProgram } from '../../src/lower-concrete.ts';
 import { targetConfig, wasm32Emscripten } from '../../src/backend/target.ts';
 import { executeTypedProgram } from '../../src/eval-typed.ts';
@@ -96,40 +75,6 @@ const native =
               features: [],
           })
         : undefined;
-// The behavioral corpus: shared samples whose expected results must not change
-// across representation redesigns (see docs/abi-callable-representations.md).
-const samples = [
-    ...enabledMigrationSamples,
-    ...demandSamples,
-    ...deferredStorageSamples,
-    ...lensStorageJoinSamples,
-    ...storageJoinSamples,
-    ...aggregateResultSamples,
-    ...aggregateJoinSamples,
-    ...callableFocusSamples,
-    ...callableStorageSamples,
-    ...backendCorpus.filter((s) => s.phase <= 6),
-    ...capturedCleanupSamples,
-    ...indirectCallSamples,
-    ...callableJoinSamples,
-    ...nativeJoinSamples,
-    ...callableResultSamples,
-    ...lensResultSamples,
-    ...phase5Samples,
-    ...computedAliases,
-    ...lensBranchSamples,
-    ...borrowedPatternSamples.map((s) => ({ ...s, name: `borrowed: ${s.name}` })),
-    ...aslensSamples.map((s) => ({ ...s, name: `aslens: ${s.name}` })),
-    ...manualRestorationSamples.map((s) => ({ ...s, name: `manual: ${s.name}` })),
-    { name: 'lexical-alias', source: '{let x = 1\n {let y = ~x\n y := y + 1}\n x}', expected: 2 },
-    { name: 'empty-swap', source: '{let x = 1\n x := x + 1}', expected: null },
-    { name: 'full-swap-order', source: '{let x = 1\n (x := 2, x := 3, x)}', expected: [1, 2, 3] },
-    { name: 'nested-swap-order', source: '{let x = 1\n (x := (x := 2), x)}', expected: [2, 1] },
-    { name: 'double-division', source: '3 / 2', expected: 1.5 },
-    { name: 'nan', source: '0 / 0', expected: { number: 'NaN' } },
-    { name: 'infinity', source: '1 / 0', expected: { number: 'Infinity' } },
-    { name: 'negative-zero', source: '0 / (0 - 1)', expected: { number: '-0' } },
-];
 const normalize = (v: unknown): unknown =>
     typeof v === 'number'
         ? Number.isNaN(v)

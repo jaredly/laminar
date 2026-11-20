@@ -1,4 +1,4 @@
-import type { ConcreteProgram, ConcreteBlock, ConcreteValueAdapter } from '../concrete-ir.ts';
+import type { ConcreteProgram, ConcreteBlock } from '../concrete-ir.ts';
 import { Storage, type Data, type View } from './storage.ts';
 import type { IRPattern, SlotRef } from '../typed-ir.ts';
 import { verifyConcreteProgram } from '../verify-concrete.ts';
@@ -23,10 +23,6 @@ export function lowerC(program: ConcreteProgram): TranslationUnit {
     const codes = new Map(program.code.map((c, i) => [c.id, `fn${i}`]));
     const abiNames = new Map(program.abis.map((a, i) => [a.id, `A${i}`]));
     const type = (id: string) => names.get(id)!;
-    const adaptValue = (a: ConcreteValueAdapter, expression: string): string => {
-        if (a.kind === 'move') return expression;
-        return `(${type(a.to)}){${a.items.map((child, n) => `.item${n}=${adaptValue(child, `(${expression}).item${n}`)}`).join(', ')}}`;
-    };
     const layout = (id: string) => layouts.get(id)!;
     const unit = program.layouts.find((l) => l.kind === 'unit')!;
     const zero = (id: string) => `(${type(id)}){0}`;
@@ -226,11 +222,11 @@ export function lowerC(program: ConcreteProgram): TranslationUnit {
     }
     const resultAdapters = new Map(
         program.wrappers
-            .filter((w) => w.kind === 'adapt-lens-result' || w.kind === 'adapt-aggregate-result')
+            .filter((w) => w.kind === 'adapt-lens-result')
             .map((w, n) => [w.id, `result_adapter${n}`]),
     );
     for (const w of program.wrappers) {
-        if (w.kind !== 'adapt-lens-result' && w.kind !== 'adapt-aggregate-result') continue;
+        if (w.kind !== 'adapt-lens-result') continue;
         const abi = program.abis.find((a) => a.id === w.abi)!;
         const source = program.wrappers.find((source) => source.id === w.source)!;
         if (source.kind !== 'invoke' && source.kind !== 'native')
@@ -283,13 +279,6 @@ export function lowerC(program: ConcreteProgram): TranslationUnit {
             });
             continue;
         }
-        helpers.push({
-            signature,
-            body: [
-                `${type(raw.result)} result = ${sourceCode}(environment${abi.arguments.map((_, n) => `, arg${n}`).join('')});`,
-                `return ${adaptValue(w.adapter, 'result')};`,
-            ],
-        });
     }
     const wrapperFunction = (id: string): string => {
         const w = program.wrappers.find((w) => w.id === id)!;
@@ -538,8 +527,7 @@ export function lowerC(program: ConcreteProgram): TranslationUnit {
                                 // Runtime joins reify native entries; ordinary intrinsics keep their storage lowering.
                                 return w.kind === 'invoke'
                                     ? `, .${e.field}=${codes.get(w.code)}`
-                                    : w.kind === 'adapt-lens-result' ||
-                                        w.kind === 'adapt-aggregate-result'
+                                    : w.kind === 'adapt-lens-result'
                                       ? `, .${e.field}=${resultAdapters.get(w.id)}`
                                       : w.kind === 'native' && nativeCodes.has(w.id)
                                         ? `, .${e.field}=${nativeCodes.get(w.id)}`
@@ -851,11 +839,7 @@ export function lowerC(program: ConcreteProgram): TranslationUnit {
                                 nested,
                             );
                             const result = block(arm.body, nested);
-                            if (i.aggregateJoin)
-                                nested.push(
-                                    `${name} = ${adaptValue(i.aggregateJoin.arms[armIndex]!, result)};`,
-                                );
-                            else nested.push(`${name} = ${result};`);
+                            nested.push(`${name} = ${result};`);
                             const state = storage.snapshot();
                             variables.length = outerVariables;
                             return { nested, state };
@@ -949,7 +933,6 @@ export function lowerC(program: ConcreteProgram): TranslationUnit {
                             if (
                                 i.field !== undefined ||
                                 w?.kind === 'invoke' ||
-                                w?.kind === 'adapt-aggregate-result' ||
                                 w?.kind === 'adapt-lens-result'
                             )
                                 expr =

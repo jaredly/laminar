@@ -17,7 +17,6 @@ import type {
     ConcreteField,
     ConcreteBlock,
     ConcreteCode,
-    ConcreteValueAdapter,
     CallableLayout,
     ConcreteWrapper,
 } from './concrete-ir.ts';
@@ -343,18 +342,6 @@ export function verifyConcreteProgram(p: ConcreteProgram): void {
     if (p.graphKey !== graphKey) fail('Concrete graph cache identity mismatch');
     const codeName = (variant: string) =>
         concreteName('code', JSON.stringify([target, graphKey, variant]));
-    function adapter(from: ValueRepresentation, to: ValueRepresentation): ConcreteValueAdapter {
-        const endpoints = { from: storage(from), to: storage(to) };
-        if (representationKey(from) === representationKey(to))
-            return { ...endpoints, kind: 'move' };
-        if (from.kind === 'aggregate' && to.kind === 'aggregate')
-            return {
-                ...endpoints,
-                kind: 'aggregate',
-                items: to.items.map((v, n) => adapter(from.items[n]!, v)),
-            };
-        return fail('Unsupported aggregate member adapter');
-    }
     const usedWrappers = new Set<string>();
     type EntryContract = {
         target: string;
@@ -419,34 +406,6 @@ export function verifyConcreteProgram(p: ConcreteProgram): void {
             eq(w.order, ['restore-source', 'release'], 'Lens result restoration order changed');
             usedWrappers.add(source.id);
             checkEntry(c, source, rawContract);
-        } else if (w.kind === 'adapt-aggregate-result') {
-            const raw = rawResult(c.descriptor, contract);
-            if (
-                raw?.kind !== 'aggregate' ||
-                contract.result.kind !== 'aggregate' ||
-                representationKey(raw) === representationKey(contract.result)
-            )
-                return fail('Missing aggregate result contract');
-            const rawABI = aid(contract.arguments.map(storage), storage(raw));
-            const rawKey = JSON.stringify([
-                'wrapper',
-                target,
-                graphKey,
-                k,
-                contractKey({ ...contract, result: raw }),
-                rawABI,
-                c.environment,
-            ]);
-            const source = wrapper(concreteName('wrapper', rawKey));
-            if (
-                source.kind !== 'invoke' ||
-                w.source !== source.id ||
-                w.ownership !== 'transfer-result'
-            )
-                fail('Invalid aggregate result transfer adapter');
-            eq(w.adapter, adapter(raw, contract.result), 'Aggregate result adapter changed');
-            usedWrappers.add(source.id);
-            checkEntry(c, source, { ...contract, result: raw });
         } else if (w.kind === 'invoke') {
             const callee = code.get(w.code) ?? fail('Wrapper references absent code');
             const exact = p.analysis.variants.find((v) => v.id === contract.target);
@@ -665,18 +624,7 @@ export function verifyConcreteProgram(p: ConcreteProgram): void {
                     if ('cleanupJoins' in o || 'storageJoins' in o)
                         fail('Unexpected storage adapter');
                     eq(o.lensJoin, join, 'Selected-branch restoration adapter changed');
-                    eq(
-                        o.aggregateJoin,
-                        reps.get(i.out.id)!.kind === 'aggregate'
-                            ? {
-                                  ownership: 'transfer-selected-result',
-                                  arms: i.cases.map((arm) =>
-                                      adapter(reps.get(arm.body.result)!, reps.get(i.out.id)!),
-                                  ),
-                              }
-                            : undefined,
-                        'Aggregate join adapter changed',
-                    );
+                    if ('aggregateJoin' in o) fail('Obsolete aggregate join adapter');
                     // Callable values share their type's record: joins are moves.
                     if ('callableJoin' in o) fail('Obsolete callable join adapter');
                     i.cases.forEach((c, j) => {

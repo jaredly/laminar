@@ -1,9 +1,15 @@
-import type { ConcreteProgram, ConcreteBlock, ConcreteValueAdapter } from '../concrete-ir.ts';
+import type { ConcreteProgram, ConcreteBlock } from '../concrete-ir.ts';
 import { Storage, type Data, type View } from './storage.ts';
 import type { IRPattern, SlotRef } from '../typed-ir.ts';
 import { verifyConcreteProgram } from '../verify-concrete.ts';
 import { BackendDiagnostic } from '../backend/target.ts';
-import { identifier, type Statement, type GoFile, type GoFunction } from './syntax.ts';
+import {
+    printGoStatements,
+    identifier,
+    type Statement,
+    type GoFile,
+    type GoFunction,
+} from './syntax.ts';
 
 type Completion = (body: Statement[]) => void;
 type Lens = { view: View; finish: Completion; stage?: (body: Statement[]) => Completion };
@@ -35,24 +41,6 @@ export function lowerGo(program: ConcreteProgram): GoFile {
         if (l.kind === 'f64') return '0.0';
         if (l.kind === 'bool') return 'false';
         return `${type(id)}{}`;
-    };
-
-    const adaptValue = (a: ConcreteValueAdapter, expression: string): string => {
-        if (a.kind === 'move') return expression;
-        if (a.kind === 'aggregate') {
-            const targetFields = layout(a.to).fields;
-            const sourceFields = layout(a.from).fields;
-            return `${type(a.to)}{\n${a.items
-                .map(
-                    (child, n) =>
-                        `\t${identifier(targetFields[n]!.name)}: ${adaptValue(
-                            child,
-                            `(${expression}).${identifier(sourceFields[n]!.name)}`,
-                        )},`,
-                )
-                .join('\n')}\n}`;
-        }
-        return unsupported('Unknown value adapter');
     };
 
     const storage = new Storage((s) =>
@@ -153,7 +141,7 @@ export function lowerGo(program: ConcreteProgram): GoFile {
             const fields = l.fields.map((f) => {
                 if (f.kind === 'value') return `\t${identifier(f.name)} ${type(f.layout)}`;
                 if (f.kind === 'pointer')
-                    return `\t${identifier(f.name)} *${f.layout ? type(f.layout) : 'any'}`;
+                    return `\t${identifier(f.name)} ${f.layout ? '*' + type(f.layout) : 'any'}`;
                 return `\t${identifier(f.name)} ${abiNames.get(f.abi)}`;
             });
             declarations.push(`type ${type(l.id)} struct {\n${fields.join('\n')}\n}`);
@@ -171,11 +159,12 @@ export function lowerGo(program: ConcreteProgram): GoFile {
     }
 
     const helpers: GoFunction[] = [];
-    const nativeEntries = new Set(
-        program.callables
+    const nativeEntries = new Set([
+        ...program.callables
             .filter((c) => c.descriptor.kind === 'native')
             .flatMap((c) => c.entries.map((e) => e.wrapper)),
-    );
+        ...program.wrappers.flatMap((w) => ('source' in w ? [w.source] : [])),
+    ]);
     const nativeCodes = new Map<string, string>();
 
     for (const w of program.wrappers) {
@@ -193,21 +182,36 @@ export function lowerGo(program: ConcreteProgram): GoFile {
         const op = w.definition.slice(7);
         if (['+', '-', '*', '/', '==', '>=', '<='].includes(op)) {
             result = `(arg0 ${op} arg1)`;
-        } else {
-            return unsupported(`Native import ${w.definition}`);
-        }
+        } else if (op === 'dup')
+            result = read(storage.get(incoming('arg0', abi.arguments[0]!)), abi.result);
+        else if (op === 'fst') {
+            const input = layout(abi.arguments[0]!),
+                output = layout(abi.result);
+            const pointer = input.fields.find((f) => f.name === 'read');
+            if (pointer?.kind === 'pointer' && pointer.layout) {
+                const replacement = input.fields.find((f) => f.name === 'replacement');
+                if (replacement?.kind === 'pointer' && replacement.layout) {
+                    layout(replacement.layout)
+                        .fields.slice(1)
+                        .forEach((f) =>
+                            body.push(`arg0.replacement.${f.name} = arg0.read.${f.name}`),
+                        );
+                }
+                result = `${type(abi.result)}{read: &arg0.read.item0${output.fields.some((f) => f.name === 'replacement') ? `, replacement: &arg0.${replacement ? 'replacement' : 'read'}.item0` : ''}}`;
+            } else result = 'arg0.item0';
+        } else return unsupported(`Native import ${w.definition}`);
         body.push(`return ${result}`);
         helpers.push({ signature, body });
     }
 
     const resultAdapters = new Map(
         program.wrappers
-            .filter((w) => w.kind === 'adapt-lens-result' || w.kind === 'adapt-aggregate-result')
+            .filter((w) => w.kind === 'adapt-lens-result')
             .map((w, n) => [w.id, `result_adapter${n}`]),
     );
 
     for (const w of program.wrappers) {
-        if (w.kind !== 'adapt-lens-result' && w.kind !== 'adapt-aggregate-result') {
+        if (w.kind !== 'adapt-lens-result') {
             continue;
         }
         const abi = program.abis.find((a) => a.id === w.abi)!;
@@ -220,16 +224,27 @@ export function lowerGo(program: ConcreteProgram): GoFile {
         const args = abi.arguments.map((id, n) => `, arg${n} ${type(id)}`).join('');
         const signature = `func ${resultAdapters.get(w.id)}(environment any${args}) ${type(abi.result)}`;
 
-        if (w.kind === 'adapt-aggregate-result') {
+        {
+            const raw = program.abis.find((a) => a.id === source.abi)!;
+            const input = endpoint(abi.result, 'read'),
+                replacement = endpoint(abi.result, 'replacement');
+            const separate = layout(abi.result).fields.some((f) => f.name === 'replacement');
+            const fallback: Statement[] = [];
+            flush(
+                'result',
+                raw.result,
+                { expression: 'replacement', layout: replacement },
+                fallback,
+            );
             helpers.push({
                 signature,
                 body: [
                     `result := ${sourceCode}(environment${abi.arguments.map((_, n) => `, arg${n}`).join('')})`,
-                    `return ${adaptValue(w.adapter, 'result')}`,
+                    `focus := ${read(storage.get(incoming('result', raw.result)), input)}`,
+                    ...(separate ? [`var write ${type(replacement)}`] : []),
+                    `return ${type(abi.result)}{read: &focus${separate ? ', replacement: &write' : ''}, restore: func(_ any, replacement ${type(replacement)}) ${type(unit.id)} {\n${printGoStatements([{ head: 'if result.restore != nil', body: ['result.restore(result.context, replacement)'] }, { head: 'else', body: fallback }, `return ${zero(unit.id)}`], 1).join('\n')}\n}}`,
                 ],
             });
-        } else {
-            return unsupported('Lens result adapters require Phase 4');
         }
     }
 
@@ -252,7 +267,7 @@ export function lowerGo(program: ConcreteProgram): GoFile {
             name = fresh(),
         ): string => {
             variables.push({ name, type: type(id) });
-            body.push(`var ${name} ${type(id)} = ${expression}`);
+            body.push(`${name} = ${expression}`);
             body.push(`_ = ${name}`);
             return name;
         };
@@ -343,11 +358,11 @@ export function lowerGo(program: ConcreteProgram): GoFile {
             declarations.push(
                 `type ${backingType} struct {\n${fields.map((f) => `\t${f}`).join('\n')}\n}`,
             );
-            variables.push({ name, type: backingType + (escapes ? ' *' : '') });
+            variables.push({ name, type: (escapes ? '*' : '') + backingType });
             if (escapes) {
-                body.push(`var ${name} *${backingType} = new(${backingType})`);
+                body.push(`${name} = new(${backingType})`);
             } else {
-                body.push(`var ${name} ${backingType}`);
+                body.push(`${name} = ${backingType}{}`);
             }
             body.push(`_ = ${name}`);
             body.push(...init);
@@ -539,7 +554,7 @@ export function lowerGo(program: ConcreteProgram): GoFile {
                                 if (w.kind === 'invoke') {
                                     return `, ${identifier(e.field)}: ${codes.get(w.code)}`;
                                 }
-                                if (w?.kind === 'adapt-aggregate-result') {
+                                if (w.kind === 'adapt-lens-result') {
                                     return `, ${identifier(e.field)}: ${resultAdapters.get(w.id)}`;
                                 }
                                 if (w.kind === 'native' && nativeCodes.has(w.id)) {
@@ -556,7 +571,8 @@ export function lowerGo(program: ConcreteProgram): GoFile {
                             expr = `${type(id)}{environment: nil${entries}}`;
                             break;
                         }
-                        return unsupported('Closures with captures require Phase 4');
+                        expr = `${type(id)}{environment: &${type(callable.environment)}{${i.captures.map((c, n) => `capture${n}: ${value(c.value)}`).join(', ')} }${entries}}`;
+                        break;
                     }
                     case 'invoke': {
                         const w = program.wrappers.find((w) => w.id === i.wrapper)!;
@@ -586,7 +602,7 @@ export function lowerGo(program: ConcreteProgram): GoFile {
                             if (
                                 i.field !== undefined ||
                                 w?.kind === 'invoke' ||
-                                w?.kind === 'adapt-aggregate-result'
+                                w?.kind === 'adapt-lens-result'
                             ) {
                                 // A direct call invokes its known member's wrapper itself.
                                 const direct =
@@ -641,7 +657,209 @@ export function lowerGo(program: ConcreteProgram): GoFile {
                         continue;
                     }
                     case 'case': {
-                        if (i.lensJoin) return unsupported('Lens case join requires Phase 5');
+                        if (i.lensJoin) {
+                            const before = storage.snapshot();
+                            const selected = fresh();
+                            variables.push({ name: selected, type: 'int' });
+                            body.push(`${selected} = 0`);
+                            const input = endpoint(id, 'read');
+                            const focus = declare(input, zero(input), body);
+                            const joined = storage.own({ expression: focus, layout: input });
+                            const normalize = (
+                                actions: (typeof i.cases)[number]['setup'],
+                                output: Statement[],
+                            ) =>
+                                actions?.forEach((a) => {
+                                    if (a.kind !== 'drop-place')
+                                        return unsupported('Invalid branch normalization');
+
+                                    storage.put(ref(a.slot), {
+                                        expression: zero(unit.id),
+                                        layout: unit.id,
+                                    });
+                                });
+                            const merge = (
+                                arms: {
+                                    nested: Statement[];
+                                    state: Map<import('./storage.ts').Cell, Data>;
+                                }[],
+                                into: Statement[],
+                            ) => {
+                                // Even one selected arm is a C scope: changed versions must
+                                // be materialized outside it before later restoration uses them.
+                                const join = (data: Data[], previous?: Data): Data => {
+                                    if (
+                                        data.every(
+                                            (d) => JSON.stringify(d) === JSON.stringify(data[0]),
+                                        ) &&
+                                        (arms.length > 1 ||
+                                            JSON.stringify(data[0]) === JSON.stringify(previous))
+                                    )
+                                        return data[0]!;
+                                    const first = data[0]!;
+                                    if (
+                                        !Array.isArray(first) &&
+                                        data.every(
+                                            (d) => !Array.isArray(d) && d.layout === first.layout,
+                                        )
+                                    ) {
+                                        const phi = declare(first.layout, zero(first.layout), into);
+                                        arms.forEach((arm, n) =>
+                                            arm.nested.push(
+                                                `${phi} = ${read(data[n]!, first.layout)};`,
+                                            ),
+                                        );
+                                        return { expression: phi, layout: first.layout };
+                                    }
+                                    const parts = data.map((d) => storage.parts(d));
+                                    if (
+                                        !parts[0]?.length ||
+                                        parts.some((p) => p.length !== parts[0]!.length)
+                                    )
+                                        return unsupported(
+                                            'Branch owner storage requires an adapter',
+                                        );
+                                    return parts[0].map((_, n) =>
+                                        join(
+                                            parts.map((p) => p[n]!),
+                                            previous && storage.parts(previous)[n],
+                                        ),
+                                    );
+                                };
+                                before.forEach(
+                                    (previous, cell) =>
+                                        (cell.data = join(
+                                            arms.map((a) => a.state.get(cell)!),
+                                            previous,
+                                        )),
+                                );
+                            };
+                            const arms = i.cases.map((arm, n) => {
+                                storage.reset(before);
+                                const nested: Statement[] = [];
+                                bind(
+                                    arm.pattern,
+                                    {
+                                        expression: value(i.value),
+                                        layout: outputLayouts.get(i.value)!,
+                                    },
+                                    nested,
+                                );
+                                block(arm.body, nested);
+                                normalize(arm.setup, nested);
+                                const lens = lenses.get(arm.body.result)!;
+                                nested.push(
+                                    `${selected} = ${n};`,
+                                    `${focus} = ${read(storage.get(lens.view), input)};`,
+                                );
+                                return {
+                                    nested,
+                                    state: storage.snapshot(),
+                                    lens,
+                                    arm,
+                                };
+                            });
+                            storage.reset(before);
+                            merge(arms, body);
+                            i.cases.forEach((arm, n) =>
+                                body.push({
+                                    head: `${n ? 'else if' : 'if'} (${matches(arm.pattern, value(i.value))})`,
+                                    body: arms[n]!.nested,
+                                }),
+                            );
+                            body.push({ head: 'else', body: ['panic("unmatched case")'] });
+                            lenses.set(i.out.id, {
+                                view: joined,
+                                stage: (output) => {
+                                    // Commit only the selected frontend and merge its visible owner
+                                    // versions before manual cleanup reads lexical dependencies.
+                                    const current = storage.snapshot();
+                                    const replacement = storage.get(joined);
+                                    const staged = arms.map((arm) => {
+                                        storage.reset(arm.state);
+                                        before.forEach(
+                                            (_, cell) => (cell.data = current.get(cell)!),
+                                        );
+                                        storage.put(arm.lens.view, replacement);
+                                        const nested: Statement[] = [];
+                                        const complete = stage(arm.lens, nested);
+                                        return {
+                                            nested,
+                                            complete,
+                                            state: storage.snapshot(),
+                                            arm,
+                                        };
+                                    });
+                                    storage.reset(current);
+                                    merge(staged, output);
+                                    staged.forEach((arm, n) =>
+                                        output.push({
+                                            head: `${n ? 'else if' : 'if'} (${selected} == ${n})`,
+                                            body: arm.nested,
+                                        }),
+                                    );
+                                    output.push({
+                                        head: 'else',
+                                        body: ['panic("unmatched case")'],
+                                    });
+                                    return (output) => {
+                                        // Cleanup may have changed those owners again. Preserve its
+                                        // versions while completing the original selected restoration.
+                                        const cleaned = storage.snapshot();
+                                        const restored = staged.map((entry) => {
+                                            storage.reset(entry.state);
+                                            before.forEach(
+                                                (_, cell) => (cell.data = cleaned.get(cell)!),
+                                            );
+                                            const nested: Statement[] = [];
+                                            entry.complete(nested);
+                                            normalize(entry.arm.arm.restored, nested);
+                                            return { nested, state: storage.snapshot() };
+                                        });
+                                        storage.reset(cleaned);
+                                        merge(restored, output);
+                                        restored.forEach((arm, n) =>
+                                            output.push({
+                                                head: `${n ? 'else if' : 'if'} (${selected} == ${n})`,
+                                                body: arm.nested,
+                                            }),
+                                        );
+                                        output.push({
+                                            head: 'else',
+                                            body: ['panic("unmatched case")'],
+                                        });
+                                    };
+                                },
+                                finish: (output) => {
+                                    const current = storage.snapshot();
+                                    const replacement = storage.get(joined);
+                                    const restored = arms.map((arm) => {
+                                        storage.reset(arm.state);
+                                        before.forEach(
+                                            (_, cell) => (cell.data = current.get(cell)!),
+                                        );
+                                        storage.put(arm.lens.view, replacement);
+                                        const nested: Statement[] = [];
+                                        arm.lens.finish(nested);
+                                        normalize(arm.arm.restored, nested);
+                                        return { nested, state: storage.snapshot() };
+                                    });
+                                    storage.reset(current);
+                                    merge(restored, output);
+                                    restored.forEach((arm, n) =>
+                                        output.push({
+                                            head: `${n ? 'else if' : 'if'} (${selected} == ${n})`,
+                                            body: arm.nested,
+                                        }),
+                                    );
+                                    output.push({
+                                        head: 'else',
+                                        body: ['panic("unmatched case")'],
+                                    });
+                                },
+                            });
+                            continue;
+                        }
                         declare(id, zero(id), body, name);
                         const before = storage.snapshot();
                         const arms = i.cases.map((arm, armIndex) => {
@@ -656,11 +874,7 @@ export function lowerGo(program: ConcreteProgram): GoFile {
                                 nested,
                             );
                             const result = block(arm.body, nested);
-                            if (i.aggregateJoin)
-                                nested.push(
-                                    `${name} = ${adaptValue(i.aggregateJoin.arms[armIndex]!, result)}`,
-                                );
-                            else nested.push(`${name} = ${result}`);
+                            nested.push(`${name} = ${result}`);
                             return { nested, state: storage.snapshot() };
                         });
                         storage.reset(before);
@@ -761,12 +975,58 @@ export function lowerGo(program: ConcreteProgram): GoFile {
             ...setup,
         ];
 
+        c.captures.forEach((capture, n) => {
+            const name = declare(
+                capture.layout,
+                `environment.(*${type(c.environment)}).capture${n}`,
+                body,
+            );
+            places.set(capture.place, storage.own({ expression: name, layout: capture.layout }));
+        });
         const result = block(c.body, body);
         if (lenses.has(c.body.result)) {
-            return unsupported('Returned lenses require Phase 4');
+            const lens = lenses.get(c.body.result)!;
+            const build = (view: View, id: string): string => {
+                const l = layout(id),
+                    input = l.fields.find((f) => f.name === 'read');
+                if (input?.kind === 'pointer' && input.layout) {
+                    const name = declare(input.layout, read(storage.get(view), input.layout), body);
+                    const output = l.fields.find((f) => f.name === 'replacement');
+                    const write =
+                        output?.kind === 'pointer' && output.layout
+                            ? declare(output.layout, zero(output.layout), body)
+                            : undefined;
+                    return `${type(id)}{read: &${name}${write ? `, replacement: &${write}` : ''}}`;
+                }
+                return `${type(id)}{${l.fields
+                    .filter((f) => f.name.startsWith('item'))
+                    .map(
+                        (f, n) =>
+                            `${f.name}: ${build(storage.project(view, [n]), (f as { layout: string }).layout)}`,
+                    )
+                    .join(', ')}}`;
+            };
+            const out = declare(c.body.layout, build(lens.view, c.body.layout), body);
+            const replacement = endpoint(c.body.layout, 'replacement');
+            storage.put(lens.view, { expression: 'replacement', layout: replacement });
+            const cleanup: Statement[] = [];
+            lens.finish(cleanup);
+            flushParameters(cleanup);
+            body.push(
+                `${out}.restore = func(_ any, replacement ${type(replacement)}) ${type(unit.id)} {\n${printGoStatements([...cleanup, `return ${zero(unit.id)}`], 1).join('\n')}\n}`,
+                `return ${out}`,
+            );
+        } else {
+            flushParameters(body);
+            body.push(`return ${result}`);
         }
-        flushParameters(body);
-        body.push(`return ${result}`);
+        // Residual restoration closures retain setup cells, including locals
+        // initialized only by a selected branch. Go keeps those cells alive.
+        body.unshift(
+            ...variables
+                .filter((v) => !c.parameters.some((_, n) => v.name === `arg${n}`))
+                .flatMap((v) => [`var ${v.name} ${v.type}`, `_ = ${v.name}`]),
+        );
 
         const sig = `func ${codes.get(c.id)}(environment any${c.parameters.map((p, i) => `, arg${i} ${type(p.layout)}`).join('')}) ${type(c.body.layout)}`;
         return { signature: sig, body };

@@ -1,6 +1,6 @@
 # Design: ABI-keyed callable representations
 
-Status: **migration in progress; M0–M4 implemented** (2026-11-20). This replaces
+Status: **migration complete: M0–M5 implemented and verified** (2026-11-20). This replaces
 the identity-precise callable model that phase 6 of the
 [C codegen plan](c-codegen-plan.md) has been extending. The migration plan and
 progress notes below track the remaining work.
@@ -566,3 +566,35 @@ resource-limit diagnostic. No execution samples, snapshots or tests were retired
 1,293 skipped and the one known source-identity snapshot failure (4,627 assertions;
 37 other snapshots pass). The complete native/Wasm corpus passes all 1,254 cases
 (4,379 assertions, 485.92 seconds). `git diff --check` is clean.
+
+### M5: concrete cleanup and Go callable parity
+
+- Removed `ConcreteValueAdapter`, aggregate join descriptors, aggregate-result
+  wrappers and their emission/printing/verification paths. Plain and aggregate
+  callable joins are record moves. Only lens-result normalization remains.
+- Concrete callable descriptors are restricted to callable types or code members;
+  members share their type's physical record and canonical ABI slots. The verifier
+  now checks exact invokes, native wrappers and ordinary lens-result normalizers,
+  without a separate value-conversion tree.
+- Go supports captured closure environments, opaque `any` environments/contexts,
+  native `dup`/`fst` entries, returned thin/scattered lenses, lens-result
+  normalization and selected-lens restoration. Residual restoration uses Go
+  closures to retain setup cells; Go's GC retains backing and environments while
+  semantic cleanup and restoration remain explicit and ordered.
+- The unchanged 625 behavioral programs now live in a shared execution-sample
+  module used by both the C/Wasm and Go harnesses. Go has a four-build concurrency
+  limit and runs the same expected values, plus the two expected runtime traps.
+  Ordinary test runs check Go emission; `LAMINAR_EXEC=1` compiles and executes it.
+
+No behavioral samples or internal tests were retired. The source-identity snapshot
+remains unchanged. M6's optional optimization and flow-class work is outside this
+migration.
+
+**Validation (2026-11-20).** TypeScript passes. The regular suite reports
+2,061 passed, 1,295 skipped and only the known source-identity snapshot failure
+(4,627 assertions; 37 other snapshots pass). Native/Wasm passes all 1,254 cases
+(4,379 assertions, 721.43 seconds). Go executes all 625 shared programs
+(625 assertions, 753.68 seconds), plus both expected runtime traps (2 assertions,
+3.97 seconds). The regular suite was rerun after the corpus runs finished to avoid
+compiler contention; its only remaining failure is the pre-existing snapshot.
+`git diff --check` is clean. **The required M0–M5 migration is complete.**

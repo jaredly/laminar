@@ -28,7 +28,6 @@ import type {
     ConcreteInstruction,
     ConcreteCode,
     ConcreteField,
-    ConcreteValueAdapter,
 } from './concrete-ir.ts';
 import { verifyConcreteProgram } from './verify-concrete.ts';
 
@@ -39,7 +38,7 @@ type Contract = {
     result: ValueRepresentation;
 };
 type Group = {
-    descriptor: ValueRepresentation | CallableMember;
+    descriptor: CallableLayout['descriptor'];
     /** The semantic function type key of every value of this record. */
     type: string;
     key: string;
@@ -249,21 +248,6 @@ export function lowerConcreteProgram(
                 wrappers.set(id, w);
                 return w;
             }
-            if (raw.kind === 'aggregate' && c.result.kind === 'aggregate') {
-                const source = wrapper(g, { ...c, result: raw }, environment);
-                const w: ConcreteWrapper = {
-                    id,
-                    key,
-                    kind: 'adapt-aggregate-result',
-                    abi,
-                    environment,
-                    source: source.id,
-                    adapter: valueAdapter(raw, c.result),
-                    ownership: 'transfer-result',
-                };
-                wrappers.set(id, w);
-                return w;
-            }
             return fail('Unsupported result adapter');
         }
         const w: ConcreteWrapper = variants.has(c.target)
@@ -399,21 +383,6 @@ export function lowerConcreteProgram(
     }
     const sorted = <T extends { id: string }>(xs: T[]): T[] =>
         xs.sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
-    const valueAdapter = (
-        from: ValueRepresentation,
-        to: ValueRepresentation,
-    ): ConcreteValueAdapter => {
-        const endpoints = { from: layout(from), to: layout(to) };
-        if (representationKey(from) === representationKey(to))
-            return { ...endpoints, kind: 'move' };
-        if (from.kind === 'aggregate' && to.kind === 'aggregate')
-            return {
-                ...endpoints,
-                kind: 'aggregate',
-                items: to.items.map((v, n) => valueAdapter(from.items[n]!, v)),
-            };
-        return fail('Unsupported aggregate member adapter');
-    };
     const lowerBody = (
         currentUnit: string,
         body: IRBlock,
@@ -458,19 +427,6 @@ export function lowerConcreteProgram(
                         ...i,
                         out,
                         cases: i.cases.map((c) => ({ ...c, body: lower(c.body) })),
-                        ...(values.get(i.out.id)!.kind === 'aggregate'
-                            ? {
-                                  aggregateJoin: {
-                                      ownership: 'transfer-selected-result' as const,
-                                      arms: i.cases.map((arm) =>
-                                          valueAdapter(
-                                              values.get(arm.body.result)!,
-                                              values.get(i.out.id)!,
-                                          ),
-                                      ),
-                                  },
-                              }
-                            : {}),
                         ...(i.out.type.tag === 'flow'
                             ? {
                                   lensJoin: {

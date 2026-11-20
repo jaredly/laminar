@@ -214,9 +214,7 @@ it('invokes callable ABI slots without dispatch wrappers or callable joins', () 
     expect(calls.every((i) => i.op === 'invoke' && i.wrapper === undefined)).toBe(true);
     expect(
         c.wrappers.every((w) =>
-            ['invoke', 'native', 'dispose', 'adapt-lens-result', 'adapt-aggregate-result'].includes(
-                w.kind,
-            ),
+            ['invoke', 'native', 'dispose', 'adapt-lens-result'].includes(w.kind),
         ),
     ).toBe(true);
 });

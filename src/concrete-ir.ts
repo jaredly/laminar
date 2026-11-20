@@ -35,12 +35,6 @@ export type ConcreteWrapper = {
     | { kind: 'invoke'; code: string; ownership: 'transfer-captures-and-free' }
     | { kind: 'native'; definition: string; ownership: 'no-environment' }
     | {
-          kind: 'adapt-aggregate-result';
-          source: string;
-          adapter: ConcreteValueAdapter;
-          ownership: 'transfer-result';
-      }
-    | {
           kind: 'adapt-lens-result';
           source: string;
           from: string;
@@ -53,7 +47,7 @@ export type ConcreteWrapper = {
 export type CallableLayout = {
     id: string;
     /** The callable type's record (`{ kind: 'callable', type }`), or a member's code. */
-    descriptor: ValueRepresentation | CallableMember;
+    descriptor: Extract<ValueRepresentation, { kind: 'callable' }> | CallableMember;
     /** The semantic function type key every value of this record has. */
     type: string;
     layout: string;
@@ -69,11 +63,6 @@ type ConcreteOutput = {
             : never
         : never;
 };
-/** Affine by-value conversion of one selected branch result. */
-export type ConcreteValueAdapter = { from: string; to: string } & (
-    | { kind: 'move' }
-    | { kind: 'aggregate'; items: ConcreteValueAdapter[] }
-);
 export type ConcreteInstruction =
     | Extract<Instruction, { op: 'bind' | 'borrow' }>
     | (Exclude<
@@ -111,7 +100,6 @@ export type ConcreteInstruction =
               setup?: Cleanup[];
               restored?: Cleanup[];
           }[];
-          aggregateJoin?: { ownership: 'transfer-selected-result'; arms: ConcreteValueAdapter[] };
           lensJoin?: { kind: 'selected'; arms: string[]; result: string };
       } & ConcreteOutput)
     | ({

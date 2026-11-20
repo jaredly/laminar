@@ -14,8 +14,8 @@ requested.
 | M1: type-determined callables, whole-program member sets | **Verified and committed** (`b77a37e`) |
 | M2: callable lenses as phase-5 lenses (delete focus machinery) | **Verified and committed** (`ecfdea1`) |
 | M3: remove callable joins and dispatch leftovers | **Verified and committed** (`b537fcb`) |
-| M4: recursion via the worklist; budgets as resource limits | **Verified and committed** (the M4 commit containing this update) |
-| M5: concrete verifier, C and Go cleanup | Not started |
+| M4: recursion via the worklist; budgets as resource limits | **Verified and committed** (`bb87846`) |
+| M5: concrete verifier, C and Go cleanup | **Verified and committed** (the M5 commit containing this update) |
 
 Unrelated, existing failure, not ours: `can show original identities and source
 origins for debugging` (source-identity snapshot in `test/print-concrete.test.ts`).
@@ -33,7 +33,7 @@ Never update that snapshot with `-u`. When regenerating printed snapshots, filte
 - `git diff --check`: clean.
 
 The C fix includes native wrappers used as adapter sources in `nativeEntries`.
-M2–M4 are implemented below; M5 remains.
+M2–M5 are implemented below.
 
 ## What M1 changed (orientation for M2+)
 
@@ -156,15 +156,33 @@ samples or snapshots were changed.
 Validation: TypeScript passes; regular suite **1436 pass / 1293 skip / 1 fail**
 (the known source-identity snapshot; 4627 assertions, 37 other snapshots pass).
 Native/Wasm: **1254 pass / 0 fail**, 4379 assertions, 485.92 seconds.
-`git diff --check` is clean. The next milestone is **M5**.
+`git diff --check` is clean. M5 is implemented below.
 
-## Next steps (M5)
+## M5 implementation (2026-11-20)
 
-- **M5.**
-  - Simplify the concrete verifier and C now that only type and member records exist.
-  - Possibly emit `NULL` instead of `((Lk){0}).environment` for direct calls of
-    environment-free code (cosmetic).
-  - Go parity.
+Removed aggregate value adapters, aggregate-result wrappers and aggregate join
+metadata from concrete IR, lowering, verification, printing, C and Go. Callable
+records retain one physical layout per type's ABI set; member metadata shares that
+layout. Descriptor types now allow only callable types and code members.
+
+Go now lowers captured closures, opaque environments, native `dup` and `fst`,
+returned lenses, result normalization and selected lenses. Its residual cleanup
+uses Go closures capturing setup cells; backing lifetime follows Go GC, while
+semantic restoration and cleanup remain explicit. Function-scope cells preserve
+selected-branch setup values for restoration.
+
+The C and Go harnesses share `test/backend/execution-samples.ts` (625 unchanged
+programs). New `test/go/abi-migration.test.ts` checks emission on ordinary runs and
+executes all samples with `LAMINAR_EXEC=1`, plus two expected runtime traps.
+Validation: TypeScript passes; regular suite **2061 pass / 1295 skip / 1 fail**
+(the unchanged source-identity snapshot, 4627 assertions; all 37 other snapshots
+pass). Native/Wasm: **1254 pass / 0 fail**, 4379 assertions, 721.43 seconds.
+Go: **625 pass / 0 fail**, 625 assertions, 753.68 seconds, plus **2 pass / 0 fail**
+for the expected runtime traps (3.97 seconds). The final regular run followed the
+corpus runs, resolving compiler-contention timeouts from an earlier overlapping run.
+`git diff --check` is clean. No tests or behavioral samples were retired.
+
+**M0–M5 are complete.** M6 remains optional and unrequested.
 
 ## Gotchas learned in M1
 

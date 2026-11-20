@@ -20,26 +20,27 @@ export function identifier(name: string): string {
     return name;
 }
 
-export function printGo(file: GoFile): string {
-    const printBody = (body: Statement[], depth: number): string[] => {
-        const lines: string[] = [];
-        for (const s of body) {
-            if (typeof s === 'string') {
-                lines.push('\t'.repeat(depth) + s);
+export const printGoStatements = (body: Statement[], depth = 0): string[] => {
+    const lines: string[] = [];
+    for (const s of body) {
+        if (typeof s === 'string') {
+            lines.push('\t'.repeat(depth) + s);
+        } else {
+            const isElse = s.head.startsWith('else');
+            if (isElse && lines.length > 0 && lines[lines.length - 1]!.trimEnd().endsWith('}')) {
+                lines[lines.length - 1] = `${lines[lines.length - 1]!} ${s.head} {`;
             } else {
-                const isElse = s.head.startsWith('else');
-                if (isElse && lines.length > 0 && lines[lines.length - 1]!.trimEnd().endsWith('}')) {
-                    lines[lines.length - 1] = `${lines[lines.length - 1]!} ${s.head} {`;
-                } else {
-                    lines.push('\t'.repeat(depth) + s.head + ' {');
-                }
-                lines.push(...printBody(s.body, depth + 1));
-                lines.push('\t'.repeat(depth) + '}');
+                lines.push('\t'.repeat(depth) + s.head + ' {');
             }
+            lines.push(...printGoStatements(s.body, depth + 1));
+            lines.push('\t'.repeat(depth) + '}');
         }
-        return lines;
-    };
+    }
+    return lines;
+};
 
+export function printGo(file: GoFile): string {
+    const printBody = printGoStatements;
     const sections: string[] = [`package ${file.packageName ?? 'main'}`];
 
     if (file.imports && file.imports.length > 0) {
@@ -57,9 +58,7 @@ export function printGo(file: GoFile): string {
 
     if (file.functions && file.functions.length > 0) {
         sections.push(
-            ...file.functions.map(
-                (f) => `${f.signature} {\n${printBody(f.body, 1).join('\n')}\n}`,
-            ),
+            ...file.functions.map((f) => `${f.signature} {\n${printBody(f.body, 1).join('\n')}\n}`),
         );
     }
 
