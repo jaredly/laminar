@@ -413,3 +413,42 @@ Validation for simplification: TypeScript and scoped diff checks pass. The regul
 suite passes 3142 tests with 75 skips and all 39 snapshots. The Go corpus passes
 all 1592 tests. With `LAMINAR_EXEC=1`, all 61 simplification, placement, naming and
 materialization tests pass (113 assertions). No remote CI was run.
+
+
+## Item 6: dead values and partial aggregates
+
+Tuple components and known constructor payloads now remain logical data through
+bindings, moves, duplication, replacement and tuple joins. A consumer requests only
+the components it needs. For example:
+
+```laminar
+{let (a, _) = (1, charList("discarded"))
+ a}
+```
+
+The generated function returns `1.0` without building the tuple or calling the
+list constructor. Matching a known constructor can inspect its logical payload
+without allocating its physical union representation. Literal payload checks and
+unmatched-case traps remain. Tuple joins materialize only the demanded fields.
+
+Discarded calls still execute in their original order, including calls returning
+unit, input, and closure capture effects. Explicit lens restoration also remains.
+Moves and duplication snapshot demanded components at the original sequence point,
+so a later write cannot change an earlier copied value. This extends the
+demand-driven materialization from item 1; it does not infer call purity or remove
+calls based on their unused results.
+
+Function calls and opaque values retain their existing ABI and representation.
+Passing a whole aggregate still builds that aggregate. Constructor facts are used
+where locally available; dynamic values continue to use runtime tag checks.
+
+`test/go/dead-values.test.ts` covers discarded tuple fields, nested data,
+constructor payloads, joins, replacement, effects, traps, cleanup and snapshots
+through thin and scattered lenses. The CI execution gate includes these tests.
+Regenerated `ok.go` is 338 lines and still produces `[[75,82,79],4]` for the
+scripted game.
+
+Validation: TypeScript and scoped diff checks pass. The regular suite passes
+3152 tests with 97 skips and all 39 snapshots. The Go corpus passes all 1592
+tests. With `LAMINAR_EXEC=1`, all 93 focused Go tests pass (165 assertions).
+No remote CI was run.

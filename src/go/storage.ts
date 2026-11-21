@@ -5,7 +5,7 @@ export const expression = (value: Expression): string =>
     typeof value === 'string' ? value : value();
 // key distinguishes deferred values without evaluating them during storage joins.
 export type Data =
-    | ({ layout: string; address?: string } & (
+    | ({ layout: string; address?: string; constructed?: { name: string; payload: Data } } & (
           | { expression: string; key?: undefined }
           | { expression: Expression; key: string }
       ))
