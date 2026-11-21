@@ -35,7 +35,7 @@ const runtime = new Set([
     'result',
 ]);
 const generated =
-    /^(?:L\d+|A\d+|v\d+|arg\d+|back\d+|Backing\d+|native\d+|result\d+|result_adapter\d+|(?:hostPrint|char_list|print)_L\d+)$/;
+    /^(?:L\d+|A\d+|v\d+|arg\d+|back\d+|Backing\d+|native\d+|result\d+|result_adapter\d+|(?:hostPrint|char_list|print)_[A-Za-z_0-9]+|Backing_[A-Za-z_0-9]+)$/;
 
 /** Escape source spelling, then disambiguate within one Go namespace. */
 export class GoNames {

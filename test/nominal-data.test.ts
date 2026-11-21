@@ -76,7 +76,7 @@ it('lowers boxed recursive variants to tagged C with owned drops and deep copies
     expect(c).toMatch(/drop_L\d+\(\(result0\)\.item1\);/);
     expect(c).toContain('release_context(value.as.v1);');
     const go = emitGo(concrete);
-    expect(go).toMatch(/tag uint32\n\tv0 L\d+\n\tv1 \*L\d+/);
+    expect(go).toMatch(/tag uint32\n\tv0 Unit\n\tv1 \*Tuple_Number_List_Number/);
 });
 
 it('reconstructs borrowed constructor patterns without a pattern-specific runtime', () => {

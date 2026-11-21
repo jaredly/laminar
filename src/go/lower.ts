@@ -14,6 +14,8 @@ import { goBytes, goPart, goStringRuntime } from './strings.ts';
 import { requireImport, usesHost } from '../runtime-imports.ts';
 import { GoNames, functionNames, patternSlots, sourceBinding } from './names.ts';
 import { GoLocals } from './locals.ts';
+import { goTypes, fingerprint } from './types.ts';
+import { reachableGo } from './reachable.ts';
 
 type Completion = (body: Statement[]) => void;
 type Lens = { view: View; finish: Completion; stage?: (body: Statement[]) => Completion };
@@ -52,9 +54,17 @@ export function lowerGo(program: ConcreteProgram): GoFile {
     const hostImports = new Set<string>();
 
     const layouts = new Map(program.layouts.map((l) => [l.id, l]));
-    const names = new Map(program.layouts.map((l, i) => [l.id, go`L${i}`]));
     const codes = functionNames(program);
-    const abiNames = new Map(program.abis.map((a, i) => [a.id, go`A${i}`]));
+    const { names, abis: abiNames, allocator: packageNames } = goTypes(program, codes.values());
+    const tags = new Map(
+        program.layouts
+            .filter((l) => l.kind === 'union')
+            .map((l) => [
+                l.id,
+                l.fields.map((f) => packageNames.source(`${names.get(l.id)}_${f.name}`)),
+            ]),
+    );
+    const tagValue = (id: string, n: number) => tags.get(id)![n]!;
 
     const type = (id: string) => names.get(id)!;
     const layout = (id: string) => layouts.get(id)!;
@@ -170,17 +180,12 @@ export function lowerGo(program: ConcreteProgram): GoFile {
     };
 
     const declarations: string[] = [];
+    const backingTypes = new Map<string, string>();
     let helperCounter = 0;
 
     // Layout type definitions
     for (const l of program.layouts) {
-        if (l.kind === 'f64') {
-            declarations.push(go`type ${type(l.id)} = float64`);
-        } else if (l.kind === 'bool') {
-            declarations.push(go`type ${type(l.id)} = bool`);
-        } else if (l.kind === 'string') {
-            declarations.push(go`type ${type(l.id)} = string`);
-        } else if (l.kind === 'unit') {
+        if (l.kind === 'unit') {
             declarations.push(go`type ${type(l.id)} struct{}`);
         } else if (l.kind === 'record') {
             const fields = l.fields.map((f) => {
@@ -191,6 +196,9 @@ export function lowerGo(program: ConcreteProgram): GoFile {
             });
             declarations.push(go`type ${type(l.id)} struct {\n${joinCode(fields, '\n')}\n}`);
         } else if (l.kind === 'union') {
+            l.fields.forEach((_, n) =>
+                declarations.push(go`const ${tagValue(l.id, n)} uint32 = ${n}`),
+            );
             // Tagged union; boxed variants share immutable payloads under Go's GC.
             const variants = l.fields.map((f, n) =>
                 f.kind === 'value'
@@ -243,7 +251,7 @@ export function lowerGo(program: ConcreteProgram): GoFile {
     const charList = (result: string): string => {
         const existing = charLists.get(result);
         if (existing) return existing;
-        const name = go`char_list_${type(result)}`;
+        const name = packageNames.unique(`char_list_${type(result)}`);
         charLists.set(result, name);
         const nil = tagOf(result, 'nil'),
             cons = tagOf(result, 'cons'),
@@ -255,14 +263,14 @@ export function lowerGo(program: ConcreteProgram): GoFile {
             body: [
                 'starts := []int{}',
                 { head: 'for i := range value', body: ['starts = append(starts, i)'] },
-                go`out := ${type(result)}{tag: ${nil}}`,
+                go`out := ${type(result)}{tag: ${tagValue(result, nil)}}`,
                 'end := len(value)',
                 {
                     head: 'for n := len(starts) - 1; n >= 0; n--',
                     body: [
                         go`cell := new(${type(cell.layout)})`,
                         go`*cell = ${type(cell.layout)}{item0: value[starts[n]:end], item1: out}`,
-                        go`out = ${type(result)}{tag: ${cons}, v${cons}: cell}`,
+                        go`out = ${type(result)}{tag: ${tagValue(result, cons)}, v${cons}: cell}`,
                         'end = starts[n]',
                     ],
                 },
@@ -272,7 +280,7 @@ export function lowerGo(program: ConcreteProgram): GoFile {
         return name;
     };
 
-    const hostHelpers = new Set<string>();
+    const hostHelpers = new Map<string, string>();
     /** Natives that take and return plain data, by registered name. Lens natives are separate. */
     const simpleNative = (op: string, args: string[], result: string): string | undefined => {
         if (['+', '-', '*', '/', '==', '>=', '<='].includes(op))
@@ -283,11 +291,15 @@ export function lowerGo(program: ConcreteProgram): GoFile {
         if (op === 'heapsize') return activeLocals ? activeLocals.scalar('0.0', 0) : '0.0';
         const helper = (name: string, fn: GoFunction, declaration?: string) => {
             if (!hostHelpers.has(name)) {
-                hostHelpers.add(name);
-                helpers.push(fn);
+                const actual = name.startsWith('hostPrint_') ? packageNames.unique(name) : name;
+                hostHelpers.set(name, actual);
+                helpers.push({
+                    ...fn,
+                    signature: fn.signature.replace(/^func [A-Za-z_]\w*/, `func ${actual}`),
+                });
                 if (declaration) declarations.push(declaration);
             }
-            return go`${name}(${args[0]})`;
+            return go`${hostHelpers.get(name)!}(${args[0]})`;
         };
         if (op === 'round')
             return helper('laminarRound', {
@@ -427,6 +439,9 @@ export function lowerGo(program: ConcreteProgram): GoFile {
         const irUnit = program.semantic.program.units.find((u) => u.id === c.unit)!;
         const localNames = new GoNames([
             ...codes.values(),
+            ...names.values(),
+            ...abiNames.values(),
+            ...[...tags.values()].flat(),
             'environment',
             'replacement',
             'focus',
@@ -711,7 +726,10 @@ export function lowerGo(program: ConcreteProgram): GoFile {
                           ),
                       );
             return joinCode(
-                [go`(${read(data, id)}).tag == ${n}`, ...items.filter((m) => m !== 'true')],
+                [
+                    go`(${read(data, id)}).tag == ${tagValue(id, n)}`,
+                    ...items.filter((m) => m !== 'true'),
+                ],
                 ' && ',
             );
         };
@@ -759,7 +777,7 @@ export function lowerGo(program: ConcreteProgram): GoFile {
                 strings && p.kind === 'literal'
                     ? goBytes(p.value as string)
                     : tags && p.kind === 'constructor'
-                      ? String(tagOf(id, p.name))
+                      ? tagValue(id, tagOf(id, p.name))
                       : '',
             );
             // Duplicate labels need ordered matching, which Go switches reject.
@@ -910,13 +928,23 @@ export function lowerGo(program: ConcreteProgram): GoFile {
 
             const expression = build(id, '');
             if (!fields.length) return { expression, finish: lens.finish };
-            const backingType = go`Backing${index}`;
-            declarations.push(
-                go`type ${backingType} struct {\n${joinCode(
-                    fields.map((f) => go`\t${f}`),
-                    '\n',
-                )}\n}`,
-            );
+            const backingKey = fields.join(';');
+            let backingType = backingTypes.get(backingKey);
+            if (!backingType) {
+                const label = fields
+                    .map((f) => f.split(' ').at(-1))
+                    .join('_')
+                    .replace(/[^A-Za-z_0-9]/g, '_')
+                    .slice(0, 50);
+                backingType = packageNames.unique(`Backing_${label}_${fingerprint(backingKey)}`);
+                backingTypes.set(backingKey, backingType);
+                declarations.push(
+                    go`type ${backingType} struct {\n${joinCode(
+                        fields.map((f) => go`\t${f}`),
+                        '\n',
+                    )}\n}`,
+                );
+            }
             body.push(
                 locals.declaration(
                     name,
@@ -1178,7 +1206,7 @@ export function lowerGo(program: ConcreteProgram): GoFile {
                                 construction.push(go`*${box} = ${contents}`);
                                 contents = box;
                             }
-                            return go`${type(id)}{tag: ${n}, v${n}: ${contents}}`;
+                            return go`${type(id)}{tag: ${tagValue(id, n)}, v${n}: ${contents}}`;
                         };
                         break;
                     }
@@ -1866,6 +1894,7 @@ export function lowerGo(program: ConcreteProgram): GoFile {
     });
 
     const printers = new Set<string>();
+    const printerNames = new Map<string, string>();
     const print = (expr: string, id: string, body: Statement[]) => {
         const l = layout(id);
         if (l.kind === 'f64') {
@@ -1884,7 +1913,9 @@ export function lowerGo(program: ConcreteProgram): GoFile {
             });
             body.push('fmt.Print("]")');
         } else if (l.kind === 'union') {
-            const name = go`print_${type(id)}`;
+            if (!printerNames.has(id))
+                printerNames.set(id, packageNames.unique(`print_${type(id)}`));
+            const name = printerNames.get(id)!;
             if (!printers.has(id)) {
                 printers.add(id);
                 const body: Statement[] = [];
@@ -1902,7 +1933,7 @@ export function lowerGo(program: ConcreteProgram): GoFile {
                     body.push(
                         'first := true',
                         'fmt.Print("[")',
-                        { head: 'for value.tag == 1', body: loop },
+                        { head: go`for value.tag == ${tagValue(id, 1)}`, body: loop },
                         'fmt.Print("]")',
                     );
                 } else
@@ -1931,7 +1962,7 @@ export function lowerGo(program: ConcreteProgram): GoFile {
                             }
                         arm.push('fmt.Print("]}")');
                         body.push({
-                            head: go`${n ? 'else if' : 'if'} value.tag == ${n}`,
+                            head: go`${n ? 'else if' : 'if'} value.tag == ${tagValue(id, n)}`,
                             body: arm,
                         });
                     });
@@ -1974,10 +2005,10 @@ export function lowerGo(program: ConcreteProgram): GoFile {
     if (program.layouts.some((l) => l.kind === 'string')) helpers.push(...goStringRuntime());
     functions.push(...helpers, { signature: 'func main()', body: mainBody });
 
-    return {
+    return reachableGo({
         packageName: 'main',
         imports: ['fmt', 'math', 'strconv', ...hostImports],
         declarations,
         functions,
-    };
+    });
 }

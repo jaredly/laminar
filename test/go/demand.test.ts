@@ -39,7 +39,7 @@ it('reborrows compatible incoming storage without private backing or copy-back c
     const code = emit(forwarding);
     // Only the owned entry value needs call backing. Both calls inside twice
     // reborrow the incoming address, rather than staging another private copy.
-    expect(code.match(/^type Backing\d+ struct/gm)).toHaveLength(1);
+    expect(code.match(/^type Backing_[A-Za-z_0-9]+ struct/gm)).toHaveLength(1);
     expect(code).not.toMatch(/^\s*_ = /m);
 });
 

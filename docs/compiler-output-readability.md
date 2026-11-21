@@ -562,3 +562,48 @@ Validation: TypeScript and scoped diff checks pass. The regular suite passes
 All 145 focused Go execution tests pass
 (240 assertions), including reordered endpoints and restoration boundaries.
 No remote CI was run.
+
+
+## Item 10: type names and declaration reachability
+
+Scalar layouts now use `float64`, `bool` and `string` directly. Other layouts use
+names derived from their semantic type or physical role, such as `Unit`,
+`Direction`, `Tuple_Number_Number_Number`, `Lens_float64`, and
+`Scattered_Lens_float64_Lens_float64_Lens_float64`. Environments and callable
+records include their capture or signature shape. ABI names include their typed
+signature and a stable key fingerprint, preserving separate concrete ABI identities.
+Long names are bounded; collisions are escaped and disambiguated in the Go package
+namespace. Local naming reserves the generated type and tag names as well.
+
+Union tags use typed constants such as `Direction_Higher` and `Direction_Lower`
+in construction, matching and result printing. The stored numeric tag values and
+payload representation remain unchanged. Recursive data still uses its original
+boxed edges, and distinct nominal layouts are not structurally merged.
+
+Backing definitions are shared only when their complete ordered field names and
+Go types match. Their names describe the field types and include a fingerprint.
+Individual allocations and logical storage cells remain separate. In particular,
+different callable ABI types keep different backing definitions even if their
+printed function signatures have the same shape.
+
+After lowering and local simplification, a conservative package dependency graph
+starts at `main` and retains reachable functions, types, tag constants and globals.
+Its Go lexer ignores interpreted strings, rune literals, raw strings and comments;
+spelling a helper name in source text cannot keep that helper alive. Reachable
+recursive declaration cycles remain intact, unreachable cycles disappear, and
+package initializer effects and `init` functions are roots. Imports are retained
+only when the remaining code uses their package selectors. This is package-level
+pruning; local demand and declaration placement still use expression metadata.
+
+The game no longer emits unused callable and environment layouts, ABI types,
+scalar aliases or `printString`. `ok.go` is 267 lines and still produces
+`[[75,82,79],4]` for the scripted game.
+
+`test/go/types.test.ts` covers primitive names, nominal tags, backing sharing,
+recursive reachability, literal-aware pruning, initializer roots, naming stability,
+collisions and callable captures. It is included in the CI execution gate. Existing
+emission assertions now check descriptive types rather than numbered aliases.
+
+Validation: TypeScript and scoped diff checks pass. The regular suite passes
+3176 tests with all 39 snapshots. The Go corpus passes all 1592 tests, and all
+160 focused Go execution tests pass (277 assertions). No remote CI was run.

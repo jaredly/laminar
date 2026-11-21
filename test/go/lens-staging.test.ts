@@ -15,23 +15,23 @@ it('forwards an unchanged aggregate lens rather than reconstructing its fields',
 });
 it('reuses backing across sequential homogeneous calls', () => {
     const code = emit(bump + '{let x = 0\n bump(~x)\n bump(~x)\n x}');
-    expect(code.match(/type Backing\d+ struct/g)).toHaveLength(1);
+    expect(code.match(/type Backing_[A-Za-z_0-9]+ struct/g)).toHaveLength(1);
     expect(code.match(/bump\(nil, .*&back0\.read0/g)).toHaveLength(2);
     expect(code).toContain('return back0.read0');
 });
 it('keeps a whole tuple in its existing backing after a call', () => {
     const code = emit(bumpPair + '{let p = (1, 2)\n bumpPair(~p)\n bumpPair(~p)\n p}');
-    expect(code.match(/type Backing\d+ struct/g)).toHaveLength(1);
+    expect(code.match(/type Backing_[A-Za-z_0-9]+ struct/g)).toHaveLength(1);
     expect(code).toMatch(/return back\d+\.read0/);
 });
 it('retains separate typed backing for type-changing calls', () => {
     const code = emit('fn change(~x) {x := true}\n{let x = 1\n change(~x)\n x}');
     expect(code).toContain('replacement: &');
-    expect(code).toMatch(/write\d+ L\d+/);
+    expect(code).toMatch(/write\d+ bool/);
 });
 it('retains allocated staging for escaping lens results', () => {
     const code = emit('fn pass(~x) ~x\n{let x = 1\n pass(~x) := 9\n x}');
-    expect(code).toMatch(/new\(Backing\d+\)/);
+    expect(code).toMatch(/new\(Backing_[A-Za-z_0-9]+\)/);
 });
 
 for (const [name, source, expected, output] of [
