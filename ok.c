@@ -52,10 +52,10 @@ void builder_bool(string_builder *b, _Bool value);
 void builder_number(string_builder *b, double x);
 laminar_string *builder_finish(string_builder *b);
 void print_string(laminar_string *s);
-double step(void *environment, double arg0, Scattered_Lens_double_Lens_double_Lens_double arg1);
+double step(void *environment, double steps, Scattered_Lens_double_Lens_double_Lens_double min_max_lastGuess);
 Tuple_Tuple_Number_Number_Number_Number game(void *environment);
-double nextGuess(void *environment, Direction arg0, Scattered_Lens_double_Lens_double_Lens_double arg1);
-bool handleResponse(void *environment, String arg0, Scattered_Lens_double_Lens_double_Lens_double arg1);
+double nextGuess(void *environment, Direction direction, Scattered_Lens_double_Lens_double_Lens_double min_max_lastGuess);
+bool handleResponse(void *environment, String response, Scattered_Lens_double_Lens_double_Lens_double state);
 Tuple_Tuple_Number_Number_Number_Number entry(void *environment);
 String host_input_String(String value);
 typedef struct { double read0; double read1; double read2; } Backing0;
@@ -66,158 +66,154 @@ typedef struct { double read0; double read1; double read2; } Backing3;
 typedef struct { double read0; double read1; double read2; } Backing4;
 Unit host_print_Unit(String value);
 void print_number(double x);
-double step(void *environment, double arg0, Scattered_Lens_double_Lens_double_Lens_double arg1) {
+double step(void *environment, double steps, Scattered_Lens_double_Lens_double_Lens_double min_max_lastGuess) {
     (void)environment;
-    double v3 = *((arg1).item2).read;
-    string_builder v5 = {0};
-    builder_bytes(&v5, "My guess is ", 12);
-    builder_number(&v5, v3);
-    builder_bytes(&v5, " (higher/lower/match): ", 23);
-    String v4 = builder_finish(&v5);
-    String v6 = host_input_String(v4);
+    double lastGuess = *((min_max_lastGuess).item2).read;
+    string_builder v4 = {0};
+    builder_bytes(&v4, "My guess is ", 12);
+    builder_number(&v4, lastGuess);
+    builder_bytes(&v4, " (higher/lower/match): ", 23);
+    String v3 = builder_finish(&v4);
+    String input = host_input_String(v3);
     Backing0 back0 = {0};
-    back0.read0 = *((arg1).item0).read;
-    back0.read1 = *((arg1).item1).read;
-    back0.read2 = *((arg1).item2).read;
-    Scattered_Lens_double_Lens_double_Lens_double v15 = (Scattered_Lens_double_Lens_double_Lens_double){.item0=(Lens_double){.read=&back0.read0}, .item1=(Lens_double){.read=&back0.read1}, .item2=(Lens_double){.read=&back0.read2}};
-    bool v14 = handleResponse(((Callable_Value_196fc0868a){0}).environment, v6, v15);
-    Tuple_Number_Number_Number v16 = (Tuple_Number_Number_Number){*((v15).item0).read, *((v15).item1).read, *((v15).item2).read};
-    double v19 = {0};
-    double v33 = {0};
-    double v34 = {0};
-    double v35 = {0};
-    if (v14 == 1) {
-        v19 = arg0;
-        v33 = (v16).item0;
-        v34 = (v16).item1;
-        v35 = (v16).item2;
+    back0.read0 = *((min_max_lastGuess).item0).read;
+    back0.read1 = *((min_max_lastGuess).item1).read;
+    back0.read2 = *((min_max_lastGuess).item2).read;
+    Scattered_Lens_double_Lens_double_Lens_double v11 = (Scattered_Lens_double_Lens_double_Lens_double){.item0=(Lens_double){.read=&back0.read0}, .item1=(Lens_double){.read=&back0.read1}, .item2=(Lens_double){.read=&back0.read2}};
+    bool next = handleResponse(((Callable_Value_196fc0868a){0}).environment, input, v11);
+    Tuple_Number_Number_Number v12 = (Tuple_Number_Number_Number){*((v11).item0).read, *((v11).item1).read, *((v11).item2).read};
+    double v14 = {0};
+    double v26 = {0};
+    double v27 = {0};
+    double v28 = {0};
+    if (next == 1) {
+        v14 = steps;
+        v26 = (v12).item0;
+        v27 = (v12).item1;
+        v28 = (v12).item2;
     }
-    else if (v14 == 0) {
+    else if (next == 0) {
         Backing1 back1 = {0};
-        back1.read0 = (v16).item0;
-        back1.read1 = (v16).item1;
-        back1.read2 = (v16).item2;
-        Scattered_Lens_double_Lens_double_Lens_double v31 = (Scattered_Lens_double_Lens_double_Lens_double){.item0=(Lens_double){.read=&back1.read0}, .item1=(Lens_double){.read=&back1.read1}, .item2=(Lens_double){.read=&back1.read2}};
-        double v30 = step(((Callable_Value_196fc0868a){0}).environment, (arg0 + 1), v31);
-        Tuple_Number_Number_Number v32 = (Tuple_Number_Number_Number){*((v31).item0).read, *((v31).item1).read, *((v31).item2).read};
-        v19 = v30;
-        v33 = (v32).item0;
-        v34 = (v32).item1;
-        v35 = (v32).item2;
+        back1.read0 = (v12).item0;
+        back1.read1 = (v12).item1;
+        back1.read2 = (v12).item2;
+        Scattered_Lens_double_Lens_double_Lens_double v24 = (Scattered_Lens_double_Lens_double_Lens_double){.item0=(Lens_double){.read=&back1.read0}, .item1=(Lens_double){.read=&back1.read1}, .item2=(Lens_double){.read=&back1.read2}};
+        double v23 = step(((Callable_Value_196fc0868a){0}).environment, (steps + 1), v24);
+        Tuple_Number_Number_Number v25 = (Tuple_Number_Number_Number){*((v24).item0).read, *((v24).item1).read, *((v24).item2).read};
+        v14 = v23;
+        v26 = (v25).item0;
+        v27 = (v25).item1;
+        v28 = (v25).item2;
     }
     else {
         abort();
     }
-    double v17 = v19;
-    *((arg1).item0).read = v33;
-    *((arg1).item1).read = v34;
-    *((arg1).item2).read = v35;
-    return v17;
+    double v13 = v14;
+    *((min_max_lastGuess).item0).read = v26;
+    *((min_max_lastGuess).item1).read = v27;
+    *((min_max_lastGuess).item2).read = v28;
+    return v13;
 }
 Tuple_Tuple_Number_Number_Number_Number game(void *environment) {
     (void)environment;
-    Tuple_Number_Number_Number v3 = (Tuple_Number_Number_Number){0, 100, 50};
+    Tuple_Number_Number_Number state = (Tuple_Number_Number_Number){0, 100, 50};
     Backing2 back2 = {0};
-    back2.read0 = (v3).item0;
-    back2.read1 = (v3).item1;
-    back2.read2 = (v3).item2;
-    Scattered_Lens_double_Lens_double_Lens_double v9 = (Scattered_Lens_double_Lens_double_Lens_double){.item0=(Lens_double){.read=&back2.read0}, .item1=(Lens_double){.read=&back2.read1}, .item2=(Lens_double){.read=&back2.read2}};
-    double v8 = step(((Callable_Value_196fc0868a){0}).environment, 0, v9);
-    Tuple_Number_Number_Number v10 = (Tuple_Number_Number_Number){*((v9).item0).read, *((v9).item1).read, *((v9).item2).read};
-    return (Tuple_Tuple_Number_Number_Number_Number){v10, v8};
+    back2.read0 = (state).item0;
+    back2.read1 = (state).item1;
+    back2.read2 = (state).item2;
+    Scattered_Lens_double_Lens_double_Lens_double v7 = (Scattered_Lens_double_Lens_double_Lens_double){.item0=(Lens_double){.read=&back2.read0}, .item1=(Lens_double){.read=&back2.read1}, .item2=(Lens_double){.read=&back2.read2}};
+    double steps = step(((Callable_Value_196fc0868a){0}).environment, 0, v7);
+    Tuple_Number_Number_Number v8 = (Tuple_Number_Number_Number){*((v7).item0).read, *((v7).item1).read, *((v7).item2).read};
+    return (Tuple_Tuple_Number_Number_Number_Number){v8, steps};
 }
-double nextGuess(void *environment, Direction arg0, Scattered_Lens_double_Lens_double_Lens_double arg1) {
+double nextGuess(void *environment, Direction direction, Scattered_Lens_double_Lens_double_Lens_double min_max_lastGuess) {
     (void)environment;
-    double v2 = {0};
-    if ((arg0).tag == 0) {
-        double v7 = *((arg1).item1).read;
-        double v10 = *((arg1).item2).read;
-        v2 = ((v7 + v10) / 2);
+    double v1 = {0};
+    if ((direction).tag == 0) {
+        double max = *((min_max_lastGuess).item1).read;
+        double lastGuess = *((min_max_lastGuess).item2).read;
+        v1 = ((max + lastGuess) / 2);
     }
-    else if ((arg0).tag == 1) {
-        double v18 = *((arg1).item2).read;
-        double v21 = *((arg1).item0).read;
-        v2 = ((v18 + v21) / 2);
+    else if ((direction).tag == 1) {
+        double lastGuess_2 = *((min_max_lastGuess).item2).read;
+        double min = *((min_max_lastGuess).item0).read;
+        v1 = ((lastGuess_2 + min) / 2);
     }
     else {
         abort();
     }
-    double v25 = round_double(v2);
-    *((arg1).item0).read = *((arg1).item0).read;
-    *((arg1).item1).read = *((arg1).item1).read;
-    *((arg1).item2).read = *((arg1).item2).read;
-    return v25;
+    return round_double(v1);
 }
-bool handleResponse(void *environment, String arg0, Scattered_Lens_double_Lens_double_Lens_double arg1) {
+bool handleResponse(void *environment, String response, Scattered_Lens_double_Lens_double_Lens_double state) {
     (void)environment;
-    bool v1 = {0};
-    double v44 = {0};
-    double v45 = {0};
-    double v46 = {0};
-    if (string_equals(arg0, "higher", 6)) {
-        string_drop(arg0);
-        Direction v4 = (Direction){.tag=0, .as.v0=(Unit){0}};
+    bool v0 = {0};
+    double v37 = {0};
+    double v38 = {0};
+    double v39 = {0};
+    if (string_equals(response, "higher", 6)) {
+        string_drop(response);
+        Direction v3 = (Direction){.tag=0, .as.v0=(Unit){0}};
         Backing3 back3 = {0};
-        back3.read0 = *((arg1).item0).read;
-        back3.read1 = *((arg1).item1).read;
-        back3.read2 = *((arg1).item2).read;
-        Scattered_Lens_double_Lens_double_Lens_double v6 = (Scattered_Lens_double_Lens_double_Lens_double){.item0=(Lens_double){.read=&back3.read0}, .item1=(Lens_double){.read=&back3.read1}, .item2=(Lens_double){.read=&back3.read2}};
-        double v5 = nextGuess(((Callable_Value_196fc0868a){0}).environment, v4, v6);
-        Tuple_Number_Number_Number v7 = (Tuple_Number_Number_Number){*((v6).item0).read, *((v6).item1).read, *((v6).item2).read};
-        double v12 = (v7).item2;
-        double v13 = (v7).item0;
+        back3.read0 = *((state).item0).read;
+        back3.read1 = *((state).item1).read;
+        back3.read2 = *((state).item2).read;
+        Scattered_Lens_double_Lens_double_Lens_double v4 = (Scattered_Lens_double_Lens_double_Lens_double){.item0=(Lens_double){.read=&back3.read0}, .item1=(Lens_double){.read=&back3.read1}, .item2=(Lens_double){.read=&back3.read2}};
+        double next = nextGuess(((Callable_Value_196fc0868a){0}).environment, v3, v4);
+        Tuple_Number_Number_Number v5 = (Tuple_Number_Number_Number){*((v4).item0).read, *((v4).item1).read, *((v4).item2).read};
+        double last = (v5).item2;
+        double v10 = (v5).item0;
+        (void)v10;
+        Unit v13 = {0};
         (void)v13;
-        Unit v17 = {0};
-        (void)v17;
-        v1 = 0;
-        v44 = v12;
-        v45 = (v7).item1;
-        v46 = v5;
+        v0 = 0;
+        v37 = last;
+        v38 = (v5).item1;
+        v39 = next;
     }
-    else if (string_equals(arg0, "lower", 5)) {
-        string_drop(arg0);
-        Direction v22 = (Direction){.tag=1, .as.v1=(Unit){0}};
+    else if (string_equals(response, "lower", 5)) {
+        string_drop(response);
+        Direction v18 = (Direction){.tag=1, .as.v1=(Unit){0}};
         Backing4 back4 = {0};
-        back4.read0 = *((arg1).item0).read;
-        back4.read1 = *((arg1).item1).read;
-        back4.read2 = *((arg1).item2).read;
-        Scattered_Lens_double_Lens_double_Lens_double v24 = (Scattered_Lens_double_Lens_double_Lens_double){.item0=(Lens_double){.read=&back4.read0}, .item1=(Lens_double){.read=&back4.read1}, .item2=(Lens_double){.read=&back4.read2}};
-        double v23 = nextGuess(((Callable_Value_196fc0868a){0}).environment, v22, v24);
-        Tuple_Number_Number_Number v25 = (Tuple_Number_Number_Number){*((v24).item0).read, *((v24).item1).read, *((v24).item2).read};
-        double v30 = (v25).item2;
-        double v31 = (v25).item1;
-        (void)v31;
-        Unit v35 = {0};
-        (void)v35;
-        v1 = 0;
-        v44 = (v25).item0;
-        v45 = v30;
-        v46 = v23;
+        back4.read0 = *((state).item0).read;
+        back4.read1 = *((state).item1).read;
+        back4.read2 = *((state).item2).read;
+        Scattered_Lens_double_Lens_double_Lens_double v19 = (Scattered_Lens_double_Lens_double_Lens_double){.item0=(Lens_double){.read=&back4.read0}, .item1=(Lens_double){.read=&back4.read1}, .item2=(Lens_double){.read=&back4.read2}};
+        double next_2 = nextGuess(((Callable_Value_196fc0868a){0}).environment, v18, v19);
+        Tuple_Number_Number_Number v20 = (Tuple_Number_Number_Number){*((v19).item0).read, *((v19).item1).read, *((v19).item2).read};
+        double last_2 = (v20).item2;
+        double v25 = (v20).item1;
+        (void)v25;
+        Unit v28 = {0};
+        (void)v28;
+        v0 = 0;
+        v37 = (v20).item0;
+        v38 = last_2;
+        v39 = next_2;
     }
-    else if (string_equals(arg0, "match", 5)) {
-        string_drop(arg0);
-        v1 = 1;
-        v44 = *((arg1).item0).read;
-        v45 = *((arg1).item1).read;
-        v46 = *((arg1).item2).read;
+    else if (string_equals(response, "match", 5)) {
+        string_drop(response);
+        v0 = 1;
+        v37 = *((state).item0).read;
+        v38 = *((state).item1).read;
+        v39 = *((state).item2).read;
     }
     else if (1) {
-        string_drop(arg0);
-        String v40 = string_new("I'm sorry, I didn't understand that. Please say 'higher', 'lower', or 'match'", 77);
-        Unit v41 = host_print_Unit(v40);
-        (void)v41;
-        v1 = 0;
-        v44 = *((arg1).item0).read;
-        v45 = *((arg1).item1).read;
-        v46 = *((arg1).item2).read;
+        string_drop(response);
+        String v33 = string_new("I'm sorry, I didn't understand that. Please say 'higher', 'lower', or 'match'", 77);
+        Unit v34 = host_print_Unit(v33);
+        (void)v34;
+        v0 = 0;
+        v37 = *((state).item0).read;
+        v38 = *((state).item1).read;
+        v39 = *((state).item2).read;
     }
     else {
         abort();
     }
-    *((arg1).item0).read = v44;
-    *((arg1).item1).read = v45;
-    *((arg1).item2).read = v46;
-    return v1;
+    *((state).item0).read = v37;
+    *((state).item1).read = v38;
+    *((state).item2).read = v39;
+    return v0;
 }
 Tuple_Tuple_Number_Number_Number_Number entry(void *environment) {
     (void)environment;
