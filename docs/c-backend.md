@@ -87,8 +87,9 @@ Unsupported native imports retain explicit diagnostics. Dynamic callable entry
 roots require a host adapter. Nominal union data and strings are described in
 *Phase 7: nominal union data* and *Phase 7: strings* below.
 
-Implemented imports are numeric `+`, `-`, `*`, `/`, `==`, `>=`, `<=`, data `dup`,
-logical `fst`, and `charList`. `dup` of a computed focus restores that focus after copying it.
+Every registered runtime import is implemented (see *Phase 7: runtime import
+registry*): numeric `+`, `-`, `*`, `/`, `==`, `>=`, `<=`, `round` and `heapsize`,
+data `dup`, logical `fst`, `charList`, and host `print` and `getInput`. `dup` of a computed focus restores that focus after copying it.
 There is no evaluator fallback. Function roots with parameters need a future host
 adapter, and borrowed lenses cannot escape the test entry boundary. Raw owned-local lenses cannot escape through function returns. Borrowed matching
 uses scoped reconstruction over scalar, tuple and nominal union data. Explicit manual
@@ -893,10 +894,57 @@ Go uses the native `string` type: drop and `dup` need no code, interpolation is
 `strconv.FormatFloat(x, 'e', -1, 64)` digits) and `strconv.FormatBool`, and
 `charList` slices at `range` code point offsets.
 
-`print` and `getInput` stay unsupported until the runtime import registry slice
-defines host printing and input. Strings have no `==` or ordering imports; literal
-patterns are the only comparison.
+`print` and `getInput` are defined by the runtime import registry (below).
+Strings have no `==` or ordering imports; literal patterns are the only comparison.
 
 The work also fixed C number literals: integral values outside the safe-integer
 range (for example `459751200000000000000`) are emitted with `.0`, since they
 exceed every C integer type.
+
+## Phase 7: runtime import registry
+
+`src/runtime-imports.ts` is the one table of runtime imports. Each entry gives the
+source signature, the ownership convention of each argument and of the result
+(`owned` data or a `lens` capability), any host capability (`stdout` or `stdin`),
+the backends that implement it (`reference`, `c`, `go`), and a one-line semantics.
+`builtinTypes()` derives every source signature from it and checks that the
+conventions restate the signature's plain/flow structure. Source arity is the
+signature's arity; no backend passes the old evaluator's hidden context argument.
+
+`requireImport` is the single availability check. The typed-IR evaluator calls it
+when it materializes a native, and C and Go call it for every import the program
+uses, with the program's target. It diagnoses an unregistered import
+(`unknown-import`), a backend without an implementation (`unsupported-import`), and
+a runtime profile without the needed capability (`unavailable-capability`).
+`runtimeCapabilities` gives native, Go and Emscripten/Node both `stdout` and
+`stdin`; Emscripten in the browser has `stdout` only, so `getInput` is rejected
+there at compile time. A unit test exercises every backend claim with one call per
+import.
+
+Semantics added in this slice:
+
+- `round` is ECMAScript `Math.round`: `floor(x)`, plus one when the fraction is at
+  least one half, and a zero result takes the sign of `x` (so `round(-0.4)` is
+  `-0`). This is exact for every double, including `0.49999999999999994`.
+- `heapsize` is 0 on every backend: the checked subset has no explicit heap.
+- `print` consumes a string and writes its bytes and a newline to stdout.
+- `getInput` consumes its prompt, writes it to stdout (flushing C's buffer), and
+  reads one stdin line without its newline. End of input ends the line, so
+  exhausted input reads as `""`.
+
+C emits these as lazily generated helpers (`round_L`, `host_print_L`,
+`host_input_L`). Go uses `laminarRound`, `hostPrint_L` and `hostInput`, which
+reads through one `bufio.Reader` and imports `bufio` and `os` only when used.
+
+Program output shares stdout with the test result protocol. A program that uses a
+host import writes a record separator (U+001E) before each result line; the
+runners (`src/backend/protocol.ts`) treat everything else as program output.
+Other programs' output, and so every existing snapshot, is unchanged. Both runners
+accept `stdin` text and an expected `output`. The evaluator takes matching
+`stdout` and `stdin` options, defaulting to the process stdout and an interactive
+prompt. Execution samples may give `stdin` and `output`, and the harness checks the
+reference output and both backends' output against them.
+
+The plan also lists files and clocks. No source import uses them, so the registry
+has nothing to adapt. Allocation (`allocate_context`) and traps (`abort`, Go
+panics) are backend runtime, not imports.

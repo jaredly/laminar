@@ -30,9 +30,13 @@ for (const sample of samples) {
                 ]);
                 const source = emitGo(c);
                 if (process.env.LAMINAR_EXEC)
-                    expect(await buildAndRunGo(source, { expected: [sample.expected] })).toEqual([
-                        sample.expected,
-                    ]);
+                    expect(
+                        await buildAndRunGo(source, {
+                            expected: [sample.expected],
+                            stdin: sample.stdin,
+                            output: sample.output ?? '',
+                        }),
+                    ).toEqual([sample.expected]);
             }),
         60000,
     );

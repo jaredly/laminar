@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { execFile } from 'node:child_process';
 import { BackendDiagnostic } from '../backend/target.ts';
+import { parseRun } from '../backend/protocol.ts';
 export type BuildOptions = {
     compiler: string;
     wasm?: boolean;
@@ -10,9 +11,13 @@ export type BuildOptions = {
     optimize?: boolean;
     sanitize?: boolean;
     expected?: unknown[];
+    /** Text supplied on the program's stdin. */
+    stdin?: string;
+    /** Exact host output expected besides the result lines. */
+    output?: string;
 };
 // Keep subprocesses asynchronous so independent builds can overlap.
-function runProcess(command: string, args: string[], env = process.env) {
+function runProcess(command: string, args: string[], env = process.env, input = '') {
     return new Promise<{
         stdout: string;
         stderr: string;
@@ -20,7 +25,7 @@ function runProcess(command: string, args: string[], env = process.env) {
         signal: NodeJS.Signals | null;
         error?: Error;
     }>((resolve) => {
-        execFile(
+        const child = execFile(
             command,
             args,
             { encoding: 'utf8', timeout: 60000, env },
@@ -34,6 +39,7 @@ function runProcess(command: string, args: string[], env = process.env) {
                 });
             },
         );
+        child.stdin?.end(input);
     });
 }
 const versions = new Map<string, Promise<string>>();
@@ -78,7 +84,12 @@ export async function buildAndRun(source: string, options: BuildOptions): Promis
         join(directory, 'build.json'),
         JSON.stringify({ options, args, compilerVersion, runtimeVersion }, null, 2),
     );
-    const run = async (command: string, args: string[], stage: 'c-build' | 'c-runtime') => {
+    const run = async (
+        command: string,
+        args: string[],
+        stage: 'c-build' | 'c-runtime',
+        input = '',
+    ) => {
         const env = { ...process.env };
         if (options.sanitize)
             env.ASAN_OPTIONS = [env.ASAN_OPTIONS, 'detect_stack_use_after_return=1']
@@ -89,7 +100,7 @@ export async function buildAndRun(source: string, options: BuildOptions): Promis
         delete env.C_INCLUDE_PATH;
         delete env.CPLUS_INCLUDE_PATH;
         if (options.wasm) delete env.SDKROOT;
-        const result = await runProcess(command, args, env);
+        const result = await runProcess(command, args, env, input);
         if (result.error || result.status !== 0) {
             await writeFile(
                 join(directory, stage + '.json'),
@@ -115,15 +126,14 @@ export async function buildAndRun(source: string, options: BuildOptions): Promis
     };
     await run(options.compiler, args, 'c-build');
     const text = options.wasm
-        ? await run(options.node ?? 'node', [output], 'c-runtime')
-        : await run(output, [], 'c-runtime');
+        ? await run(options.node ?? 'node', [output], 'c-runtime', options.stdin)
+        : await run(output, [], 'c-runtime', options.stdin);
     try {
-        const results = text
-            .trim()
-            .split('\n')
-            .map((line) => JSON.parse(line));
+        const { results, output } = parseRun(text);
         if (options.expected && JSON.stringify(results) !== JSON.stringify(options.expected))
             throw Error(`Expected ${JSON.stringify(options.expected)}`);
+        if (options.output !== undefined && output !== options.output)
+            throw Error(`Expected output ${JSON.stringify(options.output)}`);
         await rm(directory, { recursive: true });
         return results;
     } catch (e) {

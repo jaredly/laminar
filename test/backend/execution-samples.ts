@@ -24,7 +24,16 @@ import { backendCorpus } from './corpus.ts';
 import { nominalSamples } from './nominal-samples.ts';
 import { aslensNominalSamples, borrowedNominalSamples } from './nominal-pattern-samples.ts';
 import { stringSamples } from './string-samples.ts';
-export const samples = [
+import { runtimeImportSamples } from './runtime-import-samples.ts';
+/** Host I/O samples give their stdin and expected output; others perform no I/O. */
+export type ExecutionSample = {
+    name: string;
+    source: string;
+    expected: unknown;
+    stdin?: string;
+    output?: string;
+};
+export const samples: ExecutionSample[] = [
     ...enabledMigrationSamples,
     ...demandSamples,
     ...deferredStorageSamples,
@@ -43,6 +52,7 @@ export const samples = [
             expected,
         })),
     ...stringSamples.map((s) => ({ ...s, name: `string: ${s.name}` })),
+    ...runtimeImportSamples.map((s) => ({ ...s, name: `import: ${s.name}` })),
     ...capturedCleanupSamples,
     ...indirectCallSamples,
     ...unconstrainedClosureSamples,

@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { execFile } from 'node:child_process';
 import { BackendDiagnostic } from '../backend/target.ts';
+import { parseRun } from '../backend/protocol.ts';
 
 export type GoBuildOptions = {
     compiler?: string;
@@ -10,10 +11,20 @@ export type GoBuildOptions = {
     format?: boolean;
     expected?: unknown[];
     env?: NodeJS.ProcessEnv;
+    /** Text supplied on the program's stdin. */
+    stdin?: string;
+    /** Exact host output expected besides the result lines. */
+    output?: string;
 };
 
 // Keep subprocesses asynchronous so independent builds can overlap.
-function runProcess(command: string, args: string[], env = process.env, cwd?: string) {
+function runProcess(
+    command: string,
+    args: string[],
+    env = process.env,
+    cwd?: string,
+    input = '',
+) {
     return new Promise<{
         stdout: string;
         stderr: string;
@@ -21,7 +32,7 @@ function runProcess(command: string, args: string[], env = process.env, cwd?: st
         signal: NodeJS.Signals | null;
         error?: Error;
     }>((resolve) => {
-        execFile(
+        const child = execFile(
             command,
             args,
             { encoding: 'utf8', timeout: 60000, env, cwd },
@@ -35,6 +46,7 @@ function runProcess(command: string, args: string[], env = process.env, cwd?: st
                 });
             },
         );
+        child.stdin?.end(input);
     });
 }
 
@@ -71,9 +83,10 @@ export async function buildAndRunGo(source: string, options: GoBuildOptions = {}
         command: string,
         args: string[],
         stage: 'go-fmt' | 'go-build' | 'go-runtime',
+        input = '',
     ) => {
         const env = { ...process.env, ...options.env };
-        const result = await runProcess(command, args, env, directory);
+        const result = await runProcess(command, args, env, directory, input);
         if (result.error || result.status !== 0) {
             await writeFile(
                 join(directory, `${stage}.json`),
@@ -103,14 +116,12 @@ export async function buildAndRunGo(source: string, options: GoBuildOptions = {}
     }
 
     await run(compiler, ['build', '-o', output, 'main.go'], 'go-build');
-    const text = await run(output, [], 'go-runtime');
+    const text = await run(output, [], 'go-runtime', options.stdin);
 
     try {
-        const results = text
-            .trim()
-            .split('\n')
-            .filter((line) => line.length > 0)
-            .map((line) => JSON.parse(line));
+        const { results, output: printed } = parseRun(text);
+        if (options.output !== undefined && printed !== options.output)
+            throw Error(`Expected output ${JSON.stringify(options.output)}, got ${JSON.stringify(printed)}`);
 
         if (options.expected && JSON.stringify(results) !== JSON.stringify(options.expected)) {
             throw Error(`Expected ${JSON.stringify(options.expected)}, got ${JSON.stringify(results)}`);

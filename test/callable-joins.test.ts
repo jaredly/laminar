@@ -109,12 +109,12 @@ for (const mutation of ['target', 'import', 'ownership', 'abi'] as const)
                 'forged';
         expect(() => emitC(c)).toThrow();
     });
-it('keeps unsupported native imports explicit through runtime joins', () => {
+it('reifies registered natives such as round through runtime joins', () => {
     const p = typedProgram('{let f = match false {true -> fn (x) (x + 1); false -> round}\n f(2)}');
     const c = compileConcreteProgram(p, wasm32Emscripten('test'), [
         { unit: p.units.at(-1)!.id, arguments: [] },
     ]);
-    expect(() => emitC(c)).toThrow('Native import native/round');
+    expect(emitC(c)).toMatch(/\.invoke0=native0[\s\S]*return round_L\d+\(arg0\);/);
 });
 
 it('normalizes differing dynamic lens result shapes', () => {

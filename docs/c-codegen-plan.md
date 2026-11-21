@@ -7,7 +7,7 @@ executes affine closures, typed indirect calls and representation joins through
 [ABI-keyed, type-determined callable representations](abi-callable-representations.md);
 see [*Phase 6 completion*](#phase-6-completion-2026-11-20). Phase 7 runtime and host
 integration and phase 8 optimization remain broader work. Phase 7 is in progress:
-slices 1 (nominal union data) and 2 (strings) are complete (see
+slices 1 (nominal union data), 2 (strings) and 3 (runtime import registry) are complete (see
 [*Phase 7 progress*](#phase-7-progress)).
 
 The scoped lens extensions are complete as of `707521c`; see the
@@ -62,7 +62,7 @@ semantics incidentally while implementing the backend.
 - `src/check.ts` clones the checked AST before lowering and does not carry the occurrence type tables into that clone or generated IR.
 - `src/expr.ts` is untyped interpreter IR. JavaScript values and the evaluator's pointer representation supply information a C backend cannot assume implicitly.
 - `src/value-passing/` contains another lowering/evaluation approach. It is useful prior work, but the active `Checker.lower` calls `src/decompose.ts`. Choose and document one backend contract; do not accidentally combine the semantics of both implementations.
-- `src/builtins.ts` contains a limited signature registry, and `test/fixtures.ts` supplies interpreter implementations. Source signatures, native implementations, and data ownership conventions are not yet one checked registry.
+- `src/builtins.ts` contains a limited signature registry, and `test/fixtures.ts` supplies interpreter implementations. Source signatures, native implementations, and data ownership conventions are not yet one checked registry. (Resolved in phase 7 slice 3: `src/runtime-imports.ts`.)
 
 ## Architecture and recommended decisions
 
@@ -1381,9 +1381,9 @@ literal-pattern drops and the deferred `print`. Three tests that asserted
 formatting was also checked against the evaluator on 150 random decimals of 1–19
 digits across 50 decimal exponents, on C and Go.
 
-Remaining phase-7 restrictions: `print` and `getInput` (slice 3, with the runtime
-import registry), interpolation of non-scalar parts, other natives, and the
-compiler command, runner integration and host exports.
+Remaining phase-7 restrictions after this slice: `print` and `getInput` (done in
+slice 3), interpolation of non-scalar parts, and the compiler command, runner
+integration and host exports.
 
 The execution harness now runs native C only (sanitized `-O0` and plain `-O2`);
 Wasm execution compiled the same C through Emscripten and was dropped.
@@ -1393,3 +1393,35 @@ passed, 756 skipped, no failures, all 38 snapshots passing (4750 assertions).
 `LAMINAR_EXEC=1 bun test test/c/execute.test.ts` passes all 715 native cases
 (2141 assertions, 265.92 seconds); `LAMINAR_EXEC=1 bun test test/go` passes 746
 tests (785 assertions, 153.48 seconds). Remote CI was not run.
+
+### Slice 3: runtime import registry (2026-11-20)
+
+Work item 3: `src/runtime-imports.ts` unifies each import's source signature,
+ownership conventions, host capability, backend implementations and semantics.
+Type checking derives signatures from it, and the evaluator, C and Go all check
+imports through `requireImport`, C and Go against the program's target runtime.
+Every registered import is now implemented on all three: this slice adds `round`
+(ECMAScript `Math.round`, exact for all doubles), `heapsize` (0), `print` and
+`getInput` to C and Go. Host output shares stdout with the result protocol; programs
+with host imports mark result lines with U+001E. Browser Emscripten has no `stdin`
+capability, so `getInput` is rejected there at compile time. See
+[the C backend](c-backend.md#phase-7-runtime-import-registry).
+
+The evaluator's `print` now returns unit as `null`, as other unit values are; it
+returned `[]`.
+
+Tests: 16 runtime-import execution samples (`test/backend/runtime-import-samples.ts`),
+whose `stdin` and expected `output` the harness checks on the reference, native C
+and Go; and 19 unit tests in `test/runtime-imports.test.ts`: signature derivation,
+convention checking, one probe per import for every claimed backend, capability and
+unknown-import diagnostics, result marking and reference capture. A runtime-join test
+that asserted `round` was unsupported now checks that it is reified.
+
+Remaining phase-7 restrictions: interpolation of non-scalar parts, and the compiler
+command, runner integration and host exports.
+
+Validation: TypeScript and `git diff --check` pass. The regular suite reports 2237
+passed, 772 skipped, no failures, all 38 snapshots passing (4803 assertions).
+`LAMINAR_EXEC=1 bun test test/c/execute.test.ts` passes all 731 native cases
+(2918 assertions, 276.10 seconds); `LAMINAR_EXEC=1 bun test test/go` passes 762
+tests (801 assertions, 162.10 seconds). Remote CI was not run.

@@ -14,6 +14,7 @@ import type {
 } from './typed-ir.ts';
 import { verifyTypedProgram } from './verify-ir.ts';
 import createPrompt from 'prompt-sync';
+import { requireImport } from './runtime-imports.ts';
 
 const EMPTY = Symbol('empty-place');
 type Variant = { kind: 'variant'; name: string; items: Data[] };
@@ -61,6 +62,10 @@ export type ReferenceOptions = {
     onDisposeClosure?: () => void;
     /** Deterministic test guard, not a semantic recursion restriction. */
     maxSteps?: number;
+    /** Host stdout for `print` and `getInput` prompts; defaults to the process stdout. */
+    stdout?: (text: string) => void;
+    /** Host line input for `getInput`, without its newline; defaults to an interactive prompt. */
+    stdin?: () => string;
 };
 
 /** Executes only typed IR. It does not call source inference, AST lowering, or the old evaluator. */
@@ -357,12 +362,16 @@ export function executeTypedProgram(
                 case 'dup':
                     return copy(owned(lens(args[0]).peek()));
                 case 'getInput': {
-                    const p = createPrompt();
-                    return p(data(args[0]) as string);
+                    const prompt = data(args[0]) as string;
+                    if (!options.stdin) return createPrompt()(prompt) ?? '';
+                    (options.stdout ?? ((text) => process.stdout.write(text)))(prompt);
+                    return options.stdin();
                 }
                 case 'print': {
-                    console.log(data(args[0]));
-                    return [];
+                    (options.stdout ?? ((text) => process.stdout.write(text)))(
+                        `${data(args[0]) as string}\n`,
+                    );
+                    return null;
                 }
                 case 'fst': {
                     const parent = lens(args[0]);
@@ -454,7 +463,10 @@ export function executeTypedProgram(
                             i.origin,
                         );
                     result = i.instance.definition.startsWith('native/')
-                        ? { kind: 'native', name: i.instance.definition.slice(7) }
+                        ? {
+                              kind: 'native',
+                              name: requireImport(i.instance.definition, 'reference').name,
+                          }
                         : (definitions.get(i.instance.definition) ??
                           error('Unavailable definition', i.origin));
                     break;

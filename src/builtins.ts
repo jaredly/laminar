@@ -1,29 +1,15 @@
-import { Solver, con, fn, plain, flow, tuple, type Scheme, type Ty } from './types.ts';
+import { Solver, con, fn, plain, type Scheme } from './types.ts';
+import { checkConventions, runtimeImports } from './runtime-imports.ts';
 
-/** Source signatures: the evaluator's hidden context argument is not a source argument. */
+/** Source signatures, derived from the runtime import registry. */
 export function builtinTypes(): Map<string, Scheme> {
     const s = new Solver(),
         result = new Map<string, Scheme>();
-    const add = (name: string, type: Ty) => result.set(name, s.generalize(type, []));
-    const number = con('Number'),
-        bool = con('Bool'),
-        string = con('String');
-    for (const name of ['+', '-', '*', '/'])
-        add(name, fn([plain(number), plain(number)], plain(number)));
-    for (const name of ['==', '>=', '<='])
-        add(name, fn([plain(number), plain(number)], plain(bool)));
-    add('round', fn([plain(number)], plain(number)));
-    add('heapsize', fn([], plain(number)));
-    const a = s.fresh(),
-        b = s.fresh(),
-        replacement = s.fresh();
-    add('fst', fn([flow(tuple(a, b), tuple(replacement, b))], flow(a, replacement)));
-    add('dup', fn([flow(a, a)], plain(a)));
-    add('charList', fn([plain(string)], plain(con('List', string))));
-    add('getInput', fn([plain(string)], plain(string)));
-    add('print', fn([plain(string)], plain(tuple())));
-    // Remaining fixture builtins need a runtime calling-convention/resource audit.
-    // Missing signatures are errors, never implicit `any`.
+    for (const entry of runtimeImports) {
+        const type = entry.signature(s);
+        checkConventions(entry, type);
+        result.set(entry.name, s.generalize(type, []));
+    }
     return result;
 }
 

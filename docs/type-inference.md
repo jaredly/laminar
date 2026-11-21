@@ -36,7 +36,7 @@ const compiled = checkFile(file);
 - Branch joins track both types and availability: a value consumed on any branch is unavailable after the join until replenished.
 - Structured `TypeDiagnostic` errors with a code and source location. No implicit `any` fallback.
 
-`builtinTypes()` contains audited signatures for arithmetic, numeric comparisons, `round`, `heapsize`, `charList`, `fst`, and `dup`. `constructorTypes()` registers `nil` and `cons`. Supply additional closed schemes through `new Checker(environment, constructors)`; all free metavariables in external signatures must be quantified. Types/schemes are separate from parsed annotation syntax. Parameterized types such as `List<a>` are currently internal/printed types, without new surface annotation syntax.
+`builtinTypes()` derives its audited signatures from the runtime import registry (`src/runtime-imports.ts`): arithmetic, numeric comparisons, `round`, `heapsize`, `charList`, `fst`, `dup`, `getInput` and `print`. `constructorTypes()` registers `nil` and `cons`. Supply additional closed schemes through `new Checker(environment, constructors)`; all free metavariables in external signatures must be quantified. Types/schemes are separate from parsed annotation syntax. Parameterized types such as `List<a>` are currently internal/printed types, without new surface annotation syntax.
 
 ## Current restrictions
 

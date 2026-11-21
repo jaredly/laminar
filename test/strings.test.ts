@@ -66,10 +66,3 @@ it('compares string literal patterns by content and drops the matched string', (
     expect(c).toMatch(/string_equals\(v\d+, "a", 1\)/);
     expect(c).toMatch(/string_drop\(v\d+\);/);
 });
-
-it('leaves host printing and input to the runtime import registry', () => {
-    expect(() => emitC(compile('print("x")'))).toThrow('Native import native/print');
-    expect(() => emitGo(compile('print("x")', goTarget('test')))).toThrow(
-        'Native import native/print',
-    );
-});

@@ -5,6 +5,7 @@ import { verifyConcreteProgram } from '../verify-concrete.ts';
 import { BackendDiagnostic } from '../backend/target.ts';
 import { identifier, type Statement, type TranslationUnit } from './syntax.ts';
 import { appendPart, cBytes, stringRuntime, stringType } from './strings.ts';
+import { requireImport, usesHost } from '../runtime-imports.ts';
 
 // Replacement contents are already in the logical focus. Staging makes them
 // visible through adapters and returns the cleanup/restoration still to perform.
@@ -19,6 +20,11 @@ const unsupported = (message: string): never => {
 /** Resolve logical places and homogeneous restoration before printing any C. */
 export function lowerC(program: ConcreteProgram): TranslationUnit {
     verifyConcreteProgram(program);
+    // Every import reaching C must be registered, implemented and available on the target.
+    const imports = program.semantic.program.imports
+        .map((i) => i.definition)
+        .filter((d) => d.startsWith('native/'));
+    imports.forEach((d) => requireImport(d, 'c', program.target));
     const layouts = new Map(program.layouts.map((l) => [l.id, l]));
     const names = new Map(program.layouts.map((l, i) => [l.id, `L${i}`]));
     const codes = new Map(program.code.map((c, i) => [c.id, `fn${i}`]));
@@ -155,7 +161,7 @@ export function lowerC(program: ConcreteProgram): TranslationUnit {
     // Union operations are recursive C functions, generated once per layout on first use.
     const unionHelpers = new Map<string, string>();
     const unionHelper = (
-        kind: 'drop' | 'dup' | 'print' | 'char_list',
+        kind: 'drop' | 'dup' | 'print' | 'char_list' | 'round' | 'host_print' | 'host_input',
         id: string,
         result: string,
         generate: (body: Statement[]) => void,
@@ -278,6 +284,63 @@ export function lowerC(program: ConcreteProgram): TranslationUnit {
             );
         }, type(text));
     };
+    /** Natives that take and return plain data, by registered name. Lens natives are separate. */
+    const simpleNative = (
+        op: string,
+        args: string[],
+        result: string,
+        parameters: readonly string[],
+    ): string | undefined => {
+        if (['+', '-', '*', '/', '==', '>=', '<='].includes(op))
+            return `(${args[0]} ${op} ${args[1]})`;
+        if (op === 'charList') return `${charList(result)}(${args[0]})`;
+        if (op === 'heapsize') return '0.0';
+        if (op === 'round')
+            return `${unionHelper('round', result, type(result), (body) =>
+                body.push(
+                    'double rounded = floor(value);',
+                    { head: 'if (value - rounded >= 0.5)', body: ['rounded += 1;'] },
+                    // Math.round keeps the sign of a zero result, e.g. round(-0.4) is -0.
+                    { head: 'if (rounded == 0)', body: ['rounded = copysign(0.0, value);'] },
+                    'return rounded;',
+                ),
+            )}(${args[0]})`;
+        if (op === 'print')
+            return `${unionHelper(
+                'host_print',
+                result,
+                type(result),
+                (body) =>
+                    body.push(
+                        { head: 'if (value)', body: ['fwrite(value->bytes, 1, value->length, stdout);'] },
+                        'putchar(10);',
+                        'string_drop(value);',
+                        `return ${zero(result)};`,
+                    ),
+                type(parameters[0]!),
+            )}(${args[0]})`;
+        if (op === 'getInput')
+            return `${unionHelper(
+                'host_input',
+                result,
+                type(result),
+                (body) =>
+                    body.push(
+                        { head: 'if (value)', body: ['fwrite(value->bytes, 1, value->length, stdout);'] },
+                        'fflush(stdout);',
+                        'string_drop(value);',
+                        'string_builder line = {0};',
+                        'int c;',
+                        {
+                            head: 'while ((c = getchar()) != EOF && c != 10)',
+                            body: ['char byte = (char)c;', 'builder_bytes(&line, &byte, 1);'],
+                        },
+                        'return builder_finish(&line);',
+                    ),
+                type(parameters[0]!),
+            )}(${args[0]})`;
+        return undefined;
+    };
     for (const w of program.wrappers) {
         if (w.kind !== 'dispose' || !w.captures.length) continue;
         const signature = `${type(unit.id)} ${disposers.get(w.id)}(void *environment)`;
@@ -315,9 +378,14 @@ export function lowerC(program: ConcreteProgram): TranslationUnit {
             ...abi.arguments.map((_, i) => `(void)arg${i};`),
         ];
         let result: string;
-        const op = w.definition.slice(7);
-        if (['+', '-', '*', '/', '==', '>=', '<='].includes(op)) result = `(arg0 ${op} arg1)`;
-        else if (op === 'charList') result = `${charList(abi.result)}(arg0)`;
+        const op = requireImport(w.definition, 'c').name;
+        const simple = simpleNative(
+            op,
+            abi.arguments.map((_, i) => `arg${i}`),
+            abi.result,
+            abi.arguments,
+        );
+        if (simple !== undefined) result = simple;
         else if (op === 'dup')
             result = duplicate(
                 read(storage.get(incoming('arg0', abi.arguments[0]!)), abi.result),
@@ -1164,11 +1232,13 @@ export function lowerC(program: ConcreteProgram): TranslationUnit {
                                         ? `${wrapperFunction(i.wrapper!)}((${value(i.callee)}).environment${args.map((a) => `, ${a}`).join('')})`
                                         : `(${value(i.callee)}).${identifier(i.field)}((${value(i.callee)}).environment${args.map((a) => `, ${a}`).join('')})`;
                             else if (w?.kind === 'native') {
-                                const op = w.definition.slice(7);
-                                if (['+', '-', '*', '/', '==', '>=', '<='].includes(op))
-                                    expr = `(${args[0]} ${op} ${args[1]})`;
-                                else if (op === 'charList') expr = `${charList(id)}(${args[0]})`;
-                                else unsupported(`Native import ${w.definition}`);
+                                expr =
+                                    simpleNative(
+                                        requireImport(w.definition, 'c').name,
+                                        args,
+                                        id,
+                                        abi.arguments,
+                                    ) ?? unsupported(`Native import ${w.definition}`);
                             } else return unsupported('Disposer invocation');
                         }
                         declare(id, expr, body, name);
@@ -1449,11 +1519,14 @@ export function lowerC(program: ConcreteProgram): TranslationUnit {
         ],
     });
     const main: Statement[] = [];
+    const host = usesHost(imports);
     for (const entry of program.entries) {
         const c = program.code.find((c) => c.id === entry)!;
         if (c.parameters.length) unsupported('Function entry requires an explicit host adapter');
         const v = `result${main.length}`;
         main.push(`${type(c.body.layout)} ${v} = ${codes.get(entry)}(NULL);`, `(void)${v};`);
+        // With host output on stdout, a record separator (U+001E) introduces each result.
+        if (host) main.push('putchar(30);');
         print(v, c.body.layout, main);
         main.push('putchar(10);');
         drop({ expression: v, layout: c.body.layout }, main);

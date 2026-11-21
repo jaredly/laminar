@@ -5,7 +5,7 @@ import { spawnSync } from 'node:child_process';
 import { typedProgram } from '../backend/typed-program.ts';
 import { compileConcreteProgram } from '../../src/lower-concrete.ts';
 import { targetConfig } from '../../src/backend/target.ts';
-import { executeTypedProgram } from '../../src/eval-typed.ts';
+import { referenceRun } from '../backend/reference-run.ts';
 import { emitC } from '../../src/c/emit.ts';
 import { buildAndRun } from '../../src/c/build.ts';
 // Bun schedules concurrent tests in groups; cap expensive toolchain jobs at four.
@@ -75,7 +75,9 @@ for (const sample of samples)
             withBuildSlot(async () => {
                 const { p, c } = compile(sample.source);
                 const source = emitC(c);
-                expect<unknown>(normalize(executeTypedProgram(p))).toEqual(sample.expected);
+                const reference = referenceRun(p, sample.stdin);
+                expect<unknown>(normalize(reference.result)).toEqual(sample.expected);
+                expect(reference.output).toBe(sample.output ?? '');
                 // Sanitized -O0 checks memory and UB; plain -O2 checks optimized semantics.
                 for (const options of [{ sanitize: true }, { optimize: true }])
                     expect(
@@ -83,6 +85,8 @@ for (const sample of samples)
                             compiler: 'clang',
                             ...options,
                             expected: [sample.expected],
+                            stdin: sample.stdin,
+                            output: sample.output ?? '',
                         }),
                     ).toEqual([sample.expected]);
             }),

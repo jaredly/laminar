@@ -11,6 +11,7 @@ import {
     type GoFunction,
 } from './syntax.ts';
 import { goBytes, goPart, goStringRuntime } from './strings.ts';
+import { requireImport, usesHost } from '../runtime-imports.ts';
 
 type Completion = (body: Statement[]) => void;
 type Lens = { view: View; finish: Completion; stage?: (body: Statement[]) => Completion };
@@ -27,6 +28,12 @@ const unsupported = (message: string): never => {
 /** Lower ConcreteProgram to Go syntax tree. */
 export function lowerGo(program: ConcreteProgram): GoFile {
     verifyConcreteProgram(program);
+    // Every import reaching Go must be registered, implemented and available on the target.
+    const imports = program.semantic.program.imports
+        .map((i) => i.definition)
+        .filter((d) => d.startsWith('native/'));
+    imports.forEach((d) => requireImport(d, 'go', program.target));
+    const hostImports = new Set<string>();
 
     const layouts = new Map(program.layouts.map((l) => [l.id, l]));
     const names = new Map(program.layouts.map((l, i) => [l.id, `L${i}`]));
@@ -228,6 +235,60 @@ export function lowerGo(program: ConcreteProgram): GoFile {
         return name;
     };
 
+    const hostHelpers = new Set<string>();
+    /** Natives that take and return plain data, by registered name. Lens natives are separate. */
+    const simpleNative = (op: string, args: string[], result: string): string | undefined => {
+        if (['+', '-', '*', '/', '==', '>=', '<='].includes(op))
+            return `(${args[0]} ${op} ${args[1]})`;
+        if (op === 'charList') return `${charList(result)}(${args[0]})`;
+        if (op === 'heapsize') return '0.0';
+        const helper = (name: string, fn: GoFunction, declaration?: string) => {
+            if (!hostHelpers.has(name)) {
+                hostHelpers.add(name);
+                helpers.push(fn);
+                if (declaration) declarations.push(declaration);
+            }
+            return `${name}(${args[0]})`;
+        };
+        if (op === 'round')
+            return helper('laminarRound', {
+                signature: 'func laminarRound(x float64) float64',
+                body: [
+                    'rounded := math.Floor(x)',
+                    { head: 'if x-rounded >= 0.5', body: ['rounded++'] },
+                    // Math.round keeps the sign of a zero result, e.g. round(-0.4) is -0.
+                    { head: 'if rounded == 0', body: ['rounded = math.Copysign(0, x)'] },
+                    'return rounded',
+                ],
+            });
+        if (op === 'print')
+            return helper(`hostPrint_${type(result)}`, {
+                signature: `func hostPrint_${type(result)}(value string) ${type(result)}`,
+                body: ['fmt.Print(value + "\\n")', `return ${zero(result)}`],
+            });
+        if (op === 'getInput') {
+            hostImports.add('bufio').add('os');
+            return helper(
+                'hostInput',
+                {
+                    signature: 'func hostInput(prompt string) string',
+                    body: [
+                        'fmt.Print(prompt)',
+                        { head: 'if stdin == nil', body: ['stdin = bufio.NewReader(os.Stdin)'] },
+                        "line, _ := stdin.ReadString('\\n')",
+                        {
+                            head: "if len(line) > 0 && line[len(line)-1] == '\\n'",
+                            body: ['line = line[:len(line)-1]'],
+                        },
+                        'return line',
+                    ],
+                },
+                'var stdin *bufio.Reader',
+            );
+        }
+        return undefined;
+    };
+
     for (const w of program.wrappers) {
         if (w.kind !== 'native' || !nativeEntries.has(w.id)) continue;
         const abi = program.abis.find((a) => a.id === w.abi)!;
@@ -240,10 +301,13 @@ export function lowerGo(program: ConcreteProgram): GoFile {
             ...abi.arguments.map((_, i) => `_ = arg${i}`),
         ];
         let result: string;
-        const op = w.definition.slice(7);
-        if (['+', '-', '*', '/', '==', '>=', '<='].includes(op)) {
-            result = `(arg0 ${op} arg1)`;
-        } else if (op === 'charList') result = `${charList(abi.result)}(arg0)`;
+        const op = requireImport(w.definition, 'go').name;
+        const simple = simpleNative(
+            op,
+            abi.arguments.map((_, i) => `arg${i}`),
+            abi.result,
+        );
+        if (simple !== undefined) result = simple;
         else if (op === 'dup')
             result = read(storage.get(incoming('arg0', abi.arguments[0]!)), abi.result);
         else if (op === 'fst') {
@@ -736,14 +800,9 @@ export function lowerGo(program: ConcreteProgram): GoFile {
                                     ? `${direct}((${value(i.callee)}).environment${args.map((a) => `, ${a}`).join('')})`
                                     : `(${value(i.callee)}).${identifier(i.field!)}((${value(i.callee)}).environment${args.map((a) => `, ${a}`).join('')})`;
                             } else if (w?.kind === 'native') {
-                                const op = w.definition.slice(7);
-                                if (['+', '-', '*', '/', '==', '>=', '<='].includes(op)) {
-                                    expr = `(${args[0]} ${op} ${args[1]})`;
-                                } else if (op === 'charList') {
-                                    expr = `${charList(id)}(${args[0]})`;
-                                } else {
-                                    return unsupported(`Native import ${w.definition}`);
-                                }
+                                expr =
+                                    simpleNative(requireImport(w.definition, 'go').name, args, id) ??
+                                    unsupported(`Native import ${w.definition}`);
                             } else {
                                 return unsupported(`Wrapper kind ${w?.kind}`);
                             }
@@ -1265,6 +1324,8 @@ export function lowerGo(program: ConcreteProgram): GoFile {
         const v = `result${mainBody.length}`;
         mainBody.push(`var ${v} ${type(c.body.layout)} = ${codes.get(entry)}(nil)`);
         mainBody.push(`_ = ${v}`);
+        // With host output on stdout, a record separator (U+001E) introduces each result.
+        if (usesHost(imports)) mainBody.push('fmt.Print("\\x1e")');
         print(v, c.body.layout, mainBody);
         mainBody.push('fmt.Println()');
     }
@@ -1274,7 +1335,7 @@ export function lowerGo(program: ConcreteProgram): GoFile {
 
     return {
         packageName: 'main',
-        imports: ['fmt', 'math', 'strconv'],
+        imports: ['fmt', 'math', 'strconv', ...hostImports],
         declarations,
         functions,
     };
