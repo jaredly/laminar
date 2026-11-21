@@ -306,6 +306,53 @@ Each optimization needs a concrete before/after C example, verifier preservation
 
 **Exit gate:** semantic regressions remain covered and measured improvements justify the added complexity. This phase is not a prerequisite for a correct initial backend.
 
+### Phase 8 slice 1: unit-only closure environments (2026-11-20)
+
+`emitC(program, { optimize: true })` (or `lowerC` with the same option) omits
+heap environments for closures whose captures all have the concrete unit layout.
+The default remains the unoptimized debugging path. This option is independent
+of the CLI's `--optimize`, which selects the downstream compiler's `-O2`.
+Capture creation still evaluates in source order. Invocation reconstructs unit
+captures, and the callable has a null environment and null disposer. Other owned
+captures retain the original allocation and disposal path. The callable layout,
+exact entry signatures, concrete IR and public host ABI do not change; the
+concrete verifier runs before either lowering mode.
+
+For `{let u = (); let f = fn (x) {let v = u; x + 1}; f(2)}` (line breaks
+in place of semicolons), the essential C change is:
+
+```c
+// Before: one unit capture in a heap environment.
+Env *ctx = allocate_context(sizeof *ctx);
+ctx->capture0 = unit_value;
+Callable f = {.environment=ctx, .dispose=dispose_unit, .entry=invoke};
+// invoke reads capture0 and releases ctx.
+
+// After: same callable ABI, reconstructed unit capture inside invoke.
+Callable f = {.environment=NULL, .entry=invoke};
+// invoke binds its capture to (Unit){0}; no environment read or release.
+```
+
+Measurements on macOS arm64, clang 21 and Emscripten 6.0.5, at `-O2`
+(Wasm uses Node, `EXIT_RUNTIME=1`, `ASSERTIONS=1`): emitted C 2437 → 2298
+bytes; native executable 34000 → 33992 bytes; Wasm binary 13336 → 13297
+bytes. One allocation/release pair is eliminated per closure creation/invocation.
+Median process-launch times over ten launches after one warmup were native
+10.15 → 6.26 ms and Node/Wasm 57.92 → 57.07 ms. These startup-dominated
+measurements do **not** establish a throughput improvement. No representation
+variants were added. The small size benefit supports an opt-in experiment;
+phase 8's broader optimization/measurement exit gate remains open.
+
+`test/c/optimize.test.ts` checks invoked, unused, escaping and string-owning
+closures, unchanged concrete IR and baseline emission, and differentially executes
+both modes under `LAMINAR_EXEC=1`: native sanitized `-O0`, native `-O2`, and
+Emscripten/Node `-O2` (4 tests, 35 assertions, all passing). TypeScript and
+`git diff --check` pass. The regular suite passes 3112 tests, with 44 skips,
+zero failures and all 39 snapshots passing (4869 assertions). The first regular
+run encountered Zig cache permission errors; rerunning with Zig caches under
+`/tmp` passed. Local Emscripten cache writes require a writable
+`EM_CACHE`; this run used a copy under `/tmp`. No remote CI was run.
+
 ## Validation matrix and phase handoffs
 
 | Concern | Required evidence |
@@ -1522,7 +1569,7 @@ exports, and how to inspect emitted C, Go, Wasm and concrete IR. `laminar emit
 Parser-only lens features: the checker keeps three explicit lens diagnostics
 (`unsupported-lens-pattern`, `unsupported-alias`, `unsupported-lens-case`). Source
 probes did not reach them, and no test does; they are recorded as defensive checks
-in [the compiler](compiler.md#parser-only-lens-features).
+in [the compiler](compiler.md#lens-support-and-defensive-diagnostics).
 
 Exit gate. Every checker-accepted corpus case compiles and matches the reference
 on native C and Go, or is a listed, tested backend restriction: non-scalar

@@ -1,4 +1,19 @@
 
+Cleanup of the generated go:
+- `var` hoisting seems uselessss
+- `type L0 = float64` is useless why would you even do that
+- let's do better type names, `L1` should be like float3tuple or something
+- `L2` can be named after the first variable that uses it, in this case `state`
+
+---
+
+- c is maybe mostly working? or largely idk
+- do the 'remove manual, aslens is plenty' thing
+- get typescript as a target going
+- then get wasm as a target going
+- then maybe go
+
+---
 
 Next steps:
 - type alias & unions

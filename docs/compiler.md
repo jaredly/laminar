@@ -78,18 +78,41 @@ diagnostic (`test/corpus.test.ts`, *backend restrictions*):
 Programs the checker rejects are not backend restrictions; the corpus keeps them
 apart (*negative checker results*).
 
-## Parser-only lens features
+## Lens support and defensive diagnostics
 
-The parser accepts a few lens forms that the checker still rejects with explicit
-diagnostics rather than compiling: constructor alias patterns where restoration
-is not yet checked (`unsupported-lens-pattern`), persistent aliases whose source
-is not a variable lens (`unsupported-alias`), and matching directly on a lens
-term (`unsupported-lens-case`). Source probes for this release (borrowed list and
-option matches, `fst` focuses, lens function parameters with list patterns,
-parenthesized alias sources, matches over `fst(~x)`) were all either accepted or
-rejected earlier by the parser or by ordinary type errors, so these diagnostics
-were not reached. They are untested defensive checks; any form that reaches one
-is a checker gap to record here, not a backend restriction.
+Borrowed constructor patterns, persistent aliases of computed lenses, and matching
+on borrowed lenses are supported. For example, each of these programs checks and
+emits C:
+
+```lm
+{let xs = [1, 2]
+ let [head, ...tail] = ~xs
+ dup(~head)}
+```
+
+```lm
+{let pair = (1, 2)
+ let a = ~fst(~pair)
+ a := 3
+ dup(~a)}
+```
+
+```lm
+{let xs = [1, 2]
+ match ~xs {
+   [] -> 0
+   [head, ...tail] -> dup(~head)
+ }}
+```
+
+Borrowed-pattern normalization expands constructor aliases and borrowed matches
+before inference; computed aliases have their own checking path. The inferencer
+retains defensive diagnostics named `unsupported-lens-pattern`,
+`unsupported-alias` and `unsupported-lens-case`, but their presence does not
+establish a source-language restriction. No source example is currently confirmed
+to reach these guards through the normal compiler pipeline. They should not be
+listed as parser-only features; a reproducible example reaching one would identify
+a checker gap to investigate separately from C backend restrictions.
 
 ## Host exports
 

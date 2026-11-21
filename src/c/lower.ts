@@ -28,7 +28,7 @@ export type CExport = { symbol: string; entry: number };
  */
 export function lowerC(
     program: ConcreteProgram,
-    options: { exports?: readonly CExport[] } = {},
+    options: { exports?: readonly CExport[]; optimize?: boolean } = {},
 ): TranslationUnit {
     verifyConcreteProgram(program);
     // Every import reaching C must be registered, implemented and available on the target.
@@ -42,6 +42,10 @@ export function lowerC(
     const abiNames = new Map(program.abis.map((a, i) => [a.id, `A${i}`]));
     const type = (id: string) => names.get(id)!;
     const layout = (id: string) => layouts.get(id)!;
+    // Unit captures carry no information or ownership. Keep the concrete ABI and
+    // verifier contract intact; reconstruct these values at the C boundary.
+    const erasedEnvironment = (captures: readonly { layout: string }[]) =>
+        !!options.optimize && captures.every((c) => layout(c.layout).kind === 'unit');
     const unit = program.layouts.find((l) => l.kind === 'unit')!;
     const zero = (id: string) => `(${type(id)}){0}`;
     const field = (expr: string, n: number) => `(${expr}).item${n}`;
@@ -794,7 +798,13 @@ export function lowerC(
                             values.set(i.out.id, zero(id));
                             continue;
                         }
-                        if (!i.captures.length) {
+                        if (
+                            !i.captures.length ||
+                            (options.optimize &&
+                                layout(callable.environment).fields.every(
+                                    (f) => f.kind === 'value' && layout(f.layout).kind === 'unit',
+                                ))
+                        ) {
                             expr = `(${type(id)}){.environment=NULL${entries}}`;
                             break;
                         }
@@ -1318,12 +1328,15 @@ export function lowerC(
         c.captures.forEach((capture, i) => {
             const name = declare(
                 capture.layout,
-                `((${type(c.environment)} *)environment)->capture${i}`,
+                erasedEnvironment(c.captures)
+                    ? zero(capture.layout)
+                    : `((${type(c.environment)} *)environment)->capture${i}`,
                 body,
             );
             places.set(capture.place, storage.own({ expression: name, layout: capture.layout }));
         });
-        if (c.captures.length) body.push('release_context(environment);');
+        if (c.captures.length && !erasedEnvironment(c.captures))
+            body.push('release_context(environment);');
         const result = block(c.body, body);
         if (lenses.has(c.body.result)) {
             const lens = lenses.get(c.body.result)!;
