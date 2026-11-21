@@ -22,7 +22,7 @@ const interpolation = '{let strconv = true\n "${strconv}"}';
 it('preserves source function, parameter and local names', () => {
     const { code } = compile(scalar);
     expect(code).toMatch(/func nextGuess\(environment any, lastGuess L\d+\)/);
-    expect(code).toMatch(/var next L\d+/);
+    expect(code).toContain('next :=');
     expect(code).not.toMatch(/func fn\d+\(/);
     expect(code).toContain('nextGuess(nil,');
 });
@@ -39,15 +39,15 @@ it('names semantic and lens-representation specializations', () => {
 it('names local closures and capture storage from retained source bindings', () => {
     const { code } = compile(closure);
     expect(code).toMatch(/func maker_add\(environment any, x L\d+\)/);
-    expect(code).toMatch(/var n L\d+/);
+    expect(code).toContain('n :=');
     expect(code).toContain('invoke0: maker_add');
 });
 
 it('uses distinct names for shadowed bindings and storage versions', () => {
     const { code } = compile(shadow);
     expect(code).toMatch(/func pair\(environment any, x L\d+\)/);
-    expect(code).toContain('var x_2 ');
-    expect(code).toContain('var x_3 ');
+    expect(code).toContain('x_2 :=');
+    expect(code).toContain('x_3 :=');
 });
 
 it('escapes Go keywords, generated symbols and runtime names', () => {

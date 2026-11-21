@@ -129,6 +129,8 @@ opaque owned handles with explicit disposal. See
   get descriptive suffixes (`step_thin`, `step_scattered`, `id_number`); shadowed
   bindings and storage versions get numeric suffixes. Go keywords and generated
   helper names are disambiguated. Unnamed compiler temporaries keep generated names.
+  Locals are declared at their materialization points; cells shared by branches or
+  restoration closures are declared in their nearest common scope.
 - `emit --concrete` prints the verified concrete IR the backends consume: layouts,
   call ABIs, callable records and code.
 - For Wasm, `emit --target wasm32 -o program.c` gives the C that `emcc` builds;

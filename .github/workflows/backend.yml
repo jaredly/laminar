@@ -23,7 +23,7 @@ jobs:
       - name: Execution gate
         env:
           LAMINAR_EXEC: '1'
-        run: bun test test/corpus.test.ts test/host-exports.test.ts test/compiler.test.ts test/go/demand.test.ts test/go/names.test.ts
+        run: bun test test/corpus.test.ts test/host-exports.test.ts test/compiler.test.ts test/go/demand.test.ts test/go/names.test.ts test/go/locals.test.ts
       - uses: actions/upload-artifact@v4
         if: failure()
         with:

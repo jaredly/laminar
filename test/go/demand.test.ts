@@ -10,7 +10,7 @@ it('does not materialize unused pure values or their dependencies', () => {
     const code = emit('{let dead = (12345, 6 / 0)\n 7}');
     expect(code).not.toContain('12345');
     expect(code).not.toContain(' / ');
-    expect(code).not.toMatch(/\bvar v\d+\b/);
+    expect(code).not.toMatch(/(?:\bvar v\d+\b|\bv\d+ :=)/);
     expect(code).not.toMatch(/^\s*_ = /m);
 });
 
@@ -27,7 +27,7 @@ it('keeps unused calls as statements without result locals, including unit entri
         'fn effect() {print("before")\n 8}\n{let unused = effect()\n print("after")}',
     );
     expect(code).not.toMatch(/^\s*_ = /m);
-    expect(code).not.toMatch(/\bunused(?:_\d+)? = effect\(/);
+    expect(code).not.toMatch(/\bunused(?:_\d+)? (?:=|:=) effect\(/);
     expect(code).not.toMatch(/\bvar result\d+\b/);
     expect(code).toContain('"before"');
     expect(code).toContain('"after"');

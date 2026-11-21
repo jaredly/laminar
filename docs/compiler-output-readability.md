@@ -263,7 +263,7 @@ type-changing and restoration-bearing cases keep their explicit storage path.
 Regenerating the reviewed `ok.lm` produces 431 lines of Go instead of 854, with
 zero blanket blank assignments instead of 250 and one backing struct instead of
 seven. The scripted responses `higher`, `higher`, `lower`, `lower`, `match` still
-produce `[[75,82,79],4]`. Source naming is implemented below. Narrower declaration scopes, general copy
+produce `[[75,82,79],4]`. Source naming and declaration placement are implemented below. General copy
 propagation, declaration reachability and control-flow simplification remain
 subsequent work.
 
@@ -319,3 +319,50 @@ reports 3122 passed, 64 skipped, zero failures and all 39 snapshots passing.
 The Go corpus passes all 1592 tests. With `LAMINAR_EXEC=1`, the naming,
 materialization and string tests pass all 36 tests (96 assertions). Regenerated
 `ok.go` builds and produces the same scripted game result. No remote CI was run.
+
+
+## Item 4: declaration placement
+
+Ordinary Go locals now use `:=` at their materialization points instead of a
+function-wide `var` list. Values used only in one branch stay in that branch.
+For example, `step_scattered` now begins with its actual work:
+
+```go
+lastGuess := *((min_max_lastGuess).item2).read
+v3 := "My guess is " + formatNumber(lastGuess) + " (higher/lower/match): "
+input := hostInput(v3)
+input_2 := input
+```
+
+Compiler declaration and assignment nodes record ownership separately from
+expression text. Reference metadata is preserved while constructing expressions,
+joining fragments and formatting interpolated parts. Field labels and literal
+text do not count as references to similarly named variables. No printed-code
+usage scan is involved.
+
+After demand-driven materialization has finished, declaration placement finds the
+nearest common lexical scope of each definition, read, write and capture. A value
+that stays within its original scope uses a short declaration there. A cell shared
+by branch setup and later restoration gets a typed `var` before their common
+control-flow boundary, with `=` at its original initialization point. Only the
+declaration moves: loads, allocations, calls and other initializers keep their
+original evaluation order. An entire `if/else` chain is one insertion boundary,
+so a declaration can never split its arms.
+
+Returned restoration functions remain structured statement bodies through this
+placement step, allowing their captures to participate in scope decisions. The
+transparent sequencing lists from item 1 do not introduce artificial Go scopes.
+Copy chains, initial zero assignments, match simplification and representation
+choices remain separate work.
+
+Regenerated `ok.go` has 371 lines, down from 431 after naming. The scripted game
+still produces `[[75,82,79],4]`. `test/go/locals.test.ts` exercises local and shared
+declarations, nested common scopes, closure capture, conditional chains,
+reference composition, string/field literals, branch results and returned
+type-changing lenses. It is included in the CI execution gate.
+
+Validation for declaration placement: TypeScript and scoped diff checks pass.
+The regular suite passed 3132 tests with 69 skips and all 39 snapshots; the added
+field-spelling regression also passes separately. The Go corpus passes all 1592
+tests. With `LAMINAR_EXEC=1`, declaration placement, naming and materialization
+pass all 46 focused tests (94 assertions). No remote CI was run.
