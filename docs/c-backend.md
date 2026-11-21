@@ -948,3 +948,42 @@ reference output and both backends' output against them.
 The plan also lists files and clocks. No source import uses them, so the registry
 has nothing to adapt. Allocation (`allocate_context`) and traps (`abort`, Go
 panics) are backend runtime, not imports.
+
+## Phase 7: compiler command and API
+
+`src/compiler.ts` is the programmatic entry point:
+
+- `checkSource(source)` parses and type checks a file into verified typed IR.
+- `compileSource(source, { target })` checks, specializes, analyzes
+  representations and emits C or Go (chosen by the target's ABI) for the last
+  top-level expression. It never invokes a compiler. Symbol names (`L0`, `fn0`, …)
+  depend only on the program and target, so emission is deterministic.
+- `buildCompiled(compiled, target, { optimize, sanitize })` builds emitted code
+  with the target's toolchain (clang, emcc or go) using the harness's strict flags,
+  and returns the command that runs it. Failed builds keep their directory.
+
+Every failure is a `CompileError` with a stage (`usage`, `parse`, `type`,
+`backend`, `build`), a stable code and, when known, a 1-based line and column.
+`format(file)` renders `file:line:column: stage error [code]: message`. Type
+errors carry their checker location; parse errors locate the failing top-level
+item; backend diagnostics are located through the typed-IR origin table when they
+name an origin.
+
+`src/backend/host.ts` describes targets from the toolchains that build them:
+`native` asks clang for its triple, pointer width and byte order, `wasm32` uses
+`emcc`, and `go` uses `go`. Nothing is derived from the machine running the
+compiler.
+
+`cli/laminar.ts` (`bun run laminar`, or `bun cli/laminar.ts`):
+
+```
+laminar check <file>
+laminar emit  <file> [--target native|wasm32|go] [-o <path>]
+laminar run   <file> [--target native|wasm32|go|reference] [--optimize] [--sanitize]
+```
+
+`emit` writes source only. `run` builds and executes with stdin and stderr passed
+through, removes the build directory afterwards, and exits with the program's
+status. `--target reference` runs the typed-IR evaluator instead. Program output
+streams as produced and the entry result is printed last as a JSON line; the
+result-protocol record separator is stripped. Native is the default target.

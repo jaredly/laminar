@@ -7,7 +7,7 @@ executes affine closures, typed indirect calls and representation joins through
 [ABI-keyed, type-determined callable representations](abi-callable-representations.md);
 see [*Phase 6 completion*](#phase-6-completion-2026-11-20). Phase 7 runtime and host
 integration and phase 8 optimization remain broader work. Phase 7 is in progress:
-slices 1 (nominal union data), 2 (strings) and 3 (runtime import registry) are complete (see
+slices 1 (nominal union data), 2 (strings), 3 (runtime import registry) and 4 (compiler command/API) are complete (see
 [*Phase 7 progress*](#phase-7-progress)).
 
 The scoped lens extensions are complete as of `707521c`; see the
@@ -1425,3 +1425,34 @@ passed, 772 skipped, no failures, all 38 snapshots passing (4803 assertions).
 `LAMINAR_EXEC=1 bun test test/c/execute.test.ts` passes all 731 native cases
 (2918 assertions, 276.10 seconds); `LAMINAR_EXEC=1 bun test test/go` passes 762
 tests (801 assertions, 162.10 seconds). Remote CI was not run.
+
+### Slice 4: compiler command and API (2026-11-20)
+
+Work item 5: `src/compiler.ts` checks, specializes and emits C or Go
+(`checkSource`, `compileSource`), and builds separately (`buildCompiled`).
+`cli/laminar.ts` exposes `check`, `emit` and `run` with
+`--target native|wasm32|go` (plus `reference` for `run`), `--optimize`,
+`--sanitize` and `-o`. Targets are detected from their toolchains
+(`src/backend/host.ts`). Errors are `CompileError`s with stage, stable code and
+source position, reported as `file:line:column: stage error [code]: message`;
+emitted symbol names are deterministic. See
+[the C backend](c-backend.md#phase-7-compiler-command-and-api).
+
+A sample program reading input, printing and returning a list ran with the same
+output and result on the reference evaluator, native C, Go and Wasm through
+`laminar run`.
+
+Tests: ten in `test/compiler.test.ts`: typed IR from source, type and parse error
+positions, deterministic C and Go emission, missing entries, mapped backend and
+capability diagnostics, unknown targets, and the command line (`check`, `emit`,
+reference `run` with stdin, usage errors). Native and Go builds and runs, runtime
+traps and retained failed builds run under `LAMINAR_EXEC=1`.
+
+This slice adds no lowering changes, so the execution corpora were not rerun.
+Validation: TypeScript and `git diff --check` pass. The regular suite reports 2244
+passed, 775 skipped, no failures, all 38 snapshots passing (4825 assertions);
+`LAMINAR_EXEC=1 bun test test/compiler.test.ts` passes all 10 tests.
+
+Remaining phase-7 work: backend selection in the test runner (slice 5), host
+exports (slice 6), then documentation and the CI exit gate. Interpolation of
+non-scalar parts remains a tested restriction.

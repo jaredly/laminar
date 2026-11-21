@@ -50,7 +50,8 @@ export const runtimeImports: readonly RuntimeImport[] = [
         arguments: ['owned'],
         result: 'owned',
         backends: all,
-        semantics: 'ECMAScript Math.round: halves toward +Infinity, zero keeps the sign of its input',
+        semantics:
+            'ECMAScript Math.round: halves toward +Infinity, zero keeps the sign of its input',
     },
     {
         name: 'heapsize',
@@ -147,7 +148,11 @@ export function requireImport(
             'unsupported-import',
             `Runtime import ${name} has no ${backend} implementation`,
         );
-    if (target && entry.capability && !runtimeCapabilities[target.runtime].includes(entry.capability))
+    if (
+        target &&
+        entry.capability &&
+        !runtimeCapabilities[target.runtime].includes(entry.capability)
+    )
         throw new BackendDiagnostic(
             'unavailable-capability',
             `Runtime import ${name} needs ${entry.capability}, which the ${target.runtime} runtime does not provide`,

@@ -1,6 +1,10 @@
 /** Phase 7 runtime imports: registry-driven natives and host I/O adapters. */
 export const runtimeImportSamples = [
-    { name: 'round halves up', source: '(round(2.5), round(0 - 2.5), round(1.4))', expected: [3, -2, 1] },
+    {
+        name: 'round halves up',
+        source: '(round(2.5), round(0 - 2.5), round(1.4))',
+        expected: [3, -2, 1],
+    },
     {
         name: 'round keeps the sign of zero',
         source: '(round(0 - 0.4), round(0 - 0.5), round(0.4))',
