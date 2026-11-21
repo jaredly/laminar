@@ -10,7 +10,7 @@ export type LayoutId = string;
 export type Layout = {
     id: LayoutId;
     type: SemanticType;
-    storage: 'f64' | 'bool' | 'unit' | 'tuple' | 'nominal' | 'callable';
+    storage: 'f64' | 'bool' | 'string' | 'unit' | 'tuple' | 'nominal' | 'callable';
     dependencies: LayoutId[];
     indirect?: boolean[];
 };
@@ -73,6 +73,7 @@ export class LayoutTable {
             dependencies = type.items;
         } else if (!type.args.length && type.name === 'Number') storage = 'f64';
         else if (!type.args.length && type.name === 'Bool') storage = 'bool';
+        else if (!type.args.length && type.name === 'String') storage = 'string';
         else {
             const schema = this.definitions.find((d) => d.name === type.name);
             if (!schema || schema.parameters.length !== type.args.length)

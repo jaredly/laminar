@@ -23,6 +23,7 @@ import { phase5Samples } from '../c/phase5-samples.ts';
 import { backendCorpus } from './corpus.ts';
 import { nominalSamples } from './nominal-samples.ts';
 import { aslensNominalSamples, borrowedNominalSamples } from './nominal-pattern-samples.ts';
+import { stringSamples } from './string-samples.ts';
 export const samples = [
     ...enabledMigrationSamples,
     ...demandSamples,
@@ -33,16 +34,15 @@ export const samples = [
     ...aggregateJoinSamples,
     ...callableFocusSamples,
     ...callableStorageSamples,
-    // Phase 7 nominal data executes; strings remain a later phase-7 slice.
-    ...backendCorpus.filter((s) => s.phase <= 6 || s.name === 'list'),
+    // Phase 7 runtime data: nominal unions and strings.
+    ...backendCorpus,
     ...nominalSamples.map((s) => ({ ...s, name: `nominal: ${s.name}` })),
-    ...[...borrowedNominalSamples, ...aslensNominalSamples]
-        .filter(([name]) => name !== 'string literal')
-        .map(([name, source, expected]) => ({
+    ...[...borrowedNominalSamples, ...aslensNominalSamples].map(([name, source, expected]) => ({
             name: `nominal pattern: ${name}`,
             source,
             expected,
         })),
+    ...stringSamples.map((s) => ({ ...s, name: `string: ${s.name}` })),
     ...capturedCleanupSamples,
     ...indirectCallSamples,
     ...unconstrainedClosureSamples,

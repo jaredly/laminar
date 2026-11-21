@@ -86,7 +86,3 @@ it('reconstructs borrowed constructor patterns without a pattern-specific runtim
     verifyConcreteProgram(JSON.parse(JSON.stringify(concrete)));
     expect(emitC(concrete)).toContain('.tag == 1');
 });
-
-it('still reports runtime string storage as a phase-7 restriction', () => {
-    expect(() => compile('"a"')).toThrow('No storage definition for String');
-});

@@ -7,7 +7,7 @@ executes affine closures, typed indirect calls and representation joins through
 [ABI-keyed, type-determined callable representations](abi-callable-representations.md);
 see [*Phase 6 completion*](#phase-6-completion-2026-11-20). Phase 7 runtime and host
 integration and phase 8 optimization remain broader work. Phase 7 is in progress:
-slice 1, nominal union data, is complete (see
+slices 1 (nominal union data) and 2 (strings) are complete (see
 [*Phase 7 progress*](#phase-7-progress)).
 
 The scoped lens extensions are complete as of `707521c`; see the
@@ -293,7 +293,7 @@ Work:
 7. Define and test host exports using scalars, length-delimited buffers, and opaque owned handles. Cover ownership transfer/disposal and memory-view refresh after growth where relevant. Add a minimal browser host test when a browser profile is introduced.
 8. Document supported features, runtime linking/import requirements, target assumptions, and how to inspect emitted C and Wasm artifacts. Record remaining parser-only lens features separately.
 
-**Exit gate:** all acceptance cases belonging to the checked subset either compile and match the reference result or have a documented, tested backend restriction scheduled for completion. Declaring full subset support requires eliminating those restrictions, not merely classifying them. Full tests, TypeScript checks, strict C builds, optimized builds, supported sanitizers, and the pinned Wasm execution corpus pass in CI.
+**Exit gate:** all acceptance cases belonging to the checked subset either compile and match the reference result or have a documented, tested backend restriction scheduled for completion. Declaring full subset support requires eliminating those restrictions, not merely classifying them. Full tests, TypeScript checks, strict C builds, optimized builds, supported sanitizers, and the native execution corpus pass in CI. (Wasm execution was dropped from the corpus on 2026-11-20: it compiles the same C through Emscripten and so tested the toolchain, not the backend.)
 
 ## Phase 8 — Optimize after the representation contract is stable
 
@@ -1351,3 +1351,45 @@ passed, 1395 skipped, no failures, all 38 snapshots passing (4721 assertions).
 (4729 assertions, 362.23 seconds), under ASan/UBSan at `-O0` and `-O2` natively;
 `LAMINAR_EXEC=1 bun test test/go` passes 708 tests (747 assertions, 104.94
 seconds). Remote CI was not run.
+
+### Slice 2: strings (2026-11-20)
+
+Work item 1 for strings, item 2's owned operations for them, and item 4's
+interpolation and comparison: `String` is a primitive owned layout on C (native
+execution; Wasm builds the same C) and Go. Literals, interpolation, literal patterns, drop, `dup`, captures,
+strings inside tuples, lists and user unions, borrowed and `aslens` patterns over
+them, `charList`, and JSON result printing execute. See
+[the C backend](c-backend.md#phase-7-strings) for the representation.
+
+Documented semantics: interpolation accepts `String`, `Number` and `Bool` parts.
+Numbers follow ECMAScript `Number::toString`, matching the evaluator; other part
+types, whose evaluator text is JavaScript `String(...)`, are a tested backend
+restriction. Literal patterns compare bytes. Strings have no `==` import, so
+patterns are the only comparison. `charList` splits at code points, as the
+evaluator does.
+
+The C runtime is emitted only for programs with a string layout, so existing
+snapshots are unchanged. Large integral number literals beyond the safe-integer
+range are now emitted as C floating literals; previously they failed to compile.
+
+Tests: 36 string execution samples (`test/backend/string-samples.ts`); the corpus
+`string` entry and the `aslens` string-literal sample join the shared corpus; and
+seven unit tests in `test/strings.test.ts` cover layouts, conditional runtime
+emission, literal byte encoding, interpolation order, the part restriction,
+literal-pattern drops and the deferred `print`. Three tests that asserted
+`No storage definition for String` now check successful lowering. Number
+formatting was also checked against the evaluator on 150 random decimals of 1–19
+digits across 50 decimal exponents, on C and Go.
+
+Remaining phase-7 restrictions: `print` and `getInput` (slice 3, with the runtime
+import registry), interpolation of non-scalar parts, other natives, and the
+compiler command, runner integration and host exports.
+
+The execution harness now runs native C only (sanitized `-O0` and plain `-O2`);
+Wasm execution compiled the same C through Emscripten and was dropped.
+
+Validation: TypeScript and `git diff --check` pass. The regular suite reports 2203
+passed, 756 skipped, no failures, all 38 snapshots passing (4750 assertions).
+`LAMINAR_EXEC=1 bun test test/c/execute.test.ts` passes all 715 native cases
+(2141 assertions, 265.92 seconds); `LAMINAR_EXEC=1 bun test test/go` passes 746
+tests (785 assertions, 153.48 seconds). Remote CI was not run.

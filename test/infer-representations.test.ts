@@ -39,8 +39,8 @@ it('reserves recursive variants before analyzing bodies', () => {
     expect(r.variants).toHaveLength(1);
     expect(r.variants[0]!.calls.some((c) => c.target === r.variants[0]!.id)).toBe(true);
 });
-it('diagnoses unsupported nominal storage and callable roots', () => {
-    expect(() => analyze('"a"')).toThrow('No storage definition for String');
+it('gives strings primitive storage and diagnoses callable roots', () => {
+    expect(analyze('"a"').layouts.map((l) => l.storage)).toEqual(['string']);
     // A generic entry expression is instantiated at unit, leaving a callable root.
     expect(() => analyze('fn id(x) x\nid')).toThrow('Callable entry roots');
     const p = typedProgram('fn id(x) x\nid(1)');

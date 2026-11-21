@@ -155,7 +155,6 @@ it('traps an unmatched borrowed pattern before running its body', () => {
 import { borrowedPatternSamples } from './backend/borrowed-pattern-samples.ts';
 import { compileConcreteProgram } from '../src/lower-concrete.ts';
 import { verifyConcreteProgram } from '../src/verify-concrete.ts';
-import { BackendDiagnostic } from '../src/backend/target.ts';
 for (const sample of borrowedPatternSamples)
     it(`concrete borrowed pattern: ${sample.name}`, () => {
         const p = typedProgram(sample.source);
@@ -180,18 +179,13 @@ it('lowers borrowed constructor reconstruction over derived nominal storage', ()
     ]);
     verifyConcreteProgram(JSON.parse(JSON.stringify(concrete)));
 });
-it('keeps string runtime layout restrictions separate from borrowed checking', () => {
+it('lowers borrowed string literal patterns through explicit reconstruction', () => {
     const p = typedProgram('{let s = "a"\n match ~s {"a" -> (); _ -> ()}\n s}');
-    try {
-        compileConcreteProgram(p, wasm32Emscripten('test'), [
-            { unit: p.units.at(-1)!.id, arguments: [] },
-        ]);
-        throw Error('Expected string storage restriction');
-    } catch (e) {
-        expect(e).toBeInstanceOf(BackendDiagnostic);
-        expect((e as BackendDiagnostic).code).toBe('unsupported-layout');
-        expect((e as Error).message).toBe('No storage definition for String');
-    }
+    const concrete = compileConcreteProgram(p, wasm32Emscripten('test'), [
+        { unit: p.units.at(-1)!.id, arguments: [] },
+    ]);
+    verifyConcreteProgram(JSON.parse(JSON.stringify(concrete)));
+    expect(executeTypedProgram(p)).toBe('a');
 });
 
 import { Checker } from '../src/check.ts';

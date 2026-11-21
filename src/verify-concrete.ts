@@ -84,7 +84,7 @@ export function verifyConcreteProgram(p: ConcreteProgram): void {
         }
         if (parts[0] !== 'physical-layout' || parts[1] !== target)
             fail('Wrong-target physical layout');
-        if (!['f64', 'bool', 'unit', 'record', 'union'].includes(l.kind))
+        if (!['f64', 'bool', 'string', 'unit', 'record', 'union'].includes(l.kind))
             fail('Unknown concrete storage kind');
         unique(l.fields, (f) => f.name, 'layout field');
         for (const f of l.fields) {
@@ -146,8 +146,16 @@ export function verifyConcreteProgram(p: ConcreteProgram): void {
                 t.items.length ? 'record' : 'unit',
                 t.items.map((x, i) => ({ name: `item${i}`, kind: 'value', layout: data(x) })),
             );
-        else if (t.tag === 'con' && !t.args.length && ['Number', 'Bool'].includes(t.name))
-            concreteFields(id, t.name === 'Number' ? 'f64' : 'bool', []);
+        else if (
+            t.tag === 'con' &&
+            !t.args.length &&
+            ['Number', 'Bool', 'String'].includes(t.name)
+        )
+            concreteFields(
+                id,
+                t.name === 'Number' ? 'f64' : t.name === 'Bool' ? 'bool' : 'string',
+                [],
+            );
         else if (t.tag === 'con') {
             const d = nominalSchemas.find((d) => d.name === t.name);
             if (!d || d.parameters.length !== t.args.length)

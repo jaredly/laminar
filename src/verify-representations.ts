@@ -124,7 +124,7 @@ export function verifyRepresentations(
             t.tag === 'con' &&
             Array.isArray(t.args) &&
             t.args.length === 0 &&
-            ['Number', 'Bool'].includes(t.name)
+            ['Number', 'Bool', 'String'].includes(t.name)
         )
             return;
         if (t.tag === 'con') {
@@ -143,8 +143,13 @@ export function verifyRepresentations(
             dependencies: string[] = [];
         switch (l.type.tag) {
             case 'con': {
-                if (!l.type.args.length && ['Number', 'Bool'].includes(l.type.name))
-                    storage = l.type.name === 'Number' ? 'f64' : 'bool';
+                if (!l.type.args.length && ['Number', 'Bool', 'String'].includes(l.type.name))
+                    storage =
+                        l.type.name === 'Number'
+                            ? 'f64'
+                            : l.type.name === 'Bool'
+                              ? 'bool'
+                              : 'string';
                 else {
                     const t = l.type,
                         d = schemas.find((d) => d.name === t.name)!;

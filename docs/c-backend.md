@@ -83,12 +83,12 @@ returned and captured joined callees, and thin/scattered lens arguments and
 returned focuses use the same ownership and restoration paths. There is no extra
 join allocation or function-pointer cast.
 
-Strings and unsupported native imports retain explicit diagnostics. Dynamic
-callable entry roots require a host adapter. Nominal union data is described in
-*Phase 7: nominal union data* below.
+Unsupported native imports retain explicit diagnostics. Dynamic callable entry
+roots require a host adapter. Nominal union data and strings are described in
+*Phase 7: nominal union data* and *Phase 7: strings* below.
 
 Implemented imports are numeric `+`, `-`, `*`, `/`, `==`, `>=`, `<=`, data `dup`,
-and logical `fst`. `dup` of a computed focus restores that focus after copying it.
+logical `fst`, and `charList`. `dup` of a computed focus restores that focus after copying it.
 There is no evaluator fallback. Function roots with parameters need a future host
 adapter, and borrowed lenses cannot escape the test entry boundary. Raw owned-local lenses cannot escape through function returns. Borrowed matching
 uses scoped reconstruction over scalar, tuple and nominal union data. Explicit manual
@@ -111,33 +111,30 @@ focus and restoration operation until lexical release; thin, scattered, nested,
 and type-changing cases are exercised by the execution harness.
 Malformed concrete IR fails verification before storage lowering.
 
-The harness uses strict C11 (`-Wall -Wextra -Werror -pedantic`), `-O0` and `-O2`.
-Native tests additionally use ASan/UBSan and stack-use-after-return detection. It removes inherited host include-path
+The execution harness builds each sample natively with strict C11 (`-Wall -Wextra
+-Werror -pedantic`) twice: at `-O0` under ASan/UBSan with stack-use-after-return
+detection, and at `-O2` without sanitizers. Wasm is not executed: it compiles the
+same C through Emscripten, which would test that toolchain rather than the backend.
+`buildAndRun` still supports `wasm: true` for manual checks. It removes inherited host include-path
 injection when spawning tools, so Emscripten uses its own sysroot. Failed builds,
 traps, malformed results and expected-result mismatches retain their temporary
 `laminar-c-*` directory, generated C/JS/Wasm, exact command arguments and observed
 compiler/runtime versions. Successful runs remove their directories.
 
 Run `bun test test/c` for the backend tests, `bun test` for all regressions, and
-`bunx tsc --noEmit` for TypeScript checks. Native/Wasm execution tests in
+`bunx tsc --noEmit` for TypeScript checks. Native execution tests in
 `test/c/execute.test.ts` are skipped unless `LAMINAR_EXEC=1` is set (for example
 `LAMINAR_EXEC=1 bun test test/c/execute.test.ts`). When enabled, missing local
-compiler/runtime tools produce explicit execution skips; `CI` makes them failures. Tests copy the local
-Emscripten cache to writable temporary storage when `EM_CACHE` is unset, removing
-relocation-sensitive build files. Set `EM_CACHE` to an existing writable cache to
-reuse it. The relocated Homebrew cache disables batch library builds to avoid
-its relative-path issue; assertions are enabled for Wasm runs.
+compiler tools produce explicit execution skips; `CI` makes them failures.
 
-`.github/workflows/backend.yml` provisions Emscripten 4.0.23 from emsdk commit
-`c0bb220cb6e6f4e0fabb6f6db9efd53390ef5e56` (the release mapping selects the
-compiler build), Node 24.13.1, and Bun 1.4.2. The required job executes the full
-native/Wasm corpus and uploads failure artifacts. This configuration is checked
+`.github/workflows/backend.yml` provisions Bun 1.4.2, runs the tests and
+TypeScript checks, and uploads failure artifacts. This configuration is checked
 in; remote CI execution and branch-protection requirements are not established
 by local verification.
 
 Complete expected C output for tuples, thin/scattered calls, returned lenses,
 and branch version joins is inline in `test/c/print.test.ts`. Execution tests
-compare typed IR, native and Wasm with the same expected results. In addition to
+compare typed IR and native execution with the same expected results. In addition to
 the phase-4 corpus, cases cover Number/Bool and small/large transitions, nested
 mixed shapes, offset-changing aggregate reconstruction, `take`, `map`, native and
 user-defined focus assignment, repeated and nested returned calls, alias refill,
@@ -857,3 +854,49 @@ under the garbage collector.
 Entry expressions whose type stays generic (for example a bare `[]`) are
 instantiated at unit, matching the phase-6 rule for unconstrained body types.
 Definition roots still require explicit type arguments.
+
+## Phase 7: strings
+
+`String` is a primitive layout (`string` storage and physical kind), like `Number`
+and `Bool`. Its value is owned, immutable UTF-8 text.
+
+C represents a string as `laminar_string *`, pointing to one
+`allocate_context` cell holding the length and the bytes. The empty string is
+`NULL`, so a zeroed slot is a valid string and `""` never allocates. Literals
+evaluate to fresh cells (`string_new`), so drop is a uniform `string_drop` and
+`dup` copies (`string_dup`). Leaked strings therefore trip the entry adapter's
+live-allocation check. Literal bytes are emitted with three-digit octal escapes
+for everything outside printable ASCII, plus `"`, `\` and `?` (no trigraphs).
+Source text with an unpaired surrogate has no UTF-8 form and is rejected.
+The string runtime and `<string.h>` are emitted only when a program reaches a
+string layout, so other programs' C is unchanged.
+
+Interpolation appends the head, then each part and its tail, in source order into
+a growable builder, consuming each string part. Parts may be `String`, `Number`
+or `Bool`. Numbers use ECMAScript `Number::toString`: the shortest round-tripping
+digits (found by increasing `%.*e` precision until `strtod` returns the value),
+laid out positionally for decimal exponents from -7 to 20 and in `1.5e-7` /
+`1e+21` form otherwise, with `NaN`, `Infinity` and `0` for both zeros. Other part
+types (tuples, lists, variants), whose evaluator text is JavaScript's
+`String(...)`, are rejected with `String interpolation supports String, Number and
+Bool parts`.
+
+String literal patterns compare length and bytes (`string_equals`); a matched
+literal pattern consumes its string like a wildcard. `charList` consumes its
+argument and builds the list of its code points from the end, stepping back over
+UTF-8 continuation bytes, so it agrees with the evaluator's code-point iteration.
+The test protocol prints strings as JSON strings, escaping `"`, `\` and control
+bytes.
+
+Go uses the native `string` type: drop and `dup` need no code, interpolation is
+`+` concatenation through `formatNumber` (the same layout rules over
+`strconv.FormatFloat(x, 'e', -1, 64)` digits) and `strconv.FormatBool`, and
+`charList` slices at `range` code point offsets.
+
+`print` and `getInput` stay unsupported until the runtime import registry slice
+defines host printing and input. Strings have no `==` or ordering imports; literal
+patterns are the only comparison.
+
+The work also fixed C number literals: integral values outside the safe-integer
+range (for example `459751200000000000000`) are emitted with `.0`, since they
+exceed every C integer type.

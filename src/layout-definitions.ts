@@ -62,7 +62,7 @@ export function deriveNominalLayoutDefinitions(
     };
     const mentionsNominal = (t: SemanticType): boolean =>
         t.tag === 'con'
-            ? !['Number', 'Bool'].includes(t.name) || t.args.some(mentionsNominal)
+            ? !['Number', 'Bool', 'String'].includes(t.name) || t.args.some(mentionsNominal)
             : t.tag === 'tuple'
               ? t.items.some(mentionsNominal)
               : t.tag === 'fn'

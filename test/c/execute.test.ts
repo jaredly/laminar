@@ -1,13 +1,10 @@
 import { samples } from '../backend/execution-samples.ts';
-import { cp, mkdtemp, rm } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
-import { afterAll } from 'bun:test';
+import { rm } from 'node:fs/promises';
 import { it, expect } from 'bun:test';
 import { spawnSync } from 'node:child_process';
 import { typedProgram } from '../backend/typed-program.ts';
 import { compileConcreteProgram } from '../../src/lower-concrete.ts';
-import { targetConfig, wasm32Emscripten } from '../../src/backend/target.ts';
+import { targetConfig } from '../../src/backend/target.ts';
 import { executeTypedProgram } from '../../src/eval-typed.ts';
 import { emitC } from '../../src/c/emit.ts';
 import { buildAndRun } from '../../src/c/build.ts';
@@ -25,37 +22,13 @@ async function withBuildSlot(work: () => Promise<void>) {
         else active--;
     }
 }
-// Each concurrent emcc invocation otherwise starts its own CPU-sized worker pool.
-const oldCores = process.env.EMCC_CORES;
-process.env.EMCC_CORES = '1';
-afterAll(() => {
-    if (oldCores === undefined) delete process.env.EMCC_CORES;
-    else process.env.EMCC_CORES = oldCores;
-});
-// Native/Wasm builds are slow; opt in with LAMINAR_EXEC=1.
+// Native builds are slow; opt in with LAMINAR_EXEC=1. Wasm would compile the same C
+// through Emscripten, testing the toolchain rather than the backend, so it is not run.
 const executionEnabled = !!process.env.LAMINAR_EXEC;
 const skipped = { status: 1, stdout: '' } as const;
 const version = (cmd: string) =>
     executionEnabled ? spawnSync(cmd, ['--version'], { encoding: 'utf8' }) : skipped;
-const clang = version('clang'),
-    emcc = version('emcc'),
-    node = version('node');
-if (emcc.status === 0 && !process.env.EM_CACHE) {
-    const cache = await mkdtemp(join(tmpdir(), 'laminar-emcache-'));
-    const original = spawnSync('em-config', ['CACHE'], { encoding: 'utf8' }).stdout.trim();
-    await cp(original, cache, { recursive: true });
-    await rm(join(cache, 'build'), { recursive: true, force: true });
-    process.env.EM_CACHE = cache;
-    // Homebrew 6.0.5 batch builds use invalid relative source paths in a relocated cache.
-    const oldBatch = process.env.EMCC_BATCH_BUILD;
-    process.env.EMCC_BATCH_BUILD = '0';
-    afterAll(async () => {
-        delete process.env.EM_CACHE;
-        if (oldBatch === undefined) delete process.env.EMCC_BATCH_BUILD;
-        else process.env.EMCC_BATCH_BUILD = oldBatch;
-        await rm(cache, { recursive: true });
-    });
-}
+const clang = version('clang');
 const macros = executionEnabled
     ? (spawnSync('clang', ['-dM', '-E', '-x', 'c', '/dev/null'], { encoding: 'utf8' }).stdout ?? '')
     : '';
@@ -87,69 +60,51 @@ const normalize = (v: unknown): unknown =>
         : Array.isArray(v)
           ? v.map(normalize)
           : v;
-for (const wasm of [false, true]) {
-    const available = wasm ? emcc.status === 0 && node.status === 0 : clang.status === 0;
-    if (executionEnabled && !available && process.env.CI)
-        throw Error(`Required backend toolchain missing: ${wasm ? 'emcc/Node' : 'clang'}`);
-    if (executionEnabled && !available)
-        console.warn(`Skipping local backend execution: missing ${wasm ? 'emcc/Node' : 'clang'}`);
-    for (const sample of samples)
-        (available ? it.concurrent : it.skip)(
-            `${wasm ? 'Wasm' : 'native'}: ${sample.name}`,
-            () =>
-                withBuildSlot(async () => {
-                    const p = typedProgram(sample.source);
-                    const c = compileConcreteProgram(
-                        p,
-                        wasm ? wasm32Emscripten(emcc.stdout.trim()) : native!,
-                        [{ unit: p.units.at(-1)!.id, arguments: [] }],
-                    );
-                    const source = emitC(c);
-                    expect<unknown>(normalize(executeTypedProgram(p))).toEqual(sample.expected);
-                    if (!wasm)
-                        expect(
-                            await buildAndRun(source, {
-                                compiler: 'clang',
-                                sanitize: true,
-                                expected: [sample.expected],
-                            }),
-                        ).toEqual([sample.expected]);
-                    for (const optimize of [false, true])
-                        expect(
-                            await buildAndRun(source, {
-                                compiler: wasm ? 'emcc' : 'clang',
-                                wasm,
-                                optimize,
-                                expected: [sample.expected],
-                            }),
-                        ).toEqual([sample.expected]);
-                }),
-            60000,
-        );
-    for (const [name, source] of [
-        ['unmatched case', 'match 1 {2 -> 3}'],
-        ['unmatched temporary cleanup', '{let f = ~{lens 4 <- 1\n ()}\n f := 3}'],
-    ])
-        (available ? it.concurrent : it.skip)(
-            `${wasm ? 'Wasm' : 'native'}: ${name} traps`,
-            () =>
-                withBuildSlot(async () => {
-                    const p = typedProgram(source!);
-                    const c = compileConcreteProgram(
-                        p,
-                        wasm ? wasm32Emscripten(emcc.stdout.trim()) : native!,
-                        [{ unit: p.units.at(-1)!.id, arguments: [] }],
-                    );
-                    try {
-                        await buildAndRun(emitC(c), { compiler: wasm ? 'emcc' : 'clang', wasm });
-                        throw Error('Expected runtime trap');
-                    } catch (error) {
-                        expect((error as { code?: string }).code).toBe('c-runtime');
-                        const directory = String(error).match(/Artifacts: (.+)/)![1]!;
-                        // Expected trap artifacts have been checked; real regressions remain retained.
-                        await rm(directory, { recursive: true });
-                    }
-                }),
-            60000,
-        );
-}
+const available = clang.status === 0;
+if (executionEnabled && !available && process.env.CI)
+    throw Error('Required backend toolchain missing: clang');
+if (executionEnabled && !available) console.warn('Skipping local backend execution: missing clang');
+const compile = (source: string) => {
+    const p = typedProgram(source);
+    return { p, c: compileConcreteProgram(p, native!, [{ unit: p.units.at(-1)!.id, arguments: [] }]) };
+};
+for (const sample of samples)
+    (available ? it.concurrent : it.skip)(
+        `native: ${sample.name}`,
+        () =>
+            withBuildSlot(async () => {
+                const { p, c } = compile(sample.source);
+                const source = emitC(c);
+                expect<unknown>(normalize(executeTypedProgram(p))).toEqual(sample.expected);
+                // Sanitized -O0 checks memory and UB; plain -O2 checks optimized semantics.
+                for (const options of [{ sanitize: true }, { optimize: true }])
+                    expect(
+                        await buildAndRun(source, {
+                            compiler: 'clang',
+                            ...options,
+                            expected: [sample.expected],
+                        }),
+                    ).toEqual([sample.expected]);
+            }),
+        60000,
+    );
+for (const [name, source] of [
+    ['unmatched case', 'match 1 {2 -> 3}'],
+    ['unmatched temporary cleanup', '{let f = ~{lens 4 <- 1\n ()}\n f := 3}'],
+])
+    (available ? it.concurrent : it.skip)(
+        `native: ${name} traps`,
+        () =>
+            withBuildSlot(async () => {
+                try {
+                    await buildAndRun(emitC(compile(source!).c), { compiler: 'clang' });
+                    throw Error('Expected runtime trap');
+                } catch (error) {
+                    expect((error as { code?: string }).code).toBe('c-runtime');
+                    const directory = String(error).match(/Artifacts: (.+)/)![1]!;
+                    // Expected trap artifacts have been checked; real regressions remain retained.
+                    await rm(directory, { recursive: true });
+                }
+            }),
+        60000,
+    );

@@ -15,7 +15,7 @@ export type ConcreteField = { name: string } & (
 export type ConcreteLayout = {
     id: string;
     key: string;
-    kind: 'f64' | 'bool' | 'unit' | 'record' | 'union';
+    kind: 'f64' | 'bool' | 'string' | 'unit' | 'record' | 'union';
     fields: ConcreteField[];
 };
 /** Every callable entry receives one opaque environment pointer before its typed arguments. */

@@ -4,6 +4,7 @@ import type { IRPattern, SlotRef } from '../typed-ir.ts';
 import { verifyConcreteProgram } from '../verify-concrete.ts';
 import { BackendDiagnostic } from '../backend/target.ts';
 import { identifier, type Statement, type TranslationUnit } from './syntax.ts';
+import { appendPart, cBytes, stringRuntime, stringType } from './strings.ts';
 
 // Replacement contents are already in the logical focus. Staging makes them
 // visible through adapters and returns the cleanup/restoration still to perform.
@@ -102,13 +103,18 @@ export function lowerC(program: ConcreteProgram): TranslationUnit {
         '#include <math.h>',
         '#include <stdint.h>',
     ];
+    const strings = program.layouts.some((l) => l.kind === 'string');
+    const runtime = strings ? stringRuntime() : undefined;
+    if (runtime) declarations.push('#include <string.h>', runtime.declarations[0]!, runtime.declarations[1]!);
     for (const l of program.layouts)
         declarations.push(
             l.kind === 'f64'
                 ? `typedef double ${type(l.id)};`
                 : l.kind === 'bool'
                   ? `typedef _Bool ${type(l.id)};`
-                  : `typedef struct ${type(l.id)} ${type(l.id)};`,
+                  : l.kind === 'string'
+                    ? `typedef ${stringType} *${type(l.id)};`
+                    : `typedef struct ${type(l.id)} ${type(l.id)};`,
         );
     for (const a of program.abis)
         declarations.push(
@@ -127,7 +133,7 @@ export function lowerC(program: ConcreteProgram): TranslationUnit {
             declarations.push(
                 `struct ${type(l.id)} { uint32_t tag; union { ${variants.join(' ')} } as; };`,
             );
-        } else if (!['f64', 'bool'].includes(l.kind)) {
+        } else if (!['f64', 'bool', 'string'].includes(l.kind)) {
             declarations.push(
                 `struct ${type(l.id)} { ${l.fields.map((f) => (f.kind === 'value' ? `${type(f.layout)} ${identifier(f.name)};` : f.kind === 'pointer' ? `${f.layout ? type(f.layout) : 'void'} *${identifier(f.name)};` : `${abiNames.get(f.abi)} ${identifier(f.name)};`)).join(' ') || 'unsigned char inhabitant;'} };`,
             );
@@ -138,6 +144,7 @@ export function lowerC(program: ConcreteProgram): TranslationUnit {
         'static size_t live_contexts = 0;',
         'void *allocate_context(size_t size);',
         'void release_context(void *context);',
+        ...(runtime?.declarations.slice(2) ?? []),
     );
     program.code.forEach((c) => declarations.push(signature(c) + ';'));
     const helpers: TranslationUnit['functions'] = [];
@@ -148,17 +155,18 @@ export function lowerC(program: ConcreteProgram): TranslationUnit {
     // Union operations are recursive C functions, generated once per layout on first use.
     const unionHelpers = new Map<string, string>();
     const unionHelper = (
-        kind: 'drop' | 'dup' | 'print',
+        kind: 'drop' | 'dup' | 'print' | 'char_list',
         id: string,
         result: string,
         generate: (body: Statement[]) => void,
+        parameter = type(id),
     ): string => {
         const key = `${kind}:${id}`;
         const existing = unionHelpers.get(key);
         if (existing) return existing;
         const name = `${kind}_${type(id)}`;
         unionHelpers.set(key, name);
-        const signature = `${result} ${name}(${type(id)} value)`;
+        const signature = `${result} ${name}(${parameter} value)`;
         declarations.push(signature + ';');
         const body: Statement[] = ['(void)value;'];
         generate(body);
@@ -199,6 +207,7 @@ export function lowerC(program: ConcreteProgram): TranslationUnit {
                 });
                 body.push('return copy;');
             })}(${expr})`;
+        if (l.kind === 'string') return `string_dup(${expr})`;
         if (l.kind === 'record' && l.fields.every((f) => f.kind === 'value'))
             return `(${type(id)}){${l.fields.map((f, n) => duplicate(field(expr, n), (f as { layout: string }).layout)).join(', ')}}`;
         return expr;
@@ -223,6 +232,8 @@ export function lowerC(program: ConcreteProgram): TranslationUnit {
                 body.push(`return ${zero(unit.id)};`);
             });
             body.push(`${name}(${data.expression});`);
+        } else if (l.kind === 'string') {
+            body.push(`string_drop(${data.expression});`);
         } else if (l.fields.some((f) => f.name === 'dispose')) {
             body.push({
                 head: `if ((${data.expression}).dispose)`,
@@ -234,6 +245,38 @@ export function lowerC(program: ConcreteProgram): TranslationUnit {
                     drop({ expression: field(data.expression, i), layout: f.layout }, body);
             });
         }
+    };
+    /** `charList` consumes a string and builds its code points as a list, last first. */
+    const charList = (result: string): string => {
+        const nil = tagOf(result, 'nil'),
+            cons = tagOf(result, 'cons'),
+            cell = variant(result, cons);
+        if (!cell.boxed) return unsupported('List cells must be boxed');
+        const text = (layout(cell.layout).fields[0] as { layout: string }).layout;
+        return unionHelper('char_list', result, type(result), (body) => {
+            body.pop();
+            body.push(
+                `${type(result)} out = (${type(result)}){.tag=${nil}, .as.v${nil}=${zero(variant(result, nil).layout)}};`,
+                'size_t end = value ? value->length : 0;',
+                {
+                    head: 'while (end > 0)',
+                    body: [
+                        'size_t start = end - 1;',
+                        {
+                            // Step back over UTF-8 continuation bytes to the code point's lead byte.
+                            head: 'while (start > 0 && (value->bytes[start] & 0xC0) == 0x80)',
+                            body: ['start--;'],
+                        },
+                        `${type(cell.layout)} *cell = allocate_context(sizeof *cell);`,
+                        `*cell = (${type(cell.layout)}){(${type(text)})string_new((const char *)value->bytes + start, end - start), out};`,
+                        `out = (${type(result)}){.tag=${cons}, .as.v${cons}=cell};`,
+                        'end = start;',
+                    ],
+                },
+                'string_drop(value);',
+                'return out;',
+            );
+        }, type(text));
     };
     for (const w of program.wrappers) {
         if (w.kind !== 'dispose' || !w.captures.length) continue;
@@ -274,6 +317,7 @@ export function lowerC(program: ConcreteProgram): TranslationUnit {
         let result: string;
         const op = w.definition.slice(7);
         if (['+', '-', '*', '/', '==', '>=', '<='].includes(op)) result = `(arg0 ${op} arg1)`;
+        else if (op === 'charList') result = `${charList(abi.result)}(arg0)`;
         else if (op === 'dup')
             result = duplicate(
                 read(storage.get(incoming('arg0', abi.arguments[0]!)), abi.result),
@@ -422,7 +466,7 @@ export function lowerC(program: ConcreteProgram): TranslationUnit {
                 }
                 if (p.items.length === 1) bind(p.items[0]!, contents, body);
                 else p.items.forEach((item, k) => bind(item, storage.parts(contents)[k]!, body));
-            } else if (p.kind === 'drop') drop(data, body);
+            } else if (p.kind === 'drop' || p.kind === 'literal') drop(data, body);
         };
         const parameters: { expression: string; layout: string; view: View }[] = [];
         c.parameters.forEach((p, i) => {
@@ -563,7 +607,10 @@ export function lowerC(program: ConcreteProgram): TranslationUnit {
                 : typeof v === 'boolean'
                   ? String(+v)
                   : typeof v === 'number'
-                    ? String(v)
+                    ? // Integral literals beyond the safe range exceed every C integer type.
+                      Number.isSafeInteger(v) || /[.e]/.test(String(v))
+                        ? String(v)
+                        : `${v}.0`
                     : v && typeof v === 'object' && 'number' in v
                       ? {
                             NaN: 'NAN',
@@ -573,7 +620,13 @@ export function lowerC(program: ConcreteProgram): TranslationUnit {
                         }[String(v.number)]!
                       : unsupported('Literal');
         const matches = (p: IRPattern, expr: string, id: string): string => {
-            if (p.kind === 'literal') return `${expr} == ${literal(p.value, unit.id)}`;
+            if (p.kind === 'literal') {
+                if (layout(id).kind !== 'string')
+                    return `${expr} == ${literal(p.value, unit.id)}`;
+                if (typeof p.value !== 'string') return unsupported('String literal pattern');
+                const text = cBytes(p.value);
+                return `string_equals(${expr}, ${text.literal}, ${text.length})`;
+            }
             const fields = layout(id).fields as { layout: string }[];
             if (p.kind === 'tuple')
                 return (
@@ -683,6 +736,32 @@ export function lowerC(program: ConcreteProgram): TranslationUnit {
                     case 'constant':
                         expr = literal(i.value, id);
                         break;
+                    case 'string': {
+                        const head = cBytes(i.head);
+                        if (!i.parts.length) {
+                            expr = `string_new(${head.literal}, ${head.length})`;
+                            break;
+                        }
+                        // Parts were evaluated in source order; appending consumes each one.
+                        const builder = fresh();
+                        body.push(
+                            `string_builder ${builder} = {0};`,
+                            `builder_bytes(&${builder}, ${head.literal}, ${head.length});`,
+                        );
+                        for (const part of i.parts) {
+                            const tail = cBytes(part.tail);
+                            body.push(
+                                appendPart(
+                                    builder,
+                                    layout(outputLayouts.get(part.value)!).kind,
+                                    value(part.value),
+                                ),
+                                `builder_bytes(&${builder}, ${tail.literal}, ${tail.length});`,
+                            );
+                        }
+                        expr = `builder_finish(&${builder})`;
+                        break;
+                    }
                     case 'construct': {
                         const n = tagOf(id, i.name),
                             v = variant(id, n);
@@ -1088,6 +1167,7 @@ export function lowerC(program: ConcreteProgram): TranslationUnit {
                                 const op = w.definition.slice(7);
                                 if (['+', '-', '*', '/', '==', '>=', '<='].includes(op))
                                     expr = `(${args[0]} ${op} ${args[1]})`;
+                                else if (op === 'charList') expr = `${charList(id)}(${args[0]})`;
                                 else unsupported(`Native import ${w.definition}`);
                             } else return unsupported('Disposer invocation');
                         }
@@ -1104,7 +1184,7 @@ export function lowerC(program: ConcreteProgram): TranslationUnit {
                         continue;
                     }
                     default:
-                        return unsupported(`Operation ${i.op} requires a later backend phase`);
+                        return unsupported(`Unknown operation ${(i as { op: string }).op}`);
                 }
                 declare(id, expr, body, name);
                 values.set(i.out.id, name);
@@ -1265,6 +1345,7 @@ export function lowerC(program: ConcreteProgram): TranslationUnit {
     const emittedHelpers = helpers.length;
     functions.push(
         ...helpers,
+        ...(runtime?.functions ?? []),
         {
             signature: 'void *allocate_context(size_t size)',
             body: [
@@ -1289,6 +1370,7 @@ export function lowerC(program: ConcreteProgram): TranslationUnit {
         if (l.kind === 'f64') body.push(`print_number(${expr});`);
         else if (l.kind === 'bool') body.push(`fputs(${expr} ? "true" : "false", stdout);`);
         else if (l.kind === 'unit') body.push('fputs("null", stdout);');
+        else if (l.kind === 'string') body.push(`print_string(${expr});`);
         else if (l.fields.every((f) => f.kind === 'value' && f.name.startsWith('item'))) {
             body.push('putchar(91);');
             l.fields.forEach((f, i) => {

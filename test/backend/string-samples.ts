@@ -1,0 +1,107 @@
+/** Phase 7 strings: owned UTF-8 data, interpolation, literal patterns and `charList`. */
+export const stringSamples = [
+    { name: 'literal', source: '"hello"', expected: 'hello' },
+    { name: 'empty literal', source: '""', expected: '' },
+    { name: 'escapes', source: '"q\\"x\\\\ \\n\\t"', expected: 'q"x\\ \n\t' },
+    { name: 'unicode', source: '"é 😀 ??="', expected: 'é 😀 ??=' },
+    { name: 'tuple of strings', source: '("a", 1, "")', expected: ['a', 1, ''] },
+    { name: 'string interpolation', source: '{let s = "in"\n "<${s}>"}', expected: '<in>' },
+    {
+        name: 'scalar interpolation',
+        source: '"${1} ${true} ${false} ${0 - 2.5} ${2 / 3} ${0.1 + 0.2}"',
+        expected: '1 true false -2.5 0.6666666666666666 0.30000000000000004',
+    },
+    {
+        name: 'number layout',
+        source: '"${1000000 * 1000000 * 1000000 * 100} ${1000000 * 1000000 * 1000000 * 1000} ${1 / 1000000} ${1 / 10000000} ${3 / 20000000}"',
+        expected: '100000000000000000000 1e+21 0.000001 1e-7 1.5e-7',
+    },
+    {
+        name: 'special numbers',
+        source: '"${1 / 0} ${0 - 1 / 0} ${0 / 0} ${0 / (0 - 1)}"',
+        expected: 'Infinity -Infinity NaN 0',
+    },
+    {
+        name: 'large integral literal',
+        source: '"${459751200000000000000}"',
+        expected: '459751200000000000000',
+    },
+    { name: 'interpolation only', source: '{let s = "x"\n "${s}"}', expected: 'x' },
+    {
+        name: 'nested interpolation',
+        source: '{let a = "a"\n let b = "b${a}"\n "${b}c"}',
+        expected: 'bac',
+    },
+    { name: 'literal pattern', source: 'match "a" {"a" -> 1; _ -> 2}', expected: 1 },
+    { name: 'literal pattern fallthrough', source: 'match "b" {"a" -> 1; _ -> 2}', expected: 2 },
+    { name: 'empty literal pattern', source: 'match "" {"a" -> 1; "" -> 2; _ -> 3}', expected: 2 },
+    {
+        name: 'prefix is not equal',
+        source: 'match "ab" {"a" -> 1; "abc" -> 2; _ -> 3}',
+        expected: 3,
+    },
+    {
+        name: 'tuple literal pattern',
+        source: 'match ("a", 2) {("a", n) -> n; (_, _) -> 0}',
+        expected: 2,
+    },
+    {
+        name: 'function argument',
+        source: 'fn greet(name) {"hi ${name}"}\ngreet("bob")',
+        expected: 'hi bob',
+    },
+    { name: 'closure capture', source: '{let s = "cap"\n let f = fn (()) s\n f(())}', expected: 'cap' },
+    {
+        name: 'captured interpolation',
+        source: '{let s = "a"\n let f = fn (()) "${s}!"\n f(())}',
+        expected: 'a!',
+    },
+    { name: 'dup', source: '{let s = "d"\n (dup(~s), s)}', expected: ['d', 'd'] },
+    { name: 'swap', source: '{let s = "a"\n s := "${s}b"\n s}', expected: 'ab' },
+    { name: 'alias update', source: '{let x = "a"\n {let y = ~x\n y := "${y}b"}\n x}', expected: 'ab' },
+    {
+        name: 'dropped string',
+        source: '{let s = "unused"\n let t = "kept"\n t}',
+        expected: 'kept',
+    },
+    { name: 'list of strings', source: '["a", "b"]', expected: ['a', 'b'] },
+    { name: 'option of string', source: 'Some("x")', expected: { kind: 'variant', name: 'Some', items: ['x'] } },
+    {
+        name: 'user union payload',
+        source: 'type named {\n    Name(String)\n}\nmatch Name("al") {Name(n) -> "${n}?"}',
+        expected: 'al?',
+    },
+    {
+        name: 'list head',
+        source: 'fn first(l) {match l {[x, ..._] -> x; [] -> "none"}}\nfirst(["p", "q"])',
+        expected: 'p',
+    },
+    {
+        name: 'borrowed list update',
+        source: '{let xs = ["a", "b"]\n match ~xs {[h, ...rest] -> {h := "z"\n ()}; [] -> ()}\n xs}',
+        expected: ['z', 'b'],
+    },
+    {
+        name: 'borrowed dup',
+        source: '{let xs = ["a", "b"]\n let r = match ~xs {[h, ...rest] -> dup(~h); [] -> ""}\n (r, xs)}',
+        expected: ['a', ['a', 'b']],
+    },
+    {
+        name: 'borrowed tuple update',
+        source: '{let t = ("a", 1)\n match ~t {(h, n) -> {h := "c"}}\n t}',
+        expected: ['c', 1],
+    },
+    { name: 'charList', source: 'charList("héllo😀")', expected: ['h', 'é', 'l', 'l', 'o', '😀'] },
+    { name: 'empty charList', source: 'charList("")', expected: [] },
+    { name: 'charList value', source: '{let f = charList\n f("ab")}', expected: ['a', 'b'] },
+    {
+        name: 'charList length',
+        source: 'fn len(l) {match l {[] -> 0; [x, ...rest] -> 1 + len(rest)}}\nlen(charList("abc"))',
+        expected: 3,
+    },
+    {
+        name: 'charList match',
+        source: 'match charList("xy") {[a, ...rest] -> "${a}!"; [] -> "none"}',
+        expected: 'x!',
+    },
+];
