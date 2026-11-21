@@ -63,11 +63,12 @@ export type Instruction =
     | (Output & { op: 'acquire'; slot: SlotRef })
     | (Output & { op: 'lens-tuple'; items: ValueId[] })
     | (Output & {
-          op: 'manual';
-          lens: ValueId;
+          op: 'aslens';
+          initial: ValueId;
+          backing: string;
+          reconstruction?: IRPattern;
           holds: SlotRef[];
           cleanup: IRBlock;
-          reconstruction?: IRPattern;
       })
     | (Output & { op: 'swap'; lens: ValueId; value: ValueId })
     | (Output & { op: 'call'; callee: ValueId; args: ValueId[] })

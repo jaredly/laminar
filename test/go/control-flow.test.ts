@@ -13,7 +13,7 @@ for (const flag of ['a', 'b'])
         async () => {
             const source = `{let x = 1
  let count = 0
- {let focus = ~{match "${flag}" {"a" -> @(x, fn () {count := count + 1}); _ -> @(x, fn () {count := count + 10})}}
+ {let focus = ~{match "${flag}" {"a" -> {lens finalFocus <- x\nx := finalFocus\n{count := count + 1}}; _ -> {lens finalFocus <- x\nx := finalFocus\n{count := count + 10}}}}
  focus := true}
  (x, count)}`;
             const code = emit(source);
@@ -115,7 +115,7 @@ for (const [name, source, expected, output] of [
     ],
     [
         'cleanup after match',
-        '{let x = true\n let r = match dup(~{@(x, fn () {print("cleanup")})}) {true -> 1; false -> 2}\n r}',
+        '{let x = true\n let r = match dup(~{{lens finalFocus <- x\nx := finalFocus\n{print("cleanup")}}}) {true -> 1; false -> 2}\n r}',
         1,
         'cleanup\n',
     ],

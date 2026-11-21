@@ -25,9 +25,7 @@ import {
 } from './writeback.ts';
 
 type Completion = (body: Statement[]) => void;
-type Lens = { view: View; finish: Completion; stage?: (body: Statement[]) => Completion };
-const stage = (lens: Lens, body: Statement[]): Completion =>
-    lens.stage ? lens.stage(body) : lens.finish;
+type Lens = { view: View; finish: Completion };
 const noFinish = (_body: Statement[]) => {};
 
 const unsupported = (message: string): never => {
@@ -529,7 +527,7 @@ export function lowerGo(program: ConcreteProgram): GoFile {
                 }
                 if (i.op === 'move' || i.op === 'acquire') sourceSlots.push(i.slot);
                 if (i.op === 'scope') scanNames(i.body);
-                if (i.op === 'manual') scanNames(i.cleanup);
+                if (i.op === 'aslens') scanNames(i.cleanup);
                 if (i.op === 'case') i.cases.forEach((a) => scanNames(a.body));
             }
         };
@@ -925,7 +923,7 @@ export function lowerGo(program: ConcreteProgram): GoFile {
         // Adapt input/output backing at calls.
         const homogeneous = (id: string): boolean => {
             const l = layout(id);
-            // restore/context are ABI capacity; finish/stage establish whether
+            // restore/context are ABI capacity; finish establishes whether
             // this logical lens actually has an active restoration frontend.
             if (l.fields.some((f) => f.name === 'replacement')) return false;
             if (l.fields.some((f) => f.name === 'read')) return true;
@@ -955,7 +953,7 @@ export function lowerGo(program: ConcreteProgram): GoFile {
             escapes: boolean,
             body: Statement[],
         ): { expression: string; finish: (body: Statement[]) => void } => {
-            const reusable = !escapes && lens.finish === noFinish && !lens.stage && homogeneous(id);
+            const reusable = !escapes && lens.finish === noFinish && homogeneous(id);
             if (reusable) {
                 const data = storage.get(lens.view);
                 const existing = physicalLenses.find(
@@ -981,7 +979,6 @@ export function lowerGo(program: ConcreteProgram): GoFile {
                     if (
                         !escapes &&
                         lens.finish === noFinish &&
-                        !lens.stage &&
                         !output &&
                         !Array.isArray(d) &&
                         d.layout === input.layout &&
@@ -1157,7 +1154,7 @@ export function lowerGo(program: ConcreteProgram): GoFile {
             b.instructions.forEach((i) => {
                 if ('out' in i) outputLayouts.set(i.out.id, i.out.layout);
                 if (i.op === 'scope') index(i.body);
-                if (i.op === 'manual') index(i.cleanup);
+                if (i.op === 'aslens') index(i.cleanup);
                 if (i.op === 'case') i.cases.forEach((a) => index(a.body));
             });
         index(c.body);
@@ -1173,15 +1170,17 @@ export function lowerGo(program: ConcreteProgram): GoFile {
                 const operandIds =
                     i.op === 'bind' || i.op === 'swap' || i.op === 'case'
                         ? [i.value]
-                        : i.op === 'invoke'
-                          ? [i.callee, ...i.args]
-                          : i.op === 'make-callable'
-                            ? i.captures.map((c) => c.value)
-                            : i.op === 'string'
-                              ? i.parts.map((p) => p.value)
-                              : i.op === 'tuple' || i.op === 'construct'
-                                ? i.items
-                                : [];
+                        : i.op === 'aslens'
+                          ? [i.initial]
+                          : i.op === 'invoke'
+                            ? [i.callee, ...i.args]
+                            : i.op === 'make-callable'
+                              ? i.captures.map((c) => c.value)
+                              : i.op === 'string'
+                                ? i.parts.map((p) => p.value)
+                                : i.op === 'tuple' || i.op === 'construct'
+                                  ? i.items
+                                  : [];
                 const operands = new Map(operandIds.map((id) => [id, values.get(id)!]));
                 const value = (id: string) =>
                     code(operands.get(id) ?? unsupported('Missing Go operand'));
@@ -1337,7 +1336,7 @@ export function lowerGo(program: ConcreteProgram): GoFile {
                     case 'lens-tuple':
                         if (
                             i.items.every(
-                                (v) => lenses.get(v)!.finish === noFinish && !lenses.get(v)!.stage,
+                                (v) => lenses.get(v)!.finish === noFinish,
                             )
                         ) {
                             lenses.set(i.out.id, {
@@ -1348,10 +1347,6 @@ export function lowerGo(program: ConcreteProgram): GoFile {
                         }
                         lenses.set(i.out.id, {
                             view: i.items.map((v) => lenses.get(v)!.view),
-                            stage: (body) => {
-                                const completions = i.items.map((v) => stage(lenses.get(v)!, body));
-                                return (body) => completions.forEach((complete) => complete(body));
-                            },
                             finish: (body) => i.items.forEach((v) => lenses.get(v)!.finish(body)),
                         });
                         continue;
@@ -1471,7 +1466,6 @@ export function lowerGo(program: ConcreteProgram): GoFile {
                             lenses.set(i.out.id, {
                                 view: storage.project(parent.view, [0]),
                                 finish: parent.finish,
-                                stage: parent.stage,
                             });
                             continue;
                         } else {
@@ -1559,20 +1553,15 @@ export function lowerGo(program: ConcreteProgram): GoFile {
                         }
                         continue;
                     }
-                    case 'manual': {
-                        const frontend = lenses.get(i.lens)!;
-                        const manual: Lens = {
-                            view: frontend.view,
-                            stage: (output) => {
-                                const complete = stage(frontend, output);
-                                return (output) => {
-                                    block(i.cleanup, output);
-                                    complete(output);
-                                };
+                    case 'aslens': {
+                        const view = storage.own(datum(i.initial));
+                        places.set(i.backing, view);
+                        lenses.set(i.out.id, {
+                            view,
+                            finish: (output) => {
+                                block(i.cleanup, output);
                             },
-                            finish: (output) => stage(manual, output)(output),
-                        };
-                        lenses.set(i.out.id, manual);
+                        });
                         continue;
                     }
                     case 'case': {
@@ -1680,66 +1669,6 @@ export function lowerGo(program: ConcreteProgram): GoFile {
                             );
                             lenses.set(i.out.id, {
                                 view: joined,
-                                stage: (output) => {
-                                    // Commit only the selected frontend and merge its visible owner
-                                    // versions before manual cleanup reads lexical dependencies.
-                                    const current = storage.snapshot();
-                                    const replacement = storage.get(joined);
-                                    const staged = arms.map((arm) => {
-                                        storage.reset(arm.state);
-                                        before.forEach(
-                                            (_, cell) => (cell.data = current.get(cell)!),
-                                        );
-                                        storage.put(arm.lens.view, replacement);
-                                        const nested: Statement[] = [];
-                                        const complete = stage(arm.lens, nested);
-                                        return {
-                                            nested,
-                                            complete,
-                                            state: storage.snapshot(),
-                                            arm,
-                                        };
-                                    });
-                                    storage.reset(current);
-                                    merge(staged, output);
-                                    staged.forEach((arm, n) =>
-                                        output.push({
-                                            head: go`${n ? 'else if' : 'if'} (${selected} == ${n})`,
-                                            body: arm.nested,
-                                        }),
-                                    );
-                                    output.push({
-                                        head: 'else',
-                                        body: ['panic("unmatched case")'],
-                                    });
-                                    return (output) => {
-                                        // Cleanup may have changed those owners again. Preserve its
-                                        // versions while completing the original selected restoration.
-                                        const cleaned = storage.snapshot();
-                                        const restored = staged.map((entry) => {
-                                            storage.reset(entry.state);
-                                            before.forEach(
-                                                (_, cell) => (cell.data = cleaned.get(cell)!),
-                                            );
-                                            const nested: Statement[] = [];
-                                            entry.complete(nested);
-                                            normalize(entry.arm.arm.restored, nested);
-                                            return { nested, state: storage.snapshot() };
-                                        });
-                                        storage.reset(cleaned);
-                                        merge(restored, output);
-                                        restored.forEach((arm, n) =>
-                                            output.push({
-                                                head: go`${n ? 'else if' : 'if'} (${selected} == ${n})`,
-                                                body: arm.nested,
-                                            }),
-                                        );
-                                        output.push({
-                                            head: 'else',
-                                            body: ['panic("unmatched case")'],
-                                        });
-                                    };
-                                },
                                 finish: (output) => {
                                     const current = storage.snapshot();
                                     const replacement = storage.get(joined);
@@ -1885,13 +1814,6 @@ export function lowerGo(program: ConcreteProgram): GoFile {
                 const lens = lenses.get(b.result)!;
                 lenses.set(b.result, {
                     view: lens.view,
-                    stage: (body) => {
-                        const complete = stage(lens, body);
-                        return (body) => {
-                            complete(body);
-                            finish(body);
-                        };
-                    },
                     finish: (body) => {
                         lens.finish(body);
                         finish(body);

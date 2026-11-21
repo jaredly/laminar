@@ -84,7 +84,7 @@ export function executeTypedProgram(
             b.instructions.forEach((i) => {
                 if ('out' in i) types.set(i.out.id, i.out.type);
                 if (i.op === 'scope') index(i.body);
-                else if (i.op === 'manual') index(i.cleanup);
+                else if (i.op === 'aslens') index(i.cleanup);
                 else if (i.op === 'case') i.cases.forEach((c) => index(c.body));
             });
         index(unit.entry);
@@ -532,19 +532,13 @@ export function executeTypedProgram(
                     else finish();
                     break;
                 }
-                case 'manual': {
-                    const frontend = lens(take(f, i.lens));
-                    result = scoped(
-                        view(
-                            () => frontend.peek(),
-                            (value) => frontend.replace(value),
-                            () => {
-                                dispose(owned(data(executeBlock(u, i.cleanup, f))));
-                                frontend.finish();
-                            },
-                        ),
-                        () => {},
-                    );
+                case 'aslens': {
+                    const backing = cell(owned(data(take(f, i.initial))));
+                    f.places.set(i.backing, backing);
+                    result = scoped(backing, () => {
+                        dispose(owned(data(executeBlock(u, i.cleanup, f))));
+                        f.places.delete(i.backing);
+                    });
                     break;
                 }
                 case 'scope':

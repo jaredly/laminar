@@ -58,7 +58,7 @@ fn relay(f, ~p) ~f(~p)
     })),
     ...(['true', 'false'] as const).map((condition) => ({
         name: `cleanup dynamic lens result ${condition}`,
-        source: `{let f = match ${condition} {true -> fn (~p) ~p; false -> fn (~(x, y)) ~(@(x, fn () {x := x + 7}), y)}
+        source: `{let f = match ${condition} {true -> fn (~p) ~p; false -> fn (~(x, y)) ~({lens finalFocus <- x\nx := finalFocus\n{x := x + 7}}, y)}
  let pair = (1, 2)
  f(~pair) := (3, 4)
  pair}`,
@@ -76,7 +76,7 @@ fn relay(f, ~p) ~f(~p)
     })),
     ...(['true', 'false'] as const).map((condition) => ({
         name: `alias release dynamic lens result ${condition}`,
-        source: `{let f = match ${condition} {true -> fn (~p) ~p; false -> fn (~(x, y)) ~(@(x, fn () {x := x + 7}), y)}
+        source: `{let f = match ${condition} {true -> fn (~p) ~p; false -> fn (~(x, y)) ~({lens finalFocus <- x\nx := finalFocus\n{x := x + 7}}, y)}
  let pair = (1, 2)
  {let focus = ~f(~pair)
  ()}

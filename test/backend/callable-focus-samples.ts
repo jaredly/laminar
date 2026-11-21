@@ -136,9 +136,9 @@ export const callableFocusSamples = [
  let v = 3
  let f = fn () v
  {let focus = ~{let a = ~f
- @(x, {let old = a := fn () 7
+ {lens finalFocus <- x\nx := finalFocus\n{let old = a := fn () 7
  old()
- fn () ()})}
+ ()}}}
  focus := 5}
  (f(), x)}`,
         expected: [7, 5],
@@ -293,64 +293,51 @@ export const callableFocusSamples = [
         expected: [7, 9],
     },
     {
-        name: 'manual callable swap direct',
+        name: 'temporary callable swap direct',
         source: `{let v = 3
  let f = fn () v
- let old = @(f, fn () ()) := fn () 7
+ let old = {lens finalFocus <- f\nf := finalFocus\n()} := fn () 7
  (old(), f())}`,
         expected: [3, 7],
     },
     {
-        name: 'manual callable swap cleanup replacement',
+        name: 'temporary callable swap cleanup replacement',
         source: `{let v = 3
  let f = fn () v
  let seen = 0
- let old = @(f, {let installed = f := fn () 9
+ let old = {lens finalFocus <- f\nf := finalFocus\n{let installed = f := fn () 9
  seen := installed()
- fn () ()}) := fn () 7
+ ()}} := fn () 7
  (old(), seen, f())}`,
         expected: [3, 7, 9],
     },
     {
-        name: 'manual callable swap nested cleanup order',
-        source: `{let v = 3
- let f = fn () v
- let seen = 0
- let old = @(@(f, {let installed = f := fn () 9
- seen := seen * 10 + installed()
- fn () ()}), {let installed = f := fn () 8
- seen := installed()
- fn () ()}) := fn () 7
- (old(), seen, f())}`,
-        expected: [3, 78, 9],
-    },
-    {
-        name: 'manual callable swap aggregate',
+        name: 'temporary callable swap aggregate',
         source: `{let v = 3
  let p = (fn () v, 4)
- let old = @(p, fn () ()) := (fn () 7, true)
+ let old = {lens finalFocus <- p\np := finalFocus\n()} := (fn () 7, true)
  let (f, n) = old
  let (g, b) = p
  (f(), n, g(), b)}`,
         expected: [3, 4, 7, true],
     },
     {
-        name: 'manual callable swap projected',
+        name: 'temporary callable swap projected',
         source: `{let v = 3
  let p = (fn () v, 4)
  {let (a, b) = ~p
- let old = @(a, fn () ()) := fn () 7
+ let old = {lens finalFocus <- a\na := finalFocus\n()} := fn () 7
  old()}
  let (f, n) = p
  (f(), n)}`,
         expected: [7, 4],
     },
     {
-        name: 'manual callable swap unused',
+        name: 'temporary callable swap unused',
         source: `{let v = 3
  let f = fn () v
  let w = 7
- let old = @(f, fn () ()) := fn () w
+ let old = {lens finalFocus <- f\nf := finalFocus\n()} := fn () w
  9}`,
         expected: 9,
     },
@@ -364,14 +351,14 @@ export const callableFocusSamples = [
         expected: [3, 7],
     },
     {
-        name: 'forwarded callable focus manual cleanup',
+        name: 'forwarded callable focus temporary cleanup',
         source: `{let v = 3
  let f = fn () v
  let seen = 0
  let old = {let marker = ()
- @(f, {let installed = f := fn () 9
+ {lens finalFocus <- f\nf := finalFocus\n{let installed = f := fn () 9
  seen := installed()
- fn () ()})} := fn () 7
+ ()}}} := fn () 7
  (old(), seen, f())}`,
         expected: [3, 7, 9],
     },
@@ -414,15 +401,15 @@ export const callableFocusSamples = [
  let f = fn () v
  let w = 7
  let old = {let marker = ()
- @(f, fn () ())} := fn () w
+ {lens finalFocus <- f\nf := finalFocus\n()}} := fn () w
  9}`,
         expected: 9,
     },
     {
-        name: 'computed callable alias manual replacement',
+        name: 'computed callable alias temporary replacement',
         source: `{let v = 3
  let f = fn () v
- {let a = ~{@(f, fn () ())}
+ {let a = ~{{lens finalFocus <- f\nf := finalFocus\n()}}
  let old = a := fn () 7
  old()}
  f()}`,
@@ -432,7 +419,7 @@ export const callableFocusSamples = [
         name: 'computed callable alias unused',
         source: `{let v = 3
  let f = fn () v
- {let a = ~{@(f, fn () ())}
+ {let a = ~{{lens finalFocus <- f\nf := finalFocus\n()}}
  ()}
  f()}`,
         expected: 3,
@@ -442,34 +429,19 @@ export const callableFocusSamples = [
         source: `{let v = 3
  let f = fn () v
  let seen = 0
- {let a = ~{@(f, {let installed = f := fn () 9
+ {let a = ~{{lens finalFocus <- f\nf := finalFocus\n{let installed = f := fn () 9
  seen := installed()
- fn () ()})}
+ ()}}}
  let old = a := fn () 7
  old()}
  (seen, f())}`,
         expected: [7, 9],
     },
     {
-        name: 'computed callable alias nested manual order',
-        source: `{let v = 3
- let f = fn () v
- let seen = 0
- {let a = ~{@(@(f, {let installed = f := fn () 9
- seen := seen * 10 + installed()
- fn () ()}), {let installed = f := fn () 8
- seen := installed()
- fn () ()})}
- let old = a := fn () 7
- old()}
- (seen, f())}`,
-        expected: [78, 9],
-    },
-    {
         name: 'computed callable alias aggregate projected contents',
         source: `{let v = 3
  let p = (fn () v, 4)
- {let (a, b) = ~{@(p, fn () ())}
+ {let (a, b) = ~{{lens finalFocus <- p\np := finalFocus\n()}}
  {let c = ~a
  let old = c := fn () 7
  old()}
@@ -483,7 +455,7 @@ export const callableFocusSamples = [
         source: `{let v = 3
  let p = (fn () v, 4)
  {let (a, b) = ~p
- {let c = ~{@(a, fn () ())}
+ {let c = ~{{lens finalFocus <- a\na := finalFocus\n()}}
  let old = c := fn () 7
  old()}}
  let (f, n) = p
@@ -494,7 +466,7 @@ export const callableFocusSamples = [
         name: 'computed callable alias extraction to data',
         source: `{let v = 3
  let f = fn () v
- {let a = ~{@(f, fn () ())}
+ {let a = ~{{lens finalFocus <- f\nf := finalFocus\n()}}
  let old = a := true
  old()}
  f}`,
@@ -505,7 +477,7 @@ export const callableFocusSamples = [
         source: `{let v = 3
  let f = fn () v
  let w = 7
- {let a = ~{@(f, fn () ())}
+ {let a = ~{{lens finalFocus <- f\nf := finalFocus\n()}}
  let old = a := fn () w
  ()}
  9}`,
@@ -513,7 +485,7 @@ export const callableFocusSamples = [
     },
     {
         name: 'computed callable alias cleanup consumes installed value',
-        source: '{let x = 1\n {let f = ~{@(x, fn () {x()})}\n f := fn () 2}\n ()}',
+        source: '{let x = 1\n {let f = ~{{lens finalFocus <- x\nx := finalFocus\n{x()}}}\n f := fn () 2}\n ()}',
         expected: null,
     },
     {
@@ -579,37 +551,24 @@ export const callableFocusSamples = [
         expected: [7, false, true, 8],
     },
     {
-        name: 'scattered callable manual wrapper replacement',
+        name: 'scattered callable temporary wrapper replacement',
         source: `{let f = fn () 3
  let n = 4
  let seen = 0
- let (old, before) = @((f, n), {let installed = f := fn () 9
+ let (old, before) = {lens finalFocus <- (f, n)\n(f, n) := finalFocus\n{let installed = f := fn () 9
  seen := installed()
- fn () ()}) := (fn () 7, true)
+ ()}} := (fn () 7, true)
  (old(), before, seen, f(), n)}`,
         expected: [3, 4, 7, 9, true],
     },
     {
-        name: 'scattered callable manual nested wrappers',
+        name: 'scattered callable temporary member completion',
         source: `{let f = fn () 3
  let n = 4
  let seen = 0
- let (old, before) = @(@((f, n), {let installed = f := fn () 9
- seen := seen * 10 + installed()
- fn () ()}), {let installed = f := fn () 8
+ let (old, before) = ({lens finalFocus <- f\nf := finalFocus\n{let installed = f := fn () 9
  seen := installed()
- fn () ()}) := (fn () 7, true)
- (old(), before, seen, f(), n)}`,
-        expected: [3, 4, 78, 9, true],
-    },
-    {
-        name: 'scattered callable manual member completion',
-        source: `{let f = fn () 3
- let n = 4
- let seen = 0
- let (old, before) = (@(f, {let installed = f := fn () 9
- seen := installed()
- fn () ()}), @(n, fn () ())) := (fn () 7, true)
+ ()}}, {lens finalFocus <- n\nn := finalFocus\n()}) := (fn () 7, true)
  (old(), before, seen, f(), n)}`,
         expected: [3, 4, 7, 9, true],
     },
@@ -625,14 +584,14 @@ export const callableFocusSamples = [
         expected: [3, 4, 5, 7, true, null],
     },
     {
-        name: 'scattered callable forwarded manual completion',
+        name: 'scattered callable forwarded temporary completion',
         source: `{let f = fn () 3
  let n = 4
  let seen = 0
  let (old, before) = {let marker = ()
- @((f, n), {let installed = f := fn () 9
+ {lens finalFocus <- (f, n)\n(f, n) := finalFocus\n{let installed = f := fn () 9
  seen := installed()
- fn () ()})} := (fn () 7, true)
+ ()}}} := (fn () 7, true)
  (old(), before, seen, f(), n)}`,
         expected: [3, 4, 7, 9, true],
     },
@@ -672,13 +631,13 @@ export const callableFocusSamples = [
         expected: [7, true, null],
     },
     {
-        name: 'scattered callable persistent manual cleanup',
+        name: 'scattered callable persistent temporary cleanup',
         source: `{let f = fn () 3
  let n = 4
  let seen = 0
- {let (a, b) = ~{@((f, n), {let installed = f := fn () 9
+ {let (a, b) = ~{{lens finalFocus <- (f, n)\n(f, n) := finalFocus\n{let installed = f := fn () 9
  seen := installed()
- fn () ()})}
+ ()}}}
  let old = a := fn () 7
  old()
  b := true}
@@ -787,16 +746,6 @@ export const callableFocusSamples = [
         expected: [3, true, 4],
     },
     {
-        name: 'callable fst completion manual result',
-        source: `{let p = (fn () 3, 4)
- let seen = 0
- let old = @(fst(~p), {seen := 9
- fn () ()}) := fn () 7
- let (f, n) = p
- (old(), seen, f(), n)}`,
-        expected: [3, 9, 7, 4],
-    },
-    {
         name: 'private callable backing whole scope',
         source: 'fn make() {fn () 3}\n{let w = 7\n let old = {let f = make()\n f} := fn () w\n old()}',
         expected: 3,
@@ -810,13 +759,13 @@ export const callableFocusSamples = [
         expected: 3,
     },
     {
-        name: 'private callable backing manual cleanup',
+        name: 'private callable backing temporary cleanup',
         source: `fn make() {fn () 3}
 {let seen = 0
  let old = {let f = make()
- @(f, {let installed = f := fn () 9
+ {lens finalFocus <- f\nf := finalFocus\n{let installed = f := fn () 9
  seen := installed()
- fn () ()})} := fn () 7
+ ()}}} := fn () 7
  (old(), seen)}`,
         expected: [3, 7],
     },
@@ -831,14 +780,14 @@ export const callableFocusSamples = [
         expected: [3, 4],
     },
     {
-        name: 'private scattered backing manual cleanup',
+        name: 'private scattered backing temporary cleanup',
         source: `fn make(v) {fn () v}
 {let seen = 0
  let (old, before) = {let f = make(3)
  {let n = 4
- @((f, n), {let installed = f := fn () 9
+ {lens finalFocus <- (f, n)\n(f, n) := finalFocus\n{let installed = f := fn () 9
  seen := installed()
- fn () ()})}} := (fn () 7, true)
+ ()}}}} := (fn () 7, true)
  (old(), before, seen)}`,
         expected: [3, 4, 7],
     },
@@ -867,23 +816,23 @@ export const callableFocusSamples = [
         expected: [3, 7, 4],
     },
     {
-        name: 'callable fst over manual frontend',
-        source: '{let p = (fn () 3, 4)\n let old = fst(~{@(p, fn () ())}) := fn () 7\n let (f, n) = p\n (old(), f(), n)}',
+        name: 'callable fst over temporary frontend',
+        source: '{let p = (fn () 3, 4)\n let old = fst(~{{lens finalFocus <- p\np := finalFocus\n()}}) := fn () 7\n let (f, n) = p\n (old(), f(), n)}',
         expected: [3, 7, 4],
     },
     {
         name: 'callable fst cleanup observes projected replacement',
-        source: '{let p = (fn () 3, 4)\n let seen = 0\n let old = fst(~{@(p, {let (g, k) = p := (fn () 9, 5)\n seen := g() + k\n fn () ()})}) := fn () 7\n let (f, n) = p\n (old(), seen, f(), n)}',
+        source: '{let p = (fn () 3, 4)\n let seen = 0\n let old = fst(~{{lens finalFocus <- p\np := finalFocus\n{let (g, k) = p := (fn () 9, 5)\n seen := g() + k\n ()}}}) := fn () 7\n let (f, n) = p\n (old(), seen, f(), n)}',
         expected: [3, 11, 9, 5],
     },
     {
-        name: 'callable fst over scattered manual frontend',
-        source: '{let f = fn () 3\n let n = 4\n let old = fst(~{@((f, n), fn () ())}) := fn () 7\n (old(), f(), n)}',
+        name: 'callable fst over scattered temporary frontend',
+        source: '{let f = fn () 3\n let n = 4\n let old = fst(~{{lens finalFocus <- (f, n)\n(f, n) := finalFocus\n()}}) := fn () 7\n (old(), f(), n)}',
         expected: [3, 7, 4],
     },
     {
-        name: 'callable fst scattered manual cleanup',
-        source: '{let f = fn () 3\n let n = 4\n let seen = 0\n let old = fst(~{@((f, n), {let installed = f := fn () 9\n seen := installed()\n fn () ()})}) := fn () 7\n (old(), seen, f(), n)}',
+        name: 'callable fst scattered temporary cleanup',
+        source: '{let f = fn () 3\n let n = 4\n let seen = 0\n let old = fst(~{{lens finalFocus <- (f, n)\n(f, n) := finalFocus\n{let installed = f := fn () 9\n seen := installed()\n ()}}}) := fn () 7\n (old(), seen, f(), n)}',
         expected: [3, 7, 9, 4],
     },
     {

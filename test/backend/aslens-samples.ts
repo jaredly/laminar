@@ -61,11 +61,6 @@ export const aslensSamples = [
         expected: [1, 2],
     },
     {
-        name: 'manual cleanup precedes temporary cleanup',
-        source: '{let count = 1\n {let f = ~{@({lens v <- 2\n count := count + v}, fn () {count := count * 2})}\n f := 4}\n count}',
-        expected: 6,
-    },
-    {
         name: 'temporary cleanup completes nested temporary first',
         source: '{let seen = 0\n {let f = ~{lens v <- 1\n {let g = ~{lens w <- 2\n seen := w}\n g := v}\n seen := seen + 10}\n f := 4}\n seen}',
         expected: 14,

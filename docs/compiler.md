@@ -50,7 +50,7 @@ backend restrictions listed below. That includes:
 
 - `Number`, `Bool`, `String`, unit and tuples, with ordinary and type-changing
   updates (`x := ...`), persistent aliases, computed aliases, scattered tuple
-  lenses, manual `@(focus, cleanup)` restoration and `aslens` patterns.
+  lenses, and `aslens` restoration patterns.
 - Top-level definitions, generic definitions (specialized per use), recursion,
   first-class affine closures, typed indirect calls, and branch joins of callables
   and lenses.

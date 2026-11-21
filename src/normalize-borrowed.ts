@@ -29,16 +29,33 @@ export function normalizeBorrowed(source: Linear): Linear {
         body,
         loc,
     });
-    const prepare = (p: Pat): { owned: Pat; public: Pat; focus: Lens; restore: Linear } => {
+    const prepare = (
+        p: Pat,
+    ): { owned: Pat; public: Pat; initial: Linear; final: Pat; restore: Linear } => {
         if (p.type === 'constructor' || p.type === 'tuple') {
             const children = (p.type === 'constructor' ? p.args : p.items).map((v) => prepare(v));
+            const singleton =
+                p.type === 'constructor' && children.length === 1 ? children[0] : undefined;
             return {
                 owned:
                     p.type === 'constructor'
                         ? { ...p, args: children.map((c) => c.owned) }
                         : { ...p, items: children.map((c) => c.owned) },
-                public: { type: 'tuple', items: children.map((c) => c.public), loc: p.loc },
-                focus: { type: 'tuple', items: children.map((c) => c.focus), loc: p.loc },
+                public: singleton?.public ?? {
+                    type: 'tuple',
+                    items: children.map((c) => c.public),
+                    loc: p.loc,
+                },
+                initial: singleton?.initial ?? {
+                    type: 'tuple',
+                    items: children.map((c) => c.initial),
+                    loc: p.loc,
+                },
+                final: singleton?.final ?? {
+                    type: 'tuple',
+                    items: children.map((c) => c.final),
+                    loc: p.loc,
+                },
                 restore:
                     p.type === 'constructor'
                         ? {
@@ -52,11 +69,13 @@ export function normalizeBorrowed(source: Linear): Linear {
         }
         if (p.type === 'id' || p.type === 'drop') {
             const privateName = fresh(p.loc);
+            const final = fresh(p.loc);
             return {
                 owned: privateName,
                 public: p,
-                focus: copy(privateName),
-                restore: copy(privateName),
+                initial: copy(privateName),
+                final,
+                restore: copy(final),
             };
         }
         // Literal constraints select a branch, and their contents are preserved.
@@ -69,7 +88,8 @@ export function normalizeBorrowed(source: Linear): Linear {
         return {
             owned: p,
             public: { type: 'drop', loc: p.loc },
-            focus: { type: 'tuple', items: [], loc: p.loc },
+            initial: { type: 'tuple', items: [], loc: p.loc },
+            final: { type: 'tuple', items: [], loc: p.loc },
             restore:
                 p.type === 'string'
                     ? { type: 'string', head: p.text, interp: [], loc: p.loc }
@@ -81,21 +101,17 @@ export function normalizeBorrowed(source: Linear): Linear {
         const target = copy(owner);
         // Shared identity links the retained input pattern to its exact owner.
         parts.owned.reconstructionOwner = target;
-        const manual: Lens = {
-            type: 'manual',
-            frontend: parts.focus,
-            backend: {
-                type: 'fn',
-                args: [],
-                body: { type: 'assign', lens: target, value: parts.restore, loc },
-                loc,
-            },
+        const focus: Lens = {
+            type: 'aslens',
+            value: parts.initial,
+            pat: parts.final,
+            body: { type: 'assign', lens: target, value: parts.restore, loc },
+            reconstructionPattern: parts.owned,
             loc,
         };
-        manual.reconstructionPattern = parts.owned;
         return {
             pattern: parts.owned,
-            body: letNode(parts.public, { type: 'lens', lens: manual }, body, loc),
+            body: letNode(parts.public, { type: 'lens', lens: focus }, body, loc),
         };
     };
     const visit = (n: any): any => {

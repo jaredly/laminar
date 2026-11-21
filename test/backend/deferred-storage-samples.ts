@@ -6,9 +6,9 @@ export const deferredStorageSamples = (['true', 'false'] as const).flatMap((cond
  let seen = 0
  let v = 3
  let f = fn () v
- {let focus = ~{@(x, {let old = f := fn () 9
+ {let focus = ~{{lens finalFocus <- dup(~x)\nx := finalFocus\n{let old = f := fn () 9
  seen := old()
- fn () ()})}
+ ()}}}
  focus := ${condition}}
  (seen, x)}`,
         expected: [3, condition === 'true'],
@@ -19,9 +19,9 @@ export const deferredStorageSamples = (['true', 'false'] as const).flatMap((cond
  let seen = 0
  let v = 3
  let packed = (fn () v, 4)
- {let focus = ~{@(x, {let (old, n) = packed := (fn () 9, 6)
+ {let focus = ~{{lens finalFocus <- dup(~x)\nx := finalFocus\n{let (old, n) = packed := (fn () 9, 6)
  seen := old() + n
- fn () ()})}
+ ()}}}
  focus := ${condition}}
  (seen, x)}`,
         expected: [7, condition === 'true'],
@@ -34,8 +34,8 @@ export const deferredStorageSamples = (['true', 'false'] as const).flatMap((cond
  let f = fn () v
  let y = 5
  {let focus = ~{match ${condition} {true -> {let old = f := fn () y
- @(x, {seen := f()
- fn () ()})}; false -> x}}
+ {lens finalFocus <- dup(~x)\nx := finalFocus\n{seen := f()
+ ()}}}; false -> x}}
  focus := 2}
  (seen, x)}`,
         expected: [condition === 'true' ? 5 : 0, 2],
@@ -47,8 +47,8 @@ export const deferredStorageSamples = (['true', 'false'] as const).flatMap((cond
  let f = fn () v
  let y = 5
  {let focus = ~{match ${condition} {true -> {let old = f := fn () y
- @(x, {f()
- fn () ()})}; false -> x}}
+ {lens finalFocus <- dup(~x)\nx := finalFocus\n{f()
+ ()}}}; false -> x}}
  focus := true}
  f := fn () 9
  (f(), x)}`,
@@ -62,9 +62,9 @@ export const deferredStorageSamples = (['true', 'false'] as const).flatMap((cond
  let packed = ((fn () v, 4), true)
  let y = 5
  {let focus = ~{match ${condition} {true -> {let old = packed := ((fn () y, 6), false)
- @(x, {let ((f, n), _) = packed
+ {lens finalFocus <- dup(~x)\nx := finalFocus\n{let ((f, n), _) = packed
  seen := f() + n
- fn () ()})}; false -> x}}
+ ()}}}; false -> x}}
  focus := true}
  (seen, x)}`,
         expected: [condition === 'true' ? 11 : 0, true],
@@ -76,7 +76,7 @@ export const deferredStorageSamples = (['true', 'false'] as const).flatMap((cond
  let f = fn () v
  let y = 5
  {let focus = ~{match ${condition} {true -> {let old = f := fn () y
- @(x, fn () f)}; false -> x}}
+ {lens finalFocus <- dup(~x)\nx := finalFocus\nf}}; false -> x}}
  focus := true}
  x}`,
         expected: true,
@@ -89,8 +89,8 @@ export const deferredStorageSamples = (['true', 'false'] as const).flatMap((cond
  let f = fn () v
  let y = 5
  {let focus = ~{match ${condition} {true -> {let old = f := fn () y
- @(x, {seen := f()
- fn () ()})}; false -> x}}
+ {lens finalFocus <- dup(~x)\nx := finalFocus\n{seen := f()
+ ()}}}; false -> x}}
  ()}
  (seen, x)}`,
         expected: [condition === 'true' ? 5 : 0, 1],
@@ -99,8 +99,8 @@ export const deferredStorageSamples = (['true', 'false'] as const).flatMap((cond
         name: `deferred storage returned backing ${condition}`,
         source: `fn select(flag, first, second, ~x) ~{let f = first
  match flag {true -> {let old = f := second
- @(x, {f()
- fn () ()})}; false -> x}}
+ {lens finalFocus <- dup(~x)\nx := finalFocus\n{f()
+ ()}}}; false -> x}}
 {let a = 3
  let b = 5
  let x = 1
@@ -117,50 +117,22 @@ export const deferredStorageSamples = (['true', 'false'] as const).flatMap((cond
  let y = 5
  let z = 7
  {let focus = ~{match ${condition} {true -> {match false {true -> {let old = f := fn () y
- @(x, {seen := f()
- fn () ()})}; false -> {let old = f := fn () z
- @(x, {seen := f()
- fn () ()})}}}; false -> x}}
+ {lens finalFocus <- dup(~x)\nx := finalFocus\n{seen := f()
+ ()}}}; false -> {let old = f := fn () z
+ {lens finalFocus <- dup(~x)\nx := finalFocus\n{seen := f()
+ ()}}}}}; false -> x}}
  focus := true}
  (seen, x)}`,
         expected: [condition === 'true' ? 7 : 0, true],
-    },
-    {
-        name: `deferred storage staged outer cleanup ${condition}`,
-        source: `{let x = 1
- let seen = 0
- let count = 0
- let v = 3
- let f = fn () v
- let y = 5
- {let focus = ~{@({match ${condition} {true -> {let old = f := fn () y
- @(x, {seen := f() + dup(~count)
- fn () ()})}; false -> x}}, fn () {count := 10})}
- focus := true}
- (seen, count, x)}`,
-        expected: [condition === 'true' ? 15 : 0, 10, true],
-    },
-    {
-        name: `deferred storage returned staged backing ${condition}`,
-        source: `fn select(flag, first, second, ~x) ~{let f = first
- @({match flag {true -> {let old = f := second
- @(x, {f()
- fn () ()})}; false -> x}}, fn () ())}
-{let a = 3
- let b = 5
- let x = 1
- let old = select(${condition}, fn () a, fn () b, ~x) := true
- (old, x)}`,
-        expected: [1, true],
     },
     {
         name: `deferred storage continuation ${condition}`,
         source: `{let x = 1
  let v = 3
  let f = fn () v
- {let focus = ~{@(x, {let old = f := fn () 9
+ {let focus = ~{{lens finalFocus <- dup(~x)\nx := finalFocus\n{let old = f := fn () 9
  old()
- fn () ()})}
+ ()}}}
  focus := ${condition}}
  (f(), x)}`,
         expected: [9, condition === 'true'],
@@ -170,9 +142,9 @@ export const deferredStorageSamples = (['true', 'false'] as const).flatMap((cond
         source: `{let x = 1
  let v = 3
  let packed = (fn () v, 4)
- {let focus = ~{@(x, {let (old, n) = packed := (fn () 9, 6)
+ {let focus = ~{{lens finalFocus <- dup(~x)\nx := finalFocus\n{let (old, n) = packed := (fn () 9, 6)
  old() + n
- fn () ()})}
+ ()}}}
  focus := ${condition}}
  let (f, n) = packed
  (f() + n, x)}`,
@@ -183,9 +155,9 @@ export const deferredStorageSamples = (['true', 'false'] as const).flatMap((cond
         source: `{let x = 1
  let v = 3
  let f = fn () v
- {let focus = ~{@(x, {let old = f := fn () 9
+ {let focus = ~{{lens finalFocus <- dup(~x)\nx := finalFocus\n{let old = f := fn () 9
  old()
- fn () ()})}
+ ()}}}
  ()}
  (f(), x, ${condition})}`,
         expected: [9, 1, condition === 'true'],
@@ -195,39 +167,24 @@ export const deferredStorageSamples = (['true', 'false'] as const).flatMap((cond
         source: `{let x = 1
  let v = 3
  let f = fn () v
- {@(x, {let old = f := fn () 9
+ {{lens finalFocus <- dup(~x)\nx := finalFocus\n{let old = f := fn () 9
  old()
- fn () ()})} := ${condition}
+ ()}}} := ${condition}
  (f(), x)}`,
         expected: [9, condition === 'true'],
-    },
-    {
-        name: `deferred nested continuation ${condition}`,
-        source: `{let x = 1
- let v = 3
- let f = fn () v
- let g = fn () 4
- {let focus = ~{@(@(x, {let old = f := fn () 9
- old()
- fn () ()}), {let old = g := fn () 8
- old()
- fn () ()})}
- focus := ${condition}}
- (f() + g(), x)}`,
-        expected: [17, condition === 'true'],
     },
     {
         name: `deferred repeated continuation ${condition}`,
         source: `{let x = 1
  let v = 3
  let f = fn () v
- {let focus = ~{@(x, {let old = f := fn () 9
+ {let focus = ~{{lens finalFocus <- dup(~x)\nx := finalFocus\n{let old = f := fn () 9
  old()
- fn () ()})}
+ ()}}}
  focus := ${condition}}
- {let focus = ~{@(x, {let old = f := fn () 12
+ {let focus = ~{{lens finalFocus <- dup(~x)\nx := finalFocus\n{let old = f := fn () 12
  old()
- fn () ()})}
+ ()}}}
  ()}
  (f(), x)}`,
         expected: [12, condition === 'true'],
@@ -239,11 +196,11 @@ export const deferredStorageSamples = (['true', 'false'] as const).flatMap((cond
  let v = 3
  let f = fn () v
  let g = fn () 4
- {let focus = ~(@(x, {let old = f := fn () 9
+ {let focus = ~({lens finalFocus <- dup(~x)\nx := finalFocus\n{let old = f := fn () 9
  old()
- fn () ()}), @(y, {let old = g := fn () 8
+ ()}}, {lens finalFocus <- y\ny := finalFocus\n{let old = g := fn () 8
  old()
- fn () ()}))
+ ()}})
  focus := (${condition}, 7)}
  (f() + g(), x, y)}`,
         expected: [17, condition === 'true', 7],
@@ -254,9 +211,9 @@ export const deferredStorageSamples = (['true', 'false'] as const).flatMap((cond
  let y = 2
  let v = 3
  let f = fn () v
- {let focus = ~(x, @(y, {let old = f := fn () 9
+ {let focus = ~(x, {lens finalFocus <- y\ny := finalFocus\n{let old = f := fn () 9
  old()
- fn () ()}))
+ ()}})
  ()}
  (f(), x, y, ${condition})}`,
         expected: [9, 1, 2, condition === 'true'],
@@ -267,9 +224,9 @@ export const deferredStorageSamples = (['true', 'false'] as const).flatMap((cond
  let y = 2
  let v = 3
  let f = fn () v
- (x, @(y, {let old = f := fn () 9
+ (x, {lens finalFocus <- y\ny := finalFocus\n{let old = f := fn () 9
  old()
- fn () ()})) := (${condition}, 7)
+ ()}}) := (${condition}, 7)
  (f(), x, y)}`,
         expected: [9, condition === 'true', 7],
     },
@@ -281,11 +238,11 @@ export const deferredStorageSamples = (['true', 'false'] as const).flatMap((cond
  let v = 4
  let f = fn () v
  let g = fn () 5
- {let focus = ~(x, (@(y, {let old = f := fn () 9
+ {let focus = ~(x, ({lens finalFocus <- y\ny := finalFocus\n{let old = f := fn () 9
  old()
- fn () ()}), @(z, {let old = g := fn () 8
+ ()}}, {lens finalFocus <- z\nz := finalFocus\n{let old = g := fn () 8
  old()
- fn () ()})))
+ ()}}))
  focus := (${condition}, (6, 7))}
  (f() + g(), x, y, z)}`,
         expected: [17, condition === 'true', 6, 7],
@@ -296,29 +253,13 @@ export const deferredStorageSamples = (['true', 'false'] as const).flatMap((cond
  let y = 2
  let v = 3
  let packed = (fn () v, 4)
- {let focus = ~(@(x, {let (old, n) = packed := (fn () 9, 6)
+ {let focus = ~({lens finalFocus <- dup(~x)\nx := finalFocus\n{let (old, n) = packed := (fn () 9, 6)
  old() + n
- fn () ()}), y)
+ ()}}, y)
  focus := (${condition}, 7)}
  let (f, n) = packed
  (f() + n, x, y)}`,
         expected: [15, condition === 'true', 7],
-    },
-    {
-        name: `deferred manual scattered continuation ${condition}`,
-        source: `{let x = 1
- let y = 2
- let v = 3
- let f = fn () v
- let g = fn () 4
- {let focus = ~{@((@(x, {let old = f := fn () 9
- old()
- fn () ()}), y), {let old = g := fn () 8
- old()
- fn () ()})}
- focus := (${condition}, 7)}
- (f() + g(), x, y)}`,
-        expected: [17, condition === 'true', 7],
     },
     {
         name: `deferred plain call continuation ${condition}`,
@@ -326,9 +267,9 @@ export const deferredStorageSamples = (['true', 'false'] as const).flatMap((cond
 {let x = 1
  let v = 3
  let f = fn () v
- let result = read(~{@(x, {let old = f := fn () 9
+ let result = read(~{{lens finalFocus <- dup(~x)\nx := finalFocus\n{let old = f := fn () 9
  old()
- fn () ()})})
+ ()}}})
  (result, f(), x, ${condition})}`,
         expected: [1, 9, 1, condition === 'true'],
     },
@@ -338,9 +279,9 @@ export const deferredStorageSamples = (['true', 'false'] as const).flatMap((cond
 {let x = 1
  let v = 3
  let f = fn () v
- {let focus = ~{pass(~{@(x, {let old = f := fn () 9
+ {let focus = ~{pass(~{{lens finalFocus <- dup(~x)\nx := finalFocus\n{let old = f := fn () 9
  old()
- fn () ()})})}
+ ()}}})}
  focus := ${condition}}
  (f(), x)}`,
         expected: [9, condition === 'true'],
@@ -350,9 +291,9 @@ export const deferredStorageSamples = (['true', 'false'] as const).flatMap((cond
         source: `{let x = 1
  let v = 3
  let f = fn () v
- let result = dup(~{@(x, {let old = f := fn () 9
+ let result = dup(~{{lens finalFocus <- dup(~x)\nx := finalFocus\n{let old = f := fn () 9
  old()
- fn () ()})})
+ ()}}})
  (result, f(), x, ${condition})}`,
         expected: [1, 9, 1, condition === 'true'],
     },
@@ -362,9 +303,9 @@ export const deferredStorageSamples = (['true', 'false'] as const).flatMap((cond
  let y = 2
  let v = 3
  let f = fn () v
- {let focus = ~{fst(~(@(x, {let old = f := fn () 9
+ {let focus = ~{fst(~({lens finalFocus <- dup(~x)\nx := finalFocus\n{let old = f := fn () 9
  old()
- fn () ()}), y))}
+ ()}}, y))}
  focus := ${condition}}
  (f(), x, y)}`,
         expected: [9, condition === 'true', 2],
@@ -376,9 +317,9 @@ export const deferredStorageSamples = (['true', 'false'] as const).flatMap((cond
  let y = 2
  let v = 3
  let f = fn () v
- let result = read(~(@(x, {let old = f := fn () 9
+ let result = read(~({lens finalFocus <- dup(~x)\nx := finalFocus\n{let old = f := fn () 9
  old()
- fn () ()}), y))
+ ()}}, y))
  (result, f(), x, y, ${condition})}`,
         expected: [[1, 2], 9, 1, 2, condition === 'true'],
     },
@@ -389,9 +330,9 @@ export const deferredStorageSamples = (['true', 'false'] as const).flatMap((cond
  let y = 2
  let v = 3
  let f = fn () v
- {let focus = ~{pass(~(@(x, {let old = f := fn () 9
+ {let focus = ~{pass(~({lens finalFocus <- dup(~x)\nx := finalFocus\n{let old = f := fn () 9
  old()
- fn () ()}), y))}
+ ()}}, y))}
  focus := (${condition}, 7)}
  (f(), x, y)}`,
         expected: [9, condition === 'true', 7],
@@ -402,9 +343,9 @@ export const deferredStorageSamples = (['true', 'false'] as const).flatMap((cond
 {let x = 1
  let v = 3
  let f = fn () v
- {let focus = ~{pass(~{pass(~{@(x, {let old = f := fn () 9
+ {let focus = ~{pass(~{pass(~{{lens finalFocus <- dup(~x)\nx := finalFocus\n{let old = f := fn () 9
  old()
- fn () ()})})})}
+ ()}}})})}
  focus := ${condition}}
  (f(), x)}`,
         expected: [9, condition === 'true'],
@@ -415,27 +356,12 @@ export const deferredStorageSamples = (['true', 'false'] as const).flatMap((cond
 {let x = 1
  let v = 3
  let f = fn () v
- {let focus = ~{pass(~{@(x, {let old = f := fn () 9
+ {let focus = ~{pass(~{{lens finalFocus <- dup(~x)\nx := finalFocus\n{let old = f := fn () 9
  old()
- fn () ()})})}
+ ()}}})}
  ()}
  (f(), x, ${condition})}`,
         expected: [9, 1, condition === 'true'],
-    },
-    {
-        name: `deferred staged returned call continuation ${condition}`,
-        source: `fn pass(~x) ~x
-{let x = 1
- let count = 0
- let seen = 0
- let v = 3
- let f = fn () v
- {let focus = ~{@({pass(~{@(x, {let old = f := fn () 9
- seen := old()
- fn () ()})})}, fn () {count := 10})}
- focus := ${condition}}
- (f(), seen, count, x)}`,
-        expected: [9, 3, 10, condition === 'true'],
     },
     {
         name: `deferred dynamic plain call continuation ${condition}`,
@@ -445,9 +371,9 @@ fn second(~x) {dup(~x) + 1}
  let v = 3
  let f = fn () v
  let call = match ${condition} {true -> first; false -> second}
- let result = call(~{@(x, {let old = f := fn () 9
+ let result = call(~{{lens finalFocus <- dup(~x)\nx := finalFocus\n{let old = f := fn () 9
  old()
- fn () ()})})
+ ()}}})
  (result, f(), x)}`,
         expected: [condition === 'true' ? 1 : 2, 9, 1],
     },
@@ -459,9 +385,9 @@ fn second(~x) ~x
  let v = 3
  let f = fn () v
  let call = match ${condition} {true -> first; false -> second}
- {let focus = ~{call(~{@(x, {let old = f := fn () 9
+ {let focus = ~{call(~{{lens finalFocus <- dup(~x)\nx := finalFocus\n{let old = f := fn () 9
  old()
- fn () ()})})}
+ ()}}})}
  focus := true}
  (f(), x)}`,
         expected: [9, true],
@@ -472,9 +398,9 @@ fn second(~x) ~x
 {let x = 1
  let v = 3
  let packed = (fn () v, 4)
- {let focus = ~{pass(~{@(x, {let (old, n) = packed := (fn () 9, 6)
+ {let focus = ~{pass(~{{lens finalFocus <- dup(~x)\nx := finalFocus\n{let (old, n) = packed := (fn () 9, 6)
  old() + n
- fn () ()})})}
+ ()}}})}
  focus := ${condition}}
  let (f, n) = packed
  (f() + n, x)}`,
@@ -487,12 +413,12 @@ fn second(~x) ~x
  let v = 3
  let f = fn () v
  {let focus = ~{match ${condition} {
- true -> @(x, {let old = f := replacement
+ true -> {lens finalFocus <- dup(~x)\nx := finalFocus\n{let old = f := replacement
  old()
- fn () ()});
- false -> @(x, {let old = f := replacement
+ ()}};
+ false -> {lens finalFocus <- dup(~x)\nx := finalFocus\n{let old = f := replacement
  old()
- fn () ()})}}
+ ()}}}}
  focus := true}
  (f(), x)}`,
         expected: [9, true],
@@ -504,12 +430,12 @@ fn second(~x) ~x
  let v = 3
  let packed = (fn () v, 4)
  {let focus = ~{match ${condition} {
- true -> @(x, {let (old, n) = packed := (replacement, 6)
+ true -> {lens finalFocus <- dup(~x)\nx := finalFocus\n{let (old, n) = packed := (replacement, 6)
  old() + n
- fn () ()});
- false -> @(x, {let (old, n) = packed := (replacement, 6)
+ ()}};
+ false -> {lens finalFocus <- dup(~x)\nx := finalFocus\n{let (old, n) = packed := (replacement, 6)
  old() + n
- fn () ()})}}
+ ()}}}}
  focus := true}
  let (f, n) = packed
  (f() + n, x)}`,
@@ -522,12 +448,12 @@ fn second(~x) ~x
  let v = 3
  let f = fn () v
  {let focus = ~{match ${condition} {
- true -> @(x, {let old = f := replacement
+ true -> {lens finalFocus <- dup(~x)\nx := finalFocus\n{let old = f := replacement
  old()
- fn () ()});
- false -> @(x, {let old = f := replacement
+ ()}};
+ false -> {lens finalFocus <- dup(~x)\nx := finalFocus\n{let old = f := replacement
  old()
- fn () ()})}}
+ ()}}}}
  ()}
  (f(), x)}`,
         expected: [9, 1],
@@ -540,15 +466,15 @@ fn second(~x) ~x
  let f = fn () v
  {let focus = ~{match ${condition} {
  true -> {match false {
- true -> @(x, {let old = f := replacement
+ true -> {lens finalFocus <- dup(~x)\nx := finalFocus\n{let old = f := replacement
  old()
- fn () ()});
- false -> @(x, {let old = f := replacement
+ ()}};
+ false -> {lens finalFocus <- dup(~x)\nx := finalFocus\n{let old = f := replacement
  old()
- fn () ()})}};
- false -> @(x, {let old = f := replacement
+ ()}}}};
+ false -> {lens finalFocus <- dup(~x)\nx := finalFocus\n{let old = f := replacement
  old()
- fn () ()})}}
+ ()}}}}
  focus := true}
  (f(), x)}`,
         expected: [9, true],
@@ -561,33 +487,15 @@ fn pass(~x) ~x
  let v = 3
  let f = fn () v
  {let focus = ~{match ${condition} {
- true -> pass(~{@(x, {let old = f := replacement
+ true -> pass(~{{lens finalFocus <- dup(~x)\nx := finalFocus\n{let old = f := replacement
  old()
- fn () ()})});
- false -> pass(~{@(x, {let old = f := replacement
+ ()}}});
+ false -> pass(~{{lens finalFocus <- dup(~x)\nx := finalFocus\n{let old = f := replacement
  old()
- fn () ()})})}}
+ ()}}})}}
  focus := true}
  (f(), x)}`,
         expected: [9, true],
-    },
-    {
-        name: `deferred selected staged continuation ${condition}`,
-        source: `fn replacement() 9
-{let x = 1
- let count = 0
- let v = 3
- let f = fn () v
- {let focus = ~{@({match ${condition} {
- true -> @(x, {let old = f := replacement
- old()
- fn () ()});
- false -> @(x, {let old = f := replacement
- old()
- fn () ()})}}, fn () {count := 10})}
- focus := true}
- (f(), count, x)}`,
-        expected: [9, 10, true],
     },
     {
         name: `deferred selected divergent continuation ${condition}`,
@@ -596,9 +504,9 @@ fn pass(~x) ~x
  let v = 3
  let f = fn () v
  {let focus = ~{match ${condition} {
- true -> @(x, {let old = f := replacement
+ true -> {lens finalFocus <- dup(~x)\nx := finalFocus\n{let old = f := replacement
  old()
- fn () ()}); false -> x}}
+ ()}}; false -> x}}
  focus := true}
  (f(), x)}`,
         expected: [condition === 'true' ? 9 : 3, true],
@@ -609,11 +517,11 @@ fn pass(~x) ~x
  let v = 3
  let f = fn () v
  {let focus = ~{match ${condition} {
- true -> @(x, {let old = f := fn () 9
+ true -> {lens finalFocus <- dup(~x)\nx := finalFocus\n{let old = f := fn () 9
  old()
- fn () ()}); false -> @(x, {let old = f := fn () 8
+ ()}}; false -> {lens finalFocus <- dup(~x)\nx := finalFocus\n{let old = f := fn () 8
  old()
- fn () ()})}}
+ ()}}}}
  focus := true}
  (f(), x)}`,
         expected: [condition === 'true' ? 9 : 8, true],
@@ -624,9 +532,9 @@ fn pass(~x) ~x
  let v = 3
  let packed = ((fn () v, 4), true)
  {let focus = ~{match ${condition} {
- true -> @(x, {let ((old, n), _) = packed := ((fn () 9, 6), false)
+ true -> {lens finalFocus <- dup(~x)\nx := finalFocus\n{let ((old, n), _) = packed := ((fn () 9, 6), false)
  old() + n
- fn () ()}); false -> x}}
+ ()}}; false -> x}}
  focus := true}
  let ((f, n), flag) = packed
  (f() + n, flag, x)}`,
@@ -640,11 +548,11 @@ fn pass(~x) ~x
  let y = 9
  let z = 8
  {let focus = ~{match ${condition} {
- true -> @(x, {let old = f := fn () y
+ true -> {lens finalFocus <- dup(~x)\nx := finalFocus\n{let old = f := fn () y
  old()
- fn () ()}); false -> @(x, {let old = f := fn () z
+ ()}}; false -> {lens finalFocus <- dup(~x)\nx := finalFocus\n{let old = f := fn () z
  old()
- fn () ()})}}
+ ()}}}}
  focus := true}
  (f(), x)}`,
         expected: [condition === 'true' ? 9 : 8, true],
@@ -655,11 +563,11 @@ fn pass(~x) ~x
  let v = 3
  let f = fn () v
  {let focus = ~{match ${condition} {
- true -> {match false {true -> @(x, {let old = f := fn () 9
+ true -> {match false {true -> {lens finalFocus <- dup(~x)\nx := finalFocus\n{let old = f := fn () 9
  old()
- fn () ()}); false -> @(x, {let old = f := fn () 8
+ ()}}; false -> {lens finalFocus <- dup(~x)\nx := finalFocus\n{let old = f := fn () 8
  old()
- fn () ()})}}; false -> x}}
+ ()}}}}; false -> x}}
  focus := true}
  (f(), x)}`,
         expected: [condition === 'true' ? 8 : 3, true],
@@ -671,26 +579,12 @@ fn pass(~x) ~x
  let v = 3
  let f = fn () v
  {let focus = ~{match ${condition} {
- true -> pass(~{@(x, {let old = f := fn () 9
+ true -> pass(~{{lens finalFocus <- dup(~x)\nx := finalFocus\n{let old = f := fn () 9
  old()
- fn () ()})}); false -> pass(~x)}}
+ ()}}}); false -> pass(~x)}}
  focus := true}
  (f(), x)}`,
         expected: [condition === 'true' ? 9 : 3, true],
-    },
-    {
-        name: `deferred selected divergent staged ${condition}`,
-        source: `{let x = 1
- let count = 0
- let v = 3
- let f = fn () v
- {let focus = ~{@({match ${condition} {
- true -> @(x, {let old = f := fn () 9
- old()
- fn () ()}); false -> x}}, fn () {count := 10})}
- focus := true}
- (f(), count, x)}`,
-        expected: [condition === 'true' ? 9 : 3, 10, true],
     },
     {
         name: `deferred selected divergent unused ${condition}`,
@@ -699,9 +593,9 @@ fn pass(~x) ~x
  let f = fn () v
  let y = 9
  {let focus = ~{match ${condition} {
- true -> @(x, {let old = f := fn () y
+ true -> {lens finalFocus <- dup(~x)\nx := finalFocus\n{let old = f := fn () y
  old()
- fn () ()}); false -> x}}
+ ()}}; false -> x}}
  ()}
  x}`,
         expected: 1,
@@ -714,9 +608,9 @@ fn pass(~x) ~x
  let f = fn () v
  let y = 5
  {let focus = ~{match ${condition} {true -> {let old = f := fn () y
- @(x, {let old = f := fn () 9
+ {lens finalFocus <- dup(~x)\nx := finalFocus\n{let old = f := fn () 9
  seen := old()
- fn () ()})}; false -> x}}
+ ()}}}; false -> x}}
  focus := true}
  (f(), seen, x)}`,
         expected: [condition === 'true' ? 9 : 3, condition === 'true' ? 5 : 0, true],
@@ -729,11 +623,11 @@ fn pass(~x) ~x
  let f = fn () v
  let y = 5
  {let focus = ~{match ${condition} {true -> {let old = f := fn () y
- @(x, {let old = f := replacement
+ {lens finalFocus <- dup(~x)\nx := finalFocus\n{let old = f := replacement
  old()
- fn () ()})}; false -> @(x, {let old = f := replacement
+ ()}}}; false -> {lens finalFocus <- dup(~x)\nx := finalFocus\n{let old = f := replacement
  old()
- fn () ()})}}
+ ()}}}}
  focus := true}
  (f(), x)}`,
         expected: [9, true],
@@ -745,9 +639,9 @@ fn pass(~x) ~x
  let packed = (fn () v, 4)
  let y = 5
  {let focus = ~{match ${condition} {true -> {let old = packed := (fn () y, 6)
- @(x, {let (old, n) = packed := (fn () 9, 7)
+ {lens finalFocus <- dup(~x)\nx := finalFocus\n{let (old, n) = packed := (fn () 9, 7)
  old() + n
- fn () ()})}; false -> x}}
+ ()}}}; false -> x}}
  focus := true}
  let (f, n) = packed
  (f() + n, x)}`,
@@ -761,9 +655,9 @@ fn pass(~x) ~x
  let y = 5
  let z = 9
  {let focus = ~{match ${condition} {true -> {let old = f := fn () y
- @(x, {let old = f := fn () z
+ {lens finalFocus <- dup(~x)\nx := finalFocus\n{let old = f := fn () z
  old()
- fn () ()})}; false -> x}}
+ ()}}}; false -> x}}
  ()}
  x}`,
         expected: 1,
@@ -776,27 +670,12 @@ fn pass(~x) ~x
  let f = fn () v
  let y = 5
  {let focus = ~{match ${condition} {true -> {let old = f := fn () y
- pass(~{@(x, {let old = f := fn () 9
+ pass(~{{lens finalFocus <- dup(~x)\nx := finalFocus\n{let old = f := fn () 9
  old()
- fn () ()})})}; false -> pass(~x)}}
+ ()}}})}; false -> pass(~x)}}
  focus := true}
  (f(), x)}`,
         expected: [condition === 'true' ? 9 : 3, true],
-    },
-    {
-        name: `deferred retained replacement staged ${condition}`,
-        source: `{let x = 1
- let count = 0
- let v = 3
- let f = fn () v
- let y = 5
- {let focus = ~{@({match ${condition} {true -> {let old = f := fn () y
- @(x, {let old = f := fn () 9
- old()
- fn () ()})}; false -> x}}, fn () {count := 10})}
- focus := true}
- (f(), count, x)}`,
-        expected: [condition === 'true' ? 9 : 3, 10, true],
     },
     {
         name: `deferred retained replacement nested ${condition}`,
@@ -807,12 +686,12 @@ fn pass(~x) ~x
  let z = 7
  {let focus = ~{match ${condition} {true -> {match false {
  true -> {let old = f := fn () y
- @(x, {let old = f := fn () 9
+ {lens finalFocus <- dup(~x)\nx := finalFocus\n{let old = f := fn () 9
  old()
- fn () ()})}; false -> {let old = f := fn () z
- @(x, {let old = f := fn () 8
+ ()}}}; false -> {let old = f := fn () z
+ {lens finalFocus <- dup(~x)\nx := finalFocus\n{let old = f := fn () 8
  old()
- fn () ()})}}}; false -> x}}
+ ()}}}}}; false -> x}}
  focus := true}
  (f(), x)}`,
         expected: [condition === 'true' ? 8 : 3, true],
@@ -824,9 +703,9 @@ fn pass(~x) ~x
  let f = fn () v
  let y = 5
  {let focus = ~{match ${condition} {true -> {let old = f := fn () y
- @(x, {f()
+ {lens finalFocus <- dup(~x)\nx := finalFocus\n{f()
  f := fn () 9
- fn () ()})}; false -> x}}
+ ()}}}; false -> x}}
  focus := true}
  (f(), x)}`,
         expected: [condition === 'true' ? 9 : 3, true],
@@ -839,8 +718,8 @@ fn pass(~x) ~x
  let y = 5
  let z = 9
  {let focus = ~{match ${condition} {true -> {let old = f := fn () y
- @(x, {let old = f := fn () z
- fn () old})}; false -> x}}
+ {lens finalFocus <- dup(~x)\nx := finalFocus\n({let old = f := fn () z
+ fn () old})()}}; false -> x}}
  focus := true}
  (f(), x)}`,
         expected: [condition === 'true' ? 9 : 3, true],
@@ -849,9 +728,9 @@ fn pass(~x) ~x
         name: `returned local replacement ${condition}`,
         source: `fn select(flag, first, second, ~x) ~{let f = first
  match flag {true -> {let old = f := second
- @(x, {let old = f := fn () 9
+ {lens finalFocus <- dup(~x)\nx := finalFocus\n{let old = f := fn () 9
  old()
- fn () ()})}; false -> x}}
+ ()}}}; false -> x}}
 {let a = 3
  let b = 5
  let x = 1
@@ -863,9 +742,9 @@ fn pass(~x) ~x
         name: `returned local replacement unused ${condition}`,
         source: `fn select(flag, first, second, ~x) ~{let f = first
  match flag {true -> {let old = f := second
- @(x, {let old = f := fn () 9
+ {lens finalFocus <- dup(~x)\nx := finalFocus\n{let old = f := fn () 9
  old()
- fn () ()})}; false -> x}}
+ ()}}}; false -> x}}
 {let a = 3
  let b = 5
  let x = 1
@@ -878,9 +757,9 @@ fn pass(~x) ~x
         name: `returned local replacement forwarded ${condition}`,
         source: `fn select(flag, first, second, ~x) ~{let f = first
  match flag {true -> {let old = f := second
- @(x, {let old = f := fn () 9
+ {lens finalFocus <- dup(~x)\nx := finalFocus\n{let old = f := fn () 9
  old()
- fn () ()})}; false -> x}}
+ ()}}}; false -> x}}
 fn forward(flag, first, second, ~x) ~{select(flag, first, second, ~x)}
 {let a = 3
  let b = 5
@@ -893,9 +772,9 @@ fn forward(flag, first, second, ~x) ~{select(flag, first, second, ~x)}
         name: `returned local replacement aggregate ${condition}`,
         source: `fn select(flag, first, second, ~x) ~{let packed = (first, 4)
  match flag {true -> {let old = packed := (second, 6)
- @(x, {let (old, n) = packed := (fn () 9, 7)
+ {lens finalFocus <- dup(~x)\nx := finalFocus\n{let (old, n) = packed := (fn () 9, 7)
  old() + n
- fn () ()})}; false -> x}}
+ ()}}}; false -> x}}
 {let a = 3
  let b = 5
  let x = 1
@@ -908,11 +787,11 @@ fn forward(flag, first, second, ~x) ~{select(flag, first, second, ~x)}
         source: `fn replacement() 9
 fn select(flag, first, second, ~x) ~{let f = first
  match flag {true -> {let old = f := second
- @(x, {let old = f := replacement
+ {lens finalFocus <- dup(~x)\nx := finalFocus\n{let old = f := replacement
  old()
- fn () ()})}; false -> @(x, {let old = f := replacement
+ ()}}}; false -> {lens finalFocus <- dup(~x)\nx := finalFocus\n{let old = f := replacement
  old()
- fn () ()})}}
+ ()}}}}
 {let a = 3
  let b = 5
  let x = 1
@@ -924,22 +803,8 @@ fn select(flag, first, second, ~x) ~{let f = first
         name: `returned local replacement owned result ${condition}`,
         source: `fn select(flag, first, second, ~x) ~{let f = first
  match flag {true -> {let old = f := second
- @(x, {let old = f := fn () 9
- fn () old})}; false -> x}}
-{let a = 3
- let b = 5
- let x = 1
- let old = select(${condition}, fn () a, fn () b, ~x) := true
- (old, x)}`,
-        expected: [1, true],
-    },
-    {
-        name: `returned local replacement staged ${condition}`,
-        source: `fn select(flag, first, second, ~x) ~{let f = first
- @({match flag {true -> {let old = f := second
- @(x, {let old = f := fn () 9
- old()
- fn () ()})}; false -> x}}, fn () ())}
+ {lens finalFocus <- dup(~x)\nx := finalFocus\n({let old = f := fn () 9
+ fn () old})()}}; false -> x}}
 {let a = 3
  let b = 5
  let x = 1
@@ -952,9 +817,9 @@ fn select(flag, first, second, ~x) ~{let f = first
         source: `fn select(flag, first, second, ~x) ~{let f = first
  {let z = 9
  match flag {true -> {let old = f := second
- @(x, {let old = f := fn () z
+ {lens finalFocus <- dup(~x)\nx := finalFocus\n{let old = f := fn () z
  old()
- fn () ()})}; false -> x}}}
+ ()}}}; false -> x}}}
 {let a = 3
  let b = 5
  let x = 1
@@ -969,13 +834,13 @@ fn select(flag, first, second, ~x) ~{let f = first
  let v = 3
  let f = fn () v
  {let focus = ~{match ${condition} {
- true -> {let inner = ~{@(x, {let old = f := replacement
+ true -> {let inner = ~{{lens finalFocus <- dup(~x)\nx := finalFocus\n{let old = f := replacement
  old()
- fn () ()})}
+ ()}}}
  inner};
- false -> {let inner = ~{@(x, {let old = f := replacement
+ false -> {let inner = ~{{lens finalFocus <- dup(~x)\nx := finalFocus\n{let old = f := replacement
  old()
- fn () ()})}
+ ()}}}
  inner}}}
  focus := true}
  (f(), x)}`,
@@ -989,9 +854,9 @@ fn select(flag, first, second, ~x) ~{let f = first
  let y = 5
  {let focus = ~{match ${condition} {
  true -> {let old = f := fn () y
- {let inner = ~{@(x, {let old = f := fn () 9
+ {let inner = ~{{lens finalFocus <- dup(~x)\nx := finalFocus\n{let old = f := fn () 9
  old()
- fn () ()})}
+ ()}}}
  inner}}; false -> x}}
  focus := true}
  (f(), x)}`,
@@ -1004,13 +869,13 @@ fn select(flag, first, second, ~x) ~{let f = first
  let v = 3
  let f = fn () v
  {let focus = ~{match ${condition} {
- true -> {let inner = ~{@(x, {let old = f := replacement
+ true -> {let inner = ~{{lens finalFocus <- dup(~x)\nx := finalFocus\n{let old = f := replacement
  old()
- fn () ()})}
+ ()}}}
  inner};
- false -> {let inner = ~{@(x, {let old = f := replacement
+ false -> {let inner = ~{{lens finalFocus <- dup(~x)\nx := finalFocus\n{let old = f := replacement
  old()
- fn () ()})}
+ ()}}}
  inner}}}
  ()}
  (f(), x)}`,
@@ -1023,14 +888,14 @@ fn select(flag, first, second, ~x) ~{let f = first
  let v = 3
  let f = fn () v
  {let focus = ~{match ${condition} {
- true -> {let inner = ~{@(x, {let old = f := replacement
+ true -> {let inner = ~{{lens finalFocus <- dup(~x)\nx := finalFocus\n{let old = f := replacement
  old()
- fn () ()})}
+ ()}}}
  {let forwarded = ~inner
  forwarded}};
- false -> {let inner = ~{@(x, {let old = f := replacement
+ false -> {let inner = ~{{lens finalFocus <- dup(~x)\nx := finalFocus\n{let old = f := replacement
  old()
- fn () ()})}
+ ()}}}
  inner}}}
  focus := true}
  (f(), x)}`,
@@ -1044,13 +909,13 @@ fn select(flag, first, second, ~x) ~{let f = first
  let v = 3
  let f = fn () v
  {let focus = ~{match ${condition} {
- true -> {let inner = ~(@(x, {let old = f := replacement
+ true -> {let inner = ~({lens finalFocus <- dup(~x)\nx := finalFocus\n{let old = f := replacement
  old()
- fn () ()}), y)
+ ()}}, y)
  inner};
- false -> {let inner = ~(@(x, {let old = f := replacement
+ false -> {let inner = ~({lens finalFocus <- dup(~x)\nx := finalFocus\n{let old = f := replacement
  old()
- fn () ()}), y)
+ ()}}, y)
  inner}}}
  focus := (true, 7)}
  (f(), x, y)}`,
@@ -1061,13 +926,13 @@ fn select(flag, first, second, ~x) ~{let f = first
         source: `fn replacement() 9
 fn select(flag, first, ~x) ~{let f = first
  match flag {
- true -> {let inner = ~{@(x, {let old = f := replacement
+ true -> {let inner = ~{{lens finalFocus <- dup(~x)\nx := finalFocus\n{let old = f := replacement
  old()
- fn () ()})}
+ ()}}}
  inner};
- false -> {let inner = ~{@(x, {let old = f := replacement
+ false -> {let inner = ~{{lens finalFocus <- dup(~x)\nx := finalFocus\n{let old = f := replacement
  old()
- fn () ()})}
+ ()}}}
  inner}}}
 {let a = 3
  let x = 1

@@ -10,13 +10,13 @@ const cases = [
         expected: [3, 7],
     },
     {
-        name: 'callable manual argument completes after replacement',
-        source: '{let f = fn () 3\n let n = 4\n let seen = 0\n let old = fst(~{@((f, n), {let installed = f := fn () 9\n seen := installed()\n fn () ()})}) := fn () 7\n (old(), seen, f(), n)}',
+        name: 'callable temporary argument completes after replacement',
+        source: '{let f = fn () 3\n let n = 4\n let seen = 0\n let old = fst(~{{lens finalFocus <- (f, n)\n(f, n) := finalFocus\n{let installed = f := fn () 9\n seen := installed()\n ()}}}) := fn () 7\n (old(), seen, f(), n)}',
         expected: [3, 7, 9, 4],
     },
     {
         name: 'returned lens cleanup precedes argument cleanup',
-        source: 'fn first(~(x, y)) ~{@(x, fn () {x := x + 1})}\n{let seen = 0\n let old = first(~{lens (a, b) <- (3, 4)\n seen := a}) := 7\n (old, seen)}',
+        source: 'fn first(~(x, y)) ~{{lens finalFocus <- x\nx := finalFocus\n{x := x + 1}}}\n{let seen = 0\n let old = first(~{lens (a, b) <- (3, 4)\n seen := a}) := 7\n (old, seen)}',
         expected: [3, 8],
     },
 ];

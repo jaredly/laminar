@@ -410,9 +410,9 @@ export function verifyRepresentations(
                             fail('Owned local must expose a thin lens');
                         break;
                     }
-                    case 'manual':
+                    case 'aslens':
                         s.knownPlaces.clear();
-                        topology(lens(get(s, i.lens)), lens(v));
+                        if (lens(v).kind !== 'thin') fail('Temporary lens must have owned storage');
                         block(i.cleanup, clone(s));
                         break;
                     case 'lens-tuple': {

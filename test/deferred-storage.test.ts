@@ -59,9 +59,9 @@ it('normalizes deferred replacement of divergent storage', () => {
  let f = fn () v
  let y = 5
  {let focus = ~{match true {true -> {let old = f := fn () y
- @(x, {let old = f := fn () 9
+ {lens finalFocus <- dup(~x)\nx := finalFocus\n{let old = f := fn () 9
  old()
- fn () ()})}; false -> x}}
+ ()}}}; false -> x}}
  focus := 2}
  x}`;
     const p = typedProgram(source);
@@ -78,34 +78,6 @@ it('does not mistake deferred consumption for a descriptor transition', () => {
     const c = concrete();
     expect(c.analysis.entries[0].values.some((v: any) => v.cleanupStorage)).toBe(false);
 });
-function transitionManual(c: any): any {
-    function find(block: any): any {
-        for (const i of block.instructions) {
-            if (i.op === 'manual' && i.restoration.storageTransitions) return i;
-            if (i.op === 'scope') {
-                const nested = find(i.body);
-                if (nested) return nested;
-            }
-        }
-    }
-    return c.code.map((code: any) => find(code.body)).find(Boolean);
-}
-it('rejects invented physical transitions on consumption-only cleanup', () => {
-    const c = concrete();
-    function mutate(block: any): boolean {
-        for (const i of block.instructions) {
-            if (i.op === 'manual') {
-                i.restoration.storageTransitions = [];
-                return true;
-            }
-            if (i.op === 'scope' && mutate(i.body)) return true;
-            if (i.op === 'case' && i.cases.some((arm: any) => mutate(arm.body))) return true;
-        }
-        return false;
-    }
-    expect(c.code.some((code: any) => mutate(code.body))).toBe(true);
-    expect(() => verifyConcreteProgram(c)).toThrow('Manual restoration contract changed');
-});
 for (const condition of ['true', 'false'])
     it(`normalizes divergent post-cleanup descriptors ${condition}`, () => {
         const source = `fn replacement() 9
@@ -113,9 +85,9 @@ for (const condition of ['true', 'false'])
  let v = 3
  let f = fn () v
  {let focus = ~{match ${condition} {
- true -> @(x, {let old = f := replacement
+ true -> {lens finalFocus <- dup(~x)\nx := finalFocus\n{let old = f := replacement
  old()
- fn () ()}); false -> x}}
+ ()}}; false -> x}}
  focus := true}
  (f(), x)}`;
         const p = typedProgram(source);
@@ -132,12 +104,12 @@ it('normalizes distinct cleanup callable provenance with matching result types',
  let v = 3
  let f = fn () v
  {let focus = ~{match true {
- true -> @(x, {let old = f := fn () 9
+ true -> {lens finalFocus <- dup(~x)\nx := finalFocus\n{let old = f := fn () 9
  old()
- fn () ()});
- false -> @(x, {let old = f := fn () 8
+ ()}};
+ false -> {lens finalFocus <- dup(~x)\nx := finalFocus\n{let old = f := fn () 8
  old()
- fn () ()})}}
+ ()}}}}
  focus := true}
  (f(), x)}`;
     const p = typedProgram(source);
@@ -174,9 +146,9 @@ const retainedReplacementSource = (suffix = 'true') =>
 it('completes callee-local replacement restoration before escape', () => {
     const source = `fn select(flag, first, second, ~x) ~{let f = first
  match flag {true -> {let old = f := second
- @(x, {let old = f := fn () 9
+ {lens finalFocus <- dup(~x)\nx := finalFocus\n{let old = f := fn () 9
  old()
- fn () ()})}; false -> x}}
+ ()}}}; false -> x}}
 {let a = 3
  let b = 5
  let x = 1

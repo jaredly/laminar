@@ -1,5 +1,5 @@
 @config {
-    reserved: [let lens ~ <- = := case :: => _]
+    reserved: [let lens ~ <- = := case :: => _ @]
 }
 
 File {
@@ -84,7 +84,6 @@ Lens {
     text:id -> ({type: "id", text: text.text, loc: node.loc})
     ["" one:Lens] -> one
     [" " one:Lens] -> one
-    ["" "@" ["(," frontend:Lens backend:Linear]] -> ({type: "manual", frontend, backend, loc: node.loc})
     ["" fn:Linear ["(," ...args:Term]] -> ({type: "apply", fn, args, loc: node.loc})
     ["(," ...items:Lens] -> items.length === 1 ? items[0] : ({type: "tuple", items, loc: node.loc})
     ["("] -> ({type: "tuple", items: [], loc: node.loc})

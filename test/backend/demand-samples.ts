@@ -23,9 +23,9 @@ export const demandSamples = [
     {
         name: 'demand callable distinct replacement variants',
         source: `fn make(v) {fn () v}
-fn finish(~x) ~{@(x, {let installed = x := fn () 9
+fn finish(~x) ~{{lens finalFocus <- x\nx := finalFocus\n{let installed = x := fn () 9
  installed()
- fn () ()})}
+ ()}}}
 {let f = make(3)
  let g = make(4)
  let old = finish(~f) := fn () 7
@@ -115,7 +115,7 @@ fn finish(~x) ~{@(x, {let installed = x := fn () 9
     },
     {
         name: 'demand callable closure callee',
-        source: '{let k = fn () 2\n let first = fn (~(x, y)) ~{@(x, fn () {let i = k()\n ()})}\n let p = (fn () 3, 4)\n let old = first(~p) := fn () 7\n let (f, n) = p\n (old(), f(), n)}',
+        source: '{let k = fn () 2\n let first = fn (~(x, y)) ~{{lens finalFocus <- x\nx := finalFocus\n{let i = k()\n ()}}}\n let p = (fn () 3, 4)\n let old = first(~p) := fn () 7\n let (f, n) = p\n (old(), f(), n)}',
         expected: [3, 7, 4],
     },
     {

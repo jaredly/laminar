@@ -31,7 +31,7 @@ import {
 } from './ast.ts';
 
 export const grammar = new Grammar({
-    reserved: ['let', 'lens', '~', '<-', '=', ':=', 'case', '::', '=>', '_'],
+    reserved: ['let', 'lens', '~', '<-', '=', ':=', 'case', '::', '=>', '_', '@'],
 });
 
 grammar.add('File', [
@@ -384,16 +384,6 @@ grammar.add('Lens', [
     option(list(' ', b('one', 'Lens')), ({ one, node }: { one: Lens; node: Node }): Lens => one),
     // Lens:4
     option(
-        list('', lit('@'), wrapper('(', list(',', b('frontend', 'Lens'), b('backend', 'Linear')))),
-        ({ frontend, backend, node }: { frontend: Lens; backend: Linear; node: Node }): Lens => ({
-            type: 'manual',
-            frontend,
-            backend,
-            loc: node.loc,
-        }),
-    ),
-    // Lens:5
-    option(
         list('', b('fn', 'Linear'), wrapper('(', list(',', many('args', 'Term')))),
         ({ fn, args, node }: { fn: Linear; args: Term[]; node: Node }): Lens => ({
             type: 'apply',
@@ -402,27 +392,27 @@ grammar.add('Lens', [
             loc: node.loc,
         }),
     ),
-    // Lens:6
+    // Lens:5
     option(
         wrapper('(', list(',', many('items', 'Lens'))),
         ({ items, node }: { items: Lens[]; node: Node }): Lens =>
             items.length === 1 ? items[0] : { type: 'tuple', items, loc: node.loc },
     ),
+    // Lens:6
+    option(wrapper('(', null), ({ node }: { node: Node }): Lens => ({
+        type: 'tuple',
+        items: [],
+        loc: node.loc,
+    })),
     // Lens:7
-    option(wrapper('(', null), ({ node }: { node: Node }): Lens => ({
-        type: 'tuple',
-        items: [],
-        loc: node.loc,
-    })),
-    // Lens:8
     option(wrapper('{', b('one', 'Lens')), ({ one, node }: { one: Lens; node: Node }): Lens => one),
-    // Lens:9
+    // Lens:8
     option(wrapper('(', null), ({ node }: { node: Node }): Lens => ({
         type: 'tuple',
         items: [],
         loc: node.loc,
     })),
-    // Lens:10
+    // Lens:9
     option(
         wrapper(
             '{',
@@ -440,7 +430,7 @@ grammar.add('Lens', [
             loc: node.loc,
         }),
     ),
-    // Lens:11
+    // Lens:10
     option(
         wrapper(
             '{',
@@ -462,14 +452,14 @@ grammar.add('Lens', [
             node: Node;
         }): Lens => ({ type: 'aslens', pat, value, body, loc: node.loc }),
     ),
-    // Lens:12
+    // Lens:11
     option(
         wrapper('{', list('\n', b('one', 'Lens'))),
         ({ one, node }: { one: Lens; node: Node }): Lens => one,
     ),
-    // Lens:13
+    // Lens:12
     option(list('\n', b('one', 'Lens')), ({ one, node }: { one: Lens; node: Node }): Lens => one),
-    // Lens:14
+    // Lens:13
     option(
         wrapper('{', list('\n', b('value', 'Term'), rest('body', 'Lens', false))),
         ({ value, body, node }: { value: Term; body: Lens; node: Node }): Lens => ({
@@ -480,7 +470,7 @@ grammar.add('Lens', [
             loc: node.loc,
         }),
     ),
-    // Lens:15
+    // Lens:14
     option(
         list(
             ' ',
@@ -495,7 +485,7 @@ grammar.add('Lens', [
             loc: node.loc,
         }),
     ),
-    // Lens:16
+    // Lens:15
     option(
         list(
             ' ',

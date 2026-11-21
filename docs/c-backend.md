@@ -74,7 +74,7 @@ Captured callable values use concrete typed heap environments. Invocation copies
 captures into owned locals and releases the environment before executing the body;
 returned restoration contexts retain any locals needed later. Generated disposers
 recursively dispose captured callable values and release unused environments.
-Wildcard bindings, scope cleanup, branch normalization, and manual cleanup results
+Wildcard bindings, scope cleanup, branch normalization, and deferred cleanup results
 all run the corresponding disposal paths. Compatible branch-selected user-defined
 closures normalize to an erased environment pointer, the selected disposer, and
 exactly typed invocation fields. Each alternative keeps its own capture layout;
@@ -92,17 +92,9 @@ registry*): numeric `+`, `-`, `*`, `/`, `==`, `>=`, `<=`, `round` and `heapsize`
 data `dup`, logical `fst`, `charList`, and host `print` and `getInput`. `dup` of a computed focus restores that focus after copying it.
 There is no evaluator fallback. Function roots with parameters need a future host
 adapter, and borrowed lenses cannot escape the test entry boundary. Raw owned-local lenses cannot escape through function returns. Borrowed matching
-uses scoped reconstruction over scalar, tuple and nominal union data. Explicit manual
-restoration now supports the tested scalar/tuple subset on C/Wasm. Its lens
-adapter separates staging from completion: final contents reach the selected
-owner before cleanup reads them, and original restoration runs afterward.
-Returned contexts retain owned temporary focuses and deferred cleanup state;
-late callback expressions execute at restoration. Known capture-free and captured callbacks are supported for the tested subset;
-callable focus storage retains its representation restriction.
-The 23 shared manual samples cover tuple staging, both branch selections, nested
-ordering, returned owned focuses, owned callback parameters/results, late cleanup,
-and unused/duplicated focuses. Lens-valued
-branches normalize their focus into thin storage and retain a selector plus each
+uses scoped reconstruction over scalar, tuple and nominal union data.
+Returned contexts retain owned temporary focuses and deferred cleanup state.
+Lens-valued branches normalize their focus into thin storage and retain a selector plus each
 arm’s original restoration operation. Only the selected arm runs setup,
 normalization, and cleanup. Deferred branch variables are initialized outside the
 conditional and captured when a returned lens needs them; escaping call backing
@@ -146,36 +138,15 @@ discarded captures, computed-focus `dup`, branch changes, and empty/unit lenses.
 Captured callbacks and corrupt concrete artifacts have positive execution and
 negative verification tests.
 
-## Pattern-bound temporary focuses
+## Owned temporary focuses and borrowed reconstruction
 
-`aslens` cleanup patterns reuse retained manual restoration. Setup
-allocates owned backing; deferred cleanup transfers the staged final contents into
-owned pattern bindings and disposes its result and remaining locals before backing
-release. Elaboration records the backing identity and lifetime phases. Typed IR uses
-existing `scope`, `acquire`, `manual`, `move`, and `bind` instructions; representation
-and concrete lowering retain the same manual contracts and physical context adapter.
-The 21 shared scalar/tuple samples in `test/backend/aslens-samples.ts` cover detached verification
-and execution plus native strict/optimized/sanitized C and Wasm at both optimization
-levels. Constructor and literal cleanup patterns additionally use a single-arm
-`case` over the final contents, trapping before the body if no pattern matches.
-Constructor/list cases execute through checked legacy and detached typed paths;
-nominal physical layouts and callable focus storage retain their separate
-restrictions.
+The C lowering implements `aslens` with a private logical storage cell. On
+restoration its deferred block moves the final value into the cleanup pattern.
+The adapter disposes the result and the block disposes residual owned locals.
+Borrowed reconstruction uses the same operation with an independently verified
+selected-pattern and owner contract. See [owned temporary lenses](aslens-core-ir.md).
 
-## Borrowed-pattern reconstruction
-
-Borrowed matches and constructor aliases normalize to owned private pattern storage
-and retained manual field focuses. The selected IR pattern retains its reconstruction
-owner and identity; the deferred manual retains the corresponding pattern contract.
-Independent typed verification requires exactly one matching reconstruction, preserving
-constructor tags, literals, field identities and the whole-owner swap. Generic
-ownership checks still require field refill and protect the original owner. Concrete
-lowering retains this contract and verification checks it against semantic IR.
-
-The scalar/tuple borrowed-match cases in `test/backend/borrowed-pattern-samples.ts`
-execute through the existing C/Wasm manual adapter. List patterns in
-`test/backend/nominal-pattern-samples.ts` also execute natively, on Wasm and in Go;
-only the string-literal `aslens` case waits for string storage.
+The milestone sections below retain descriptions of earlier restoration adapters.
 
 ## Captured cleanup environments
 

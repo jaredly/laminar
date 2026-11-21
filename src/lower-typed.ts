@@ -392,20 +392,12 @@ export function lowerTypedUnit(e: Elaboration): IRUnit {
                 return letBody(n, b, true);
             case 'aslens': {
                 const record =
-                    e.manuals.find((m) => m.node === id(n)) ??
+                    e.temporaryLenses.find((m) => m.node === id(n)) ??
                     fail('Missing temporary lens restoration metadata', n);
                 const backing =
                     e.bindings.find((v) => v.id === record.temporary) ??
                     fail('Missing temporary lens backing', n);
-                const nested = block(n);
-                const value = linear(n.value, nested);
-                nested.instructions.push({
-                    op: 'bind',
-                    origin: id(n),
-                    value: value.id,
-                    pattern: { kind: 'bind', slot: ref(backing), type: backing.initialType },
-                });
-                const frontend = emit(nested, n, { op: 'acquire', slot: ref(backing) });
+                const value = linear(n.value, b);
                 const cleanup = block(n.body);
                 const final = emit(cleanup, n.pat, { op: 'move', slot: ref(backing) });
                 const p = pattern(n.pat);
@@ -432,45 +424,13 @@ export function lowerTypedUnit(e: Elaboration): IRUnit {
                     cleanup.result = linear(n.body, cleanup).id;
                     cleanup.cleanup.push(...drops(p));
                 }
-                nested.result = emit(nested, n, {
-                    op: 'manual',
-                    lens: frontend.id,
-                    holds: record.dependencies.map((id) =>
-                        ref(e.bindings.find((v) => v.id === id)!),
-                    ),
-                    cleanup,
-                }).id;
-                nested.cleanup.push({ kind: 'drop-place', slot: ref(backing) });
-                return emit(b, n, { op: 'scope', body: nested });
-            }
-            case 'manual': {
-                const frontend = lens(n.frontend, b);
-                const record =
-                    e.manuals.find((m) => m.node === id(n)) ??
-                    fail('Missing manual restoration metadata', n);
-                const cleanup = block(
-                    record.scoped && n.backend.type === 'fn' ? n.backend.body : n.backend,
-                );
-                if (record.scoped && n.backend.type === 'fn') {
-                    if (n.backend.body.type === 'lens') return fail('Cleanup returned a lens', n);
-                    cleanup.result = linear(n.backend.body, cleanup).id;
-                } else {
-                    const callee = linear(n.backend, cleanup);
-                    if (callee.type.tag !== 'plain' || callee.type.value.tag !== 'fn')
-                        return fail('Cleanup is not callable', n);
-                    cleanup.result = emit(
-                        cleanup,
-                        n.backend,
-                        { op: 'call', callee: callee.id, args: [] },
-                        callee.type.value.result,
-                    ).id;
-                }
                 return emit(b, n, {
-                    op: 'manual',
-                    lens: frontend.id,
-                    holds: record.dependencies.map((id) =>
-                        ref(e.bindings.find((v) => v.id === id)!),
-                    ),
+                    op: 'aslens',
+                    initial: value.id,
+                    backing: backing.place,
+                    holds: record.dependencies
+                        .filter((id) => id !== backing.id)
+                        .map((id) => ref(e.bindings.find((v) => v.id === id)!)),
                     cleanup,
                     ...(n.reconstructionPattern
                         ? { reconstruction: pattern(n.reconstructionPattern) }

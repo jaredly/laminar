@@ -3,7 +3,7 @@
 exports[`negative checker results classifies the snapshot corpus 1`] = `
 [
   {
-    "accepted": 36,
+    "accepted": 39,
     "file": "src/systematic.test.lm",
     "rejectedCases": [
       "src/systematic.test.lm:375 unbound-name",
@@ -11,15 +11,11 @@ exports[`negative checker results classifies the snapshot corpus 1`] = `
       "src/systematic.test.lm:572 use-while-borrowed",
       "src/systematic.test.lm:672 unbound-name",
       "src/systematic.test.lm:687 unbound-name",
-      "src/systematic.test.lm:768 unbound-name",
-      "src/systematic.test.lm:812 unbound-name",
-      "src/systematic.test.lm:825 unbound-name",
-      "src/systematic.test.lm:838 unbound-name",
+      "src/systematic.test.lm:756 unbound-name",
     ],
     "rejectedDefinitions": [
       "src/systematic.test.lm:353 unbound-name",
-      "src/systematic.test.lm:696 unbound-name",
-      "src/systematic.test.lm:789 unbound-name",
+      "src/systematic.test.lm:696 use-while-borrowed",
     ],
   },
   {

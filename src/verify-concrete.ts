@@ -326,7 +326,7 @@ export function verifyConcreteProgram(p: ConcreteProgram): void {
                     // Indirect calls are entries of the callee type's record.
                     if (!call.callee) addContract(callee.type, call);
                 } else if (i.op === 'scope') walk(i.body);
-                else if (i.op === 'manual') walk(i.cleanup);
+                else if (i.op === 'aslens') walk(i.cleanup);
                 else if (i.op === 'case') i.cases.forEach((c) => walk(c.body));
             }
         };
@@ -577,36 +577,13 @@ export function verifyConcreteProgram(p: ConcreteProgram): void {
                     { ...i.out, layout: storage(reps.get(i.out.id)!) },
                     'Concrete output layout/type mismatch',
                 );
-                if (i.op === 'manual') {
-                    if (o.op !== 'manual') return fail('Manual restoration operation changed');
-                    const frontend = reps.get(i.lens)!,
-                        result = reps.get(i.out.id)!;
-                    if (frontend.kind !== 'lens' || result.kind !== 'lens')
-                        return fail('Manual restoration lacks lens shapes');
+                if (i.op === 'aslens') {
+                    if (o.op !== 'aslens') return fail('Temporary lens operation changed');
                     eq(
-                        {
-                            origin: o.origin,
-                            lens: o.lens,
-                            holds: o.holds,
-                            reconstruction: o.reconstruction,
-                            restoration: o.restoration,
-                        },
-                        {
-                            origin: i.origin,
-                            lens: i.lens,
-                            holds: i.holds,
-                            reconstruction: i.reconstruction,
-                            restoration: {
-                                kind: 'deferred',
-                                frontend: frontend.shape,
-                                result: result.shape,
-                                order: ['stage', 'cleanup', 'dispose-result', 'restore', 'release'],
-                                retention: 'through-enclosing-cleanup',
-                            },
-                        },
-                        'Manual restoration contract changed',
+                        { ...o, out: undefined, cleanup: undefined },
+                        { ...i, out: undefined, cleanup: undefined },
+                        'Temporary lens contract changed',
                     );
-                    if (!o.cleanup) return fail('Missing manual cleanup block');
                     walk(i.cleanup, o.cleanup);
                 } else if (i.op === 'scope') {
                     if (o.op !== 'scope') return fail('Scope operation changed');

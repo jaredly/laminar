@@ -66,7 +66,7 @@ for (const [name, source, expected, output] of [
     ],
     [
         'restoration of discarded dup',
-        '{let x = 1\n let (a, _) = (1, dup(~{@(x, fn () {print("cleanup")})}))\n a}',
+        '{let x = 1\n let (a, _) = (1, dup(~{{lens finalFocus <- x\nx := finalFocus\n{print("cleanup")}}}))\n a}',
         1,
         'cleanup\n',
     ],

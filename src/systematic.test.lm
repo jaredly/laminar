@@ -696,26 +696,18 @@ ir-> block{
 fn head(~x) ~{
     match ~x {
         [h, ...rest] -> {
-            let v = ~heap(Some(h))
-            @(
-                v, fn () {
-                    match v {
-                        None -> {x := []}
-                        Some(h) -> {x := [h, ...rest]}
-                    }
-                }
-            )
+            lens opt <- Some(h)
+            match opt {
+                None -> {x := []}
+                Some(h) -> {x := [h, ...rest]}
+            }
         }
         [] -> {
-            let v = ~heap(None)
-            @(
-                v, fn () {
-                    match v {
-                        None -> {x := []}
-                        Some(h) -> {x := [h]}
-                    }
-                }
-            )
+            lens opt <- None
+            match opt {
+                None -> {x := []}
+                Some(h) -> {x := [h]}
+            }
         }
     }
 }
@@ -723,35 +715,31 @@ fn head(~x) ~{
 ir-> (&x0)=>block{
     let (&t1, r2) = (
         match &x0 {
-            &[h3, ...rest4] -> block{
-                let (&t6, r7) = heap(Some(*h3));
-                let &v5 = &t6
-            }{
+            &[h3, ...rest4] -> block{let (&t5, r6) = heap(Some(*h3))}{
                 (
-                    &v5, ()=>block{}{null}{
-                        ()=>(
-                            match *v5 {
-                                *None() -> swap(&x0, [])
-                                *Some(h8) -> swap(&x0, [*h8, ...*rest4])
-                            }
-                        )();
-                        r7()
+                    &t5, ()=>block{}{null}{
+                        block{let &opt7 = &t5}{
+                            (
+                                match *opt7 {
+                                    *None() -> swap(&x0, [])
+                                    *Some(h8) -> swap(&x0, [*h8, ...*rest4])
+                                }
+                            )
+                        }{r6()}
                     }
                 )
             }{}
-            &[] -> block{
-                let (&t10, r11) = heap(None());
-                let &v9 = &t10
-            }{
+            &[] -> block{let (&t9, r10) = heap(None())}{
                 (
-                    &v9, ()=>block{}{null}{
-                        ()=>(
-                            match *v9 {
-                                *None() -> swap(&x0, [])
-                                *Some(h12) -> swap(&x0, [*h12])
-                            }
-                        )();
-                        r11()
+                    &t9, ()=>block{}{null}{
+                        block{let &opt11 = &t9}{
+                            (
+                                match *opt11 {
+                                    *None() -> swap(&x0, [])
+                                    *Some(h12) -> swap(&x0, [*h12])
+                                }
+                            )
+                        }{r10()}
                     }
                 )
             }{}
@@ -787,19 +775,13 @@ ir-> (*f0, &x1)=>(
 )
 
 fn leftShifted(~x) ~{
-    let v = ~heap(x + 2)
-    @(v, fn () {x := v - 2})
+    lens v <- x + 2
+    x := v - 2
 }
 
-ir-> (&x0)=>block{
-    let (&t2, r3) = heap(+(*x0, 2));
-    let &v1 = &t2
-}{
+ir-> (&x0)=>block{let (&t1, r2) = heap(+(*x0, 2))}{
     (
-        &v1, ()=>block{}{null}{
-            ()=>swap(&x0, -(*v1, 2))();
-            r3()
-        }
+        &t1, ()=>block{}{null}{block{let &v3 = &t1}{swap(&x0, -(*v3, 2))}{r2()}}
     )
 }{}
 

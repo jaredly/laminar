@@ -7,12 +7,8 @@ import { identifier, type Statement, type TranslationUnit } from './syntax.ts';
 import { appendPart, cBytes, stringRuntime, stringType } from './strings.ts';
 import { requireImport, usesHost } from '../runtime-imports.ts';
 
-// Replacement contents are already in the logical focus. Staging makes them
-// visible through adapters and returns the cleanup/restoration still to perform.
 type Completion = (body: Statement[]) => void;
-type Lens = { view: View; finish: Completion; stage?: (body: Statement[]) => Completion };
-const stage = (lens: Lens, body: Statement[]): Completion =>
-    lens.stage ? lens.stage(body) : lens.finish;
+type Lens = { view: View; finish: Completion };
 type Variable = { name: string; type: string };
 const unsupported = (message: string): never => {
     throw new BackendDiagnostic('unsupported-c', message);
@@ -762,21 +758,19 @@ export function lowerC(
                     name = fresh();
                 let expr!: string;
                 switch (i.op) {
-                    case 'manual': {
-                        const frontend = lenses.get(i.lens)!;
-                        const manual: Lens = {
-                            view: frontend.view,
-                            stage: (output) => {
-                                const complete = stage(frontend, output);
-                                return (output) => {
-                                    const result = block(i.cleanup, output);
-                                    drop({ expression: result, layout: i.cleanup.layout }, output);
-                                    complete(output);
-                                };
+                    case 'aslens': {
+                        const view = storage.own({
+                            expression: value(i.initial),
+                            layout: outputLayouts.get(i.initial)!,
+                        });
+                        places.set(i.backing, view);
+                        lenses.set(i.out.id, {
+                            view,
+                            finish: (output) => {
+                                const result = block(i.cleanup, output);
+                                drop({ expression: result, layout: i.cleanup.layout }, output);
                             },
-                            finish: (output) => stage(manual, output)(output),
-                        };
-                        lenses.set(i.out.id, manual);
+                        });
                         continue;
                     }
                     case 'make-callable': {
@@ -885,10 +879,6 @@ export function lowerC(
                     case 'lens-tuple':
                         lenses.set(i.out.id, {
                             view: i.items.map((v) => lenses.get(v)!.view),
-                            stage: (body) => {
-                                const completions = i.items.map((v) => stage(lenses.get(v)!, body));
-                                return (body) => completions.forEach((complete) => complete(body));
-                            },
                             finish: (body) => i.items.forEach((v) => lenses.get(v)!.finish(body)),
                         });
                         continue;
@@ -1056,60 +1046,6 @@ export function lowerC(
                             body.push({ head: 'else', body: ['abort();'] });
                             lenses.set(i.out.id, {
                                 view: joined,
-                                stage: (output) => {
-                                    // Commit only the selected frontend and merge its visible owner
-                                    // versions before manual cleanup reads lexical dependencies.
-                                    const current = storage.snapshot();
-                                    const replacement = storage.get(joined);
-                                    const staged = arms.map((arm) => {
-                                        storage.reset(arm.state);
-                                        before.forEach(
-                                            (_, cell) => (cell.data = current.get(cell)!),
-                                        );
-                                        storage.put(arm.lens.view, replacement);
-                                        const nested: Statement[] = [];
-                                        const complete = stage(arm.lens, nested);
-                                        return {
-                                            nested,
-                                            complete,
-                                            state: storage.snapshot(),
-                                            arm,
-                                        };
-                                    });
-                                    storage.reset(current);
-                                    merge(staged, output);
-                                    staged.forEach((arm, n) =>
-                                        output.push({
-                                            head: `${n ? 'else if' : 'if'} (${selected} == ${n})`,
-                                            body: arm.nested,
-                                        }),
-                                    );
-                                    output.push({ head: 'else', body: ['abort();'] });
-                                    return (output) => {
-                                        // Cleanup may have changed those owners again. Preserve its
-                                        // versions while completing the original selected restoration.
-                                        const cleaned = storage.snapshot();
-                                        const restored = staged.map((entry) => {
-                                            storage.reset(entry.state);
-                                            before.forEach(
-                                                (_, cell) => (cell.data = cleaned.get(cell)!),
-                                            );
-                                            const nested: Statement[] = [];
-                                            entry.complete(nested);
-                                            normalize(entry.arm.arm.restored, nested);
-                                            return { nested, state: storage.snapshot() };
-                                        });
-                                        storage.reset(cleaned);
-                                        merge(restored, output);
-                                        restored.forEach((arm, n) =>
-                                            output.push({
-                                                head: `${n ? 'else if' : 'if'} (${selected} == ${n})`,
-                                                body: arm.nested,
-                                            }),
-                                        );
-                                        output.push({ head: 'else', body: ['abort();'] });
-                                    };
-                                },
                                 finish: (output) => {
                                     const current = storage.snapshot();
                                     const replacement = storage.get(joined);
@@ -1233,7 +1169,6 @@ export function lowerC(
                             lenses.set(i.out.id, {
                                 view: storage.project(parent.view, [0]),
                                 finish: parent.finish,
-                                stage: parent.stage,
                             });
                             continue;
                         } else {
@@ -1294,13 +1229,6 @@ export function lowerC(
                 const lens = lenses.get(b.result)!;
                 lenses.set(b.result, {
                     view: lens.view,
-                    stage: (body) => {
-                        const complete = stage(lens, body);
-                        return (body) => {
-                            complete(body);
-                            finish(body);
-                        };
-                    },
                     finish: (body) => {
                         lens.finish(body);
                         finish(body);
@@ -1316,7 +1244,7 @@ export function lowerC(
             b.instructions.forEach((i) => {
                 if ('out' in i) outputLayouts.set(i.out.id, i.out.layout);
                 if (i.op === 'scope') index(i.body);
-                if (i.op === 'manual') index(i.cleanup);
+                if (i.op === 'aslens') index(i.cleanup);
                 if (i.op === 'case') i.cases.forEach((a) => index(a.body));
             });
         index(c.body);

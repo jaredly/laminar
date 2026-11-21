@@ -103,7 +103,7 @@ export function functionNames(program: ConcreteProgram): Map<string, string> {
                 if ('out' in i) producers.set(i.out.id, i);
                 if (i.op === 'bind') bindings.push(i);
                 if (i.op === 'scope') scan(i.body);
-                if (i.op === 'manual') scan(i.cleanup);
+                if (i.op === 'aslens') scan(i.cleanup);
                 if (i.op === 'case') i.cases.forEach((a) => scan(a.body));
             }
         };

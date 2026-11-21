@@ -50,18 +50,15 @@ export type Elaboration = {
         /** Present for independent computed focuses; absent for direct aliases. */
         owners?: { place: PlaceId; path: number[]; permit?: string }[];
     }[];
-    manuals: {
+    temporaryLenses: {
         node: NodeId;
-        frontend: NodeId;
-        /** Owned backing for a pattern-bound temporary; absent for explicit manual lenses. */
-        temporary?: BindingId;
+        initial: NodeId;
+        temporary: BindingId;
         reconstruction?: NodeId;
         cleanup: NodeId;
-        scoped: boolean;
         dependencies: BindingId[];
         staged: PlaceState[];
         cleaned: PlaceState[];
-        restored: PlaceState[];
     }[];
     instantiations: {
         node: NodeId;
@@ -133,18 +130,15 @@ export class ElaborationBuilder {
     readonly bindings: (Omit<BindingRecord, 'initialType'> & { initialType: Ty })[] = [];
     readonly uses: Elaboration['uses'] = [];
     readonly borrows: Elaboration['borrows'] = [];
-    readonly manuals: {
+    readonly temporaryLenses: {
         node: NodeId;
-        frontend: NodeId;
-        /** Owned backing for a pattern-bound temporary; absent for explicit manual lenses. */
-        temporary?: BindingId;
+        initial: NodeId;
+        temporary: BindingId;
         reconstruction?: NodeId;
         cleanup: NodeId;
-        scoped: boolean;
         dependencies: BindingId[];
         staged: RawState[];
         cleaned: RawState[];
-        restored: RawState[];
     }[] = [];
     readonly instantiations: {
         node: NodeId;
@@ -302,11 +296,10 @@ export class ElaborationBuilder {
             bindings: this.bindings.map((b) => ({ ...b, initialType: type(b.initialType) })),
             uses: this.uses,
             borrows: this.borrows,
-            manuals: this.manuals.map((m) => ({
+            temporaryLenses: this.temporaryLenses.map((m) => ({
                 ...m,
                 staged: m.staged.map(state),
                 cleaned: m.cleaned.map(state),
-                restored: m.restored.map(state),
             })),
             instantiations: this.instantiations.map((i) => ({
                 ...i,

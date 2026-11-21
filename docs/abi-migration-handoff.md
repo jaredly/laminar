@@ -6,6 +6,15 @@ design doc first, especially *The new model* and *Migration plan*. The user aske
 **one commit per milestone (M0–M5)**. M6 was subsequently requested; its measured scope and the flow-class deferral
 are recorded below.
 
+## Owned temporary IR
+
+The `@(...)` syntax and the `manual` operation have been removed. Source
+`lens pattern <- initial` and generated borrowed reconstruction use `aslens`.
+The instruction owns backing, transfers the final value into cleanup, and
+releases backing when cleanup completes. Rebuild serialized artifacts that
+contain the removed operation. The migration history below describes the
+previous backend. See [owned temporary lenses](aslens-core-ir.md).
+
 ## Where things stand
 
 | Milestone | State |

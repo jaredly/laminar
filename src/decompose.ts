@@ -430,7 +430,6 @@ export const lensAsRef = (ctx: Ctx, lens: Lens): Ref => {
                 inner: { ...lens, type: 'idd', id: id.type === 'builtin' ? -1 : id.id },
             };
         }
-        case 'manual':
         case 'aslens':
         case 'let':
         case 'apply':
@@ -762,30 +761,6 @@ export const lensToRvalue = (
                     cleanup: [],
                 });
             }
-        }
-        case 'manual': {
-            const scoped =
-                lin.backend.type === 'fn' &&
-                lin.backend.args.length === 0 &&
-                lin.backend.body.type !== 'lens';
-            const backend: Expr = {
-                type: 'fn',
-                args: [],
-                retained: true,
-                loc: lin.loc,
-                body:
-                    scoped && lin.backend.type === 'fn' && lin.backend.body.type !== 'lens'
-                        ? linearToExpr(ctx, lin.backend.body)
-                        : {
-                              type: 'apply',
-                              args: [],
-                              fn: linearToExpr(ctx, lin.backend),
-                              loc: lin.loc,
-                          },
-            };
-            return lensToRvalue(ctx, lin.frontend, (value, cleanup) =>
-                inner(value, [{ type: 'apply', args: [], fn: backend, loc: lin.loc }, ...cleanup]),
-            );
         }
     }
     throw new Error('nope' + JSON.stringify(lin));

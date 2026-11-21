@@ -195,7 +195,7 @@ function instructions(body: ConcreteBlock): ConcreteInstruction[] {
         i,
         ...(i.op === 'scope'
             ? instructions(i.body)
-            : i.op === 'manual'
+            : i.op === 'aslens'
               ? instructions(i.cleanup)
               : i.op === 'case'
                 ? i.cases.flatMap((arm) => instructions(arm.body))

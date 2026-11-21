@@ -85,50 +85,6 @@ export const computedAliases = [
         expected: [[true, 2], 1],
     },
     {
-        name: 'disjoint-manual-cleanup',
-        source:
-            first +
-            `{let pair = ((1, 2), 3)
- {let (a, b) = ~pair
- {let f = ~{@(first(~a), fn () {b := b + 1})}
- f := 4}}
- pair}`,
-        expected: [[4, 2], 4],
-    },
-    {
-        name: 'disjoint-cleanup-type-change',
-        source:
-            first +
-            `{let pair = ((1, 2), 3)
- {let (a, b) = ~pair
- {let f = ~{@(first(~a), fn () {b := true})}
- f := 4}}
- pair}`,
-        expected: [[4, 2], true],
-    },
-    {
-        name: 'disjoint-cleanup-around-computed-branch',
-        source:
-            first +
-            `{let pair = ((1, 2), 3)
- {let (a, b) = ~pair
- {let f = ~{@({match true {true -> first(~a); false -> first(~a)}}, fn () {b := b + 1})}
- f := 4}}
- pair}`,
-        expected: [[4, 2], 4],
-    },
-    {
-        name: 'disjoint-cleanup-in-computed-branch',
-        source:
-            first +
-            `{let pair = ((1, 2), 3)
- {let (a, b) = ~pair
- {let f = ~{match false {true -> @(first(~a), fn () {b := b + 1}); false -> @(first(~a), fn () {b := b + 2})}}
- f := 4}}
- pair}`,
-        expected: [[4, 2], 5],
-    },
-    {
         name: 'disjoint-assignment-rhs',
         source:
             first +

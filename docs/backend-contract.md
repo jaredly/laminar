@@ -50,23 +50,10 @@ Tests run in temporary directories and preserve generated C/Wasm and compiler co
 
 Phase-0 baseline: `bun test` reported 285 pass, 39 existing skips, 0 failures across 15 files; `bunx tsc --noEmit` passed. Required sanitizer support and compiler flags are checked per toolchain, not assumed identical between native and Wasm targets.
 
-## Scoped manual restoration
+## Owned temporary restoration
 
-Manual cleanup is a non-escaping restoration computation. Its zero-argument
-function-literal body may borrow lexical storage for that computation's lifetime;
-ordinary and nested escaping functions still cannot borrow outer storage. Cleanup
-expressions and any captures they construct are evaluated at restoration, with final focus
-contents available, and owned callback results are disposed once. The frontend's
-original restoration runs afterward. All dependency borrows remain live until
-this sequence completes, and borrowed lens parameters still require refill.
-
-An explicit manual contract retains owned frontend storage through restoration
-and enclosing-scope disposal. This permits returned manual focuses backed by
-owned storage, while raw owned-local lens returns remain invalid. Typed execution
-retains these storage cells and scopes explicitly; no inference closure or source
-AST is needed after serialization. Concrete manual contracts independently retain
-cleanup ordering, dependencies, shapes, and lifetime obligations. C/Wasm adapters
-stage scalar/tuple focuses before cleanup and retain returned state using the
-existing context machinery. Known captured callbacks execute through typed
-environments in the tested subset; callable focus storage remains an explicit
-backend restriction. No evaluator fallback is used.
+The `aslens` instruction owns its initial value and exposes a private focus.
+Restoration stages final contents into the backing before the deferred block
+moves them into owned cleanup bindings. The block disposes remaining owned
+locals, its result is discarded, and the backing lifetime ends. The C/Wasm
+and Go adapters follow this same contract for supported physical layouts.

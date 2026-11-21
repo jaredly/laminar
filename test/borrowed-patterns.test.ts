@@ -85,9 +85,9 @@ for (const [name, source, expected] of samples)
 function reconstructed(p: ReturnType<typeof typedProgram>) {
     const visit = (
         b: import('../src/typed-ir.ts').IRBlock,
-    ): Extract<import('../src/typed-ir.ts').Instruction, { op: 'manual' }> | undefined => {
+    ): Extract<import('../src/typed-ir.ts').Instruction, { op: 'aslens' }> | undefined => {
         for (const i of b.instructions) {
-            if (i.op === 'manual' && i.reconstruction) return i;
+            if (i.op === 'aslens' && i.reconstruction) return i;
             if (i.op === 'scope') {
                 const v = visit(i.body);
                 if (v) return v;
@@ -133,13 +133,33 @@ for (const mutation of ['contract', 'tag', 'fields', 'target', 'cleanup', 'permi
             tag: 'Reconstruction constructor or shape changed',
             fields: 'Reconstruction field changed',
             target: 'Reconstruction restores a different owner',
-            cleanup: 'Reconstruction does not restore its owner',
-            permissions: 'Manual cleanup dependency protection mismatch',
+            cleanup: 'Cleanup must move the entire temporary backing first',
+            permissions: 'Temporary cleanup dependency protection mismatch',
         }[mutation];
         let steps = 0;
         expect(() => executeTypedProgram(p, { onStep: () => steps++ })).toThrow(expected);
         expect(steps).toBe(0);
     });
+
+it('rejects changing which matched field initializes the temporary', () => {
+    const p = structuredClone(typedProgram(samples[0][1]));
+    const temporary = reconstructed(p);
+    const corrupt = (b: import('../src/typed-ir.ts').IRBlock): boolean => {
+        for (const i of b.instructions) {
+            if (i.op === 'tuple' && i.out.id === temporary.initial) {
+                i.items.reverse();
+                return true;
+            }
+            if (i.op === 'scope' && corrupt(i.body)) return true;
+            if (i.op === 'case' && i.cases.some((arm) => corrupt(arm.body))) return true;
+        }
+        return false;
+    };
+    expect(p.units.some((u) => corrupt(u.entry) || u.functions.some((f) => corrupt(f.body)))).toBe(
+        true,
+    );
+    expect(() => verifyTypedProgram(p)).toThrow('Reconstruction field mapping changed');
+});
 
 it('traps an unmatched borrowed pattern before running its body', () => {
     for (const source of [
@@ -200,7 +220,7 @@ it('retains and independently checks selected reconstruction elaboration', () =>
     const e = JSON.parse(JSON.stringify(new Checker().check(parsed.value).elaboration));
     expect(JSON.stringify(parsed.value)).toBe(original);
     verifyElaboration(e);
-    const m = e.manuals.find((m: any) => m.reconstruction);
+    const m = e.temporaryLenses.find((m: any) => m.reconstruction);
     expect(m).toBeDefined();
     delete m.reconstruction;
     expect(() => verifyElaboration(e)).toThrow('Missing constructor reconstruction metadata');
@@ -216,7 +236,7 @@ it('rejects changing a concrete reconstruction contract', () => {
     );
     const visit = (b: any): boolean => {
         for (const i of b.instructions) {
-            if (i.op === 'manual' && i.reconstruction) {
+            if (i.op === 'aslens' && i.reconstruction) {
                 delete i.reconstruction;
                 return true;
             }
@@ -226,7 +246,7 @@ it('rejects changing a concrete reconstruction contract', () => {
         return false;
     };
     expect(c.code.some((code: any) => visit(code.body))).toBe(true);
-    expect(() => verifyConcreteProgram(c)).toThrow('Manual restoration contract changed');
+    expect(() => verifyConcreteProgram(c)).toThrow('Temporary lens contract changed');
 });
 
 for (const source of [
@@ -255,29 +275,19 @@ for (const source of [
         expect(() => typedProgram(source)).toThrow('Returned lens must refer to a lens parameter');
     });
 
-it('independently preserves raw-local escape checks through reconstruction', () => {
-    const p = JSON.parse(
-        JSON.stringify(
-            typedProgram(
-                'fn retained() ~{let pair = (1, 2)\n @({match ~pair {(a, b) -> a}}, fn () ())}',
-            ),
-        ),
-    );
-    let removed = false;
-    const visit = (b: import('../src/typed-ir.ts').IRBlock): void => {
-        const explicit = b.instructions.find((i) => i.op === 'manual' && !i.reconstruction);
-        if (explicit?.op === 'manual') {
-            b.instructions = b.instructions.filter((i) => i !== explicit);
-            if (b.result === explicit.out.id) b.result = explicit.lens;
-            removed = true;
-        }
-        for (const i of b.instructions) {
-            if (i.op === 'scope') visit(i.body);
-            if (i.op === 'case') i.cases.forEach((arm) => visit(arm.body));
-        }
-    };
-    for (const u of p.units) for (const f of u.functions) visit(f.body);
-    expect(removed).toBe(true);
+it('independently rejects a reconstructed field escaping an owned parameter', () => {
+    const p = structuredClone(typedProgram('fn first(~pair) ~{match ~pair {(a, b) -> a}}'));
+    const unit = p.units[0]!;
+    const fn = unit.functions[0]!;
+    const argument = fn.type.args[0]!;
+    const closure = unit.entry.instructions[0]!;
+    if (argument.tag !== 'flow' || closure.op !== 'closure')
+        throw Error('Expected a function with a lens parameter');
+    fn.type.args[0] = { tag: 'plain', value: argument.read };
+    delete fn.parameters[0]!.lensPlace;
+    fn.body.cleanup = fn.body.cleanup.filter((action) => action.kind !== 'restored');
+    unit.signature.type = fn.type;
+    closure.out.type = { tag: 'plain', value: fn.type };
     expect(() => verifyTypedProgram(p)).toThrow('Lens return escapes owned local storage');
 });
 

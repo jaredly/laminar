@@ -113,8 +113,8 @@ for (const [name, source, expected, output] of [
         '',
     ],
     [
-        'manual restoration order',
-        bump + '{let x = 0\n bump(~{@(x, fn () {print("cleanup")})})\n bump(~x)\n x}',
+        'temporary restoration order',
+        bump + '{let x = 0\n bump(~{{lens finalFocus <- x\nx := finalFocus\n{print("cleanup")}}})\n bump(~x)\n x}',
         2,
         'cleanup\n',
     ],

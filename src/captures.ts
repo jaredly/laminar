@@ -68,10 +68,6 @@ export function captureUses(body: Term, bound: Set<string>) {
                 linear(n.fn, scope);
                 n.args.forEach((v) => term(v, scope));
                 return;
-            case 'manual':
-                lens(n.frontend, scope);
-                linear(n.backend, scope);
-                return;
             case 'aslens':
                 linear(n.value, scope);
                 linear(n.body, bind(scope, n.pat));

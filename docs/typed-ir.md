@@ -111,65 +111,30 @@ C storage lowering dispatches deferred restoration using the retained selector,
 reconstructs selected owner outputs, and merges their logical storage versions.
 Scalar/tuple cases, including thin/scattered joins, execute on native C and Wasm.
 
-## Manual restoration
-
-`manual` consumes a frontend lens temporary and retains a `cleanup` block plus
-`holds` dependency references. The output has the frontend's focus contract.
-Cleanup runs at restoration, after staging the final contents but before the
-frontend's original restoration. Its owned block result is disposed. A separate
-staging operation in the verifier preserves this order through tuples, scopes,
-and branch selections; ordinary non-manual restoration keeps its atomic contract.
-
-The verifier derives external dependency references from cleanup instructions,
-normalizes nested borrow permissions, and compares them with `holds`. Its active
-loan protections cover those dependencies and the frontend owners. Pending
-computed owners remain inaccessible during cleanup. A manual capability explicitly
-retains owned frontend storage; enclosing deferred scope/parameter cleanup must
-still dispose every owned value. Raw local-lens escape checks remain unchanged
-outside that contract. Elaboration's `manuals` records retain frontend/cleanup node
-identities, dependency binding IDs, whether a function literal is scoped, and
-staged/cleaned/restored storage states.
-
-The typed interpreter executes this detached block and retains its frame until
-restoration completes. The legacy pointer path uses retained scoped cleanup
-thunks, so reading a temporary or owned callback after a function return sees its
-final contents and live lexical storage. Representation analysis and independent
-verification cover manual topology and deferred cleanup temporaries/calls, using
-restoration-time data annotations and protected callable provenance. Concrete
-lowering retains independently checked deferred cleanup blocks and restoration
-contracts. C lowering stages final scalar/tuple contents before cleanup and
-retains returned state in contexts; the 23 shared samples execute on native C and
-Wasm. Known captured cleanup callbacks execute through typed environments in the tested
-C/Wasm subset; callable focus storage remains a separate backend restriction.
-
 ## Pattern-bound temporary focuses
 
-`aslens` cleanup patterns reuse retained manual restoration. Setup
-allocates owned backing; deferred cleanup transfers the staged final contents into
-owned pattern bindings and disposes its result and remaining locals before backing
-release. Elaboration records the backing identity and lifetime phases. Typed IR uses
-existing `scope`, `acquire`, `manual`, `move`, and `bind` instructions; representation
-and concrete lowering retain the same manual contracts and physical context adapter.
-The 21 shared scalar/tuple samples in `test/backend/aslens-samples.ts` cover detached verification
-and execution plus native strict/optimized/sanitized C and Wasm at both optimization
-levels. Constructor and literal cleanup patterns additionally use a single-arm
-`case` over the final contents, trapping before the body if no pattern matches.
-Constructor/list cases execute through checked legacy and detached typed paths;
-nominal physical layouts and callable focus storage retain their separate
-restrictions.
+`aslens` consumes one owned SSA value and allocates private backing. The
+instruction records its backing place, lexical cleanup dependencies, and deferred
+cleanup block. On restoration the consumer's replacement is staged into backing,
+and the cleanup block's first instruction moves the complete final contents.
+Cleanup binds the value into owned pattern locals or matches it with a single-arm
+`case`. Cleanup results and residual locals are disposed before backing is retired.
+
+The typed verifier checks the backing declaration and initial type, reserves
+backing against ordinary slot operations, and derives the protected lexical
+dependencies from the cleanup block. The final value can have a different type
+and shape from the initial value. A refutable cleanup pattern traps before the
+body if it fails to match.
+
+Artifacts that contain the removed `manual` operation require recompilation.
+See [owned temporary lenses](aslens-core-ir.md) for compatibility details.
 
 ## Borrowed-pattern reconstruction
 
-Borrowed matches and constructor aliases normalize to owned private pattern storage
-and retained manual field focuses. The selected IR pattern retains its reconstruction
-owner and identity; the deferred manual retains the corresponding pattern contract.
-Independent typed verification requires exactly one matching reconstruction, preserving
-constructor tags, literals, field identities and the whole-owner swap. Generic
-ownership checks still require field refill and protect the original owner. Concrete
-lowering retains this contract and verification checks it against semantic IR.
-
-The scalar/tuple borrowed-match cases in `test/backend/borrowed-pattern-samples.ts`
-execute through the existing C/Wasm manual adapter. List patterns execute in checked
-legacy and detached typed paths; physical list lowering retains the explicit
-`unsupported-layout: No storage definition for List` restriction. Captured invocation
-and callable storage restrictions are unchanged.
+Borrowed matches and constructor aliases use an `aslens` with a reconstruction
+contract that identifies the selected pattern and original owner. The initial
+operand moves exactly the selected fields into private backing. The final
+cleanup binds those fields and restores the same constructor or tuple, including
+literal and wildcard contents. Field aliases require refill and preserve the
+original owner's escape restrictions. Detached verification checks the selected
+pattern, field mapping, restoration target, and cleanup effects.

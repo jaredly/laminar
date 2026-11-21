@@ -36,8 +36,14 @@ export type Decl = { type: 'decl'; name: Id; ann: Type; loc: number };
 
 export type Lens =
     | Id
-    | { type: 'manual'; frontend: Lens; backend: Linear; loc: Loc; reconstructionPattern?: Pat }
-    | { type: 'aslens'; pat: Pat; value: Linear; body: Linear; loc: Loc }
+    | {
+          type: 'aslens';
+          pat: Pat;
+          value: Linear;
+          body: Linear;
+          loc: Loc;
+          reconstructionPattern?: Pat;
+      }
     | { type: 'let'; pat: Pat; value: Term; body: Lens; loc: Loc }
     | { type: 'apply'; fn: Linear; args: Term[]; loc: Loc }
     | { type: 'tuple'; items: Lens[]; loc: Loc }
@@ -113,9 +119,6 @@ export const free = (expr: Term | Lens): string[] => {
             const two = free(expr.body);
             return one.concat(two.filter((t) => !one.includes(t) && !bound.includes(t)));
         }
-        case 'manual': {
-            return free(expr.frontend).concat(free(expr.backend));
-        }
         case 'string': {
             let res: string[] = [];
             expr.interp.forEach((item) => {
@@ -184,11 +187,6 @@ export const getFree = (
             getFree(bound, expr.value, ref, deref);
             const lbound = names(expr.pat);
             getFree(bound.union(new Set(lbound)), expr.body, ref, deref);
-            return;
-        }
-        case 'manual': {
-            getFree(bound, expr.frontend, ref, deref);
-            getFree(bound, expr.backend, ref, deref);
             return;
         }
         case 'string': {

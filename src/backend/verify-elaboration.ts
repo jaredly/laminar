@@ -134,23 +134,18 @@ export function verifyElaboration(e: Elaboration): void {
         Object.values(v).forEach(snapshot);
     };
     snapshot(e.source);
-    const manuals = e.manuals ?? [];
+    const temporaryLenses = e.temporaryLenses ?? [];
     unique(
-        manuals.map((m) => m.node),
-        'manual restoration',
+        temporaryLenses.map((m) => m.node),
+        'temporary lens',
     );
     for (const n of e.nodes)
-        if (
-            (n.kind === 'manual' || n.kind === 'aslens') &&
-            n.type &&
-            !manuals.some((m) => m.node === n.id)
-        )
-            fail('Missing manual restoration metadata', n.id);
-    manuals.forEach((m) => {
+        if (n.kind === 'aslens' && n.type && !temporaryLenses.some((m) => m.node === n.id))
+            fail('Missing temporary lens metadata', n.id);
+    temporaryLenses.forEach((m) => {
         node(m.node);
-        node(m.frontend);
+        node(m.initial);
         node(m.cleanup);
-        const temporary = e.nodes.find((n) => n.id === m.node)!.kind === 'aslens';
         const selected = snapshotNodes.get(m.node)?.reconstructionPattern?.nodeId;
         if (selected !== m.reconstruction)
             fail('Missing constructor reconstruction metadata', m.node);
@@ -164,34 +159,28 @@ export function verifyElaboration(e: Elaboration): void {
                 fail('Invalid constructor reconstruction pattern', m.node);
         }
         if (
-            (!temporary && e.nodes.find((n) => n.id === m.node)!.kind !== 'manual') ||
-            e.nodes.find((n) => n.id === m.frontend)!.type?.tag !== (temporary ? 'plain' : 'flow')
+            e.nodes.find((n) => n.id === m.node)!.kind !== 'aslens' ||
+            e.nodes.find((n) => n.id === m.initial)!.type?.tag !== 'plain'
         )
-            fail('Invalid manual restoration source', m.node);
-        for (const phase of [m.staged, m.cleaned, m.restored]) {
-            if (!Array.isArray(phase)) fail('Missing manual restoration phase', m.node);
+            fail('Invalid temporary lens source', m.node);
+        for (const phase of [m.staged, m.cleaned]) {
+            if (!Array.isArray(phase)) fail('Missing temporary lens phase', m.node);
             phase.forEach(state);
         }
-        if (temporary) {
-            const backing =
-                e.bindings.find((b) => b.id === m.temporary) ??
-                fail('Missing temporary lens backing retention', m.node);
-            if (
-                backing.kind !== 'local' ||
-                backing.declaration !== m.node ||
-                !m.scoped ||
-                !m.dependencies.includes(backing.id)
-            )
-                fail('Missing temporary lens backing retention', m.node);
-            if (
-                !m.staged.some((s) => s.place === backing.place && !s.empty.length) ||
-                !m.cleaned.some(
-                    (s) => s.place === backing.place && s.empty.some((p) => !p.length),
-                ) ||
-                !m.restored.some((s) => s.place === backing.place && s.empty.some((p) => !p.length))
-            )
-                fail('Invalid temporary lens lifetime phases', m.node);
-        } else if (m.temporary) fail('Unexpected temporary backing on manual lens', m.node);
+        const backing =
+            e.bindings.find((b) => b.id === m.temporary) ??
+            fail('Missing temporary lens backing retention', m.node);
+        if (
+            backing.kind !== 'local' ||
+            backing.declaration !== m.node ||
+            !m.dependencies.includes(backing.id)
+        )
+            fail('Missing temporary lens backing retention', m.node);
+        if (
+            !m.staged.some((s) => s.place === backing.place && !s.empty.length) ||
+            !m.cleaned.some((s) => s.place === backing.place && s.empty.some((p) => !p.length))
+        )
+            fail('Invalid temporary lens lifetime phases', m.node);
         unique(m.dependencies, 'cleanup dependency');
         m.dependencies.forEach(binding);
     });

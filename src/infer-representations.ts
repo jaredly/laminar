@@ -406,12 +406,12 @@ export function inferRepresentations(
                     };
                     break;
                 }
-                case 'manual':
+                case 'aslens':
                     s.knownPlaces.clear();
-                    if (i.out.type.tag !== 'flow') return fail('Manual produced data');
+                    if (i.out.type.tag !== 'flow') return fail('Temporary lens produced data');
                     out = {
                         kind: 'lens',
-                        shape: retype(shape(get(s, i.lens)), i.out.type.read, i.out.type.write),
+                        shape: reps.thin(i.out.type.read, i.out.type.write),
                     };
                     block(unit, i.cleanup, clone(s), record, chain);
                     break;

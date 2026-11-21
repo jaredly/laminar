@@ -76,37 +76,16 @@ it('rejects a projected callable lens with its whole owner shape', () => {
     expect(() => verifyConcreteProgram(c)).toThrow();
     expect(() => emitC(c)).toThrow();
 });
-function firstManual(block: any): any {
-    for (const i of block.instructions) {
-        if (i.op === 'manual') return i;
-        if (i.op === 'scope') {
-            const found = firstManual(i.body);
-            if (found) return found;
-        }
-    }
-}
-for (const field of ['frontend', 'result', 'kind', 'order'] as const)
-    it(`rejects a forged manual callable physical ${field}`, () => {
-        const c = concrete(
-            callableFocusSamples.find((s) => s.name === 'manual callable swap cleanup replacement')!
-                .source,
-        );
-        const m = c.code.map((code: any) => firstManual(code.body)).find(Boolean);
-        if (field === 'order') m.restoration.order.reverse();
-        else m.restoration[field] = 'forged-endpoint-contract';
-        expect(() => verifyConcreteProgram(c)).toThrow('Manual restoration contract changed');
-        expect(() => emitC(c)).toThrow('Manual restoration contract changed');
-    });
 it('keeps computed callable aliases exclusive over frontend owners', () => {
     expect(() =>
         typedProgram(
-            '{let v = 3\n let f = fn () v\n let a = ~{@(f, fn () ())}\n f()\n a := fn () 7}',
+            '{let v = 3\n let f = fn () v\n let a = ~{{lens finalFocus <- f\nf := finalFocus\n()}}\n f()\n a := fn () 7}',
         ),
     ).toThrow('Binding is exclusively borrowed until its aliases leave scope');
 });
 it('rejects forged computed callable owner protection', () => {
     const c = concrete(
-        callableFocusSamples.find((s) => s.name === 'computed callable alias manual replacement')!
+        callableFocusSamples.find((s) => s.name === 'computed callable alias temporary replacement')!
             .source,
     );
     const loan = c.semantic.program.units.flatMap((u: any) => u.loans).find((l: any) => l.owners);
@@ -138,17 +117,6 @@ it('rejects a nested scattered callable lens with its child shape', () => {
     focuses.at(-1).representation.shape = focuses[0].representation.shape;
     expect(() => verifyConcreteProgram(c)).toThrow();
     expect(() => emitC(c)).toThrow();
-});
-it('rejects forged scattered manual restoration mode', () => {
-    const c = concrete(
-        callableFocusSamples.find(
-            (s) => s.name === 'scattered callable manual wrapper replacement',
-        )!.source,
-    );
-    const m = c.code.map((code: any) => firstManual(code.body)).find(Boolean);
-    m.restoration.kind = 'local-focus';
-    expect(() => verifyConcreteProgram(c)).toThrow('Manual restoration contract changed');
-    expect(() => emitC(c)).toThrow('Manual restoration contract changed');
 });
 it('rejects missing scattered alias owner protection', () => {
     const c = concrete(

@@ -83,7 +83,7 @@ export const callableJoinSamples = [
     })),
     ...(['true', 'false'] as const).map((condition) => ({
         name: `joined deferred cleanup ${condition}`,
-        source: `fn restore(f, ~x) ~{@(x, f)}
+        source: `fn restore(f, ~x) ~{{lens finalFocus <- x\nx := finalFocus\n(f)()}}
 {let resource = 2
  let f = match ${condition} {true -> fn () resource; false -> fn () 3}
  let x = 1

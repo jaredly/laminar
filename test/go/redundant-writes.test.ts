@@ -84,8 +84,8 @@ for (const [name, source, expected, output] of [
         '',
     ],
     [
-        'manual cleanup',
-        '{let x = 1\n let old = dup(~{@(x, fn () {print("cleanup")})})\n (old, x)}',
+        'temporary cleanup',
+        '{let x = 1\n let old = dup(~{{lens finalFocus <- x\nx := finalFocus\n{print("cleanup")}}})\n (old, x)}',
         [1, 1],
         'cleanup\n',
     ],

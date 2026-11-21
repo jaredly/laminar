@@ -135,7 +135,7 @@ for (const [name, source, expected, output] of [
     ],
     [
         'cleanup reads joined owner',
-        'fn update(flag, ~x) {let cleanup = ~{@(x, fn () {print("${dup(~x)}")})}\n match flag {true -> {cleanup := 3\n ()}; false -> {cleanup := 5\n ()}}}\n{let x = 1\n update(true, ~x)\n x}',
+        'fn update(flag, ~x) {let cleanup = ~{{lens finalFocus <- x\nx := finalFocus\n{print("${dup(~x)}")}}}\n match flag {true -> {cleanup := 3\n ()}; false -> {cleanup := 5\n ()}}}\n{let x = 1\n update(true, ~x)\n x}',
         3,
         '3\n',
     ],

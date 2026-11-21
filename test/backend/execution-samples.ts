@@ -13,7 +13,6 @@ import { callableResultSamples } from './callable-result-samples.ts';
 import { nativeJoinSamples } from './native-join-samples.ts';
 import { borrowedPatternSamples } from './borrowed-pattern-samples.ts';
 import { aslensSamples } from './aslens-samples.ts';
-import { manualRestorationSamples } from './manual-restoration-samples.ts';
 import { lensBranchSamples } from './lens-branch-samples.ts';
 import { computedAliases } from './computed-alias-samples.ts';
 import { capturedCleanupSamples } from './captured-cleanup-samples.ts';
@@ -65,7 +64,6 @@ export const samples: ExecutionSample[] = [
     ...lensBranchSamples,
     ...borrowedPatternSamples.map((s) => ({ ...s, name: `borrowed: ${s.name}` })),
     ...aslensSamples.map((s) => ({ ...s, name: `aslens: ${s.name}` })),
-    ...manualRestorationSamples.map((s) => ({ ...s, name: `manual: ${s.name}` })),
     { name: 'lexical-alias', source: '{let x = 1\n {let y = ~x\n y := y + 1}\n x}', expected: 2 },
     { name: 'empty-swap', source: '{let x = 1\n x := x + 1}', expected: null },
     { name: 'full-swap-order', source: '{let x = 1\n (x := 2, x := 3, x)}', expected: [1, 2, 3] },

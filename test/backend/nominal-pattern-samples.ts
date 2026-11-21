@@ -59,8 +59,8 @@ export const borrowedNominalSamples = [
         [4, 2],
     ],
     [
-        'manual cleanup updates reconstructed sibling',
-        '{let xs = [1, 2]\n {let [h, ...rest] = ~xs\n {let f = ~{@(h, fn () {rest := []})}\n f := 4}}\n xs}',
+        'temporary cleanup updates reconstructed sibling',
+        '{let xs = [1, 2]\n {let [h, ...rest] = ~xs\n {let f = ~{{lens finalFocus <- h\nh := finalFocus\n{rest := []}}}\n f := 4}}\n xs}',
         [4],
     ],
     [

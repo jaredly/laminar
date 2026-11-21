@@ -32,8 +32,8 @@ type Cap =
       }
     | { kind: 'scope'; inner: Cap; cleanup: Cleanup[]; retire: string[] }
     | {
-          kind: 'manual';
-          inner: Cap;
+          kind: 'aslens';
+          backing: SlotRef;
           holds: SlotRef[];
           cleanup: IRBlock;
           reconstructionOwner?: SlotRef;
@@ -50,7 +50,6 @@ type Cap =
       };
 type Value = { type: SemanticFlow; cap?: Cap };
 type State = {
-    locked: SlotRef[];
     slots: Map<string, Slot>;
     values: Map<string, Value>;
     loans: Map<string, { cap: Cap; type: SemanticFlow & { tag: 'flow' } }>;
@@ -188,7 +187,12 @@ export function verifyTypedProgram(program: TypedProgram): void {
         // A reconstruction contract must correspond to an actual selected input
         // pattern, and its deferred swap must rebuild that exact tag/field tree.
         const reconstructionPatterns = new Map<string, IRPattern>();
-        const reconstructions: Extract<Instruction, { op: 'manual' }>[] = [];
+        const reconstructions: {
+            temporary: Extract<Instruction, { op: 'aslens' }>;
+            inputs: Map<string, Instruction>;
+        }[] = [];
+        const outputs = (instructions: Instruction[]) =>
+            new Map(instructions.flatMap((i) => ('out' in i ? [[i.out.id, i] as const] : [])));
         const indexPattern = (p: IRPattern): void => {
             if (p.reconstructionOwner || p.reconstructionId) {
                 if (
@@ -202,23 +206,56 @@ export function verifyTypedProgram(program: TypedProgram): void {
             }
             if (p.kind === 'tuple' || p.kind === 'constructor') p.items.forEach(indexPattern);
         };
-        const indexReconstruction = (b: IRBlock): void => {
+        const backingPlaces = new Set<string>();
+        const backingTransfers = new Set<Instruction>();
+        const indexBlock = (b: IRBlock, selected: readonly string[] = []): void => {
+            const inputs = outputs(b.instructions);
             for (const i of b.instructions) {
                 if (i.op === 'bind') indexPattern(i.pattern);
-                else if (i.op === 'scope') indexReconstruction(i.body);
+                else if (i.op === 'scope') indexBlock(i.body, selected);
                 else if (i.op === 'case')
                     for (const c of i.cases) {
+                        if (c.pattern.reconstructionOwner) {
+                            const owner = inputs.get(i.value);
+                            if (
+                                owner?.op !== 'move' ||
+                                slotKey(owner.slot) !== slotKey(c.pattern.reconstructionOwner)
+                            )
+                                fail('Reconstruction pattern selects a different owner');
+                        }
                         indexPattern(c.pattern);
-                        indexReconstruction(c.body);
+                        indexBlock(
+                            c.body,
+                            c.pattern.reconstructionId
+                                ? [...selected, c.pattern.reconstructionId]
+                                : selected,
+                        );
                     }
-                else if (i.op === 'manual') {
-                    if (i.reconstruction) reconstructions.push(i);
-                    indexReconstruction(i.cleanup);
+                else if (i.op === 'aslens') {
+                    if (backingPlaces.has(i.backing)) fail('Duplicate temporary backing');
+                    backingPlaces.add(i.backing);
+                    const transfer = i.cleanup?.instructions[0];
+                    if (
+                        transfer?.op !== 'move' ||
+                        transfer.slot.place !== i.backing ||
+                        transfer.slot.path.length ||
+                        transfer.slot.permit
+                    )
+                        fail('Cleanup must move the entire temporary backing first');
+                    backingTransfers.add(transfer!);
+                    if (i.reconstruction) {
+                        if (!selected.includes(i.reconstruction.reconstructionId!))
+                            fail('Reconstruction is outside its selected pattern');
+                        reconstructions.push({ temporary: i, inputs });
+                    }
+                    indexBlock(i.cleanup, selected);
                 }
             }
         };
-        indexReconstruction(u.entry);
-        u.functions.forEach((f) => indexReconstruction(f.body));
+        const lexicalPlace = (place: string) => {
+            if (backingPlaces.has(place)) fail('Temporary backing cannot be accessed directly');
+        };
+        for (const loan of u.loans) lexicalPlace(loan.place);
         const slotKey = (r: SlotRef) => JSON.stringify([r.place, r.path, r.permit ?? null]);
         const patternKey = (p: IRPattern): string =>
             JSON.stringify([
@@ -244,8 +281,10 @@ export function verifyTypedProgram(program: TypedProgram): void {
                           ? p.items.map(patternKey)
                           : null,
             ]);
+        indexBlock(u.entry);
+        u.functions.forEach((f) => indexBlock(f.body));
         const seenReconstruction = new Set<string>();
-        for (const m of reconstructions) {
+        for (const { temporary: m, inputs } of reconstructions) {
             const p = m.reconstruction!;
             const original = p.reconstructionId && reconstructionPatterns.get(p.reconstructionId);
             if (
@@ -255,9 +294,51 @@ export function verifyTypedProgram(program: TypedProgram): void {
             )
                 fail('Reconstruction does not match its selected pattern');
             seenReconstruction.add(p.reconstructionId!);
-            const instructions = new Map(
-                m.cleanup.instructions.flatMap((i) => ('out' in i ? [[i.out.id, i] as const] : [])),
-            );
+            const [transfer, bind, ...body] = m.cleanup.instructions;
+            if (transfer.op !== 'move' || bind?.op !== 'bind' || bind.value !== transfer.out.id)
+                return fail('Missing reconstruction final field bindings');
+            const fields = new Map<IRPattern, SlotRef>();
+            const matchFields = (p: IRPattern, final: IRPattern, initial: string): void => {
+                const input = inputs.get(initial);
+                if (p.kind === 'bind') {
+                    if (
+                        input?.op !== 'move' ||
+                        slotKey(input.slot) !== slotKey(p.slot) ||
+                        final.kind !== 'bind'
+                    )
+                        return fail('Reconstruction field mapping changed');
+                    fields.set(p, final.slot);
+                    return;
+                }
+                if (p.kind === 'constructor' && p.items.length === 1) {
+                    matchFields(p.items[0]!, final, initial);
+                    return;
+                }
+                const items =
+                    p.kind === 'literal'
+                        ? []
+                        : p.kind === 'tuple' || p.kind === 'constructor'
+                          ? p.items
+                          : fail('Reconstruction discards an unmatched field');
+                if (
+                    !items.length &&
+                    final.kind === 'tuple' &&
+                    !final.items.length &&
+                    input?.op === 'constant' &&
+                    input.value === null
+                )
+                    return;
+                if (
+                    input?.op !== 'tuple' ||
+                    final.kind !== 'tuple' ||
+                    input.items.length !== items.length ||
+                    final.items.length !== items.length
+                )
+                    return fail('Reconstruction field shape changed');
+                items.forEach((child, n) => matchFields(child, final.items[n]!, input.items[n]!));
+            };
+            matchFields(p, bind.pattern, m.initial);
+            const instructions = outputs(body);
             const used = new Set<string>();
             const rebuild = (p: IRPattern, value: string): void => {
                 if (used.has(value)) fail('Reconstruction duplicates a field');
@@ -265,8 +346,11 @@ export function verifyTypedProgram(program: TypedProgram): void {
                 const i = instructions.get(value);
                 if (!i) fail('Missing reconstruction value');
                 if (p.kind === 'bind') {
-                    if (i!.op !== 'move' || slotKey(i!.slot) !== slotKey(p.slot))
+                    if (i!.op !== 'move' || slotKey(i!.slot) !== slotKey(fields.get(p)!))
                         fail('Reconstruction field changed');
+                } else if (p.kind === 'tuple' && !p.items.length) {
+                    if (i!.op !== 'constant' || i!.value !== null)
+                        fail('Reconstruction constructor or shape changed');
                 } else if (p.kind === 'constructor' || p.kind === 'tuple') {
                     if (
                         (p.kind === 'constructor'
@@ -305,19 +389,29 @@ export function verifyTypedProgram(program: TypedProgram): void {
             used.add(swap!.out.id);
             used.add(target!.out.id);
             rebuild(p, (swap as Extract<Instruction, { op: 'swap' }>).value);
-            if (used.size !== m.cleanup.instructions.length || m.cleanup.cleanup.length)
+            const drops = m.cleanup.cleanup;
+            const expected = [...fields.values()].map(slotKey).sort();
+            if (
+                used.size !== body.length ||
+                drops.some((drop) => drop.kind !== 'drop-place') ||
+                JSON.stringify(
+                    drops
+                        .map((drop) =>
+                            slotKey((drop as Extract<Cleanup, { kind: 'drop-place' }>).slot),
+                        )
+                        .sort(),
+                ) !== JSON.stringify(expected)
+            )
                 fail('Unexpected reconstruction cleanup effects');
         }
         if (seenReconstruction.size !== reconstructionPatterns.size)
             fail('Missing selected-pattern reconstruction');
         const fresh = (): State => ({
-            locked: [],
             slots: new Map(),
             values: new Map(),
             loans: new Map(),
         });
         const clone = (s: State): State => ({
-            locked: [...s.locked],
             slots: new Map(
                 [...s.slots].map(([id, v]) => [
                     id,
@@ -337,8 +431,6 @@ export function verifyTypedProgram(program: TypedProgram): void {
         const cap = (v: Value): Cap =>
             v.type.tag === 'flow' && v.cap ? v.cap : fail('Expected a lens capability');
         const access = (s: State, r: SlotRef): Slot => {
-            if (s.locked.some((p) => p.place === r.place && overlap(p.path, r.path)))
-                fail('Cleanup accesses an owner before pending restoration');
             if (r.path.some((p) => !Number.isSafeInteger(p) || p < 0)) fail('Invalid slot path');
             const slot = s.slots.get(r.place) ?? fail(`Unknown or retired place ${r.place}`);
             const permits = new Set<string>();
@@ -402,8 +494,8 @@ export function verifyTypedProgram(program: TypedProgram): void {
                     ),
             );
         const targets = (c: Cap): SlotRef[] =>
-            c.kind === 'manual'
-                ? normalized([...targets(c.inner), ...c.holds])
+            c.kind === 'aslens'
+                ? [c.backing, ...c.holds]
                 : c.kind === 'choice'
                   ? c.refs
                   : c.kind === 'place'
@@ -414,8 +506,8 @@ export function verifyTypedProgram(program: TypedProgram): void {
                         ? targets(c.inner)
                         : c.effects.flatMap((e) => targets(e.cap));
         const read = (s: State, c: Cap): SemanticType =>
-            c.kind === 'manual'
-                ? read(s, c.inner)
+            c.kind === 'aslens'
+                ? focus(s, c.backing)
                 : c.kind === 'choice'
                   ? c.read
                   : c.kind === 'place'
@@ -433,8 +525,9 @@ export function verifyTypedProgram(program: TypedProgram): void {
                         .map((p) => p.slice(c.slot.path.length));
                 case 'tuple':
                     return c.items.flatMap((v, i) => empty(s, v).map((p) => [i, ...p]));
+                case 'aslens':
+                    return empty(s, { kind: 'place', slot: c.backing });
                 case 'scope':
-                case 'manual':
                     return empty(s, c.inner);
                 case 'call':
                     return [];
@@ -464,15 +557,10 @@ export function verifyTypedProgram(program: TypedProgram): void {
             if (c.kind === 'choice')
                 return c.arms.flatMap((a) => externalTargets(outer, a.state, a.cap));
             if (c.kind === 'scope') return externalTargets(outer, branch, c.inner);
-            // Cleanup holds may name retained branch locals or branch-local permits.
-            // Resolve them just like frontend places before exposing outer owners.
-            if (c.kind === 'manual')
-                return normalized([
-                    ...externalTargets(outer, branch, c.inner),
-                    ...c.holds.flatMap((r) =>
-                        externalTargets(outer, branch, { kind: 'place', slot: r }),
-                    ),
-                ]);
+            if (c.kind === 'aslens')
+                return targets(c).flatMap((slot) =>
+                    externalTargets(outer, branch, { kind: 'place', slot }),
+                );
             if (c.kind === 'tuple')
                 return c.items.flatMap((v) => externalTargets(outer, branch, v));
             if (c.kind === 'call')
@@ -488,125 +576,13 @@ export function verifyTypedProgram(program: TypedProgram): void {
             while (permit && !outer.loans.has(permit)) permit = loans.get(permit)?.parent;
             return [{ ...c.slot, permit }];
         };
-        const pending = (s: State, c: Cap): SlotRef[] => {
-            if (c.kind === 'place') return [];
-            if (c.kind === 'call') return targets(c);
-            if (c.kind === 'tuple') return c.items.flatMap((v) => pending(s, v));
-            if (c.kind === 'manual') return pending(s, c.inner);
-            if (c.kind === 'choice') return c.arms.flatMap((a) => pending(a.state, a.cap));
-            return [
-                ...pending(s, c.inner),
-                ...c.cleanup.flatMap((a) =>
-                    a.kind === 'release'
-                        ? targets(s.loans.get(a.loan)?.cap ?? fail('Missing deferred loan'))
-                        : [],
-                ),
-            ];
-        };
-        const stage = (s: State, c: Cap, type: SemanticType): (() => void) => {
-            if (c.kind === 'place') {
-                write(s, c.slot, type);
-                return () => {};
-            }
-            if (c.kind === 'tuple') {
-                const parts = tupleItems(type);
-                if (parts.length !== c.items.length) fail('Tuple lens replacement shape mismatch');
-                const finishes = c.items.map((v, i) => stage(s, v, parts[i]!));
-                return () => finishes.forEach((f) => f());
-            }
-            if (c.kind === 'call') {
-                eq(type, c.write);
-                return () => apply(s, c, type);
-            }
-            if (c.kind === 'scope') {
-                const finish = stage(s, c.inner, type);
-                return () => {
-                    finish();
-                    cleanup(s, c.cleanup);
-                    for (const p of c.retire) {
-                        if (s.slots.has(p) && full(s, { place: p, path: [] }))
-                            fail('Deferred scope value has no disposal');
-                        s.slots.delete(p);
-                    }
-                };
-            }
-            if (c.kind === 'manual') {
-                const finish = stage(s, c.inner, type);
-                return () => {
-                    const locked = s.locked;
-                    s.locked = [...locked, ...pending(s, c.inner)];
-                    const value = verifyBlock(c.cleanup, s);
-                    plain(value);
-                    s.locked = locked;
-                    finish();
-                };
-            }
-            if (c.guards.some((g) => revision(s.slots.get(g.place)?.version, g.path) !== g.version))
-                fail('Branch lens owner changed before restoration');
-            const arms = c.arms.map((arm) => {
-                const branch = clone(arm.state);
-                for (const place of c.places) {
-                    const current = s.slots.get(place)!;
-                    const original = branch.slots.get(place)!;
-                    branch.slots.set(place, {
-                        ...current,
-                        empty: current.empty.map((p) => [...p]),
-                        version: advance(original.version, current.version, c.versions.get(place)!),
-                    });
-                }
-                for (const id of c.baseLoans) branch.loans.delete(id);
-                for (const [id, loan] of s.loans) branch.loans.set(id, loan);
-                const finish = stage(branch, arm.cap, type);
-                return { branch, finish, restored: arm.restored };
-            });
-            mergeStates(
-                s,
-                arms.map((a) => a.branch),
-                c.places,
-            );
-            const versions = new Map([...s.slots].map(([p, slot]) => [p, new Map(slot.version)]));
-            return () => {
-                for (const arm of arms) {
-                    for (const place of c.places) {
-                        const current = s.slots.get(place)!;
-                        const original = arm.branch.slots.get(place)!;
-                        arm.branch.slots.set(place, {
-                            ...current,
-                            empty: current.empty.map((p) => [...p]),
-                            version: advance(
-                                original.version,
-                                current.version,
-                                versions.get(place)!,
-                            ),
-                        });
-                    }
-                    for (const id of c.baseLoans) arm.branch.loans.delete(id);
-                    for (const [id, loan] of s.loans) arm.branch.loans.set(id, loan);
-                    arm.finish();
-                    cleanup(arm.branch, arm.restored);
-                    for (const place of arm.branch.slots.keys())
-                        if (!c.places.includes(place)) {
-                            if (full(arm.branch, { place, path: [] }))
-                                fail('Branch-local storage has no deferred disposal');
-                            arm.branch.slots.delete(place);
-                        }
-                    if (
-                        JSON.stringify([...arm.branch.loans.keys()].sort()) !==
-                        JSON.stringify([...s.loans.keys()].sort())
-                    )
-                        fail('Branch restoration leaks a lexical loan');
-                }
-                mergeStates(
-                    s,
-                    arms.map((a) => a.branch),
-                    c.places,
-                );
-            };
-        };
         const apply = (s: State, c: Cap, type: SemanticType): void => {
             switch (c.kind) {
-                case 'manual':
-                    stage(s, c, type)();
+                case 'aslens':
+                    write(s, c.backing, type);
+                    plain(verifyBlock(c.cleanup, s));
+                    if (full(s, c.backing)) fail('Temporary backing was not consumed');
+                    s.slots.delete(c.backing.place);
                     return;
                 case 'choice': {
                     if (
@@ -702,15 +678,18 @@ export function verifyTypedProgram(program: TypedProgram): void {
                     if (refs.some((r) => !full(s, r))) fail('Unrestored borrowed focus');
                     eq(read(s, borrowed.cap), borrowed.type.write);
                 } else if (action.kind === 'restored') {
+                    lexicalPlace(action.slot.place);
                     if (!full(s, action.slot)) fail('Unrestored lens parameter');
                     eq(focus(s, action.slot), action.type);
                 } else if (action.kind === 'drop-place') {
+                    lexicalPlace(action.slot.place);
                     access(s, action.slot);
                     write(s, action.slot, irUnit(), true);
                 } else fail('Unknown cleanup operation');
             }
         };
-        const allocate = (s: State, place: string, type: SemanticType): void => {
+        const allocate = (s: State, place: string, type: SemanticType, backing = false): void => {
+            if (!backing) lexicalPlace(place);
             if (s.slots.has(place)) fail('Place allocated twice');
             s.slots.set(place, { type, empty: [], version: new Map() });
         };
@@ -880,12 +859,14 @@ export function verifyTypedProgram(program: TypedProgram): void {
                         feq(i.out.type, irPlain(instantiate(i.instance)));
                         break;
                     case 'move': {
+                        if (!backingTransfers.has(i)) lexicalPlace(i.slot.place);
                         if (!full(s, i.slot)) fail('Use after move', i.origin);
                         feq(i.out.type, irPlain(focus(s, i.slot)));
                         write(s, i.slot, irUnit(), true);
                         break;
                     }
                     case 'acquire':
+                        lexicalPlace(i.slot.place);
                         if (i.out.type.tag !== 'flow') fail('Acquire produces a non-lens');
                         access(s, i.slot);
                         result.cap = { kind: 'place', slot: i.slot };
@@ -964,10 +945,25 @@ export function verifyTypedProgram(program: TypedProgram): void {
                         });
                         break;
                     }
-                    case 'manual': {
-                        const frontend = take(s, i.lens);
-                        feq(frontend.type, i.out.type);
-                        const local = new Set<string>(),
+                    case 'aslens': {
+                        const backing = { place: i.backing, path: [] };
+                        const initial = plain(take(s, i.initial));
+                        const flow = i.out.type;
+                        if (flow.tag !== 'flow') return fail('Temporary lens produced data');
+                        eq(initial, flow.read);
+                        const record = u.bindings.find(
+                            (b) => b.place === i.backing && b.declaration === i.origin,
+                        );
+                        if (
+                            !record ||
+                            record.kind !== 'local' ||
+                            record.path.length ||
+                            record.borrow
+                        )
+                            return fail('Invalid temporary backing');
+                        eq(record.initialType, initial);
+                        allocate(s, i.backing, initial, true);
+                        const local = new Set([backing.place]),
                             refs: SlotRef[] = [],
                             scopedLoans = new Set<string>();
                         const patternPlaces = (p: IRPattern): void => {
@@ -998,7 +994,8 @@ export function verifyTypedProgram(program: TypedProgram): void {
                                         ])
                                             if (a.kind !== 'release') refs.push(a.slot);
                                     }
-                                else if (instruction.op === 'manual') {
+                                else if (instruction.op === 'aslens') {
+                                    local.add(instruction.backing);
                                     refs.push(...instruction.holds);
                                     scan(instruction.cleanup);
                                 }
@@ -1021,11 +1018,14 @@ export function verifyTypedProgram(program: TypedProgram): void {
                                 .map((r) => JSON.stringify([r.place, r.path, r.permit ?? null]))
                                 .sort();
                         if (JSON.stringify(keys(held)) !== JSON.stringify(keys(i.holds)))
-                            fail('Manual cleanup dependency protection mismatch');
-                        i.holds.forEach((r) => access(s, r));
+                            fail('Temporary cleanup dependency protection mismatch');
+                        i.holds.forEach((r) => {
+                            lexicalPlace(r.place);
+                            access(s, r);
+                        });
                         result.cap = {
-                            kind: 'manual',
-                            inner: cap(frontend),
+                            kind: 'aslens',
+                            backing,
                             holds: i.holds,
                             cleanup: i.cleanup,
                             reconstructionOwner: i.reconstruction?.reconstructionOwner,
@@ -1192,7 +1192,7 @@ export function verifyTypedProgram(program: TypedProgram): void {
                 const escapes = (state: State, c: Cap): boolean => {
                     if (c.kind === 'choice') return c.arms.some((a) => escapes(a.state, a.cap));
                     if (c.kind === 'scope') return escapes(state, c.inner);
-                    if (c.kind === 'manual')
+                    if (c.kind === 'aslens')
                         return c.reconstructionOwner
                             ? escapes(state, { kind: 'place', slot: c.reconstructionOwner })
                             : false;

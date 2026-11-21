@@ -67,24 +67,13 @@ export type ConcreteInstruction =
     | Extract<Instruction, { op: 'bind' | 'borrow' }>
     | (Exclude<
           Instruction,
-          { op: 'bind' | 'borrow' | 'scope' | 'case' | 'call' | 'global' | 'closure' | 'manual' }
+          {
+              op: 'bind' | 'borrow' | 'scope' | 'case' | 'call' | 'global' | 'closure' | 'aslens';
+          }
       > &
           ConcreteOutput)
-    | ({
-          op: 'manual';
-          reconstruction?: IRPattern;
-          origin: string;
-          lens: string;
-          holds: SlotRef[];
-          cleanup: ConcreteBlock;
-          restoration: {
-              kind: 'deferred';
-              frontend: string;
-              result: string;
-              order: ['stage', 'cleanup', 'dispose-result', 'restore', 'release'];
-              retention: 'through-enclosing-cleanup';
-          };
-      } & ConcreteOutput)
+    | (Omit<Extract<Instruction, { op: 'aslens' }>, 'cleanup' | 'out'> &
+          ConcreteOutput & { cleanup: ConcreteBlock })
     | ({
           op: 'scope';
           origin: string;

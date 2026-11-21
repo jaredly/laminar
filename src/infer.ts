@@ -50,8 +50,6 @@ type Binding = { id?: string; root: Root; path: number[]; scheme?: Scheme; permi
 type Env = Map<string, Binding>;
 type View = {
     /** Stage final focus contents now; the returned action completes restoration. */
-    stage?: (type: Ty) => () => void;
-    pending?: Binding[];
     provenance?: Binding[];
     empty?: number[][];
     read: Ty;
@@ -351,14 +349,21 @@ export class Inferencer {
         const params = new Map<string, Ty>();
         for (const arg of node.args ?? []) {
             if (params.has(arg.text))
-                this.error('duplicate-type-parameter', arg.loc, `Duplicate type parameter ${arg.text}`);
+                this.error(
+                    'duplicate-type-parameter',
+                    arg.loc,
+                    `Duplicate type parameter ${arg.text}`,
+                );
             params.set(arg.text, this.solver.fresh());
         }
         const constructors = new Map<string, Scheme>();
         if (node.type === 'type-alias') {
             // The alias is not yet registered, so a self-reference is an unknown type.
             this.annotation(node.alias, params, true);
-            return { definition: { kind: 'alias', params: [...params.keys()], body: node.alias }, constructors };
+            return {
+                definition: { kind: 'alias', params: [...params.keys()], body: node.alias },
+                constructors,
+            };
         }
         const definition: TypeDefinition = { kind: 'union', params: [...params.keys()] };
         const result = plain(con(name, ...params.values()));
@@ -828,14 +833,6 @@ export class Inferencer {
                 const view = this.lens(n.body as Lens, sub);
                 return {
                     ...view,
-                    pending: [...(view.pending ?? []), b],
-                    stage: (t) => {
-                        const finish = this.stage(view, t);
-                        return () => {
-                            finish();
-                            close();
-                        };
-                    },
                     put: (t) => {
                         view.put(t);
                         close();
@@ -859,13 +856,6 @@ export class Inferencer {
             const view = this.lens(n.body as Lens, sub);
             return {
                 ...view,
-                stage: (t) => {
-                    const finish = this.stage(view, t);
-                    return () => {
-                        finish();
-                        close();
-                    };
-                },
                 put: (t) => {
                     view.put(t);
                     close();
@@ -925,14 +915,6 @@ export class Inferencer {
             const result = this.lens(n.body as Lens, sub);
             return {
                 ...result,
-                pending: [...(result.pending ?? []), ...view.targets],
-                stage: (t) => {
-                    const finish = this.stage(result, t);
-                    return () => {
-                        finish();
-                        close();
-                    };
-                },
                 put: (type) => {
                     result.put(type);
                     close();
@@ -942,9 +924,6 @@ export class Inferencer {
         const result = this.linear(n.body as Linear, sub);
         close();
         return result;
-    }
-    private stage(view: View, type: Ty): () => void {
-        return view.stage ? view.stage(type) : () => view.put(type);
     }
     private lens(n: Lens, env: Env): View {
         const v = this.lensInner(n, env);
@@ -960,12 +939,6 @@ export class Inferencer {
             },
             targets: v.targets,
             provenance: v.provenance,
-            pending: v.pending,
-            stage: (t) => {
-                this.record(n, flow(v.read, write));
-                this.solver.unify(write, t, n.loc);
-                return this.stage(v, t);
-            },
             put: (t) => {
                 this.record(n, flow(v.read, write));
                 this.solver.unify(write, t, n.loc);
@@ -988,10 +961,6 @@ export class Inferencer {
                             .filter((p) => self.overlaps(p, b.path))
                             .map((p) => p.slice(b.path.length));
                     },
-                    stage: (t) => {
-                        this.put(b, t, n.loc);
-                        return () => {};
-                    },
                     put: (t) => this.put(b, t, n.loc),
                     targets: [b],
                 };
@@ -1009,13 +978,6 @@ export class Inferencer {
                     },
                     targets,
                     provenance: views.flatMap((v) => v.provenance ?? v.targets),
-                    pending: views.flatMap((v) => v.pending ?? []),
-                    stage: (t) => {
-                        const finishes = this.components(t, views.length, n.loc).map((v, i) =>
-                            this.stage(views[i], v),
-                        );
-                        return () => finishes.forEach((f) => f());
-                    },
                     put: (t) =>
                         this.components(t, views.length, n.loc).forEach((v, i) => views[i].put(v)),
                 };
@@ -1026,8 +988,6 @@ export class Inferencer {
                 return this.letBody(n, env, true) as View;
             case 'case':
                 return this.lensCase(n, env);
-            case 'manual':
-                return this.manual(n, env);
             case 'aslens':
                 return this.aslens(n, env);
         }
@@ -1080,11 +1040,6 @@ export class Inferencer {
             read,
             targets: view?.targets ?? [],
             provenance: view?.provenance,
-            pending: view?.targets ?? [],
-            stage: (t) => {
-                this.solver.unify(write, t, n.loc);
-                return () => view?.put(replacement);
-            },
             put: (t) => {
                 this.solver.unify(write, t, n.loc);
                 view?.put(replacement);
@@ -1102,129 +1057,41 @@ export class Inferencer {
                 const b = this.lookup(env, name, n.loc);
                 return b.scheme ? [] : [b];
             });
-        const record: (typeof this.builder.manuals)[number] = {
+        const record: (typeof this.builder.temporaryLenses)[number] = {
             node: this.builder.node(n),
-            frontend: this.builder.node(n.value),
+            initial: this.builder.node(n.value),
+            reconstruction: n.reconstructionPattern && this.builder.node(n.reconstructionPattern),
             temporary: temporary.id!,
             cleanup: this.builder.node(n.body),
-            scoped: true,
             dependencies: [temporary.id!, ...dependencies.map((b) => b.id!)],
             staged: [],
             cleaned: [],
-            restored: [],
         };
-        this.builder.manuals.push(record);
-        const stage = (type: Ty) => {
+        this.builder.temporaryLenses.push(record);
+        const put = (type: Ty) => {
             this.put(temporary, type, n.loc);
             record.staged = [...this.states(env), this.state(temporary.root)];
-            return () => {
-                // Transfer the owned final contents into cleanup-local storage. These
-                // bindings do not borrow an enclosing owner and need not be refilled.
-                const final = this.consume(temporary, n.loc);
-                const sub = new Map(env);
-                this.pattern(n.pat, final, sub);
-                this.linear(n.body, sub);
-                const locals = names(n.pat).map((name) => sub.get(name)!);
-                this.builder.scopes.push({
-                    node: this.builder.node(n),
-                    bindings: locals.map((b) => b.id!),
-                    exit: locals.map((b) => this.state(b.root)),
-                });
-                record.cleaned = [...this.states(env), this.state(temporary.root)];
-                record.restored = record.cleaned;
-            };
+            // Transfer the owned final contents into cleanup-local storage. These
+            // bindings do not borrow an enclosing owner and need not be refilled.
+            const final = this.consume(temporary, n.loc);
+            const sub = new Map(env);
+            this.pattern(n.pat, final, sub);
+            this.linear(n.body, sub);
+            const locals = names(n.pat).map((name) => sub.get(name)!);
+            this.builder.scopes.push({
+                node: this.builder.node(n),
+                bindings: locals.map((b) => b.id!),
+                exit: locals.map((b) => this.state(b.root)),
+            });
+            record.cleaned = [...this.states(env), this.state(temporary.root)];
         };
         return {
             read,
             targets: [temporary, ...dependencies],
-            provenance: [],
-            stage,
-            put: (t) => stage(t)(),
-        };
-    }
-    private manual(n: Lens & { type: 'manual' }, env: Env): View {
-        const frontend = this.lens(n.frontend, env);
-        const dependencies = [...new Set(free(n.backend))].flatMap((name) => {
-            const binding = this.lookup(env, name, n.loc);
-            return binding.scheme ? [] : [binding];
-        });
-        const all = [...frontend.targets, ...dependencies];
-        const targets = all.filter(
-            (b, i) =>
-                !all.some(
-                    (other, j) =>
-                        other.root === b.root &&
-                        other.permit === b.permit &&
-                        other.path.length <= b.path.length &&
-                        other.path.every((v, k) => b.path[k] === v) &&
-                        (other.path.length < b.path.length || j < i),
-                ),
-        );
-        const scoped = n.backend.type === 'fn' && n.backend.args.length === 0;
-        const record: (typeof this.builder.manuals)[number] = {
-            node: this.builder.node(n),
-            frontend: this.builder.node(n.frontend),
-            reconstruction: n.reconstructionPattern
-                ? this.builder.node(n.reconstructionPattern)
-                : undefined,
-            cleanup: this.builder.node(
-                scoped && n.backend.type === 'fn' ? n.backend.body : n.backend,
-            ),
-            scoped,
-            dependencies: dependencies.map((b) => b.id!),
-            staged: [],
-            cleaned: [],
-            restored: [],
-        };
-        this.builder.manuals.push(record);
-        const stage = (type: Ty) => {
-            const finish = this.stage(frontend, type);
-            record.staged = this.states(env);
-            return () => {
-                if (
-                    (frontend.pending ?? []).some((p) =>
-                        dependencies.some(
-                            (b) => b.root === p.root && this.overlaps(b.path, p.path),
-                        ),
-                    )
-                )
-                    this.error(
-                        'use-while-borrowed',
-                        n.loc,
-                        'Cleanup accesses an owner before its computed focus is restored',
-                    );
-                if (scoped && n.backend.type === 'fn') {
-                    if (n.backend.body.type === 'lens')
-                        this.error('mode-mismatch', n.loc, 'Cleanup must return an owned value');
-                    const result = this.linear(n.backend.body as Linear, env);
-                    if (n.backend.ann)
-                        this.solver.unifyFlow(
-                            plain(result),
-                            this.annotation(n.backend.ann, new Map()),
-                            n.loc,
-                        );
-                    this.record(n.backend, plain(fn([], plain(result))));
-                } else {
-                    const cleanup = this.linear(n.backend, env);
-                    this.solver.unify(cleanup, fn([], plain(this.solver.fresh())), n.loc);
-                }
-                record.cleaned = this.states(env);
-                finish();
-                record.restored = this.states(env);
-            };
-        };
-        return {
-            read: frontend.read,
-            empty: frontend.empty,
-            targets,
-            // Compiler-generated reconstruction preserves the original owner's
-            // escape restrictions; it is not an explicit owned-retention request.
             provenance: n.reconstructionPattern
                 ? [this.lookup(env, n.reconstructionPattern.reconstructionOwner!.text, n.loc)]
                 : [],
-            pending: frontend.pending,
-            stage,
-            put: (type) => stage(type)(),
+            put,
         };
     }
     private lensCase(n: Lens & { type: 'case' }, env: Env): View {
@@ -1351,48 +1218,6 @@ export class Inferencer {
             targets,
             empty: arms.flatMap((a) => a.empty),
             provenance: arms.flatMap((a) => a.view.provenance ?? a.view.targets),
-            pending: arms.flatMap((a) => a.view.pending ?? []),
-            stage: (type) => {
-                const current = snapshot();
-                const staged = arms.map((arm) => {
-                    restore(
-                        current.map((s, j) => ({
-                            ...s,
-                            borrows: new Set([
-                                ...s.borrows,
-                                ...[...arm.state[j].borrows].filter(
-                                    (b) => !initial[j].borrows.has(b),
-                                ),
-                            ]),
-                        })),
-                    );
-                    const finish = this.stage(arm.view, type);
-                    return { state: snapshot(), finish };
-                });
-                restore(join(staged.map((a) => a.state)));
-                return () => {
-                    const updated = snapshot();
-                    const outputs: Snapshot[] = [];
-                    staged.forEach((arm, i) => {
-                        restore(
-                            updated.map((s, j) => ({
-                                ...s,
-                                borrows: new Set([
-                                    ...s.borrows,
-                                    ...[...arm.state[j].borrows].filter(
-                                        (b) => !initial[j].borrows.has(b),
-                                    ),
-                                ]),
-                            })),
-                        );
-                        arm.finish();
-                        outputs.push(snapshot());
-                        record.arms[i].restored = this.states(env);
-                    });
-                    restore(join(outputs).map((s, i) => ({ ...s, borrows: updated[i].borrows })));
-                    record.restored = this.states(env);
-                };
-            },
             put: (type) => {
                 const current = snapshot();
                 const outputs: Snapshot[] = [];

@@ -118,7 +118,7 @@ it('independently requires disposal of constructor cleanup locals', () => {
     const visit = (b: import('../src/typed-ir.ts').IRBlock): void => {
         for (const i of b.instructions) {
             if (i.op === 'scope') visit(i.body);
-            if (i.op === 'manual') {
+            if (i.op === 'aslens') {
                 const match = i.cleanup.instructions.find((i) => i.op === 'case');
                 if (match?.op === 'case') {
                     match.cases[0]!.body.cleanup = [];

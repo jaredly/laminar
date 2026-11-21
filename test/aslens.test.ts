@@ -118,6 +118,11 @@ for (const sample of [
         });
     });
 
+it('rejects the removed @ lens syntax', () => {
+    const source = '{let x = 1\n @(x, fn () ()) := 2}';
+    expect(grammar.parse('Linear', readLines(source).nodes[0]).type).toBe('failure');
+});
+
 it('checks and executes an owned temporary after JSON detachment', () => {
     const source = 'fn temp() ~{lens v <- 1\n v}\n {let f = ~temp()\n f := 8}';
     const artifact = JSON.parse(JSON.stringify(typedProgram(source)));
@@ -208,9 +213,9 @@ it('disposes cleanup results and unused pattern contents exactly once', () => {
 function restoration(p: ReturnType<typeof typedProgram>) {
     const visit = (
         b: import('../src/typed-ir.ts').IRBlock,
-    ): Extract<import('../src/typed-ir.ts').Instruction, { op: 'manual' }> | undefined => {
+    ): Extract<import('../src/typed-ir.ts').Instruction, { op: 'aslens' }> | undefined => {
         for (const i of b.instructions) {
-            if (i.op === 'manual') return i;
+            if (i.op === 'aslens') return i;
             if (i.op === 'scope') {
                 const found = visit(i.body);
                 if (found) return found;
@@ -228,12 +233,12 @@ function restoration(p: ReturnType<typeof typedProgram>) {
     throw Error('Missing temporary restoration');
 }
 
-it('independently rejects lost temporary backing protection', () => {
-    const p = JSON.parse(JSON.stringify(typedProgram(aslensSamples[0].source)));
+it('independently rejects lost temporary cleanup dependency protection', () => {
+    const p = JSON.parse(JSON.stringify(typedProgram(aslensSamples[2].source)));
     restoration(p).holds = [];
     let steps = 0;
     expect(() => executeTypedProgram(p, { onStep: () => steps++ })).toThrow(
-        'Manual cleanup dependency protection mismatch',
+        'Temporary cleanup dependency protection mismatch',
     );
     expect(steps).toBe(0);
 });
@@ -244,13 +249,31 @@ it('independently rejects lost cleanup-local disposal', () => {
     expect(() => verifyTypedProgram(p)).toThrow('Owned scope value has no disposal');
 });
 
-it('independently rejects cleanup access to a retired local place', () => {
+it('independently rejects redirecting the final backing transfer', () => {
     const p = JSON.parse(JSON.stringify(typedProgram(aslensSamples[0].source)));
     const m = restoration(p);
     const move = m.cleanup.instructions.find((i) => i.op === 'move')!;
     if (move.op !== 'move') throw Error('Missing cleanup move');
     move.slot.place = 'retired-place';
-    expect(() => verifyTypedProgram(p)).toThrow('Manual cleanup dependency protection mismatch');
+    expect(() => verifyTypedProgram(p)).toThrow(
+        'Cleanup must move the entire temporary backing first',
+    );
+});
+
+it('independently rejects changed concrete backing', () => {
+    const target = wasm32Emscripten('test');
+    const program = typedProgram(aslensSamples[0].source);
+    const concrete = structuredClone(
+        compileConcreteProgram(program, target, [
+            { unit: program.units.at(-1)!.id, arguments: [] },
+        ]),
+    );
+    const temporary = concrete.code
+        .flatMap((code) => code.body.instructions)
+        .find((instruction) => instruction.op === 'aslens');
+    if (!temporary) throw Error('Missing concrete temporary');
+    temporary.backing = 'forged-backing';
+    expect(() => verifyConcreteProgram(concrete)).toThrow('Temporary lens contract changed');
 });
 
 function temporaryElaboration() {
@@ -267,7 +290,7 @@ function temporaryElaboration() {
 it('verifies detached temporary elaboration with final-content bindings', () => {
     const e = temporaryElaboration();
     verifyElaboration(e);
-    const m = e.manuals[0];
+    const m = e.temporaryLenses[0];
     const backing = e.bindings.find((b) => b.id === m.temporary)!;
     expect(backing.initialType).toEqual({ tag: 'con', name: 'Number', args: [] });
     expect(e.bindings.find((b) => b.name === 'v')!.initialType).toEqual({
@@ -277,48 +300,36 @@ it('verifies detached temporary elaboration with final-content bindings', () => 
     });
 });
 
-for (const mutation of ['metadata', 'backing', 'protection', 'staging', 'retirement'] as const)
+for (const mutation of ['metadata', 'backing', 'protection', 'staging', 'cleanup'] as const)
     it(`rejects corrupted temporary elaboration: ${mutation}`, () => {
         const e = temporaryElaboration();
-        if (mutation === 'metadata') e.manuals = [];
-        else if (mutation === 'backing') delete e.manuals[0].temporary;
-        else if (mutation === 'protection') e.manuals[0].dependencies = [];
-        else if (mutation === 'staging') e.manuals[0].staged = [];
-        else e.manuals[0].restored = [];
+        if (mutation === 'metadata') e.temporaryLenses = [];
+        else if (mutation === 'backing') Reflect.deleteProperty(e.temporaryLenses[0], 'temporary');
+        else if (mutation === 'protection') e.temporaryLenses[0].dependencies = [];
+        else if (mutation === 'staging') e.temporaryLenses[0].staged = [];
+        else e.temporaryLenses[0].cleaned = [];
         expect(() => verifyElaboration(e)).toThrow(
             mutation === 'metadata'
-                ? 'Missing manual restoration metadata'
-                : mutation === 'staging' || mutation === 'retirement'
+                ? 'Missing temporary lens metadata'
+                : mutation === 'staging' || mutation === 'cleanup'
                   ? 'Invalid temporary lens lifetime phases'
                   : 'Missing temporary lens backing retention',
         );
     });
 
-it('rejects removing temporary retention while returning its raw focus', () => {
-    const p = JSON.parse(JSON.stringify(typedProgram(aslensSamples[0].source)));
-    const m = restoration(p);
-    const visit = (b: import('../src/typed-ir.ts').IRBlock): void => {
-        b.instructions = b.instructions.filter((i) => i !== m);
-        if (b.result === m.out.id) b.result = m.lens;
-        for (const i of b.instructions) if (i.op === 'scope') visit(i.body);
-    };
-    for (const u of p.units) for (const f of u.functions) visit(f.body);
-    expect(() => verifyTypedProgram(p)).toThrow('Lens return escapes owned local storage');
-});
-
-it('rejects disposing backing before consumer access', () => {
+it('rejects direct access to backing during consumer setup', () => {
     const p = JSON.parse(JSON.stringify(typedProgram(aslensSamples[0].source)));
     const m = restoration(p);
     const visit = (b: import('../src/typed-ir.ts').IRBlock): void => {
         const index = b.instructions.indexOf(m);
         if (index >= 0)
             b.instructions.splice(
-                index,
+                index + 1,
                 0,
                 {
                     op: 'move',
                     origin: m.origin,
-                    slot: m.holds[0],
+                    slot: { place: m.backing, path: [] },
                     out: {
                         id: 'premature-move',
                         type: { tag: 'plain', value: { tag: 'con', name: 'Number', args: [] } },
@@ -334,9 +345,7 @@ it('rejects disposing backing before consumer access', () => {
         for (const i of b.instructions) if (i.op === 'scope') visit(i.body);
     };
     for (const u of p.units) for (const f of u.functions) visit(f.body);
-    expect(() => verifyTypedProgram(p)).toThrow(
-        'Type mismatch: ["tuple",[]] versus ["con","Number",[]]',
-    );
+    expect(() => verifyTypedProgram(p)).toThrow('Temporary backing cannot be accessed directly');
 });
 
 it('disposes residual callable contents and the replaced value once', () => {

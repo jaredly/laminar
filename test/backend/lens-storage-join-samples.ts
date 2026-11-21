@@ -47,7 +47,7 @@ export const lensStorageJoinSamples = (['true', 'false'] as const).flatMap((cond
  let f = fn () v
  let y = 5
  {let focus = ~{match ${condition} {true -> {let old = f := fn () y
- @(x, fn () {count := count + 1})}; false -> @(x, fn () {count := count + 10})}}
+ {lens finalFocus <- dup(~x)\nx := finalFocus\n{count := count + 1}}}; false -> {lens finalFocus <- dup(~x)\nx := finalFocus\n{count := count + 10}}}}
  focus := true}
  (f(), x, count)}`,
         expected: [condition === 'true' ? 5 : 3, true, condition === 'true' ? 1 : 10],
@@ -75,20 +75,6 @@ export const lensStorageJoinSamples = (['true', 'false'] as const).flatMap((cond
  ()}
  (f(), x)}`,
         expected: [condition === 'true' ? 5 : 3, 1],
-    },
-    {
-        name: `lens storage join outer cleanup consumes owner ${condition}`,
-        source: `{let x = 1
- let seen = 0
- let v = 3
- let f = fn () v
- let y = 5
- {let focus = ~{@({match ${condition} {true -> {let old = f := fn () y
- x}; false -> x}}, {seen := f()
- fn () ()})}
- focus := true}
- (seen, x)}`,
-        expected: [condition === 'true' ? 5 : 3, true],
     },
     {
         name: `lens storage join mixed focus ${condition}`,

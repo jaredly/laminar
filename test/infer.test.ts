@@ -368,9 +368,6 @@ describe('AST inference', () => {
             'branch-state',
         );
     });
-    it('checks the zero-argument manual cleanup convention', () => {
-        rejects('fn (~x) ~{ @(x, round) }', 'arity-mismatch');
-    });
 });
 
 describe('checked compilation', () => {

@@ -140,7 +140,7 @@ export function lowerConcreteProgram(
                     // calls use their member's exact wrapper.
                     if (!call.callee) addContract(typeGroup(callee.type), call);
                 } else if (i.op === 'scope') walk(i.body);
-                else if (i.op === 'manual') walk(i.cleanup);
+                else if (i.op === 'aslens') walk(i.cleanup);
                 else if (i.op === 'case') i.cases.forEach((c) => walk(c.body));
             }
         };
@@ -407,24 +407,7 @@ export function lowerConcreteProgram(
             instructions: b.instructions.map((i): ConcreteInstruction => {
                 if (i.op === 'borrow' || i.op === 'bind') return structuredClone(i);
                 const out = { ...i.out, layout: layout(values.get(i.out.id)!) };
-                if (i.op === 'manual') {
-                    const frontend = values.get(i.lens)!,
-                        result = values.get(i.out.id)!;
-                    if (frontend.kind !== 'lens' || result.kind !== 'lens')
-                        return fail('Manual restoration requires lens representations');
-                    return {
-                        ...i,
-                        out,
-                        cleanup: lower(i.cleanup),
-                        restoration: {
-                            kind: 'deferred',
-                            frontend: frontend.shape,
-                            result: result.shape,
-                            order: ['stage', 'cleanup', 'dispose-result', 'restore', 'release'],
-                            retention: 'through-enclosing-cleanup',
-                        },
-                    };
-                }
+                if (i.op === 'aslens') return { ...i, out, cleanup: lower(i.cleanup) };
                 if (i.op === 'scope')
                     return {
                         ...i,

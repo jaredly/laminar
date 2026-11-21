@@ -119,52 +119,28 @@ so setup availability normalization agrees with typed verification. Native
 strict/optimized/sanitized and Emscripten/Node execution cover these adapters;
 dynamic callable joins and nominal/runtime data retain their existing restrictions.
 
-## Deferred manual restoration
-
-A concrete `manual` operation retains its frontend lens, protected logical slot
-references, and a recursively lowered cleanup block. Its `restoration` record
-retains frontend/result representation shapes, the required sequence (`stage`,
-`cleanup`, `dispose-result`, `restore`, `release`), and retention through enclosing
-cleanup. These are serialized lowering obligations, not allocated C contexts.
-Independent verification checks the contract against verified typed IR and
-representation analysis, including cleanup output ownership, complete instruction
-coverage, layouts, and concrete invocation wrappers. The callable indexers and
-diagnostic printer include deferred cleanup regions. C lowering implements staged
-manual restoration for the tested scalar/tuple subset using logical storage and
-retained returned-lens contexts. Known captured cleanup callbacks execute through typed environments in the tested
-C/Wasm subset; callable focus storage retains its explicit backend restriction.
-
 ## Pattern-bound temporary focuses
 
-`aslens` cleanup patterns reuse retained manual restoration. Setup
-allocates owned backing; deferred cleanup transfers the staged final contents into
-owned pattern bindings and disposes its result and remaining locals before backing
-release. Elaboration records the backing identity and lifetime phases. Typed IR uses
-existing `scope`, `acquire`, `manual`, `move`, and `bind` instructions; representation
-and concrete lowering retain the same manual contracts and physical context adapter.
-The 21 shared scalar/tuple samples in `test/backend/aslens-samples.ts` cover detached verification
-and execution plus native strict/optimized/sanitized C and Wasm at both optimization
-levels. Constructor and literal cleanup patterns additionally use a single-arm
-`case` over the final contents, trapping before the body if no pattern matches.
-Constructor/list cases execute through checked legacy and detached typed paths;
-nominal physical layouts and callable focus storage retain their separate
-restrictions.
+Concrete `aslens` preserves the typed instruction's owned initial operand,
+private backing place, cleanup block, and lexical dependencies. Its focus is thin,
+with independently verified read and replacement types. Concrete verification
+checks those operands and walks the cleanup block against the detached typed
+program and representation analysis. The C/Wasm and Go adapters use owned
+logical storage and run cleanup when the focus is restored. C/Wasm additionally
+emits disposal of the cleanup result.
+
+Version 1 artifacts that contain the removed `manual` operation require
+recompilation.
 
 ## Borrowed-pattern reconstruction
 
-Borrowed matches and constructor aliases normalize to owned private pattern storage
-and retained manual field focuses. The selected IR pattern retains its reconstruction
-owner and identity; the deferred manual retains the corresponding pattern contract.
-Independent typed verification requires exactly one matching reconstruction, preserving
-constructor tags, literals, field identities and the whole-owner swap. Generic
-ownership checks still require field refill and protect the original owner. Concrete
-lowering retains this contract and verification checks it against semantic IR.
+Concrete reconstruction uses the same owned `aslens` operation and retains the
+typed reconstruction contract on the instruction. The concrete verifier checks
+the operation against the detached typed program, whose verifier validates the
+selected pattern, field mapping, and owner restoration.
 
-The scalar/tuple borrowed-match cases in `test/backend/borrowed-pattern-samples.ts`
-execute through the existing C/Wasm manual adapter. List patterns execute in checked
-legacy and detached typed paths; physical list lowering retains the explicit
-`unsupported-layout: No storage definition for List` restriction. Captured invocation
-and callable storage restrictions are unchanged.
+The following sections record backend milestones. References to manual
+restoration in those sections describe the backend before the removal.
 
 ## Owned callable aggregate storage
 
