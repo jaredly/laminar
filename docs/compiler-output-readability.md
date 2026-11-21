@@ -1,0 +1,282 @@
+# Readable compiler output
+
+Generated code should preserve recognizable source structure and names while making
+necessary representation and ownership operations explicit. The current Go output
+exposes too much mechanical lowering detail. This work improves the emitted source;
+it does not depend on proving that the downstream Go compiler misses an optimization.
+
+## Starting example
+
+`ok.lm` implements a number-guessing game with `nextGuess`, `handleResponse`,
+`step` and `game`. The inspected `ok.go` has 854 lines, including 250 blank
+assignments (`_ = ...`) and 116 `var` declarations. These counts describe the
+reviewed artifact, not a permanent benchmark threshold.
+
+The generated functions are currently:
+
+| Generated name | Source meaning |
+| --- | --- |
+| `fn0` | `step`, with a scattered lens |
+| `fn1` | `handleResponse` |
+| `fn2` | `step`, with a thin aggregate lens |
+| `fn3` | `game` |
+| `fn4` | `nextGuess` |
+| `fn5` | Top-level entry expression |
+
+Two `step` implementations have different lens representations, so naming alone
+cannot make them one function. Distinct specializations should remain identifiable.
+
+## Proposed changes
+
+### 1. Suppress only truly unused locals
+
+The Go lowerer's `declare` helper adds a blank assignment after every assignment,
+and declaration hoisting adds another after each declaration. Parameters also get
+blank assignments, although Go permits unused parameters.
+
+Track actual reads, including uses inside restoration closures. Remove blanket
+suppression and emit a blank assignment only for a retained local that Go would
+otherwise reject. Prefer eliminating an unused local entirely when possible.
+Writes alone do not make a local used.
+
+```go
+// Before
+var v27 float64
+_ = v27
+v27 = 1.0
+_ = v27
+v28 = v26 + v27
+
+// After, before expression simplification
+increment := 1.0
+nextSteps := steps + increment
+```
+
+### 2. Preserve source function names
+
+Carry source names through specialization and concrete lowering. Emit `nextGuess`,
+`handleResponse` and `game`; distinguish variants with deterministic suffixes such
+as `step_thin` and `step_scattered`. Use collision suffixes only where needed.
+
+Names must remain valid Go identifiers, avoid keywords and generated helpers, and
+handle shadowing and multiple semantic/representation specializations. Do not use
+traversal-order numbers as the primary identity visible to readers.
+
+### 3. Preserve parameter and local names
+
+Use source provenance to recover names such as `direction`, `response`, `steps`,
+`state`, `lastGuess` and `next`. Reserve generated names for actual compiler
+intermediates. When a source binding has multiple storage versions, use a readable
+base name with deterministic disambiguation rather than implying they are one cell.
+
+Tuple field names should remain structural unless a stable semantic name is
+available; a tuple can be used under different destructuring names in different
+functions.
+
+### 4. Declare locals near their first assignment
+
+Prefer `input := hostInput(prompt)` to function-wide `var` blocks. Keep branch-local
+values inside their branches. Hoist only values that cross control-flow boundaries
+or whose cells must be retained by restoration closures.
+
+The current blanket hoisting accommodates residual restoration closures, including
+cells initialized in a selected branch. Any replacement must preserve those cells'
+scope, identity and lifetime. Ordinary single-assignment temporaries need not pay
+that readability cost.
+
+### 5. Collapse copies and inline simple expressions
+
+The higher-response arm currently contains this chain, interspersed with blank
+assignments:
+
+```go
+v19 = false
+v18 = v19
+v14 = v18
+v10 = v14
+v8 = v10
+v1 = v8
+```
+
+Assign `false` directly to the branch result. Similarly, emit `steps + 1` without
+separate temporaries for the parameter, literal and arithmetic result. Return a
+computed value directly when no cleanup or restoration must intervene.
+
+Start with constants and immutable copies. Inlining a mutable lens read across a
+call or write can change its value; duplicating an expression can duplicate effects.
+Keep source evaluation order and ownership transfer explicit where required.
+
+### 6. Remove dead values while preserving effects
+
+Do not materialize unused unit values or discarded tuple components. Emit a call
+as a statement when its result is unused, for example `hostPrint(message)`.
+Eliminate unused pure computations entirely.
+
+Unused results do not imply unused effects: input/output, traps, calls, disposal
+and restoration must still occur. Retain required cleanup for owned values even
+when their source names are unused.
+
+### 7. Simplify control flow
+
+Use `switch` for suitable string and union-tag matches. Emit an exhaustive Boolean
+match as `if condition { ... } else { ... }`, rather than comparing against both
+Boolean literals and adding an unreachable unmatched-case panic. A wildcard arm
+should be `else` or `default`, rather than `else if true` followed by another arm.
+
+Preserve arm order and retain unmatched-case traps where exhaustiveness has not
+been established. Avoid introducing early returns that bypass restoration.
+
+### 8. Remove redundant writes and initialization
+
+`nextGuess` currently ends with writes equivalent to:
+
+```go
+*state.item0.read = *state.item0.read
+*state.item1.read = *state.item1.read
+*state.item2.read = *state.item2.read
+```
+
+Remove proven self-assignments. Avoid explicit zero assignments that merely repeat
+Go's initial zero value, while retaining resets that execute repeatedly or refer
+to reused storage. Distinguish ordinary zero initialization from logical empty-slot
+and branch-availability bookkeeping.
+
+### 9. Reduce lens staging and aggregate reconstruction
+
+Calls repeatedly copy three fields into a `BackingN`, construct pointers to the
+fields, invoke a function, read the fields back and reconstruct a tuple.
+
+For compatible homogeneous storage, investigate forwarding an existing lens or
+pointing directly into existing backing. Avoid rebuilding an aggregate when its
+existing storage already holds the required result.
+
+This is a representation/storage optimization, beyond surface cleanup. Prove
+aliasing, availability, lifetime and restoration compatibility first. Preserve
+separate typed storage for type-changing updates when required.
+
+### 10. Improve type names and prune declarations
+
+Use `float64`, `bool` and `string` directly instead of `L0`, `L8` and `L6` aliases.
+Give unit, nominal data, tuple, environment and lens types descriptive names.
+Name union tags after constructors rather than exposing only numeric tags.
+
+`Backing0` through `Backing5` have identical fields in the inspected artifact;
+share equivalent generated backing definitions. Compute declaration reachability
+from emitted functions and helpers to omit unused layouts and ABI function types.
+The artifact also contains an unused `printString` helper, which should not be
+emitted for this data-only result.
+
+Sharing structural definitions must not erase distinctions needed by the callable
+ABI or introduce recursive type-definition problems. Deterministic readable names
+should remain stable when unrelated declarations are added.
+
+### 11. Simplify direct calls
+
+The output contains calls such as:
+
+```go
+fn4((L3{}).environment, v4, v6)
+```
+
+For known environment-free callees, pass `nil` directly instead of constructing an
+empty callable merely to extract its environment. A further improvement is to give
+named functions ordinary direct-call signatures and generate ABI-compatible wrappers
+when those functions are used as first-class values.
+
+The wrapper approach changes internal calling conventions and needs its own review.
+Preserve exact typed callable entries, capture ownership and lens-result adapters.
+
+### 12. Format and organize the output
+
+Run `gofmt`, remove unnecessary expression parentheses using precedence-aware
+printing, and order definitions predictably. Add source-location comments for
+source functions and clearly separate generated runtime helpers from program code.
+Avoid moving a large block of runtime machinery ahead of the source functions a
+reader is trying to inspect.
+
+Formatting alone cannot remove lowering noise, but it should be the final step of
+every emission path. Keep the entry/result protocol explicit; its printing and
+number-formatting helpers implement observable semantics.
+
+## Suggested implementation slices
+
+1. **Usage-aware emission:** remove blanket blank assignments and unused parameter
+   suppressions; eliminate dead result locals while preserving effects.
+2. **Names and provenance:** retain function, parameter and local names; introduce
+   deterministic specialization and collision naming.
+3. **Local structure:** narrow declaration scope, collapse safe copy chains, inline
+   constants and simplify branch/result plumbing.
+4. **Types and presentation:** readable type/tag names, reachable declarations and
+   runtime helpers, backing-definition deduplication and canonical formatting.
+5. **Storage and calling conventions:** reduce lens staging/reconstruction and add
+   simpler direct-call signatures where justified.
+
+These are proposed slices, not completed work. The first four primarily improve
+source presentation; the fifth overlaps the optimization candidates in phase 8 of
+`c-codegen-plan.md`. Small direct-call simplifications such as replacing an empty
+environment projection with `nil` can land earlier.
+
+## Validation
+
+- Keep `ok.lm` as a readable representative example and compare regenerated output
+  with the inspected artifact. Compile and execute the game with scripted input.
+- Test unused locals, unused parameters, effects with discarded results, shadowing,
+  naming collisions, multiple specializations and deterministic emission.
+- Exercise branch joins, recursion, captured cells and residual restoration closures
+  when changing scopes or copy propagation.
+- Run the existing checker, IR verification and backend corpus checks. Differentially
+  execute affected cases against the reference and the existing lowering behavior.
+- For representation or ABI changes, add focused ownership/restoration cases and
+  measure emitted size and execution behavior independently of readability gains.
+
+The immediate goal is recognizable generated code without reconstructing source
+intent from numbered temporaries. Keep explicit sequencing where correctness needs
+it; remove artifacts introduced solely by the emitter's implementation convenience.
+
+## Slice 1 implementation: demand-driven Go materialization
+
+Go lowering now resolves concrete-IR value dependencies on demand. A pure result,
+logical storage snapshot, constructor payload or branch-result cell becomes a Go
+local only when an emitted consumer reads it. Discarded pure results therefore
+never acquire declarations or assignments. There is no generated-text usage scan
+or pass that adds blank assignments to suppress compiler errors.
+
+Materialization is a compile-time decision, not runtime lazy evaluation. Lowering
+reserves a sequencing point for each operation. If a later consumer needs an old
+load, its load is emitted at that original point, before intervening calls, writes
+or restoration. Operand expressions are captured per lowering edge because deferred
+cleanup can lower the same IR block under different storage versions.
+
+General calls still execute when their results are unused; they become call
+statements. Calls to the explicitly known pure Go natives can disappear when their
+results are unused. Host I/O and traps in user-defined or indirect calls remain.
+Numeric constants can appear directly in expressions, but operands of floating
+arithmetic are materialized where necessary to preserve runtime IEEE-754 behavior
+rather than Go constant arithmetic. Unit-only entry results need no result local,
+including tuples consisting entirely of units.
+
+Synchronous homogeneous reborrows also use existing incoming addresses when no
+staging/restoration or separate replacement storage is required. Those calls do
+not introduce private backing structs or copy-back snapshots. Escaping,
+type-changing and restoration-bearing cases keep their explicit storage path.
+
+Regenerating the reviewed `ok.lm` produces 431 lines of Go instead of 854, with
+zero blanket blank assignments instead of 250 and one backing struct instead of
+seven. The scripted responses `higher`, `higher`, `lower`, `lower`, `match` still
+produce `[[75,82,79],4]`. Source naming, narrower declaration scopes, general copy
+propagation, declaration reachability and control-flow simplification remain the
+subsequent slices described above.
+
+Focused tests in `test/go/demand.test.ts` cover dead pure computations, discarded
+constructor scrutinees, unused effectful calls, unit results, preserved load order,
+forwarded writes, type-changing backing, floating-point edge cases, boxed
+construction and traps in discarded calls. The shared Go corpus exercises the
+existing deferred-restoration, branch-join and callable cases against reference
+expectations.
+
+Validation: TypeScript and `git diff --check` pass. The regular suite reports
+3116 passed, 55 skipped, zero failures and all 39 snapshots passing.
+`LAMINAR_BACKENDS=go bun test test/corpus.test.ts` passes all 1592 tests,
+including 792 accepted Go cases and two expected traps. With `LAMINAR_EXEC=1`,
+all 15 tests in `test/go/demand.test.ts` pass (36 assertions). The execution
+workflow now includes those focused Go tests. No remote CI run was performed.

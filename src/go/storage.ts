@@ -1,6 +1,15 @@
 /** Logical cells survive physical version changes. Views retain cell/path identities,
  * never a pointer into an obsolete Go aggregate. */
-export type Data = { expression: string; layout: string } | Data[];
+export type Expression = string | (() => string);
+export const expression = (value: Expression): string =>
+    typeof value === 'string' ? value : value();
+// key distinguishes deferred values without evaluating them during storage joins.
+export type Data =
+    | ({ layout: string; address?: string } & (
+          | { expression: string; key?: undefined }
+          | { expression: Expression; key: string }
+      ))
+    | Data[];
 export type Cell = { data: Data };
 export type View = { cell: Cell; path: number[] } | View[];
 

@@ -47,7 +47,7 @@ it('builds interpolation in source order and consumes string parts', () => {
     );
     expect(order.every((n, i) => n > 0 && (!i || n > order[i - 1]!))).toBe(true);
     expect(emitGo(compile('{let s = "x"\n "a${1}b${true}c${s}"}', goTarget('test')))).toMatch(
-        /"a" \+ formatNumber\(v\d+\) \+ "b" \+ strconv\.FormatBool\(v\d+\) \+ "c" \+ v\d+/,
+        /"a" \+ formatNumber\(1\.0\) \+ "b" \+ strconv\.FormatBool\(true\) \+ "c" \+ v\d+/,
     );
 });
 

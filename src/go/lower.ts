@@ -1,5 +1,5 @@
 import type { ConcreteProgram, ConcreteBlock } from '../concrete-ir.ts';
-import { Storage, type Data, type View } from './storage.ts';
+import { Storage, expression as code, type Expression, type Data, type View } from './storage.ts';
 import type { IRPattern, SlotRef } from '../typed-ir.ts';
 import { verifyConcreteProgram } from '../verify-concrete.ts';
 import { BackendDiagnostic } from '../backend/target.ts';
@@ -57,13 +57,18 @@ export function lowerGo(program: ConcreteProgram): GoFile {
             if (f.kind !== 'value' || !f.name.startsWith('item')) {
                 return unsupported('Non-data projection');
             }
-            return { expression: `(${s.expression}).${identifier(f.name)}`, layout: f.layout };
+            return {
+                expression: () => `(${code(s.expression)}).${identifier(f.name)}`,
+                key: `${s.key ?? s.expression}.${f.name}`,
+                layout: f.layout,
+                ...(s.address ? { address: `&(*${s.address}).${identifier(f.name)}` } : {}),
+            };
         }),
     );
 
     const read = (data: Data, id: string): string => {
         if (layout(id).kind === 'unit') return zero(id);
-        if (!Array.isArray(data) && data.layout === id) return data.expression;
+        if (!Array.isArray(data) && data.layout === id) return code(data.expression);
         const parts = storage.parts(data);
         const fields = layout(id).fields;
         if (!fields.length || parts.length !== fields.length) {
@@ -105,7 +110,11 @@ export function lowerGo(program: ConcreteProgram): GoFile {
         const l = layout(id);
         const f = l.fields.find((f) => f.name === 'read');
         if (f?.kind === 'pointer' && f.layout)
-            return storage.own({ expression: `*(${expression}).read`, layout: f.layout });
+            return storage.own({
+                expression: `*(${expression}).read`,
+                layout: f.layout,
+                address: `(${expression}).read`,
+            });
         return l.fields
             .filter((f) => f.name.startsWith('item'))
             .map((f) =>
@@ -296,10 +305,7 @@ export function lowerGo(program: ConcreteProgram): GoFile {
         nativeCodes.set(w.id, name);
         const args = abi.arguments.map((id, i) => `, arg${i} ${type(id)}`).join('');
         const signature = `func ${name}(environment any${args}) ${type(abi.result)}`;
-        const body: Statement[] = [
-            '_ = environment',
-            ...abi.arguments.map((_, i) => `_ = arg${i}`),
-        ];
+        const body: Statement[] = [];
         let result: string;
         const op = requireImport(w.definition, 'go').name;
         const simple = simpleNative(
@@ -375,7 +381,8 @@ export function lowerGo(program: ConcreteProgram): GoFile {
     }
 
     const functions: GoFunction[] = program.code.map((c) => {
-        const values = new Map<string, string>();
+        const values = new Map<string, Expression>();
+        const constants = new Set<string>();
         const lenses = new Map<string, Lens>();
         const places = new Map<string, View>();
         const loans = new Map<string, Lens>();
@@ -394,8 +401,48 @@ export function lowerGo(program: ConcreteProgram): GoFile {
         ): string => {
             variables.push({ name, type: type(id) });
             body.push(`${name} = ${expression}`);
-            body.push(`_ = ${name}`);
             return name;
+        };
+
+        // Reserve the original sequencing point before a value is demanded. A
+        // delayed load still precedes the calls/restoration that followed it in IR.
+        const defer = (
+            id: string,
+            compute: (into: Statement[]) => string,
+            body: Statement[],
+            name = fresh(),
+        ): Exclude<Data, Data[]> => {
+            const at: Statement[] = [];
+            body.push(at);
+            let materialized = false;
+            return {
+                layout: id,
+                key: name,
+                expression: () => {
+                    if (!materialized) {
+                        materialized = true;
+                        const expr = compute(at);
+                        declare(id, expr, at, name);
+                    }
+                    return name;
+                },
+            };
+        };
+        const phi = (
+            id: string,
+            inputs: { data: Data; body: Statement[] }[],
+            body: Statement[],
+        ): Exclude<Data, Data[]> => {
+            const name = fresh();
+            return defer(
+                id,
+                () => {
+                    inputs.forEach((input) => input.body.push(`${name} = ${read(input.data, id)}`));
+                    return zero(id);
+                },
+                body,
+                name,
+            );
         };
 
         const parameters: { expression: string; layout: string; view: View }[] = [];
@@ -411,7 +458,7 @@ export function lowerGo(program: ConcreteProgram): GoFile {
                 const n = tagOf(data.layout, p.name),
                     v = variant(data.layout, n);
                 const contents: Data = {
-                    expression: declare(v.layout, payload(data.expression, data.layout, n), body),
+                    ...defer(v.layout, () => payload(code(data.expression), data.layout, n), body),
                     layout: v.layout,
                 };
                 if (p.items.length === 1) bind(p.items[0]!, contents, body);
@@ -434,20 +481,22 @@ export function lowerGo(program: ConcreteProgram): GoFile {
         const flushParameters = (body: Statement[]) =>
             parameters.forEach((p) => flush(p.expression, p.layout, storage.get(p.view), body));
 
-        const matches = (p: IRPattern, expr: string, id: string): string => {
+        const matches = (p: IRPattern, expr: Expression, id: string): string => {
             if (p.kind === 'literal')
-                return `${expr} == ${layout(id).kind === 'string' && typeof p.value === 'string' ? goBytes(p.value) : literal(p.value, unit.id)}`;
+                return `${code(expr)} == ${layout(id).kind === 'string' && typeof p.value === 'string' ? goBytes(p.value) : literal(p.value, unit.id)}`;
             const fields = layout(id).fields as { layout: string }[];
             if (p.kind === 'tuple')
                 return (
                     p.items
-                        .map((p, i) => matches(p, `(${expr}).item${i}`, fields[i]!.layout))
+                        .map((p, i) =>
+                            matches(p, () => `(${code(expr)}).item${i}`, fields[i]!.layout),
+                        )
                         .join(' && ') || 'true'
                 );
             if (p.kind !== 'constructor') return 'true';
             const n = tagOf(id, p.name),
                 v = variant(id, n),
-                contents = payload(expr, id, n);
+                contents = payload(code(expr), id, n);
             const items =
                 p.items.length === 1
                     ? [matches(p.items[0]!, contents, v.layout)]
@@ -458,13 +507,13 @@ export function lowerGo(program: ConcreteProgram): GoFile {
                               (layout(v.layout).fields[k] as { layout: string }).layout,
                           ),
                       );
-            return [`(${expr}).tag == ${n}`, ...items.filter((m) => m !== 'true')].join(' && ');
+            return [`(${code(expr)}).tag == ${n}`, ...items.filter((m) => m !== 'true')].join(
+                ' && ',
+            );
         };
 
         const ref = (s: SlotRef) =>
             storage.project(places.get(s.place) ?? unsupported('Unavailable Go place'), s.path);
-
-        const value = (id: string) => values.get(id) ?? unsupported('Missing value in Go lowering');
 
         // Adapt input/output backing at calls.
         const adapt = (
@@ -483,13 +532,23 @@ export function lowerGo(program: ConcreteProgram): GoFile {
                 const input = l.fields.find((f) => f.name === 'read');
                 if (input?.kind === 'pointer' && input.layout) {
                     const output = l.fields.find((f) => f.name === 'replacement');
+                    const d = storage.get(
+                        storage.project(lens.view, path ? path.split('.').map(Number) : []),
+                    );
+                    if (
+                        !escapes &&
+                        lens.finish === noFinish &&
+                        !lens.stage &&
+                        !output &&
+                        !Array.isArray(d) &&
+                        d.layout === input.layout &&
+                        d.address
+                    )
+                        return `${type(id)}{read: ${d.address}}`;
                     const n = fields.length;
                     const r = `read${n}`;
                     const w = output ? `write${n}` : r;
                     fields.push(`${r} ${type(input.layout)}`);
-                    const d = storage.get(
-                        storage.project(lens.view, path ? path.split('.').map(Number) : []),
-                    );
                     init.push(`${name}.${r} = ${read(d, input.layout)}`);
                     if (output?.kind === 'pointer' && output.layout) {
                         fields.push(`${w} ${type(output.layout)}`);
@@ -507,6 +566,7 @@ export function lowerGo(program: ConcreteProgram): GoFile {
             };
 
             const expression = build(id, '');
+            if (!fields.length) return { expression, finish: lens.finish };
             const backingType = `Backing${index}`;
             declarations.push(
                 `type ${backingType} struct {\n${fields.map((f) => `\t${f}`).join('\n')}\n}`,
@@ -517,7 +577,6 @@ export function lowerGo(program: ConcreteProgram): GoFile {
             } else {
                 body.push(`${name} = ${backingType}{}`);
             }
-            body.push(`_ = ${name}`);
             body.push(...init);
 
             const arg = declare(id, expression, body);
@@ -541,17 +600,13 @@ export function lowerGo(program: ConcreteProgram): GoFile {
             return {
                 expression: arg,
                 finish: (body) => {
-                    const result = declare(
+                    const result = defer(
                         endpoint(id, 'replacement'),
-                        read(outputs(arg, id), endpoint(id, 'replacement')),
+                        () => read(outputs(arg, id), endpoint(id, 'replacement')),
                         body,
                     );
-                    storage.put(lens.view, {
-                        expression: result,
-                        layout: endpoint(id, 'replacement'),
-                    });
+                    storage.put(lens.view, result);
                     lens.finish(body);
-                    body.push(`_ = ${name}`);
                 },
             };
         };
@@ -617,13 +672,34 @@ export function lowerGo(program: ConcreteProgram): GoFile {
             });
         index(c.body);
 
-        const block = (b: ConcreteBlock, body: Statement[]): string => {
+        const block = (b: ConcreteBlock, output: Statement[]): Expression => {
             for (const i of b.instructions) {
+                const body: Statement[] = [];
+                output.push(body);
+                // Deferred restoration can lower the same IR block on several
+                // edges. Capture operand expressions now, before later edges
+                // install another physical version under the same IR value ID.
+                const operandIds =
+                    i.op === 'bind' || i.op === 'swap' || i.op === 'case'
+                        ? [i.value]
+                        : i.op === 'invoke'
+                          ? [i.callee, ...i.args]
+                          : i.op === 'make-callable'
+                            ? i.captures.map((c) => c.value)
+                            : i.op === 'string'
+                              ? i.parts.map((p) => p.value)
+                              : i.op === 'tuple' || i.op === 'construct'
+                                ? i.items
+                                : [];
+                const operands = new Map(operandIds.map((id) => [id, values.get(id)!]));
+                const value = (id: string) =>
+                    code(operands.get(id) ?? unsupported('Missing Go operand'));
                 if (i.op === 'bind') {
                     bind(
                         i.pattern,
                         {
-                            expression: value(i.value),
+                            expression: operands.get(i.value)!,
+                            key: fresh(),
                             layout: outputLayouts.get(i.value)!,
                         },
                         body,
@@ -643,63 +719,90 @@ export function lowerGo(program: ConcreteProgram): GoFile {
 
                 const id = i.out.layout;
                 const name = fresh();
-                let expr!: string;
+                let expr!: Expression;
 
                 switch (i.op) {
                     case 'constant':
                         expr = literal(i.value, id);
+                        constants.add(expr);
                         break;
                     case 'string':
                         // Parts were evaluated in source order; concatenation consumes them.
-                        expr = [
-                            goBytes(i.head),
-                            ...i.parts.flatMap((part) => [
-                                goPart(layout(outputLayouts.get(part.value)!).kind, value(part.value)),
-                                goBytes(part.tail),
-                            ]),
-                        ]
-                            .filter((piece) => piece !== '""')
-                            .join(' + ') || '""';
+                        expr = () =>
+                            [
+                                goBytes(i.head),
+                                ...i.parts.flatMap((part) => [
+                                    goPart(
+                                        layout(outputLayouts.get(part.value)!).kind,
+                                        value(part.value),
+                                    ),
+                                    goBytes(part.tail),
+                                ]),
+                            ]
+                                .filter((piece) => piece !== '""')
+                                .join(' + ') || '""';
                         break;
                     case 'construct': {
-                        const n = tagOf(id, i.name),
-                            v = variant(id, n),
-                            l = layout(v.layout);
-                        let contents =
-                            i.items.length === 0
-                                ? zero(v.layout)
-                                : i.items.length === 1
-                                  ? value(i.items[0]!)
-                                  : `${type(v.layout)}{${i.items.map((it, k) => `${identifier(l.fields[k]!.name)}: ${value(it)}`).join(', ')}}`;
-                        if (v.boxed) {
-                            const box = fresh();
-                            variables.push({ name: box, type: `*${type(v.layout)}` });
-                            body.push(`${box} = new(${type(v.layout)})`, `*${box} = ${contents}`);
-                            contents = box;
-                        }
-                        expr = `${type(id)}{tag: ${n}, v${n}: ${contents}}`;
+                        const construction: Statement[] = [];
+                        body.push(construction);
+                        expr = () => {
+                            const n = tagOf(id, i.name),
+                                v = variant(id, n),
+                                l = layout(v.layout);
+                            let contents =
+                                i.items.length === 0
+                                    ? zero(v.layout)
+                                    : i.items.length === 1
+                                      ? value(i.items[0]!)
+                                      : `${type(v.layout)}{${i.items.map((it, k) => `${identifier(l.fields[k]!.name)}: ${value(it)}`).join(', ')}}`;
+                            if (v.boxed) {
+                                const box = fresh();
+                                variables.push({ name: box, type: `*${type(v.layout)}` });
+                                construction.push(
+                                    `${box} = new(${type(v.layout)})`,
+                                    `*${box} = ${contents}`,
+                                );
+                                contents = box;
+                            }
+                            return `${type(id)}{tag: ${n}, v${n}: ${contents}}`;
+                        };
                         break;
                     }
                     case 'tuple': {
-                        const l = layout(id);
-                        if (!l.fields.length) {
-                            expr = `${type(id)}{}`;
-                        } else {
-                            const fieldInits = i.items.map(
-                                (it, idx) => `${identifier(l.fields[idx]!.name)}: ${value(it)}`,
-                            );
-                            expr = `${type(id)}{${fieldInits.join(', ')}}`;
-                        }
+                        expr = () => {
+                            const l = layout(id);
+                            if (!l.fields.length) {
+                                return `${type(id)}{}`;
+                            } else {
+                                const fieldInits = i.items.map(
+                                    (it, idx) => `${identifier(l.fields[idx]!.name)}: ${value(it)}`,
+                                );
+                                return `${type(id)}{${fieldInits.join(', ')}}`;
+                            }
+                        };
                         break;
                     }
-                    case 'move':
-                        expr = read(storage.get(ref(i.slot)), id);
+                    case 'move': {
+                        const contents = storage.get(ref(i.slot));
+                        expr = () => read(contents, id);
                         storage.put(ref(i.slot), { expression: zero(unit.id), layout: unit.id });
                         break;
+                    }
                     case 'acquire':
                         lenses.set(i.out.id, { view: ref(i.slot), finish: noFinish });
                         continue;
                     case 'lens-tuple':
+                        if (
+                            i.items.every(
+                                (v) => lenses.get(v)!.finish === noFinish && !lenses.get(v)!.stage,
+                            )
+                        ) {
+                            lenses.set(i.out.id, {
+                                view: i.items.map((v) => lenses.get(v)!.view),
+                                finish: noFinish,
+                            });
+                            continue;
+                        }
                         lenses.set(i.out.id, {
                             view: i.items.map((v) => lenses.get(v)!.view),
                             stage: (body) => {
@@ -711,14 +814,15 @@ export function lowerGo(program: ConcreteProgram): GoFile {
                         continue;
                     case 'swap': {
                         const lens = lenses.get(i.lens)!;
-                        expr = read(storage.get(lens.view), id);
-                        declare(id, expr, body, name);
+                        const contents = storage.get(lens.view);
+                        const old = defer(id, () => read(contents, id), body, name);
                         storage.put(lens.view, {
-                            expression: value(i.value),
+                            expression: operands.get(i.value)!,
+                            key: fresh(),
                             layout: outputLayouts.get(i.value)!,
                         });
                         lens.finish(body);
-                        values.set(i.out.id, name);
+                        values.set(i.out.id, old.expression);
                         continue;
                     }
                     case 'scope': {
@@ -727,8 +831,8 @@ export function lowerGo(program: ConcreteProgram): GoFile {
                             lenses.set(i.out.id, lenses.get(i.body.result)!);
                             continue;
                         }
-                        expr = result;
-                        break;
+                        values.set(i.out.id, result);
+                        continue;
                     }
                     case 'make-callable': {
                         const callable = program.callables.find((cb) => cb.id === i.callable)!;
@@ -755,7 +859,8 @@ export function lowerGo(program: ConcreteProgram): GoFile {
                             expr = `${type(id)}{environment: nil${entries}}`;
                             break;
                         }
-                        expr = `${type(id)}{environment: &${type(callable.environment)}{${i.captures.map((c, n) => `capture${n}: ${value(c.value)}`).join(', ')} }${entries}}`;
+                        expr = () =>
+                            `${type(id)}{environment: &${type(callable.environment)}{${i.captures.map((c, n) => `capture${n}: ${value(c.value)}`).join(', ')} }${entries}}`;
                         break;
                     }
                     case 'invoke': {
@@ -763,10 +868,54 @@ export function lowerGo(program: ConcreteProgram): GoFile {
                         const abi = program.abis.find((a) => a.id === i.abi)!;
                         const isLens = layout(id).fields.some((f) => f.name === 'restore');
                         const adapters: { finish: (body: Statement[]) => void }[] = [];
+                        // These registered natives have no observable effect in Go.
+                        // User functions and indirect calls remain effectful, including
+                        // traps, even when their returned value has no consumer.
+                        if (
+                            w?.kind === 'native' &&
+                            [
+                                '+',
+                                '-',
+                                '*',
+                                '/',
+                                '==',
+                                '>=',
+                                '<=',
+                                'round',
+                                'heapsize',
+                                'charList',
+                            ].includes(requireImport(w.definition, 'go').name)
+                        ) {
+                            values.set(
+                                i.out.id,
+                                defer(
+                                    id,
+                                    (at) => {
+                                        const args = i.args.map((v) => {
+                                            const expr = value(v);
+                                            return constants.has(expr)
+                                                ? declare(outputLayouts.get(v)!, expr, at)
+                                                : expr;
+                                        });
+                                        return (
+                                            simpleNative(
+                                                requireImport(w.definition, 'go').name,
+                                                args,
+                                                id,
+                                            ) ?? unsupported(`Native import ${w.definition}`)
+                                        );
+                                    },
+                                    body,
+                                    name,
+                                ).expression,
+                            );
+                            continue;
+                        }
                         let args: string[] = [];
                         if (w?.kind === 'native' && w.definition === 'native/dup') {
                             const lens = lenses.get(i.args[0]!)!;
-                            expr = read(storage.get(lens.view), id);
+                            const contents = storage.get(lens.view);
+                            expr = () => read(contents, id);
                             adapters.push({ finish: lens.finish });
                         } else if (w?.kind === 'native' && w.definition === 'native/fst') {
                             const parent = lenses.get(i.args[0]!)!;
@@ -797,18 +946,50 @@ export function lowerGo(program: ConcreteProgram): GoFile {
                                           : (resultAdapters.get(w.id) ??
                                             unsupported(`Direct ${w.kind} call`));
                                 expr = direct
-                                    ? `${direct}((${value(i.callee)}).environment${args.map((a) => `, ${a}`).join('')})`
+                                    ? `${direct}(${w.kind === 'invoke' && !program.code.find((c) => c.id === w.code)!.captures.length ? 'nil' : `(${value(i.callee)}).environment`}${args.map((a) => `, ${a}`).join('')})`
                                     : `(${value(i.callee)}).${identifier(i.field!)}((${value(i.callee)}).environment${args.map((a) => `, ${a}`).join('')})`;
                             } else if (w?.kind === 'native') {
                                 expr =
-                                    simpleNative(requireImport(w.definition, 'go').name, args, id) ??
-                                    unsupported(`Native import ${w.definition}`);
+                                    simpleNative(
+                                        requireImport(w.definition, 'go').name,
+                                        args,
+                                        id,
+                                    ) ?? unsupported(`Native import ${w.definition}`);
                             } else {
                                 return unsupported(`Wrapper kind ${w?.kind}`);
                             }
                         }
-                        declare(id, expr, body, name);
-                        values.set(i.out.id, name);
+                        if (w?.kind === 'native' && w.definition === 'native/dup') {
+                            values.set(
+                                i.out.id,
+                                layout(id).kind === 'unit'
+                                    ? zero(id)
+                                    : defer(id, () => code(expr), body, name).expression,
+                            );
+                        } else if (isLens) {
+                            declare(id, code(expr), body, name);
+                            values.set(i.out.id, name);
+                        } else {
+                            // Calls execute even when their result is discarded. Only
+                            // introduce a result local if a later IR consumer asks for it.
+                            const call = code(expr);
+                            const at: Statement[] = [call];
+                            body.push(at);
+                            let materialized = false;
+                            values.set(
+                                i.out.id,
+                                layout(id).kind === 'unit'
+                                    ? zero(id)
+                                    : () => {
+                                          if (!materialized) {
+                                              variables.push({ name, type: type(id) });
+                                              at[0] = `${name} = ${call}`;
+                                              materialized = true;
+                                          }
+                                          return name;
+                                      },
+                            );
+                        }
                         if (isLens) {
                             lenses.set(
                                 i.out.id,
@@ -844,8 +1025,8 @@ export function lowerGo(program: ConcreteProgram): GoFile {
                             variables.push({ name: selected, type: 'int' });
                             body.push(`${selected} = 0`);
                             const input = endpoint(id, 'read');
-                            const focus = declare(input, zero(input), body);
-                            const joined = storage.own({ expression: focus, layout: input });
+                            const focusInputs: { data: Data; body: Statement[] }[] = [];
+                            const joined = storage.own(phi(input, focusInputs, body));
                             const normalize = (
                                 actions: (typeof i.cases)[number]['setup'],
                                 output: Statement[],
@@ -884,13 +1065,14 @@ export function lowerGo(program: ConcreteProgram): GoFile {
                                             (d) => !Array.isArray(d) && d.layout === first.layout,
                                         )
                                     ) {
-                                        const phi = declare(first.layout, zero(first.layout), into);
-                                        arms.forEach((arm, n) =>
-                                            arm.nested.push(
-                                                `${phi} = ${read(data[n]!, first.layout)};`,
-                                            ),
+                                        return phi(
+                                            first.layout,
+                                            arms.map((arm, n) => ({
+                                                data: data[n]!,
+                                                body: arm.nested,
+                                            })),
+                                            into,
                                         );
-                                        return { expression: phi, layout: first.layout };
                                     }
                                     const parts = data.map((d) => storage.parts(d));
                                     if (
@@ -921,7 +1103,8 @@ export function lowerGo(program: ConcreteProgram): GoFile {
                                 bind(
                                     arm.pattern,
                                     {
-                                        expression: value(i.value),
+                                        expression: operands.get(i.value)!,
+                                        key: fresh(),
                                         layout: outputLayouts.get(i.value)!,
                                     },
                                     nested,
@@ -929,10 +1112,8 @@ export function lowerGo(program: ConcreteProgram): GoFile {
                                 block(arm.body, nested);
                                 normalize(arm.setup, nested);
                                 const lens = lenses.get(arm.body.result)!;
-                                nested.push(
-                                    `${selected} = ${n};`,
-                                    `${focus} = ${read(storage.get(lens.view), input)};`,
-                                );
+                                nested.push(`${selected} = ${n};`);
+                                focusInputs.push({ data: storage.get(lens.view), body: nested });
                                 return {
                                     nested,
                                     state: storage.snapshot(),
@@ -944,7 +1125,7 @@ export function lowerGo(program: ConcreteProgram): GoFile {
                             merge(arms, body);
                             i.cases.forEach((arm, n) =>
                                 body.push({
-                                    head: `${n ? 'else if' : 'if'} (${matches(arm.pattern, value(i.value), outputLayouts.get(i.value)!)})`,
+                                    head: `${n ? 'else if' : 'if'} (${matches(arm.pattern, operands.get(i.value)!, outputLayouts.get(i.value)!)})`,
                                     body: arms[n]!.nested,
                                 }),
                             );
@@ -1041,7 +1222,8 @@ export function lowerGo(program: ConcreteProgram): GoFile {
                             });
                             continue;
                         }
-                        declare(id, zero(id), body, name);
+                        const resultInputs: { data: Data; body: Statement[] }[] = [];
+                        const resultData = phi(id, resultInputs, body);
                         const before = storage.snapshot();
                         const arms = i.cases.map((arm, armIndex) => {
                             storage.reset(before);
@@ -1049,13 +1231,17 @@ export function lowerGo(program: ConcreteProgram): GoFile {
                             bind(
                                 arm.pattern,
                                 {
-                                    expression: value(i.value),
+                                    expression: operands.get(i.value)!,
+                                    key: fresh(),
                                     layout: outputLayouts.get(i.value)!,
                                 },
                                 nested,
                             );
                             const result = block(arm.body, nested);
-                            nested.push(`${name} = ${result}`);
+                            resultInputs.push({
+                                data: { expression: result, layout: id, key: arm.body.result },
+                                body: nested,
+                            });
                             return { nested, state: storage.snapshot() };
                         });
                         storage.reset(before);
@@ -1072,12 +1258,11 @@ export function lowerGo(program: ConcreteProgram): GoFile {
                                 !Array.isArray(first) &&
                                 data.every((d) => !Array.isArray(d) && d.layout === first.layout)
                             ) {
-                                const phi = fresh();
-                                declare(first.layout, zero(first.layout), body, phi);
-                                arms.forEach((arm, n) =>
-                                    arm.nested.push(`${phi} = ${read(data[n]!, first.layout)}`),
+                                return phi(
+                                    first.layout,
+                                    arms.map((arm, n) => ({ data: data[n]!, body: arm.nested })),
+                                    body,
                                 );
-                                return { expression: phi, layout: first.layout };
                             }
                             const parts = data.map((d) => storage.parts(d));
                             if (
@@ -1101,22 +1286,29 @@ export function lowerGo(program: ConcreteProgram): GoFile {
                         );
                         i.cases.forEach((arm, n) =>
                             body.push({
-                                head: `${n ? 'else if' : 'if'} ${matches(arm.pattern, value(i.value), outputLayouts.get(i.value)!)}`,
+                                head: `${n ? 'else if' : 'if'} ${matches(arm.pattern, operands.get(i.value)!, outputLayouts.get(i.value)!)}`,
                                 body: arms[n]!.nested,
                             }),
                         );
                         body.push({ head: 'else', body: ['panic("unmatched case")'] });
-                        values.set(i.out.id, name);
+                        values.set(i.out.id, resultData.expression);
                         continue;
                     }
                     default:
                         return unsupported(`Unknown operation ${(i as { op: string }).op}`);
                 }
 
-                declare(id, expr, body, name);
-                values.set(i.out.id, name);
+                values.set(
+                    i.out.id,
+                    layout(id).kind === 'unit'
+                        ? zero(id)
+                        : i.op === 'constant' || (i.op === 'make-callable' && !i.captures.length)
+                          ? expr
+                          : defer(id, () => code(expr), body, name).expression,
+                );
             }
 
+            const body = output;
             const finish = (body: Statement[]) =>
                 b.cleanup.forEach((cl) => {
                     if (cl.kind === 'release') {
@@ -1147,22 +1339,22 @@ export function lowerGo(program: ConcreteProgram): GoFile {
             }
 
             finish(body);
-            return value(b.result);
+            return values.get(b.result) ?? unsupported('Missing Go block result');
         };
 
-        const body: Statement[] = [
-            '_ = environment',
-            ...c.parameters.map((_, i) => `_ = arg${i}`),
-            ...setup,
-        ];
+        const body: Statement[] = [...setup];
 
         c.captures.forEach((capture, n) => {
-            const name = declare(
-                capture.layout,
-                `environment.(*${type(c.environment)}).capture${n}`,
-                body,
+            places.set(
+                capture.place,
+                storage.own(
+                    defer(
+                        capture.layout,
+                        () => `environment.(*${type(c.environment)}).capture${n}`,
+                        body,
+                    ),
+                ),
             );
-            places.set(capture.place, storage.own({ expression: name, layout: capture.layout }));
         });
         const result = block(c.body, body);
         if (lenses.has(c.body.result)) {
@@ -1199,14 +1391,14 @@ export function lowerGo(program: ConcreteProgram): GoFile {
             );
         } else {
             flushParameters(body);
-            body.push(`return ${result}`);
+            body.push(`return ${code(result)}`);
         }
         // Residual restoration closures retain setup cells, including locals
         // initialized only by a selected branch. Go keeps those cells alive.
         body.unshift(
             ...variables
                 .filter((v) => !c.parameters.some((_, n) => v.name === `arg${n}`))
-                .flatMap((v) => [`var ${v.name} ${v.type}`, `_ = ${v.name}`]),
+                .map((v) => `var ${v.name} ${v.type}`),
         );
 
         const sig = `func ${codes.get(c.id)}(environment any${c.parameters.map((p, i) => `, arg${i} ${type(p.layout)}`).join('')}) ${type(c.body.layout)}`;
@@ -1315,6 +1507,16 @@ export function lowerGo(program: ConcreteProgram): GoFile {
         }
     };
 
+    // Printing unit (including tuples made only of units) observes no result
+    // storage. Execute the entry for its effects without introducing a local.
+    const printedValue = (id: string): boolean => {
+        const l = layout(id);
+        return l.kind === 'unit'
+            ? false
+            : l.kind === 'record'
+              ? l.fields.some((f) => f.kind === 'value' && printedValue(f.layout))
+              : true;
+    };
     const mainBody: Statement[] = [];
     for (const entry of program.entries) {
         const c = program.code.find((c) => c.id === entry)!;
@@ -1322,8 +1524,11 @@ export function lowerGo(program: ConcreteProgram): GoFile {
             unsupported('Function entry requires an explicit host adapter');
         }
         const v = `result${mainBody.length}`;
-        mainBody.push(`var ${v} ${type(c.body.layout)} = ${codes.get(entry)}(nil)`);
-        mainBody.push(`_ = ${v}`);
+        mainBody.push(
+            !printedValue(c.body.layout)
+                ? `${codes.get(entry)}(nil)`
+                : `var ${v} ${type(c.body.layout)} = ${codes.get(entry)}(nil)`,
+        );
         // With host output on stdout, a record separator (U+001E) introduces each result.
         if (usesHost(imports)) mainBody.push('fmt.Print("\\x1e")');
         print(v, c.body.layout, mainBody);

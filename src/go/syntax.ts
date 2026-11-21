@@ -1,5 +1,7 @@
 /** Syntax-only statement tree for Go. Storage decisions belong to lower.ts. */
-export type Statement = string | { head: string; body: Statement[] };
+// Nested lists are transparent sequencing points. Lowering can reserve a point
+// and materialize a value there only when an IR consumer actually needs it.
+export type Statement = string | Statement[] | { head: string; body: Statement[] };
 
 export type GoFunction = {
     signature: string;
@@ -23,7 +25,9 @@ export function identifier(name: string): string {
 export const printGoStatements = (body: Statement[], depth = 0): string[] => {
     const lines: string[] = [];
     for (const s of body) {
-        if (typeof s === 'string') {
+        if (Array.isArray(s)) {
+            lines.push(...printGoStatements(s, depth));
+        } else if (typeof s === 'string') {
             lines.push('\t'.repeat(depth) + s);
         } else {
             const isElse = s.head.startsWith('else');
