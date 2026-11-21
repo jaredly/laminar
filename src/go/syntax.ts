@@ -8,6 +8,9 @@ export type LocalDeclaration = {
     value?: string;
     pure?: boolean;
     inline?: boolean;
+    // The initializer equals this type's default value. It may be omitted only
+    // when the declaration stays here; hoisted cells still need their reset.
+    zeroInitial?: boolean;
 };
 export type LocalAssignment = { kind: 'set'; name: string; value: string };
 export type Statement =

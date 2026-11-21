@@ -484,3 +484,35 @@ Validation: TypeScript and scoped diff checks pass. The regular suite passes
 The focused Go execution suite passes all 111
 tests (200 assertions), including selected-lens restoration through string
 switches. No remote CI was run.
+
+
+## Item 8: redundant writes and initialization
+
+Restoration now omits a write when the current data carries the same live storage
+address and layout as the destination. This uses the lowerer's address metadata,
+not a comparison of printed assignment text. Snapshot values do not carry that
+live-address fact, so restoring a saved value after a mutation still writes it.
+Changed owners and separate replacement endpoints also retain their writes.
+
+Fresh zero-valued locals use typed `var` declarations. If declaration placement
+hoists a cell, its original initialization remains an assignment at the original
+sequence point, including a zero reset: a shared cell may be reused by later
+closure invocations. Negative zero retains its explicit IEEE representation.
+Logical empty-slot data and branch state tracking remain unchanged.
+
+Adapter backing is freshly zeroed before read fields are populated, so its
+replacement fields need no extra zero assignments. Read fields already containing
+the default value also need no assignment. Escaping backing still allocates with
+`new`, and hoisted backing retains its reset at the original sequencing point.
+
+`test/go/redundant-writes.test.ts` covers live-address restoration, changed owners,
+snapshots, thin and scattered lenses, type-changing replacements, repeated calls,
+manual cleanup, negative zero and shared-cell resets. It is included in the CI
+execution gate. `ok.go` no longer contains the unchanged-state writes at the ends
+of `step` and `nextGuess`; the latter can now return `laminarRound(v2)` directly.
+The file is 324 lines and the scripted result remains `[[75,82,79],4]`.
+
+Validation: TypeScript and scoped diff checks pass. The regular suite passes
+3163 tests with all 39 snapshots. The Go corpus passes all 1592 tests, and the
+combined focused Go execution suite passes all 125 tests (216 assertions).
+No remote CI was run.

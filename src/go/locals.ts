@@ -152,7 +152,7 @@ export class GoLocals {
         name: string,
         type: string,
         value?: string,
-        options: { pure?: boolean; inline?: boolean } = {},
+        options: { pure?: boolean; inline?: boolean; zeroInitial?: boolean } = {},
     ): LocalDeclaration {
         this.reference(name);
         if (this.declarations.has(name)) throw Error(`Duplicate Go local ${name}`);
@@ -515,7 +515,7 @@ export class GoLocals {
                         if (s.value !== undefined) result.push(`${s.name} = ${s.value}`);
                     } else
                         result.push(
-                            s.value === undefined
+                            s.value === undefined || s.zeroInitial
                                 ? `var ${s.name} ${s.type}`
                                 : `${s.name} := ${s.value}`,
                         );

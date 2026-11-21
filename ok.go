@@ -105,23 +105,20 @@ func step_scattered(environment any, steps L0, min_max_lastGuess L10) L0 {
 	lastGuess := *((min_max_lastGuess).item2).read
 	input := hostInput("My guess is " + formatNumber(lastGuess) + " (higher/lower/match): ")
 	next := handleResponse(nil, input, L10{item0: L9{read: ((min_max_lastGuess).item0).read}, item1: L9{read: ((min_max_lastGuess).item1).read}, item2: L9{read: ((min_max_lastGuess).item2).read}})
-	v20 := 0.0
+	var v20 L0
 	if next {
 		v20 = steps
 	} else {
 		v20 = step_scattered(nil, (steps + 1.0), L10{item0: L9{read: ((min_max_lastGuess).item0).read}, item1: L9{read: ((min_max_lastGuess).item1).read}, item2: L9{read: ((min_max_lastGuess).item2).read}})
 	}
-	*((min_max_lastGuess).item0).read = *((min_max_lastGuess).item0).read
-	*((min_max_lastGuess).item1).read = *((min_max_lastGuess).item1).read
-	*((min_max_lastGuess).item2).read = *((min_max_lastGuess).item2).read
 	return v20
 }
 
 func handleResponse(environment any, response L6, state L10) L8 {
-	v1 := false
-	v47 := 0.0
-	v48 := 0.0
-	v49 := 0.0
+	var v1 L8
+	var v47 L0
+	var v48 L0
+	var v49 L0
 	switch response {
 	case "higher":
 		v4 := L11{tag: 0, v0: L7{}}
@@ -160,18 +157,17 @@ func step_thin(environment any, steps L0, min_max_lastGuess L5) L0 {
 	lastGuess := (*(min_max_lastGuess).read).item2
 	input := hostInput("My guess is " + formatNumber(lastGuess) + " (higher/lower/match): ")
 	next := handleResponse(nil, input, L10{item0: L9{read: &(*(min_max_lastGuess).read).item0}, item1: L9{read: &(*(min_max_lastGuess).read).item1}, item2: L9{read: &(*(min_max_lastGuess).read).item2}})
-	v20 := 0.0
+	var v20 L0
 	if next {
 		v20 = steps
 	} else {
 		v20 = step_scattered(nil, (steps + 1.0), L10{item0: L9{read: &(*(min_max_lastGuess).read).item0}, item1: L9{read: &(*(min_max_lastGuess).read).item1}, item2: L9{read: &(*(min_max_lastGuess).read).item2}})
 	}
-	*(min_max_lastGuess).read = *(min_max_lastGuess).read
 	return v20
 }
 
 func game(environment any) L2 {
-	back6 := Backing6{}
+	var back6 Backing6
 	back6.read0 = L1{item0: 0.0, item1: 100.0, item2: 50.0}
 	v13 := L5{read: &back6.read0}
 	steps := step_thin(nil, 0.0, v13)
@@ -180,7 +176,7 @@ func game(environment any) L2 {
 }
 
 func nextGuess(environment any, direction L11, min_max_lastGuess L10) L0 {
-	v2 := 0.0
+	var v2 L0
 	switch (direction).tag {
 	case 0:
 		max := *((min_max_lastGuess).item1).read
@@ -191,11 +187,7 @@ func nextGuess(environment any, direction L11, min_max_lastGuess L10) L0 {
 		min := *((min_max_lastGuess).item0).read
 		v2 = ((lastGuess_2 + min) / 2.0)
 	}
-	v42 := laminarRound(v2)
-	*((min_max_lastGuess).item0).read = *((min_max_lastGuess).item0).read
-	*((min_max_lastGuess).item1).read = *((min_max_lastGuess).item1).read
-	*((min_max_lastGuess).item2).read = *((min_max_lastGuess).item2).read
-	return v42
+	return laminarRound(v2)
 }
 
 func entry(environment any) L2 {

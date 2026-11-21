@@ -145,6 +145,14 @@ export function lowerGo(program: ConcreteProgram): GoFile {
             l.fields.find((f) => f.name === 'replacement') ??
             l.fields.find((f) => f.name === 'read');
         if (f?.kind === 'pointer' && f.layout) {
+            // An address denotes a live read of that exact storage, not a
+            // snapshot. Restoring it to itself cannot change the owner.
+            if (
+                !Array.isArray(data) &&
+                data.layout === f.layout &&
+                data.address === go`(${expression}).${field(f.name)}`
+            )
+                return;
             body.push(go`*(${expression}).${field(f.name)} = ${read(data, f.layout)}`);
             return;
         }
@@ -509,7 +517,11 @@ export function lowerGo(program: ConcreteProgram): GoFile {
             body: Statement[],
             name = fresh(),
         ): string => {
-            body.push(locals.declaration(name, type(id), expression));
+            body.push(
+                locals.declaration(name, type(id), expression, {
+                    zeroInitial: expression === zero(id),
+                }),
+            );
             return name;
         };
 
@@ -534,7 +546,13 @@ export function lowerGo(program: ConcreteProgram): GoFile {
                     if (!materialized) {
                         materialized = true;
                         const expr = compute(at);
-                        at.push(locals.declaration(name, type(id), expr, { pure, inline }));
+                        at.push(
+                            locals.declaration(name, type(id), expr, {
+                                pure,
+                                inline,
+                                zeroInitial: expr === zero(id),
+                            }),
+                        );
                     }
                     return name;
                 },
@@ -818,10 +836,13 @@ export function lowerGo(program: ConcreteProgram): GoFile {
                     const r = go`read${n}`;
                     const w = output ? go`write${n}` : r;
                     fields.push(go`${field(r)} ${type(input.layout)}`);
-                    init.push(go`${name}.${field(r)} = ${read(d, input.layout)}`);
+                    const initial = read(d, input.layout);
+                    if (initial !== zero(input.layout))
+                        init.push(go`${name}.${field(r)} = ${initial}`);
                     if (output?.kind === 'pointer' && output.layout) {
                         fields.push(go`${field(w)} ${type(output.layout)}`);
-                        init.push(go`${name}.${field(w)} = ${zero(output.layout)}`);
+                        // Every adapter creates (or resets) its backing before
+                        // filling the read fields. Replacement fields start zero.
                     }
                     return go`${type(id)}{read: &${name}.${field(r)}${output ? go`, replacement: &${name}.${field(w)}` : ''}}`;
                 }
@@ -850,6 +871,7 @@ export function lowerGo(program: ConcreteProgram): GoFile {
                     name,
                     (escapes ? '*' : '') + backingType,
                     escapes ? go`new(${backingType})` : go`${backingType}{}`,
+                    { zeroInitial: !escapes },
                 ),
             );
             body.push(...init);
