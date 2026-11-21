@@ -20,7 +20,7 @@ it('gives String a primitive physical layout', () => {
     expect(c).toContain('string_new("a", 1)');
     expect(c).toContain('print_string(result0);');
     expect(c).toContain('string_drop(result0);');
-    expect(emitGo(compile('"a"', goTarget('test')))).toContain('func entry(environment any) string');
+    expect(emitGo(compile('"a"', goTarget('test')))).toContain('func entry() string');
 });
 
 it('emits the string runtime only for programs that reach a string layout', () => {

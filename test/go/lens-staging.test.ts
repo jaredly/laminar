@@ -11,12 +11,12 @@ it('forwards an unchanged aggregate lens rather than reconstructing its fields',
     const code = emit(
         'fn sum(~(a, b)) {dup(~a) + dup(~b)}\nfn forward(~(a, b)) {sum(~(a, b))}\n{let a = 1\n let b = 2\n forward(~(a, b))}',
     );
-    expect(code).toMatch(/sum\(nil, [A-Za-z_]\w*\)/);
+    expect(code).toMatch(/sum\([A-Za-z_]\w*\)/);
 });
 it('reuses backing across sequential homogeneous calls', () => {
     const code = emit(bump + '{let x = 0\n bump(~x)\n bump(~x)\n x}');
     expect(code.match(/type Backing_[A-Za-z_0-9]+ struct/g)).toHaveLength(1);
-    expect(code.match(/bump\(nil, .*&back0\.read0/g)).toHaveLength(2);
+    expect(code.match(/bump\(.*&back0\.read0/g)).toHaveLength(2);
     expect(code).toContain('return back0.read0');
 });
 it('keeps a whole tuple in its existing backing after a call', () => {

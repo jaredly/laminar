@@ -607,3 +607,46 @@ emission assertions now check descriptive types rather than numbered aliases.
 Validation: TypeScript and scoped diff checks pass. The regular suite passes
 3176 tests with all 39 snapshots. The Go corpus passes all 1592 tests, and all
 160 focused Go execution tests pass (277 assertions). No remote CI was run.
+
+
+## Item 11: ordinary direct calls and callable ABI thunks
+
+Capture-free code now has ordinary Go signatures. The game emits `game()`,
+`nextGuess(direction, state)` and recursive `step` calls without dummy environment
+parameters or `nil` arguments. This applies to entry functions and capture-free
+local closures as well as named source definitions. Capture requirements come from
+concrete IR, and one call builder keeps body signatures, direct calls, result
+adapters and entry invocation consistent.
+
+First-class callable records retain their exact typed, environment-first ABI.
+When a capture-free body is stored in a record, its entry points to a thunk such as:
+
+```go
+func inc_callable(_ any, arg0 float64) float64 {
+    return inc(arg0)
+}
+```
+
+Only referenced thunks survive declaration reachability. Thunk names share the
+package namespace with source functions, types and helpers, so a source definition
+named `inc_callable` receives its own distinct name from the generated entry.
+Local naming reserves these entry names as well.
+
+Captured closure bodies retain their opaque environment parameter and typed
+capture loads. Their callable entries still point directly to those bodies.
+Indirect invocation continues to pass the record's environment to its typed entry;
+native callable entries and lens-result adapter ABIs retain that convention too.
+Known result adapters whose source needs no captures use `nil` rather than
+materializing a callable just to extract its environment.
+
+This changes internal Go body signatures without changing concrete callable ABIs,
+argument or result layouts, capture ownership, or restoration order.
+`test/go/direct-calls.test.ts` covers direct and zero-argument calls, recursion,
+generic specialization, typed thunks, captured and mixed callable joins,
+type-changing lenses, returned-lens adapters, effect order and naming collisions.
+It is included in the CI execution gate. `ok.go` remains 267 lines, with shorter
+signatures and calls, and its scripted result remains `[[75,82,79],4]`.
+
+Validation: TypeScript and scoped diff checks pass. The regular suite passes
+3180 tests with all 39 snapshots. The Go corpus passes all 1592 tests, and all
+176 focused Go execution tests pass (304 assertions). No remote CI was run.

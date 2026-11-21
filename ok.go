@@ -61,20 +61,20 @@ type Backing_Tuple_Number_Number_Number_d63659393c struct {
 	read0 Tuple_Number_Number_Number
 }
 
-func step_scattered(environment any, steps float64, min_max_lastGuess Scattered_Lens_float64_Lens_float64_Lens_float64) float64 {
+func step_scattered(steps float64, min_max_lastGuess Scattered_Lens_float64_Lens_float64_Lens_float64) float64 {
 	lastGuess := *((min_max_lastGuess).item2).read
 	input := hostInput("My guess is " + formatNumber(lastGuess) + " (higher/lower/match): ")
-	next := handleResponse(nil, input, min_max_lastGuess)
+	next := handleResponse(input, min_max_lastGuess)
 	var v20 float64
 	if next {
 		v20 = steps
 	} else {
-		v20 = step_scattered(nil, (steps + 1.0), min_max_lastGuess)
+		v20 = step_scattered((steps + 1.0), min_max_lastGuess)
 	}
 	return v20
 }
 
-func handleResponse(environment any, response string, state Scattered_Lens_float64_Lens_float64_Lens_float64) bool {
+func handleResponse(response string, state Scattered_Lens_float64_Lens_float64_Lens_float64) bool {
 	var v1 bool
 	var v47 float64
 	var v48 float64
@@ -82,14 +82,14 @@ func handleResponse(environment any, response string, state Scattered_Lens_float
 	switch response {
 	case "higher":
 		v4 := Direction{tag: Direction_Higher, v0: Unit{}}
-		next := nextGuess(nil, v4, state)
+		next := nextGuess(v4, state)
 		v47 = *((state).item2).read
 		v48 = *((state).item1).read
 		v49 = next
 		v1 = false
 	case "lower":
 		v21 := Direction{tag: Direction_Lower, v1: Unit{}}
-		next_2 := nextGuess(nil, v21, state)
+		next_2 := nextGuess(v21, state)
 		last_2 := *((state).item2).read
 		v47 = *((state).item0).read
 		v48 = last_2
@@ -113,28 +113,28 @@ func handleResponse(environment any, response string, state Scattered_Lens_float
 	return v1
 }
 
-func step_thin(environment any, steps float64, min_max_lastGuess Lens_Tuple_Number_Number_Number) float64 {
+func step_thin(steps float64, min_max_lastGuess Lens_Tuple_Number_Number_Number) float64 {
 	lastGuess := (*(min_max_lastGuess).read).item2
 	input := hostInput("My guess is " + formatNumber(lastGuess) + " (higher/lower/match): ")
-	next := handleResponse(nil, input, Scattered_Lens_float64_Lens_float64_Lens_float64{item0: Lens_float64{read: &(*(min_max_lastGuess).read).item0}, item1: Lens_float64{read: &(*(min_max_lastGuess).read).item1}, item2: Lens_float64{read: &(*(min_max_lastGuess).read).item2}})
+	next := handleResponse(input, Scattered_Lens_float64_Lens_float64_Lens_float64{item0: Lens_float64{read: &(*(min_max_lastGuess).read).item0}, item1: Lens_float64{read: &(*(min_max_lastGuess).read).item1}, item2: Lens_float64{read: &(*(min_max_lastGuess).read).item2}})
 	var v20 float64
 	if next {
 		v20 = steps
 	} else {
-		v20 = step_scattered(nil, (steps + 1.0), Scattered_Lens_float64_Lens_float64_Lens_float64{item0: Lens_float64{read: &(*(min_max_lastGuess).read).item0}, item1: Lens_float64{read: &(*(min_max_lastGuess).read).item1}, item2: Lens_float64{read: &(*(min_max_lastGuess).read).item2}})
+		v20 = step_scattered((steps + 1.0), Scattered_Lens_float64_Lens_float64_Lens_float64{item0: Lens_float64{read: &(*(min_max_lastGuess).read).item0}, item1: Lens_float64{read: &(*(min_max_lastGuess).read).item1}, item2: Lens_float64{read: &(*(min_max_lastGuess).read).item2}})
 	}
 	return v20
 }
 
-func game(environment any) Tuple_Tuple_Number_Number_Number_Number {
+func game() Tuple_Tuple_Number_Number_Number_Number {
 	var back2 Backing_Tuple_Number_Number_Number_d63659393c
 	back2.read0 = Tuple_Number_Number_Number{item0: 0.0, item1: 100.0, item2: 50.0}
-	steps := step_thin(nil, 0.0, Lens_Tuple_Number_Number_Number{read: &back2.read0})
+	steps := step_thin(0.0, Lens_Tuple_Number_Number_Number{read: &back2.read0})
 	state_2 := back2.read0
 	return Tuple_Tuple_Number_Number_Number_Number{item0: state_2, item1: steps}
 }
 
-func nextGuess(environment any, direction Direction, min_max_lastGuess Scattered_Lens_float64_Lens_float64_Lens_float64) float64 {
+func nextGuess(direction Direction, min_max_lastGuess Scattered_Lens_float64_Lens_float64_Lens_float64) float64 {
 	var v2 float64
 	switch (direction).tag {
 	case Direction_Higher:
@@ -149,8 +149,8 @@ func nextGuess(environment any, direction Direction, min_max_lastGuess Scattered
 	return laminarRound(v2)
 }
 
-func entry(environment any) Tuple_Tuple_Number_Number_Number_Number {
-	return game(nil)
+func entry() Tuple_Tuple_Number_Number_Number_Number {
+	return game()
 }
 
 func hostInput(prompt string) string {
@@ -250,7 +250,7 @@ func formatNumber(x float64) string {
 }
 
 func main() {
-	result0 := entry(nil)
+	result0 := entry()
 	fmt.Print("\x1e")
 	fmt.Print("[")
 	fmt.Print("[")

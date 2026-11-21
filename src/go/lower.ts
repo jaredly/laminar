@@ -67,6 +67,18 @@ export function lowerGo(program: ConcreteProgram): GoFile {
     const tagValue = (id: string, n: number) => tags.get(id)![n]!;
 
     const type = (id: string) => names.get(id)!;
+    const codeById = new Map(program.code.map((c) => [c.id, c]));
+    const usesEnvironment = (id: string) => !!codeById.get(id)!.captures.length;
+    const callCode = (id: string, environment: () => string, args: string[]) =>
+        go`${codes.get(id)}(${joinCode([...(usesEnvironment(id) ? [environment()] : []), ...args], ', ')})`;
+    const wrapperUsesEnvironment = (id: string): boolean => {
+        const w = program.wrappers.find((w) => w.id === id)!;
+        return w.kind === 'invoke'
+            ? usesEnvironment(w.code)
+            : w.kind === 'adapt-lens-result'
+              ? wrapperUsesEnvironment(w.source)
+              : false;
+    };
     const layout = (id: string) => layouts.get(id)!;
     const unit = program.layouts.find((l) => l.kind === 'unit')!;
 
@@ -225,6 +237,26 @@ export function lowerGo(program: ConcreteProgram): GoFile {
     }
 
     const helpers: GoFunction[] = [];
+    // Callable records retain their exact environment-first ABI. Ordinary
+    // capture-free bodies need that convention only at first-class entry points.
+    const callableEntries = new Map<string, string>();
+    for (const w of program.wrappers) {
+        if (w.kind !== 'invoke' || usesEnvironment(w.code)) continue;
+        const name = packageNames.unique(`${codes.get(w.code)}_callable`);
+        callableEntries.set(w.id, name);
+        const abi = program.abis.find((a) => a.id === w.abi)!;
+        const args = abi.arguments.map((id, n) => go`arg${n} ${type(id)}`);
+        helpers.push({
+            signature: go`func ${name}(_ any${args.length ? go`, ${joinCode(args, ', ')}` : ''}) ${type(abi.result)}`,
+            body: [
+                go`return ${callCode(
+                    w.code,
+                    () => 'nil',
+                    abi.arguments.map((_, n) => go`arg${n}`),
+                )}`,
+            ],
+        });
+    }
     const variant = (id: string, n: number) => {
         const f = layout(id).fields[n]!;
         if (f.kind === 'code' || !f.layout)
@@ -421,10 +453,18 @@ export function lowerGo(program: ConcreteProgram): GoFile {
             helpers.push({
                 signature,
                 body: [
-                    go`result := ${sourceCode}(environment${joinCode(
-                        abi.arguments.map((_, n) => go`, arg${n}`),
-                        '',
-                    )})`,
+                    go`result := ${
+                        source.kind === 'invoke'
+                            ? callCode(
+                                  source.code,
+                                  () => 'environment',
+                                  abi.arguments.map((_, n) => go`arg${n}`),
+                              )
+                            : go`${sourceCode}(environment${joinCode(
+                                  abi.arguments.map((_, n) => go`, arg${n}`),
+                                  '',
+                              )})`
+                    }`,
                     go`focus := ${read(storage.get(incoming('result', raw.result)), input)}`,
                     ...(separate ? [go`var write ${type(replacement)}`] : []),
                     go`return ${type(abi.result)}{read: &focus${separate ? ', replacement: &write' : ''}, restore: func(_ any, replacement ${type(replacement)}) ${type(unit.id)} {\n${joinCode(printGoStatements([{ head: 'if result.restore != nil', body: ['result.restore(result.context, replacement)'] }, { head: 'else', body: fallback }, go`return ${zero(unit.id)}`], 1), '\n')}\n}}`,
@@ -439,6 +479,7 @@ export function lowerGo(program: ConcreteProgram): GoFile {
         const irUnit = program.semantic.program.units.find((u) => u.id === c.unit)!;
         const localNames = new GoNames([
             ...codes.values(),
+            ...callableEntries.values(),
             ...names.values(),
             ...abiNames.values(),
             ...[...tags.values()].flat(),
@@ -1285,7 +1326,7 @@ export function lowerGo(program: ConcreteProgram): GoFile {
                             callable.entries.map((e) => {
                                 const w = program.wrappers.find((w) => w.id === e.wrapper)!;
                                 if (w.kind === 'invoke') {
-                                    return go`, ${field(e.field)}: ${codes.get(w.code)}`;
+                                    return go`, ${field(e.field)}: ${callableEntries.get(w.id) ?? codes.get(w.code)}`;
                                 }
                                 if (w.kind === 'adapt-lens-result') {
                                     return go`, ${field(e.field)}: ${resultAdapters.get(w.id)}`;
@@ -1397,15 +1438,22 @@ export function lowerGo(program: ConcreteProgram): GoFile {
                                           ? codes.get(w.code)
                                           : (resultAdapters.get(w.id) ??
                                             unsupported(go`Direct ${w.kind} call`));
-                                expr = direct
-                                    ? go`${direct}(${w.kind === 'invoke' && !program.code.find((c) => c.id === w.code)!.captures.length ? 'nil' : go`(${value(i.callee)}).environment`}${joinCode(
-                                          args.map((a) => go`, ${a}`),
-                                          '',
-                                      )})`
-                                    : go`(${value(i.callee)}).${field(i.field!)}((${value(i.callee)}).environment${joinCode(
-                                          args.map((a) => go`, ${a}`),
-                                          '',
-                                      )})`;
+                                expr =
+                                    direct && w.kind === 'invoke'
+                                        ? callCode(
+                                              w.code,
+                                              () => go`(${value(i.callee)}).environment`,
+                                              args,
+                                          )
+                                        : direct
+                                          ? go`${direct}(${wrapperUsesEnvironment(w.id) ? go`(${value(i.callee)}).environment` : 'nil'}${joinCode(
+                                                args.map((a) => go`, ${a}`),
+                                                '',
+                                            )})`
+                                          : go`(${value(i.callee)}).${field(i.field!)}((${value(i.callee)}).environment${joinCode(
+                                                args.map((a) => go`, ${a}`),
+                                                '',
+                                            )})`;
                             } else if (w?.kind === 'native') {
                                 expr =
                                     simpleNative(
@@ -1857,9 +1905,12 @@ export function lowerGo(program: ConcreteProgram): GoFile {
             body.push(locals.returnValue(code(result)));
         }
 
-        const sig = go`func ${codes.get(c.id)}(environment any${joinCode(
-            c.parameters.map((p, i) => go`, ${parameterNames[i]} ${type(p.layout)}`),
-            '',
+        const sig = go`func ${codes.get(c.id)}(${joinCode(
+            [
+                ...(usesEnvironment(c.id) ? ['environment any'] : []),
+                ...c.parameters.map((p, i) => go`${parameterNames[i]} ${type(p.layout)}`),
+            ],
+            ', ',
         )}) ${type(c.body.layout)}`;
         const placed = locals.place(body);
         activeLocals = undefined;
@@ -1993,8 +2044,8 @@ export function lowerGo(program: ConcreteProgram): GoFile {
         const v = go`result${mainBody.length}`;
         mainBody.push(
             !printedValue(c.body.layout)
-                ? go`${codes.get(entry)}(nil)`
-                : go`${v} := ${codes.get(entry)}(nil)`,
+                ? callCode(entry, () => 'nil', [])
+                : go`${v} := ${callCode(entry, () => 'nil', [])}`,
         );
         // With host output on stdout, a record separator (U+001E) introduces each result.
         if (usesHost(imports)) mainBody.push('fmt.Print("\\x1e")');
