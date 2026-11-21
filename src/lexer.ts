@@ -1,6 +1,14 @@
-export type WrapperKind = '{' | '[' | '(' | '<';
+export type WrapperKind = '{' | '[' | '(' | '<' | '[:' | '{:' | '(:';
 export type ListKind = ' ' | ':' | '' | '\n' | '"' | ',' | ';';
-const closer = { '(': ')', '{': '}', '[': ']', '<': '>' } as const;
+const closer = {
+    '(': ')',
+    '{': '}',
+    '[': ']',
+    '<': '>',
+    '[:': ':]',
+    '{:': ':}',
+    '(:': ':)',
+} as const;
 
 export type Loc = number;
 export type Wrapper = { type: 'wrapper'; kind: WrapperKind; child?: Node; loc: Loc };
@@ -327,11 +335,19 @@ const read_ = (i: number, text: string, config: Config): void | { i: number; nod
         case '(':
         case '[':
         case '{': {
-            const result = readUntilCloser(i + 1, text, config, closer[text[i]]);
+            const result =
+                text[i + 1] === ':'
+                    ? readUntilCloser(i + 2, text, config, closer[(text[i] + ':') as '[:'])
+                    : readUntilCloser(i + 1, text, config, closer[text[i]]);
             if (!result) throw new Error('could not read wrapped child ' + text[i]);
             return {
                 i: result.i + 1,
-                node: { type: 'wrapper', kind: text[i], child: result.node, loc: i },
+                node: {
+                    type: 'wrapper',
+                    kind: (text[i] + (text[i + 1] === ':' ? ':' : '')) as WrapperKind,
+                    child: result.node,
+                    loc: i,
+                },
             };
         }
     }
@@ -357,9 +373,17 @@ const readUntilCloser = (
     let node: { child?: Node } = {};
     // let node: Wrapper = { type: 'wrapper', kind: wrapper, loc: i };
     while (i < text.length && text[i] !== closer) {
+        if (closer?.length === 2 && text[i] === closer[0] && text[i + 1] === closer[1]) {
+            i++;
+            break;
+        }
         let lc;
         [i, lc] = skipComments(i, text, config);
         if (i >= text.length || text[i] === closer) break;
+        if (closer?.length === 2 && text[i] === closer[0] && text[i + 1] === closer[1]) {
+            i++;
+            break;
+        }
         let level = listLevels.length - 1;
         if (lc) {
             level = listLevels.indexOf('\n');
@@ -387,6 +411,10 @@ const readUntilCloser = (
             i = skipComments(i + 1, text, config)[0];
         }
         if (i >= text.length || text[i] === closer) break;
+        if (closer?.length === 2 && text[i] === closer[0] && text[i + 1] === closer[1]) {
+            i++;
+            break;
+        }
         const next = read_(i, text, config);
         if (!next) throw new LexError(i, `cannot read until closer ` + closer);
         addToWrapper(node, listLevels[level], next.node);

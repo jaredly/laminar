@@ -26,6 +26,10 @@ it('should do a wrapper', () => {
     `);
 });
 
+it('should do vectors', () => {
+    expect(compact(read('[:1,2,3:]'))).toEqual(['[:,', '1', '2', '3']);
+});
+
 it('should ignore newlines between elemesn', () => {
     expect(
         compact(
