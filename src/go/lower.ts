@@ -12,6 +12,7 @@ import {
 } from './syntax.ts';
 import { goBytes, goPart, goStringRuntime } from './strings.ts';
 import { requireImport, usesHost } from '../runtime-imports.ts';
+import { GoNames, functionNames, patternSlots, sourceBinding } from './names.ts';
 
 type Completion = (body: Statement[]) => void;
 type Lens = { view: View; finish: Completion; stage?: (body: Statement[]) => Completion };
@@ -37,7 +38,7 @@ export function lowerGo(program: ConcreteProgram): GoFile {
 
     const layouts = new Map(program.layouts.map((l) => [l.id, l]));
     const names = new Map(program.layouts.map((l, i) => [l.id, `L${i}`]));
-    const codes = new Map(program.code.map((c, i) => [c.id, `fn${i}`]));
+    const codes = functionNames(program);
     const abiNames = new Map(program.abis.map((a, i) => [a.id, `A${i}`]));
 
     const type = (id: string) => names.get(id)!;
@@ -381,6 +382,81 @@ export function lowerGo(program: ConcreteProgram): GoFile {
     }
 
     const functions: GoFunction[] = program.code.map((c) => {
+        const irUnit = program.semantic.program.units.find((u) => u.id === c.unit)!;
+        const localNames = new GoNames([
+            ...codes.values(),
+            'environment',
+            'replacement',
+            'focus',
+            'write',
+            'result',
+        ]);
+        const bindingNames = new Map<string, string>();
+        const bindingName = (slot: SlotRef): string | undefined => {
+            const binding = sourceBinding(irUnit.bindings, slot);
+            if (!binding) return undefined;
+            if (!bindingNames.has(binding.id))
+                bindingNames.set(binding.id, localNames.source(binding.name));
+            return bindingNames.get(binding.id)!;
+        };
+        const parameterNames = c.parameters.map((p, n) => {
+            const slots = patternSlots(p.pattern);
+            if (slots.length === 1 && !slots[0]!.path.length) {
+                const name = bindingName(slots[0]!);
+                if (name) return name;
+            }
+            const parts = slots
+                .map((slot) => sourceBinding(irUnit.bindings, slot)?.name)
+                .filter((n): n is string => !!n);
+            return localNames.source(parts.length ? parts.join('_') : `argument${n}`);
+        });
+        const sourceSlots = c.parameters.flatMap((p) => patternSlots(p.pattern));
+        sourceSlots.push(...c.captures.map((p) => ({ place: p.place, path: [] })));
+        const producers = new Map<string, ConcreteBlock['instructions'][number]>();
+        const localBindings: Extract<ConcreteBlock['instructions'][number], { op: 'bind' }>[] = [];
+        const scanNames = (b: ConcreteBlock) => {
+            for (const i of b.instructions) {
+                if ('out' in i) producers.set(i.out.id, i);
+                if (i.op === 'bind') {
+                    localBindings.push(i);
+                    sourceSlots.push(...patternSlots(i.pattern));
+                }
+                if (i.op === 'move' || i.op === 'acquire') sourceSlots.push(i.slot);
+                if (i.op === 'scope') scanNames(i.body);
+                if (i.op === 'manual') scanNames(i.cleanup);
+                if (i.op === 'case') i.cases.forEach((a) => scanNames(a.body));
+            }
+        };
+        scanNames(c.body);
+        const referencedBindings = new Set(
+            sourceSlots.map((slot) => sourceBinding(irUnit.bindings, slot)?.id),
+        );
+        // Give source declarations their names before allocating any versions or
+        // temporaries, including destructured parameters and captured bindings.
+        for (const binding of irUnit.bindings)
+            if (referencedBindings.has(binding.id) && !bindingNames.has(binding.id))
+                bindingNames.set(binding.id, localNames.source(binding.name));
+        const preferred = new Map<string, string>();
+        const prefer = (id: string, name: string) => {
+            const i = producers.get(id);
+            if (i?.op === 'scope') prefer(i.body.result, name);
+            else if (!preferred.has(id)) preferred.set(id, name);
+        };
+        for (const i of localBindings) {
+            for (const slot of patternSlots(i.pattern)) bindingName(slot);
+            if (i.pattern.kind === 'bind') {
+                const name = bindingName(i.pattern.slot);
+                if (name) prefer(i.value, name);
+            }
+        }
+        const namedVersions = new Set(parameterNames);
+        const versionName = (base: string) => {
+            if (!namedVersions.has(base)) {
+                namedVersions.add(base);
+                return base;
+            }
+            return localNames.unique(base);
+        };
         const values = new Map<string, Expression>();
         const constants = new Set<string>();
         const lenses = new Map<string, Lens>();
@@ -389,7 +465,7 @@ export function lowerGo(program: ConcreteProgram): GoFile {
         let counter = 0;
         const fresh = () => `v${counter++}`;
         const variables: Variable[] = c.parameters.map((p, i) => ({
-            name: `arg${i}`,
+            name: parameterNames[i]!,
             type: type(p.layout),
         }));
 
@@ -470,11 +546,11 @@ export function lowerGo(program: ConcreteProgram): GoFile {
 
         c.parameters.forEach((p, i) => {
             if (p.lensPlace) {
-                const view = incoming(`arg${i}`, p.layout);
+                const view = incoming(parameterNames[i]!, p.layout);
                 places.set(p.lensPlace, view);
-                parameters.push({ expression: `arg${i}`, layout: p.layout, view });
+                parameters.push({ expression: parameterNames[i]!, layout: p.layout, view });
             } else {
-                bind(p.pattern, { expression: `arg${i}`, layout: p.layout });
+                bind(p.pattern, { expression: parameterNames[i]!, layout: p.layout });
             }
         });
 
@@ -671,6 +747,7 @@ export function lowerGo(program: ConcreteProgram): GoFile {
                 if (i.op === 'case') i.cases.forEach((a) => index(a.body));
             });
         index(c.body);
+        const lensSlots = new Map<string, SlotRef>();
 
         const block = (b: ConcreteBlock, output: Statement[]): Expression => {
             for (const i of b.instructions) {
@@ -718,7 +795,23 @@ export function lowerGo(program: ConcreteProgram): GoFile {
                 }
 
                 const id = i.out.layout;
-                const name = fresh();
+                const hinted =
+                    preferred.get(i.out.id) ??
+                    (i.op === 'move'
+                        ? bindingName(i.slot)
+                        : i.op === 'invoke' &&
+                            program.wrappers.find((w) => w.id === i.wrapper)?.kind === 'native'
+                          ? (() => {
+                                const slot = lensSlots.get(i.args[0]!);
+                                return slot && bindingName(slot);
+                            })()
+                          : undefined);
+                const name =
+                    hinted &&
+                    i.op !== 'constant' &&
+                    !(i.op === 'make-callable' && !i.captures.length)
+                        ? versionName(hinted)
+                        : fresh();
                 let expr!: Expression;
 
                 switch (i.op) {
@@ -789,6 +882,7 @@ export function lowerGo(program: ConcreteProgram): GoFile {
                         break;
                     }
                     case 'acquire':
+                        lensSlots.set(i.out.id, i.slot);
                         lenses.set(i.out.id, { view: ref(i.slot), finish: noFinish });
                         continue;
                     case 'lens-tuple':
@@ -1345,6 +1439,7 @@ export function lowerGo(program: ConcreteProgram): GoFile {
         const body: Statement[] = [...setup];
 
         c.captures.forEach((capture, n) => {
+            const base = bindingName({ place: capture.place, path: [] });
             places.set(
                 capture.place,
                 storage.own(
@@ -1352,6 +1447,7 @@ export function lowerGo(program: ConcreteProgram): GoFile {
                         capture.layout,
                         () => `environment.(*${type(c.environment)}).capture${n}`,
                         body,
+                        base ? versionName(base) : fresh(),
                     ),
                 ),
             );
@@ -1397,11 +1493,11 @@ export function lowerGo(program: ConcreteProgram): GoFile {
         // initialized only by a selected branch. Go keeps those cells alive.
         body.unshift(
             ...variables
-                .filter((v) => !c.parameters.some((_, n) => v.name === `arg${n}`))
+                .filter((v) => !parameterNames.includes(v.name))
                 .map((v) => `var ${v.name} ${v.type}`),
         );
 
-        const sig = `func ${codes.get(c.id)}(environment any${c.parameters.map((p, i) => `, arg${i} ${type(p.layout)}`).join('')}) ${type(c.body.layout)}`;
+        const sig = `func ${codes.get(c.id)}(environment any${c.parameters.map((p, i) => `, ${parameterNames[i]} ${type(p.layout)}`).join('')}) ${type(c.body.layout)}`;
         return { signature: sig, body };
     });
 

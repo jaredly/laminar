@@ -125,6 +125,10 @@ opaque owned handles with explicit disposal. See
 
 - `emit` writes the generated C or Go to stdout or `-o`. Symbol names are
   deterministic for a program and target.
+- Go output retains source function, parameter and local names. Specializations
+  get descriptive suffixes (`step_thin`, `step_scattered`, `id_number`); shadowed
+  bindings and storage versions get numeric suffixes. Go keywords and generated
+  helper names are disambiguated. Unnamed compiler temporaries keep generated names.
 - `emit --concrete` prints the verified concrete IR the backends consume: layouts,
   call ABIs, callable records and code.
 - For Wasm, `emit --target wasm32 -o program.c` gives the C that `emcc` builds;

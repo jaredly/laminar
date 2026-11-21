@@ -101,203 +101,203 @@ type Backing6 struct {
 	read0 L1
 }
 
-func fn0(environment any, arg0 L0, arg1 L10) L0 {
-	var v3 L0
-	var v4 L6
-	var v5 L6
-	var v13 L6
-	var v29 L0
-	var v33 L0
-	var v31 L0
-	var v14 L8
-	var v17 L8
-	var v21 L0
-	var v32 L0
-	var v19 L0
-	v3 = *((arg1).item2).read
-	v4 = "My guess is " + formatNumber(v3) + " (higher/lower/match): "
-	v5 = hostInput(v4)
-	v13 = v5
-	v14 = fn1(nil, v13, L10{item0: L9{read: ((arg1).item0).read}, item1: L9{read: ((arg1).item1).read}, item2: L9{read: ((arg1).item2).read}})
-	v17 = v14
-	v19 = 0.0
-	if v17 == true {
-		v21 = arg0
-		v19 = v21
-	} else if v17 == false {
-		v29 = arg0
-		v33 = 1.0
-		v31 = (v29 + v33)
-		v32 = fn0(nil, v31, L10{item0: L9{read: ((arg1).item0).read}, item1: L9{read: ((arg1).item1).read}, item2: L9{read: ((arg1).item2).read}})
-		v19 = v32
-	} else {
-		panic("unmatched case")
-	}
-	*((arg1).item0).read = *((arg1).item0).read
-	*((arg1).item1).read = *((arg1).item1).read
-	*((arg1).item2).read = *((arg1).item2).read
-	return v19
-}
-
-func fn1(environment any, arg0 L6, arg1 L10) L8 {
-	var v6 L11
-	var v28 L11
-	var v51 L6
-	var v0 L6
-	var v13 L0
-	var v56 L0
-	var v35 L0
-	var v57 L0
-	var v7 L0
-	var v19 L0
-	var v29 L0
-	var v41 L0
-	var v58 L0
-	var v2 L8
-	v0 = arg0
-	v2 = false
-	v56 = 0.0
-	v57 = 0.0
-	v58 = 0.0
-	if v0 == "higher" {
-		v6 = L11{tag: 0, v0: L7{}}
-		v7 = fn4(nil, v6, L10{item0: L9{read: ((arg1).item0).read}, item1: L9{read: ((arg1).item1).read}, item2: L9{read: ((arg1).item2).read}})
-		v13 = *((arg1).item2).read
-		v19 = v7
-		v56 = v13
-		v57 = *((arg1).item1).read
-		v58 = v19
-		v2 = false
-	} else if v0 == "lower" {
-		v28 = L11{tag: 1, v1: L7{}}
-		v29 = fn4(nil, v28, L10{item0: L9{read: ((arg1).item0).read}, item1: L9{read: ((arg1).item1).read}, item2: L9{read: ((arg1).item2).read}})
-		v35 = *((arg1).item2).read
-		v41 = v29
-		v56 = *((arg1).item0).read
-		v57 = v35
-		v58 = v41
-		v2 = false
-	} else if v0 == "match" {
-		v56 = *((arg1).item0).read
-		v57 = *((arg1).item1).read
-		v58 = *((arg1).item2).read
-		v2 = true
-	} else if true {
-		v51 = "I'm sorry, I didn't understand that. Please say 'higher', 'lower', or 'match'"
-		hostPrint_L7(v51)
-		v56 = *((arg1).item0).read
-		v57 = *((arg1).item1).read
-		v58 = *((arg1).item2).read
-		v2 = false
-	} else {
-		panic("unmatched case")
-	}
-	*((arg1).item0).read = v56
-	*((arg1).item1).read = v57
-	*((arg1).item2).read = v58
-	return v2
-}
-
-func fn2(environment any, arg0 L0, arg1 L5) L0 {
-	var v3 L0
-	var v4 L6
-	var v5 L6
-	var v13 L6
-	var v29 L0
-	var v33 L0
-	var v31 L0
-	var v14 L8
-	var v17 L8
-	var v21 L0
-	var v32 L0
-	var v19 L0
-	v3 = (*(arg1).read).item2
-	v4 = "My guess is " + formatNumber(v3) + " (higher/lower/match): "
-	v5 = hostInput(v4)
-	v13 = v5
-	v14 = fn1(nil, v13, L10{item0: L9{read: &(*(arg1).read).item0}, item1: L9{read: &(*(arg1).read).item1}, item2: L9{read: &(*(arg1).read).item2}})
-	v17 = v14
-	v19 = 0.0
-	if v17 == true {
-		v21 = arg0
-		v19 = v21
-	} else if v17 == false {
-		v29 = arg0
-		v33 = 1.0
-		v31 = (v29 + v33)
-		v32 = fn0(nil, v31, L10{item0: L9{read: &(*(arg1).read).item0}, item1: L9{read: &(*(arg1).read).item1}, item2: L9{read: &(*(arg1).read).item2}})
-		v19 = v32
-	} else {
-		panic("unmatched case")
-	}
-	*(arg1).read = *(arg1).read
-	return v19
-}
-
-func fn3(environment any) L2 {
-	var v3 L1
-	var back6 Backing6
-	var v10 L5
-	var v11 L1
-	var v14 L1
-	var v9 L0
-	var v15 L0
-	var v16 L2
-	v3 = L1{item0: 0.0, item1: 100.0, item2: 50.0}
-	back6 = Backing6{}
-	back6.read0 = v3
-	v10 = L5{read: &back6.read0}
-	v9 = fn2(nil, 0.0, v10)
-	v11 = *(v10).read
-	v14 = v11
-	v15 = v9
-	v16 = L2{item0: v14, item1: v15}
-	return v16
-}
-
-func fn4(environment any, arg0 L11, arg1 L10) L0 {
-	var v1 L11
-	var v10 L0
-	var v13 L0
-	var v14 L0
-	var v31 L0
-	var v16 L0
-	var v23 L0
+func step_scattered(environment any, steps L0, min_max_lastGuess L10) L0 {
+	var lastGuess L0
+	var v3 L6
+	var input L6
+	var input_2 L6
+	var steps_3 L0
 	var v26 L0
-	var v27 L0
-	var v32 L0
-	var v29 L0
-	var v3 L0
-	var v30 L0
-	v1 = arg0
-	v3 = 0.0
-	if (v1).tag == 0 {
-		v10 = *((arg1).item1).read
-		v13 = *((arg1).item2).read
-		v14 = (v10 + v13)
-		v31 = 2.0
-		v16 = (v14 / v31)
-		v3 = v16
-	} else if (v1).tag == 1 {
-		v23 = *((arg1).item2).read
-		v26 = *((arg1).item0).read
-		v27 = (v23 + v26)
-		v32 = 2.0
-		v29 = (v27 / v32)
-		v3 = v29
+	var v24 L0
+	var next L8
+	var next_2 L8
+	var steps_2 L0
+	var v25 L0
+	var v14 L0
+	lastGuess = *((min_max_lastGuess).item2).read
+	v3 = "My guess is " + formatNumber(lastGuess) + " (higher/lower/match): "
+	input = hostInput(v3)
+	input_2 = input
+	next = handleResponse(nil, input_2, L10{item0: L9{read: ((min_max_lastGuess).item0).read}, item1: L9{read: ((min_max_lastGuess).item1).read}, item2: L9{read: ((min_max_lastGuess).item2).read}})
+	next_2 = next
+	v14 = 0.0
+	if next_2 == true {
+		steps_2 = steps
+		v14 = steps_2
+	} else if next_2 == false {
+		steps_3 = steps
+		v26 = 1.0
+		v24 = (steps_3 + v26)
+		v25 = step_scattered(nil, v24, L10{item0: L9{read: ((min_max_lastGuess).item0).read}, item1: L9{read: ((min_max_lastGuess).item1).read}, item2: L9{read: ((min_max_lastGuess).item2).read}})
+		v14 = v25
 	} else {
 		panic("unmatched case")
 	}
-	v30 = laminarRound(v3)
-	*((arg1).item0).read = *((arg1).item0).read
-	*((arg1).item1).read = *((arg1).item1).read
-	*((arg1).item2).read = *((arg1).item2).read
-	return v30
+	*((min_max_lastGuess).item0).read = *((min_max_lastGuess).item0).read
+	*((min_max_lastGuess).item1).read = *((min_max_lastGuess).item1).read
+	*((min_max_lastGuess).item2).read = *((min_max_lastGuess).item2).read
+	return v14
 }
 
-func fn5(environment any) L2 {
+func handleResponse(environment any, response L6, state L10) L8 {
+	var v5 L11
+	var v24 L11
+	var v44 L6
+	var response_2 L6
+	var last L0
+	var v49 L0
+	var last_2 L0
+	var v50 L0
+	var next L0
+	var next_3 L0
+	var next_2 L0
+	var next_2_2 L0
+	var v51 L0
+	var v1 L8
+	response_2 = response
+	v1 = false
+	v49 = 0.0
+	v50 = 0.0
+	v51 = 0.0
+	if response_2 == "higher" {
+		v5 = L11{tag: 0, v0: L7{}}
+		next = nextGuess(nil, v5, L10{item0: L9{read: ((state).item0).read}, item1: L9{read: ((state).item1).read}, item2: L9{read: ((state).item2).read}})
+		last = *((state).item2).read
+		next_3 = next
+		v49 = last
+		v50 = *((state).item1).read
+		v51 = next_3
+		v1 = false
+	} else if response_2 == "lower" {
+		v24 = L11{tag: 1, v1: L7{}}
+		next_2 = nextGuess(nil, v24, L10{item0: L9{read: ((state).item0).read}, item1: L9{read: ((state).item1).read}, item2: L9{read: ((state).item2).read}})
+		last_2 = *((state).item2).read
+		next_2_2 = next_2
+		v49 = *((state).item0).read
+		v50 = last_2
+		v51 = next_2_2
+		v1 = false
+	} else if response_2 == "match" {
+		v49 = *((state).item0).read
+		v50 = *((state).item1).read
+		v51 = *((state).item2).read
+		v1 = true
+	} else if true {
+		v44 = "I'm sorry, I didn't understand that. Please say 'higher', 'lower', or 'match'"
+		hostPrint_L7(v44)
+		v49 = *((state).item0).read
+		v50 = *((state).item1).read
+		v51 = *((state).item2).read
+		v1 = false
+	} else {
+		panic("unmatched case")
+	}
+	*((state).item0).read = v49
+	*((state).item1).read = v50
+	*((state).item2).read = v51
+	return v1
+}
+
+func step_thin(environment any, steps L0, min_max_lastGuess L5) L0 {
+	var lastGuess L0
+	var v3 L6
+	var input L6
+	var input_2 L6
+	var steps_3 L0
+	var v26 L0
+	var v24 L0
+	var next L8
+	var next_2 L8
+	var steps_2 L0
+	var v25 L0
+	var v14 L0
+	lastGuess = (*(min_max_lastGuess).read).item2
+	v3 = "My guess is " + formatNumber(lastGuess) + " (higher/lower/match): "
+	input = hostInput(v3)
+	input_2 = input
+	next = handleResponse(nil, input_2, L10{item0: L9{read: &(*(min_max_lastGuess).read).item0}, item1: L9{read: &(*(min_max_lastGuess).read).item1}, item2: L9{read: &(*(min_max_lastGuess).read).item2}})
+	next_2 = next
+	v14 = 0.0
+	if next_2 == true {
+		steps_2 = steps
+		v14 = steps_2
+	} else if next_2 == false {
+		steps_3 = steps
+		v26 = 1.0
+		v24 = (steps_3 + v26)
+		v25 = step_scattered(nil, v24, L10{item0: L9{read: &(*(min_max_lastGuess).read).item0}, item1: L9{read: &(*(min_max_lastGuess).read).item1}, item2: L9{read: &(*(min_max_lastGuess).read).item2}})
+		v14 = v25
+	} else {
+		panic("unmatched case")
+	}
+	*(min_max_lastGuess).read = *(min_max_lastGuess).read
+	return v14
+}
+
+func game(environment any) L2 {
+	var state L1
+	var back6 Backing6
+	var v8 L5
+	var v9 L1
+	var state_2 L1
+	var steps L0
+	var steps_2 L0
+	var v12 L2
+	state = L1{item0: 0.0, item1: 100.0, item2: 50.0}
+	back6 = Backing6{}
+	back6.read0 = state
+	v8 = L5{read: &back6.read0}
+	steps = step_thin(nil, 0.0, v8)
+	v9 = *(v8).read
+	state_2 = v9
+	steps_2 = steps
+	v12 = L2{item0: state_2, item1: steps_2}
+	return v12
+}
+
+func nextGuess(environment any, direction L11, min_max_lastGuess L10) L0 {
+	var direction_2 L11
+	var max L0
+	var lastGuess L0
+	var v11 L0
+	var v26 L0
+	var v13 L0
+	var lastGuess_2 L0
+	var min L0
+	var v22 L0
+	var v27 L0
+	var v24 L0
+	var v2 L0
+	var v25 L0
+	direction_2 = direction
+	v2 = 0.0
+	if (direction_2).tag == 0 {
+		max = *((min_max_lastGuess).item1).read
+		lastGuess = *((min_max_lastGuess).item2).read
+		v11 = (max + lastGuess)
+		v26 = 2.0
+		v13 = (v11 / v26)
+		v2 = v13
+	} else if (direction_2).tag == 1 {
+		lastGuess_2 = *((min_max_lastGuess).item2).read
+		min = *((min_max_lastGuess).item0).read
+		v22 = (lastGuess_2 + min)
+		v27 = 2.0
+		v24 = (v22 / v27)
+		v2 = v24
+	} else {
+		panic("unmatched case")
+	}
+	v25 = laminarRound(v2)
+	*((min_max_lastGuess).item0).read = *((min_max_lastGuess).item0).read
+	*((min_max_lastGuess).item1).read = *((min_max_lastGuess).item1).read
+	*((min_max_lastGuess).item2).read = *((min_max_lastGuess).item2).read
+	return v25
+}
+
+func entry(environment any) L2 {
 	var v1 L2
-	v1 = fn3(nil)
+	v1 = game(nil)
 	return v1
 }
 
@@ -414,7 +414,7 @@ func printString(s string) {
 }
 
 func main() {
-	var result0 L2 = fn5(nil)
+	var result0 L2 = entry(nil)
 	fmt.Print("\x1e")
 	fmt.Print("[")
 	fmt.Print("[")

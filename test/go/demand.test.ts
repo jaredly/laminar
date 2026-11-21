@@ -27,7 +27,7 @@ it('keeps unused calls as statements without result locals, including unit entri
         'fn effect() {print("before")\n 8}\n{let unused = effect()\n print("after")}',
     );
     expect(code).not.toMatch(/^\s*_ = /m);
-    expect(code).not.toMatch(/\bv\d+ = fn\d+\(/);
+    expect(code).not.toMatch(/\bunused(?:_\d+)? = effect\(/);
     expect(code).not.toMatch(/\bvar result\d+\b/);
     expect(code).toContain('"before"');
     expect(code).toContain('"after"');

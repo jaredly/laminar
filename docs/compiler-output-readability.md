@@ -263,9 +263,9 @@ type-changing and restoration-bearing cases keep their explicit storage path.
 Regenerating the reviewed `ok.lm` produces 431 lines of Go instead of 854, with
 zero blanket blank assignments instead of 250 and one backing struct instead of
 seven. The scripted responses `higher`, `higher`, `lower`, `lower`, `match` still
-produce `[[75,82,79],4]`. Source naming, narrower declaration scopes, general copy
-propagation, declaration reachability and control-flow simplification remain the
-subsequent slices described above.
+produce `[[75,82,79],4]`. Source naming is implemented below. Narrower declaration scopes, general copy
+propagation, declaration reachability and control-flow simplification remain
+subsequent work.
 
 Focused tests in `test/go/demand.test.ts` cover dead pure computations, discarded
 constructor scrutinees, unused effectful calls, unit results, preserved load order,
@@ -280,3 +280,42 @@ Validation: TypeScript and `git diff --check` pass. The regular suite reports
 including 792 accepted Go cases and two expected traps. With `LAMINAR_EXEC=1`,
 all 15 tests in `test/go/demand.test.ts` pass (36 assertions). The execution
 workflow now includes those focused Go tests. No remote CI run was performed.
+
+
+## Items 2 and 3: source names in Go output
+
+Go function names now come from the retained generic IR's definition bindings.
+For `ok.lm`, these are `nextGuess`, `handleResponse`, `game`, `step_thin` and
+`step_scattered`, plus the generated entry adapter. Distinct semantic
+specializations use labels such as `id_number` and `id_bool`. Local closures use
+their binding names, qualified by the enclosing definition, such as `maker_add`.
+Anonymous functions fall back to a closure name rather than pretending to have a
+source declaration.
+
+Parameter names come from binding records and patterns. A destructured parameter
+uses a compound name such as `min_max_lastGuess`; its component reads can retain
+names such as `lastGuess`. Owned locals, captures and direct alias reads use source
+names where the IR records them. Shadowed bindings and different physical storage
+versions receive suffixes, for example `input_2` or `next_2_2`. Unnamed compiler
+intermediates still use generated names. This changes naming, not copy propagation
+or declaration placement.
+
+The allocator reserves Go keywords, required predeclared identifiers, imports,
+runtime helper names, closure parameters and generated symbol families. For
+example, source `func` becomes `func_2`, source `back0` becomes `back0_source`,
+and a source function named `environment` cannot be shadowed by the callable ABI's
+hidden environment parameter. Source declarations receive names before generated
+storage versions. Assignment is deterministic and does not rewrite IR identities,
+specialization keys, layouts or callable signatures.
+
+`test/go/names.test.ts` checks function/parameter/local names, specialization
+suffixes, captured closures, shadowing, escaping, repeated deterministic emission
+and unchanged concrete IR. Its execution cases cover semantic and lens variants,
+closures, keyword/import/runtime collisions and recursive calls. These tests are
+also included in the CI execution gate.
+
+Validation for naming: TypeScript and `git diff --check` pass. The regular suite
+reports 3122 passed, 64 skipped, zero failures and all 39 snapshots passing.
+The Go corpus passes all 1592 tests. With `LAMINAR_EXEC=1`, the naming,
+materialization and string tests pass all 36 tests (96 assertions). Regenerated
+`ok.go` builds and produces the same scripted game result. No remote CI was run.

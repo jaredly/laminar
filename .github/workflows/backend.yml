@@ -18,12 +18,12 @@ jobs:
       - name: Regression tests (reference corpus and emission)
         run: bun test
       # Phase-7 exit gate: strict C11 at -O0 under ASan/UBSan and at -O2, and Go,
-      # over the whole accepted corpus, plus host-export, command-line and Go materialization tests.
+      # over the whole accepted corpus, plus host-export, command-line and Go lowering tests.
       # CI=true makes a missing toolchain a failure rather than a skip.
       - name: Execution gate
         env:
           LAMINAR_EXEC: '1'
-        run: bun test test/corpus.test.ts test/host-exports.test.ts test/compiler.test.ts test/go/demand.test.ts
+        run: bun test test/corpus.test.ts test/host-exports.test.ts test/compiler.test.ts test/go/demand.test.ts test/go/names.test.ts
       - uses: actions/upload-artifact@v4
         if: failure()
         with:
