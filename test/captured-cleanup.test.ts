@@ -71,57 +71,57 @@ it('prints the complete captured callable environment lifecycle', () => {
       #include <stdlib.h>
       #include <math.h>
       #include <stdint.h>
-      typedef struct L0 L0;
-      typedef struct L1 L1;
-      typedef double L2;
-      typedef struct L3 L3;
-      typedef struct L4 L4;
-      typedef L0 (*A0)(void *);
-      typedef L2 (*A1)(void *);
-      struct L0 { unsigned char inhabitant; };
-      struct L1 { unsigned char inhabitant; };
-      struct L3 { L2 capture0; };
-      struct L4 { void *environment; A0 dispose; };
+      #include <stdbool.h>
+      typedef struct Unit Unit;
+      typedef struct Environment_Empty_6db1d02aec Environment_Empty_6db1d02aec;
+      typedef struct Environment_double_8f01c970ea Environment_double_8f01c970ea;
+      typedef struct Callable_Value_d6f73c1cde Callable_Value_d6f73c1cde;
+      typedef Unit (*Func_to_Unit_b3b0e12625)(void *);
+      typedef double (*Func_to_double_f62d6b85c2)(void *);
+      struct Unit { unsigned char inhabitant; };
+      struct Environment_Empty_6db1d02aec { unsigned char inhabitant; };
+      struct Environment_double_8f01c970ea { double capture0; };
+      struct Callable_Value_d6f73c1cde { void *environment; Func_to_Unit_b3b0e12625 dispose; };
       static size_t live_contexts = 0;
       void *allocate_context(size_t size);
       void release_context(void *context);
-      L2 fn0(void *environment);
-      L2 fn1(void *environment);
-      L0 dispose0(void *environment);
+      double cleanup(void *environment);
+      double entry(void *environment);
+      Unit dispose0(void *environment);
       void print_number(double x);
-      L2 fn0(void *environment) {
+      double cleanup(void *environment) {
           (void)environment;
-          L2 v0 = ((L3 *)environment)->capture0;
+          double v0 = ((Environment_double_8f01c970ea *)environment)->capture0;
           (void)v0;
           release_context(environment);
-          L2 v1 = v0;
+          double v1 = v0;
           (void)v1;
           return v1;
       }
-      L2 fn1(void *environment) {
+      double entry(void *environment) {
           (void)environment;
-          L2 v0 = 2;
+          double v0 = 2;
           (void)v0;
-          L2 v2 = v0;
+          double v2 = v0;
           (void)v2;
-          L3 *v4 = allocate_context(sizeof *v4);
+          Environment_double_8f01c970ea *v4 = allocate_context(sizeof *v4);
           v4->capture0 = v2;
-          L4 v3 = (L4){.environment=v4, .dispose=dispose0};
+          Callable_Value_d6f73c1cde v3 = (Callable_Value_d6f73c1cde){.environment=v4, .dispose=dispose0};
           (void)v3;
-          L4 v6 = v3;
+          Callable_Value_d6f73c1cde v6 = v3;
           (void)v6;
-          L2 v7 = fn0((v6).environment);
+          double v7 = cleanup((v6).environment);
           (void)v7;
-          L2 v5 = v7;
+          double v5 = v7;
           (void)v5;
-          L2 v1 = v5;
+          double v1 = v5;
           (void)v1;
           return v1;
       }
-      L0 dispose0(void *environment) {
-          L3 *captured = environment;
+      Unit dispose0(void *environment) {
+          Environment_double_8f01c970ea *captured = environment;
           release_context(captured);
-          return (L0){0};
+          return (Unit){0};
       }
       void *allocate_context(size_t size) {
           void *context = malloc(size);
@@ -153,7 +153,7 @@ it('prints the complete captured callable environment lifecycle', () => {
           }
       }
       int main(void) {
-          L2 result0 = fn1(NULL);
+          double result0 = entry(NULL);
           (void)result0;
           print_number(result0);
           putchar(10);

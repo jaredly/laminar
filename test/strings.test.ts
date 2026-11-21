@@ -16,7 +16,7 @@ it('gives String a primitive physical layout', () => {
     const concrete = compile('"a"');
     expect(concrete.layouts.map((l) => l.kind)).toContain('string');
     const c = emitC(concrete);
-    expect(c).toMatch(/typedef laminar_string \*L\d+;/);
+    expect(c).toMatch(/typedef laminar_string \*String;/);
     expect(c).toContain('string_new("a", 1)');
     expect(c).toContain('print_string(result0);');
     expect(c).toContain('string_drop(result0);');

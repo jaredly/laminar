@@ -6,6 +6,9 @@ import { BackendDiagnostic } from '../backend/target.ts';
 import { identifier, type Statement, type TranslationUnit } from './syntax.ts';
 import { appendPart, cBytes, stringRuntime, stringType } from './strings.ts';
 import { requireImport, usesHost } from '../runtime-imports.ts';
+import { functionNames } from '../backend/names.ts';
+import { layoutNames } from '../backend/type-names.ts';
+import { CNames, cScalars } from './names.ts';
 
 type Completion = (body: Statement[]) => void;
 type Lens = { view: View; finish: Completion };
@@ -33,9 +36,10 @@ export function lowerC(
         .filter((d) => d.startsWith('native/'));
     imports.forEach((d) => requireImport(d, 'c', program.target));
     const layouts = new Map(program.layouts.map((l) => [l.id, l]));
-    const names = new Map(program.layouts.map((l, i) => [l.id, `L${i}`]));
-    const codes = new Map(program.code.map((c, i) => [c.id, `fn${i}`]));
-    const abiNames = new Map(program.abis.map((a, i) => [a.id, `A${i}`]));
+    // Host export symbols are fixed by the caller; every other name avoids them.
+    const packageNames = new CNames((options.exports ?? []).map((e) => e.symbol));
+    const codes = functionNames(program, packageNames);
+    const { names, abis: abiNames } = layoutNames(program, packageNames, cScalars);
     const type = (id: string) => names.get(id)!;
     const layout = (id: string) => layouts.get(id)!;
     // Unit captures carry no information or ownership. Keep the concrete ABI and
@@ -126,6 +130,7 @@ export function lowerC(
         '#include <stdlib.h>',
         '#include <math.h>',
         '#include <stdint.h>',
+        '#include <stdbool.h>',
     ];
     const strings = program.layouts.some((l) => l.kind === 'string');
     const runtime = strings ? stringRuntime() : undefined;
@@ -136,15 +141,9 @@ export function lowerC(
             runtime.declarations[1]!,
         );
     for (const l of program.layouts)
-        declarations.push(
-            l.kind === 'f64'
-                ? `typedef double ${type(l.id)};`
-                : l.kind === 'bool'
-                  ? `typedef _Bool ${type(l.id)};`
-                  : l.kind === 'string'
-                    ? `typedef ${stringType} *${type(l.id)};`
-                    : `typedef struct ${type(l.id)} ${type(l.id)};`,
-        );
+        if (l.kind === 'string') declarations.push(`typedef ${stringType} *${type(l.id)};`);
+        else if (l.kind !== 'f64' && l.kind !== 'bool')
+            declarations.push(`typedef struct ${type(l.id)} ${type(l.id)};`);
     for (const a of program.abis)
         declarations.push(
             `typedef ${type(a.result)} (*${abiNames.get(a.id)})(void *${a.arguments.map((id) => `, ${type(id)}`).join('')});`,

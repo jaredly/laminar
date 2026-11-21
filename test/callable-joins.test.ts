@@ -117,7 +117,7 @@ it('reifies registered natives such as round through runtime joins', () => {
     const c = compileConcreteProgram(p, wasm32Emscripten('test'), [
         { unit: p.units.at(-1)!.id, arguments: [] },
     ]);
-    expect(emitC(c)).toMatch(/\.invoke0=native0[\s\S]*return round_L\d+\(arg0\);/);
+    expect(emitC(c)).toMatch(/\.invoke0=native0[\s\S]*return round_[A-Za-z_0-9]+\(arg0\);/);
 });
 
 it('normalizes differing dynamic lens result shapes', () => {

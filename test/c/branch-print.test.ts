@@ -18,37 +18,36 @@ it('prints complete selected-branch C', () => {
 #include <stdlib.h>
 #include <math.h>
 #include <stdint.h>
-typedef _Bool L0;
-typedef double L1;
-typedef struct L2 L2;
-typedef struct L3 L3;
-typedef struct L4 L4;
-typedef struct L5 L5;
-typedef L3 (*A0)(void *, L1);
-typedef L2 (*A1)(void *);
-typedef L3 (*A2)(void *, L0);
-struct L2 { L0 item0; L1 item1; };
-struct L3 { unsigned char inhabitant; };
-struct L4 { L3 *read; L1 *replacement; A0 restore; void *context; };
-struct L5 { L1 *read; L0 *replacement; A2 restore; void *context; };
+#include <stdbool.h>
+typedef struct Tuple_Bool_Number Tuple_Bool_Number;
+typedef struct Unit Unit;
+typedef struct Lens_Unit_to_double Lens_Unit_to_double;
+typedef struct Lens_double_to_bool Lens_double_to_bool;
+typedef Unit (*Func_double_to_Unit_47414720dc)(void *, double);
+typedef Tuple_Bool_Number (*Func_to_Tuple_Bool_Number_a2de97117d)(void *);
+typedef Unit (*Func_bool_to_Unit_fe0e204ab7)(void *, bool);
+struct Tuple_Bool_Number { bool item0; double item1; };
+struct Unit { unsigned char inhabitant; };
+struct Lens_Unit_to_double { Unit *read; double *replacement; Func_double_to_Unit_47414720dc restore; void *context; };
+struct Lens_double_to_bool { double *read; bool *replacement; Func_bool_to_Unit_fe0e204ab7 restore; void *context; };
 static size_t live_contexts = 0;
 void *allocate_context(size_t size);
 void release_context(void *context);
-L2 fn0(void *environment);
+Tuple_Bool_Number entry(void *environment);
 void print_number(double x);
-L2 fn0(void *environment) {
+Tuple_Bool_Number entry(void *environment) {
     (void)environment;
-    L1 v0 = 1;
+    double v0 = 1;
     (void)v0;
-    L1 v2 = 2;
+    double v2 = 2;
     (void)v2;
-    L0 v4 = 0;
+    bool v4 = 0;
     (void)v4;
     int v6 = 0;
     (void)v6;
-    L1 v7 = (L1){0};
+    double v7 = (double){0};
     (void)v7;
-    L1 v8 = {0};
+    double v8 = {0};
     (void)v8;
     if (v4 == 1) {
         v8 = v2;
@@ -63,9 +62,9 @@ L2 fn0(void *environment) {
     else {
         abort();
     }
-    L0 v14 = 1;
+    bool v14 = 1;
     (void)v14;
-    L1 v15 = v7;
+    double v15 = v7;
     (void)v15;
     if (v6 == 0) {
     }
@@ -74,25 +73,25 @@ L2 fn0(void *environment) {
     else {
         abort();
     }
-    L1 v12 = v15;
+    double v12 = v15;
     (void)v12;
-    L1 v18 = 3;
+    double v18 = 3;
     (void)v18;
-    L3 v19 = (L3){0};
+    Unit v19 = (Unit){0};
     (void)v19;
-    L0 v21 = v14;
+    bool v21 = v14;
     (void)v21;
-    L1 v22 = v18;
+    double v22 = v18;
     (void)v22;
-    L2 v23 = (L2){v21, v22};
+    Tuple_Bool_Number v23 = (Tuple_Bool_Number){v21, v22};
     (void)v23;
-    L2 v20 = v23;
+    Tuple_Bool_Number v20 = v23;
     (void)v20;
-    L2 v16 = v20;
+    Tuple_Bool_Number v16 = v20;
     (void)v16;
-    L2 v3 = v16;
+    Tuple_Bool_Number v3 = v16;
     (void)v3;
-    L2 v1 = v3;
+    Tuple_Bool_Number v1 = v3;
     (void)v1;
     return v1;
 }
@@ -126,7 +125,7 @@ void print_number(double x) {
     }
 }
 int main(void) {
-    L2 result0 = fn0(NULL);
+    Tuple_Bool_Number result0 = entry(NULL);
     (void)result0;
     putchar(91);
     fputs((result0).item0 ? "true" : "false", stdout);
