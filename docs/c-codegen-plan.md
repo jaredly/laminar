@@ -6,9 +6,10 @@ Status: phases 0–6 are complete for the checked subset (phase 6 closed
 executes affine closures, typed indirect calls and representation joins through
 [ABI-keyed, type-determined callable representations](abi-callable-representations.md);
 see [*Phase 6 completion*](#phase-6-completion-2026-11-20). Phase 7 runtime and host
-integration and phase 8 optimization remain broader work. Phase 7 is in progress:
-slices 1 (nominal union data), 2 (strings), 3 (runtime import registry), 4 (compiler command/API), 5 (corpus runner with backend selection) and 6 (host exports) are complete (see
-[*Phase 7 progress*](#phase-7-progress)).
+integration is complete locally: its exit gate passes on this machine, and the CI
+workflow that enforces it has not yet run remotely (see
+[*Phase 7 completion*](#phase-7-completion-2026-11-20)). Phase 8 optimization remains.
+The user guide is [the compiler](compiler.md).
 
 The scoped lens extensions are complete as of `707521c`; see the
 [completion record and follow-up mapping](checker-completeness-handoff.md).
@@ -1509,3 +1510,34 @@ Remote CI was not run.
 
 Remaining phase-7 work: documentation of supported features and artifact
 inspection (work item 8), and the CI exit gate.
+
+### Phase 7 completion (2026-11-20)
+
+Work item 8: [the compiler](compiler.md) documents usage, supported features,
+target assumptions and runtime linking (C standard library and `libm` only; no
+separate runtime library), backend restrictions, parser-only lens features, host
+exports, and how to inspect emitted C, Go, Wasm and concrete IR. `laminar emit
+--concrete` prints the verified concrete IR.
+
+Parser-only lens features: the checker keeps three explicit lens diagnostics
+(`unsupported-lens-pattern`, `unsupported-alias`, `unsupported-lens-case`). Source
+probes did not reach them, and no test does; they are recorded as defensive checks
+in [the compiler](compiler.md#parser-only-lens-features).
+
+Exit gate. Every checker-accepted corpus case compiles and matches the reference
+on native C and Go, or is a listed, tested backend restriction: non-scalar
+interpolation and callable entry results (plus host-export and capability limits).
+These remain restrictions, so this is not a claim of full subset support.
+`.github/workflows/backend.yml` now enforces the gate: TypeScript, the regression
+suite, and with `LAMINAR_EXEC=1` and `CI=true` the full corpus natively (strict
+C11, `-O0` with ASan/UBSan and `-O2`) and on Go, plus host-export and command-line
+builds, where a missing toolchain fails rather than skips. Wasm execution is no
+longer part of the gate (slice 2).
+
+Validation (local, macOS arm64, clang 21, Go 1.26.3, emcc for the Wasm host test):
+TypeScript and `git diff --check` pass. The regular suite reports 3108 passed, 44
+skipped, no failures, 39 snapshots passing (4858 assertions). The CI gate command,
+`CI=1 LAMINAR_EXEC=1 bun test test/corpus.test.ts test/host-exports.test.ts
+test/compiler.test.ts`, passes all 3193 tests (472.76 seconds). The workflow has
+not run remotely, so Linux clang, LeakSanitizer and the pinned Go version on the
+runner are unverified.

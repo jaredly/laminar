@@ -4,11 +4,12 @@
  *
  *   laminar check <file>
  *   laminar emit  <file> [--target native|wasm32|go] [-o <path>]
- *                        [--export <name,...> --header <path>]
+ *                        [--export <name,...> --header <path>] [--concrete]
  *   laminar run   <file> [--target native|wasm32|go|reference] [--optimize] [--sanitize]
  *
  * `emit` writes C (native, wasm32) or Go source without invoking a compiler. With
- * `--export`, it writes a C library exporting those definitions, and its header.
+ * `--export`, it writes a C library exporting those definitions, and its header;
+ * `--concrete` prints the verified concrete IR instead of target source.
  * `run` builds with the target's toolchain and executes; `--target reference` runs
  * the typed-IR evaluator instead. Program output and input pass through; the
  * entry's result is printed last, as a JSON line.
@@ -25,9 +26,10 @@ import {
 import { detectTarget, targetNames, type TargetName } from '../src/backend/host.ts';
 import { BackendDiagnostic } from '../src/backend/target.ts';
 import { executeTypedProgram } from '../src/eval-typed.ts';
+import { printConcreteProgram } from '../src/print-concrete.ts';
 
 const usage = `usage: laminar check <file>
-       laminar emit <file> [--target native|wasm32|go] [-o <path>] [--export <name,...> --header <path>]
+       laminar emit <file> [--target native|wasm32|go] [-o <path>] [--export <name,...> --header <path>] [--concrete]
        laminar run <file> [--target native|wasm32|go|reference] [--optimize] [--sanitize]`;
 
 function parseArgs(argv: string[]) {
@@ -37,6 +39,7 @@ function parseArgs(argv: string[]) {
         output: undefined as string | undefined,
         header: undefined as string | undefined,
         exports: [] as string[],
+        concrete: false,
         optimize: false,
         sanitize: false,
     };
@@ -45,6 +48,7 @@ function parseArgs(argv: string[]) {
         if (arg === '--target') flags.target = rest[++i] ?? '';
         else if (arg === '-o') flags.output = rest[++i];
         else if (arg === '--header') flags.header = rest[++i];
+        else if (arg === '--concrete') flags.concrete = true;
         else if (arg === '--export')
             flags.exports.push(...(rest[++i] ?? '').split(',').filter(Boolean));
         else if (arg === '--optimize') flags.optimize = true;
@@ -105,8 +109,11 @@ async function main(argv: string[]): Promise<number> {
         }
         const compiled = compileSource(source, { target });
         if (args.command === 'emit') {
-            if (args.output) writeFileSync(args.output, compiled.code);
-            else process.stdout.write(compiled.code);
+            const text = args.concrete
+                ? printConcreteProgram(compiled.concrete) + '\n'
+                : compiled.code;
+            if (args.output) writeFileSync(args.output, text);
+            else process.stdout.write(text);
             return 0;
         }
         const built = buildCompiled(compiled, target, args);

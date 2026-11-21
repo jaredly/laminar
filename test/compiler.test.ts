@@ -100,6 +100,7 @@ it('checks, emits and runs from the command line', () => {
     expect(cli(['run', hello, '--target', 'reference'], 'bob\n').stdout).toBe(
         'name? hi bob\n["b","o","b"]\n',
     );
+    expect(cli(['emit', hello, '--concrete']).stdout).toContain('code ');
     const usage = cli(['frob', hello]);
     expect([usage.status, usage.stderr.startsWith('usage: laminar check')]).toEqual([1, true]);
     expect(cli(['run', hello, '--target', 'mips']).stderr).toBe(

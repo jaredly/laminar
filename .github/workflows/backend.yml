@@ -1,4 +1,4 @@
-name: C backend
+name: Compiler backends
 on: [push, pull_request]
 jobs:
   backend:
@@ -8,13 +8,27 @@ jobs:
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version: 1.4.2
+      # The Go backend's execution corpus; clang ships with the runner image.
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.26.x'
       - run: bun install
-      - name: Required tests
-        run: |
-          bun test
-          bunx tsc --noEmit
+      - name: TypeScript
+        run: bunx tsc --noEmit
+      - name: Regression tests (reference corpus and emission)
+        run: bun test
+      # Phase-7 exit gate: strict C11 at -O0 under ASan/UBSan and at -O2, and Go,
+      # over the whole accepted corpus, plus host-export and command-line builds.
+      # CI=true makes a missing toolchain a failure rather than a skip.
+      - name: Execution gate
+        env:
+          LAMINAR_EXEC: '1'
+        run: bun test test/corpus.test.ts test/host-exports.test.ts test/compiler.test.ts
       - uses: actions/upload-artifact@v4
         if: failure()
         with:
           name: backend-failures
-          path: /tmp/laminar-c-*
+          path: |
+            /tmp/laminar-c-*
+            /tmp/laminar-go-*
+            /tmp/laminar-build-*
