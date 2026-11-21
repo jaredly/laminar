@@ -516,3 +516,49 @@ Validation: TypeScript and scoped diff checks pass. The regular suite passes
 3163 tests with all 39 snapshots. The Go corpus passes all 1592 tests, and the
 combined focused Go execution suite passes all 125 tests (216 assertions).
 No remote CI was run.
+
+
+## Item 9: lens staging and aggregate reconstruction
+
+Ordinary homogeneous calls now keep their results in the backing used by the
+call. Logical storage retains live endpoint addresses rather than immediately
+copying out a detached aggregate. A later compatible call can point into that
+backing, and returning a whole value can read the aggregate already stored there.
+For example, two sequential updates of an owned scalar now share one backing cell.
+
+When the requested lens ABI and all live endpoint addresses match an incoming
+parameter, the call passes that parameter directly. The game now emits
+`nextGuess(nil, v4, state)` and forwards the scattered `step` parameter
+directly on recursive calls. Thin-to-scattered calls still construct the required
+pointer tuple, using pointers into the existing aggregate rather than a new copy.
+
+Reuse requires a non-escaping call, no active restoration frontend or staging
+completion, and no separate replacement endpoint anywhere in the lens. The ABI's
+optional `restore` and `context` fields alone do not indicate an active frontend;
+the logical lens's completion facts determine eligibility. Whole-lens forwarding
+also checks endpoint order, identity and layout. Equal values are insufficient.
+
+Partial reuse preserves existing endpoints and stages detached components into
+fresh fields. Logical updates that replace a value lose its old live-address
+fact, so subsequent calls stage the new value. Moves and duplication still
+snapshot demanded data at their original sequence points, keeping earlier copies
+independent of later mutations to reused backing. Declaration placement retains
+the backing's required scope, and Go's GC preserves its lifetime.
+
+Type-changing calls retain separate typed read and replacement fields. Returned
+lenses keep their allocated staging, and manual, selected and other restoration
+frontends retain the existing completion path. No callable ABI or public layout
+changes are required.
+
+`test/go/lens-staging.test.ts` covers whole-lens forwarding, endpoint order,
+sequential calls, whole and scattered tuples, mixed storage, snapshots, moves,
+branch joins, projections, type changes, returned lenses, manual cleanup and
+indirect calls. It is included in the CI execution gate. Regenerated `ok.go` is
+323 lines; its shorter calls and direct backing reads retain the scripted result
+`[[75,82,79],4]`.
+
+Validation: TypeScript and scoped diff checks pass. The regular suite passes
+3169 tests with all 39 snapshots. The Go corpus passes all 1592 tests.
+All 145 focused Go execution tests pass
+(240 assertions), including reordered endpoints and restoration boundaries.
+No remote CI was run.

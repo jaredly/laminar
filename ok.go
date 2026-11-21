@@ -97,19 +97,19 @@ type A12 func(environment any, arg0 L9) L0
 
 var stdin *bufio.Reader
 
-type Backing6 struct {
+type Backing2 struct {
 	read0 L1
 }
 
 func step_scattered(environment any, steps L0, min_max_lastGuess L10) L0 {
 	lastGuess := *((min_max_lastGuess).item2).read
 	input := hostInput("My guess is " + formatNumber(lastGuess) + " (higher/lower/match): ")
-	next := handleResponse(nil, input, L10{item0: L9{read: ((min_max_lastGuess).item0).read}, item1: L9{read: ((min_max_lastGuess).item1).read}, item2: L9{read: ((min_max_lastGuess).item2).read}})
+	next := handleResponse(nil, input, min_max_lastGuess)
 	var v20 L0
 	if next {
 		v20 = steps
 	} else {
-		v20 = step_scattered(nil, (steps + 1.0), L10{item0: L9{read: ((min_max_lastGuess).item0).read}, item1: L9{read: ((min_max_lastGuess).item1).read}, item2: L9{read: ((min_max_lastGuess).item2).read}})
+		v20 = step_scattered(nil, (steps + 1.0), min_max_lastGuess)
 	}
 	return v20
 }
@@ -122,14 +122,14 @@ func handleResponse(environment any, response L6, state L10) L8 {
 	switch response {
 	case "higher":
 		v4 := L11{tag: 0, v0: L7{}}
-		next := nextGuess(nil, v4, L10{item0: L9{read: ((state).item0).read}, item1: L9{read: ((state).item1).read}, item2: L9{read: ((state).item2).read}})
+		next := nextGuess(nil, v4, state)
 		v47 = *((state).item2).read
 		v48 = *((state).item1).read
 		v49 = next
 		v1 = false
 	case "lower":
 		v21 := L11{tag: 1, v1: L7{}}
-		next_2 := nextGuess(nil, v21, L10{item0: L9{read: ((state).item0).read}, item1: L9{read: ((state).item1).read}, item2: L9{read: ((state).item2).read}})
+		next_2 := nextGuess(nil, v21, state)
 		last_2 := *((state).item2).read
 		v47 = *((state).item0).read
 		v48 = last_2
@@ -167,12 +167,11 @@ func step_thin(environment any, steps L0, min_max_lastGuess L5) L0 {
 }
 
 func game(environment any) L2 {
-	var back6 Backing6
-	back6.read0 = L1{item0: 0.0, item1: 100.0, item2: 50.0}
-	v13 := L5{read: &back6.read0}
-	steps := step_thin(nil, 0.0, v13)
-	v14 := *(v13).read
-	return L2{item0: v14, item1: steps}
+	var back2 Backing2
+	back2.read0 = L1{item0: 0.0, item1: 100.0, item2: 50.0}
+	steps := step_thin(nil, 0.0, L5{read: &back2.read0})
+	state_2 := back2.read0
+	return L2{item0: state_2, item1: steps}
 }
 
 func nextGuess(environment any, direction L11, min_max_lastGuess L10) L0 {

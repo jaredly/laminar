@@ -618,6 +618,7 @@ export function lowerGo(program: ConcreteProgram): GoFile {
         };
 
         const parameters: { expression: string; layout: string; view: View }[] = [];
+        const physicalLenses: { expression: string; layout: string; data: Data }[] = [];
         const setup: Statement[] = [];
         const bind = (p: IRPattern, data: Data, body: Statement[] = setup) => {
             if (p.kind === 'bind') {
@@ -646,6 +647,11 @@ export function lowerGo(program: ConcreteProgram): GoFile {
                 const view = incoming(parameterNames[i]!, p.layout);
                 places.set(p.lensPlace, view);
                 parameters.push({ expression: parameterNames[i]!, layout: p.layout, view });
+                physicalLenses.push({
+                    expression: parameterNames[i]!,
+                    layout: p.layout,
+                    data: storage.get(view),
+                });
             } else {
                 bind(p.pattern, { expression: parameterNames[i]!, layout: p.layout });
             }
@@ -802,17 +808,52 @@ export function lowerGo(program: ConcreteProgram): GoFile {
             storage.project(places.get(s.place) ?? unsupported('Unavailable Go place'), s.path);
 
         // Adapt input/output backing at calls.
+        const homogeneous = (id: string): boolean => {
+            const l = layout(id);
+            // restore/context are ABI capacity; finish/stage establish whether
+            // this logical lens actually has an active restoration frontend.
+            if (l.fields.some((f) => f.name === 'replacement')) return false;
+            if (l.fields.some((f) => f.name === 'read')) return true;
+            return l.fields
+                .filter((f) => f.name.startsWith('item'))
+                .every(
+                    (f) => f.kind === 'value' && f.name.startsWith('item') && homogeneous(f.layout),
+                );
+        };
+        const sameStorage = (a: Data, b: Data): boolean => {
+            if (
+                !Array.isArray(a) &&
+                !Array.isArray(b) &&
+                a.layout === b.layout &&
+                a.address &&
+                a.address === b.address
+            )
+                return true;
+            if (!Array.isArray(a) && !Array.isArray(b)) return false;
+            const left = storage.parts(a),
+                right = storage.parts(b);
+            return left.length === right.length && left.every((d, n) => sameStorage(d, right[n]!));
+        };
         const adapt = (
             lens: Lens,
             id: string,
             escapes: boolean,
             body: Statement[],
         ): { expression: string; finish: (body: Statement[]) => void } => {
+            const reusable = !escapes && lens.finish === noFinish && !lens.stage && homogeneous(id);
+            if (reusable) {
+                const data = storage.get(lens.view);
+                const existing = physicalLenses.find(
+                    (p) => p.layout === id && sameStorage(data, p.data),
+                );
+                if (existing) return { expression: existing.expression, finish: noFinish };
+            }
             const index = helperCounter++;
             const name = locals.reference(go`back${index}`);
             locals.mutable(name);
             const fields: string[] = [];
             const init: Statement[] = [];
+            const live = new Map<string, Data>();
 
             const build = (id: string, path: string): string => {
                 const l = layout(id);
@@ -830,11 +871,21 @@ export function lowerGo(program: ConcreteProgram): GoFile {
                         !Array.isArray(d) &&
                         d.layout === input.layout &&
                         d.address
-                    )
+                    ) {
+                        live.set(path, d);
                         return go`${type(id)}{read: ${d.address}}`;
+                    }
                     const n = fields.length;
                     const r = go`read${n}`;
                     const w = output ? go`write${n}` : r;
+                    live.set(path, {
+                        expression: go`${name}.${field(w)}`,
+                        address: go`&${name}.${field(w)}`,
+                        layout:
+                            output?.kind === 'pointer' && output.layout
+                                ? output.layout
+                                : input.layout,
+                    });
                     fields.push(go`${field(r)} ${type(input.layout)}`);
                     const initial = read(d, input.layout);
                     if (initial !== zero(input.layout))
@@ -875,6 +926,26 @@ export function lowerGo(program: ConcreteProgram): GoFile {
                 ),
             );
             body.push(...init);
+
+            if (reusable) {
+                const output = (id: string, path = ''): Data => {
+                    const data = live.get(path);
+                    if (data) return data;
+                    return layout(id)
+                        .fields.filter((f) => f.name.startsWith('item'))
+                        .map((f, n) =>
+                            output(
+                                (f as { layout: string }).layout,
+                                path ? path + '.' + n : String(n),
+                            ),
+                        );
+                };
+                const data = output(id);
+                return {
+                    expression,
+                    finish: () => storage.put(lens.view, data),
+                };
+            }
 
             const arg = declare(id, expression, body);
             const outputs = (expr: string, id: string): Data => {
