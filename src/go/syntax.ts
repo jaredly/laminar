@@ -1,11 +1,13 @@
 /** Syntax-only statement tree for Go. Storage decisions belong to lower.ts. */
+import { Code, type Expr } from './code.ts';
+
 // Nested lists are transparent sequencing points. Lowering can reserve a point
 // and materialize a value there only when an IR consumer actually needs it.
 export type LocalDeclaration = {
     kind: 'local';
     name: string;
     type: string;
-    value?: string;
+    value?: Expr;
     pure?: boolean;
     inline?: boolean;
     load?: boolean;
@@ -13,13 +15,13 @@ export type LocalDeclaration = {
     // when the declaration stays here; hoisted cells still need their reset.
     zeroInitial?: boolean;
 };
-export type LocalAssignment = { kind: 'set'; name: string; value: string };
+export type LocalAssignment = { kind: 'set'; name: string; value: Expr };
 export type Statement =
-    | string
+    | Expr
     | Statement[]
     | LocalDeclaration
     | LocalAssignment
-    | { head: string; body: Statement[] };
+    | { head: Expr; body: Statement[] };
 
 export type GoFunction = {
     signature: string;
@@ -45,7 +47,7 @@ export const printGoStatements = (body: Statement[], depth = 0): string[] => {
     for (const s of body) {
         if (Array.isArray(s)) {
             lines.push(...printGoStatements(s, depth));
-        } else if (typeof s === 'string') {
+        } else if (typeof s === 'string' || s instanceof Code) {
             lines.push('\t'.repeat(depth) + s);
         } else if ('kind' in s) {
             const text =
@@ -56,16 +58,17 @@ export const printGoStatements = (body: Statement[], depth = 0): string[] => {
                       : `${s.name} := ${s.value}`;
             lines.push('\t'.repeat(depth) + text);
         } else {
-            if (s.head.startsWith('case ') || s.head === 'default:') {
-                lines.push('\t'.repeat(Math.max(0, depth - 1)) + s.head);
+            const head = String(s.head);
+            if (head.startsWith('case ') || head === 'default:') {
+                lines.push('\t'.repeat(Math.max(0, depth - 1)) + head);
                 lines.push(...printGoStatements(s.body, depth));
                 continue;
             }
-            const isElse = s.head.startsWith('else');
+            const isElse = head.startsWith('else');
             if (isElse && lines.length > 0 && lines[lines.length - 1]!.trimEnd().endsWith('}')) {
-                lines[lines.length - 1] = `${lines[lines.length - 1]!} ${s.head} {`;
+                lines[lines.length - 1] = `${lines[lines.length - 1]!} ${head} {`;
             } else {
-                lines.push('\t'.repeat(depth) + s.head + ' {');
+                lines.push('\t'.repeat(depth) + head + ' {');
             }
             lines.push(...printGoStatements(s.body, depth + 1));
             lines.push('\t'.repeat(depth) + '}');

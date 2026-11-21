@@ -14,6 +14,7 @@ import { goBytes, goPart, goStringRuntime } from './strings.ts';
 import { requireImport, usesHost } from '../runtime-imports.ts';
 import { GoNames, functionNames, patternSlots, sourceBinding } from './names.ts';
 import { GoLocals } from './locals.ts';
+import { same, type Expr } from './code.ts';
 import { goTypes, fingerprint } from './types.ts';
 import { reachableGo } from './reachable.ts';
 import {
@@ -38,14 +39,16 @@ export function lowerGo(program: ConcreteProgram): GoFile {
     // Local-bearing templates/joins use these helpers; external formatters must
     // supply their input references with format/derive; field names are literals.
     let activeLocals: GoLocals | undefined;
-    const go = (strings: TemplateStringsArray, ...parts: unknown[]) =>
-        activeLocals
-            ? activeLocals.template(strings, ...parts)
-            : strings.reduce((s, piece, i) => s + (i ? String(parts[i - 1]) : '') + piece, '');
-    const joinCode = (parts: readonly unknown[], separator = ',') =>
+    // Package text (declarations, signatures, generated names, diagnostics) is
+    // never optimized; it needs no expression structure.
+    const goText = (strings: TemplateStringsArray, ...parts: unknown[]): string =>
+        strings.reduce((s, piece, i) => s + (i ? String(parts[i - 1]) : '') + piece, '');
+    const go = (strings: TemplateStringsArray, ...parts: unknown[]): Expr =>
+        activeLocals ? activeLocals.template(strings, ...parts) : goText(strings, ...parts);
+    const joinCode = (parts: readonly unknown[], separator = ','): Expr =>
         activeLocals ? activeLocals.join(parts, separator) : parts.join(separator);
-    const stringPart = (kind: string, value: string) => {
-        const text = goPart(kind, value);
+    const stringPart = (kind: string, value: Expr) => {
+        const text = goPart(kind, String(value));
         return activeLocals ? activeLocals.format((v) => goPart(kind, v), value) : text;
     };
     const field = (name: string) =>
@@ -74,7 +77,7 @@ export function lowerGo(program: ConcreteProgram): GoFile {
     const type = (id: string) => names.get(id)!;
     const codeById = new Map(program.code.map((c) => [c.id, c]));
     const usesEnvironment = (id: string) => !!codeById.get(id)!.captures.length;
-    const callCode = (id: string, environment: () => string, args: string[]) =>
+    const callCode = (id: string, environment: () => Expr, args: Expr[]) =>
         go`${codes.get(id)}(${joinCode([...(usesEnvironment(id) ? [environment()] : []), ...args], ', ')})`;
     const wrapperUsesEnvironment = (id: string): boolean => {
         const w = program.wrappers.find((w) => w.id === id)!;
@@ -94,7 +97,7 @@ export function lowerGo(program: ConcreteProgram): GoFile {
             : unsupported('Malformed vector layout');
     };
 
-    const zero = (id: string): string => {
+    const zero = (id: string): Expr => {
         const l = layout(id);
         if (l.kind === 'f64') return '0.0';
         if (l.kind === 'bool') return 'false';
@@ -109,14 +112,14 @@ export function lowerGo(program: ConcreteProgram): GoFile {
             }
             return {
                 expression: () => go`(${code(s.expression)}).${field(f.name)}`,
-                key: go`${s.key ?? s.expression}.${f.name}`,
+                key: goText`${s.key ?? s.expression}.${f.name}`,
                 layout: f.layout,
                 ...(s.address ? { address: go`&(*${s.address}).${field(f.name)}` } : {}),
             };
         }),
     );
 
-    const read = (data: Data, id: string): string => {
+    const read = (data: Data, id: string): Expr => {
         if (layout(id).kind === 'unit') return zero(id);
         if (!Array.isArray(data) && data.layout === id) return code(data.expression);
         const parts = storage.parts(data);
@@ -153,7 +156,7 @@ export function lowerGo(program: ConcreteProgram): GoFile {
         );
     };
 
-    const incoming = (expression: string, id: string): View => {
+    const incoming = (expression: Expr, id: string): View => {
         const l = layout(id);
         const f = l.fields.find((f) => f.name === 'read');
         if (f?.kind === 'pointer' && f.layout)
@@ -169,7 +172,7 @@ export function lowerGo(program: ConcreteProgram): GoFile {
             );
     };
 
-    const flush = (expression: string, id: string, data: Data, body: Statement[]) => {
+    const flush = (expression: Expr, id: string, data: Data, body: Statement[]) => {
         const l = layout(id);
         const f =
             l.fields.find((f) => f.name === 'replacement') ??
@@ -180,7 +183,7 @@ export function lowerGo(program: ConcreteProgram): GoFile {
             if (
                 !Array.isArray(data) &&
                 data.layout === f.layout &&
-                data.address === go`(${expression}).${field(f.name)}`
+                same(data.address, go`(${expression}).${field(f.name)}`)
             )
                 return;
             body.push(go`*(${expression}).${field(f.name)} = ${read(data, f.layout)}`);
@@ -206,7 +209,7 @@ export function lowerGo(program: ConcreteProgram): GoFile {
     // Layout type definitions
     for (const l of program.layouts) {
         if (l.kind === 'unit') {
-            declarations.push(go`type ${type(l.id)} struct{}`);
+            declarations.push(goText`type ${type(l.id)} struct{}`);
         } else if (l.kind === 'record') {
             const fields = l.fields.map((f) => {
                 if (f.kind === 'value') return go`\t${field(f.name)} ${type(f.layout)}`;
@@ -214,12 +217,12 @@ export function lowerGo(program: ConcreteProgram): GoFile {
                     return go`\t${field(f.name)} ${f.layout ? '*' + type(f.layout) : 'any'}`;
                 return go`\t${field(f.name)} ${abiNames.get(f.abi)}`;
             });
-            declarations.push(go`type ${type(l.id)} struct {\n${joinCode(fields, '\n')}\n}`);
+            declarations.push(goText`type ${type(l.id)} struct {\n${joinCode(fields, '\n')}\n}`);
         } else if (l.kind === 'vector') {
-            declarations.push(go`type ${type(l.id)} []${type(element(l.id))}`);
+            declarations.push(goText`type ${type(l.id)} []${type(element(l.id))}`);
         } else if (l.kind === 'union') {
             l.fields.forEach((_, n) =>
-                declarations.push(go`const ${tagValue(l.id, n)} uint32 = ${n}`),
+                declarations.push(goText`const ${tagValue(l.id, n)} uint32 = ${n}`),
             );
             // Tagged union; boxed variants share immutable payloads under Go's GC.
             const variants = l.fields.map((f, n) =>
@@ -230,7 +233,7 @@ export function lowerGo(program: ConcreteProgram): GoFile {
                       : unsupported('Union variant requires data storage'),
             );
             declarations.push(
-                go`type ${type(l.id)} struct {\n\ttag uint32\n${joinCode(variants, '\n')}\n}`,
+                goText`type ${type(l.id)} struct {\n\ttag uint32\n${joinCode(variants, '\n')}\n}`,
             );
         }
     }
@@ -242,7 +245,7 @@ export function lowerGo(program: ConcreteProgram): GoFile {
             ', ',
         );
         declarations.push(
-            go`type ${abiNames.get(a.id)} func(environment any${args ? go`, ${args}` : ''}) ${type(a.result)}`,
+            goText`type ${abiNames.get(a.id)} func(environment any${String(args) ? goText`, ${args}` : ''}) ${type(a.result)}`,
         );
     }
 
@@ -257,7 +260,7 @@ export function lowerGo(program: ConcreteProgram): GoFile {
         const abi = program.abis.find((a) => a.id === w.abi)!;
         const args = abi.arguments.map((id, n) => go`arg${n} ${type(id)}`);
         helpers.push({
-            signature: go`func ${name}(_ any${args.length ? go`, ${joinCode(args, ', ')}` : ''}) ${type(abi.result)}`,
+            signature: goText`func ${name}(_ any${args.length ? goText`, ${joinCode(args, ', ')}` : ''}) ${type(abi.result)}`,
             body: [
                 go`return ${callCode(
                     w.code,
@@ -275,11 +278,11 @@ export function lowerGo(program: ConcreteProgram): GoFile {
     };
     const tagOf = (id: string, name: string): number => {
         const n = layout(id).fields.findIndex((f) => f.name === name);
-        return n < 0 ? unsupported(go`Constructor ${name} is absent from its union layout`) : n;
+        return n < 0 ? unsupported(goText`Constructor ${name} is absent from its union layout`) : n;
     };
     // Boxed payloads are never written in place (binding copies them out and
     // construction allocates), so `dup` and moves may share them.
-    const payload = (expr: string, id: string, n: number): string =>
+    const payload = (expr: Expr, id: string, n: number): Expr =>
         variant(id, n).boxed ? go`(*(${expr}).v${n})` : go`(${expr}).v${n}`;
     const nativeEntries = new Set([
         ...program.callables
@@ -301,7 +304,7 @@ export function lowerGo(program: ConcreteProgram): GoFile {
         if (!cell.boxed) return unsupported('List cells must be boxed');
         const text = (layout(cell.layout).fields[0] as { layout: string }).layout;
         helpers.push({
-            signature: go`func ${name}(value ${type(text)}) ${type(result)}`,
+            signature: goText`func ${name}(value ${type(text)}) ${type(result)}`,
             body: [
                 'starts := []int{}',
                 { head: 'for i := range value', body: ['starts = append(starts, i)'] },
@@ -350,12 +353,12 @@ export function lowerGo(program: ConcreteProgram): GoFile {
      * Copy for affine `dup`. Immutable data may be shared under Go's GC, but vector
      * elements are written in place, so every vector reached gets its own buffer.
      */
-    const copyValue = (expr: string, id: string): string => {
+    const copyValue = (expr: Expr, id: string): Expr => {
         if (!reachesVector(id)) return expr;
         const l = layout(id);
         if (l.kind === 'vector')
             return go`${vectorHelper('dup', id, (name) => ({
-                signature: go`func ${name}(value ${type(id)}) ${type(id)}`,
+                signature: goText`func ${name}(value ${type(id)}) ${type(id)}`,
                 body: [
                     go`out := make(${type(id)}, len(value))`,
                     {
@@ -367,7 +370,7 @@ export function lowerGo(program: ConcreteProgram): GoFile {
             }))}(${expr})`;
         if (l.kind === 'union')
             return go`${vectorHelper('dup', id, (name) => ({
-                signature: go`func ${name}(value ${type(id)}) ${type(id)}`,
+                signature: goText`func ${name}(value ${type(id)}) ${type(id)}`,
                 body: [
                     ...l.fields.flatMap((_, n): Statement[] => {
                         const v = variant(id, n);
@@ -401,7 +404,7 @@ export function lowerGo(program: ConcreteProgram): GoFile {
     };
     const vectorArray = (id: string): string =>
         vectorHelper('array', id, (name) => ({
-            signature: go`func ${name}(length float64, init ${type(element(id))}) ${type(id)}`,
+            signature: goText`func ${name}(length float64, init ${type(element(id))}) ${type(id)}`,
             body: [
                 {
                     head: 'if !(length >= 0) || length != math.Floor(length) || length > float64(math.MaxInt32)',
@@ -424,7 +427,7 @@ export function lowerGo(program: ConcreteProgram): GoFile {
     /** Address of element `index`, trapping unless it is an integer in range. */
     const vectorAt = (id: string): string =>
         vectorHelper('at', id, (name) => ({
-            signature: go`func ${name}(value ${type(id)}, index float64) *${type(element(id))}`,
+            signature: goText`func ${name}(value ${type(id)}, index float64) *${type(element(id))}`,
             body: [
                 {
                     head: 'if !(index >= 0) || index != math.Floor(index) || index >= float64(len(value))',
@@ -435,7 +438,7 @@ export function lowerGo(program: ConcreteProgram): GoFile {
         }));
     const hostHelpers = new Map<string, string>();
     /** Natives that take and return plain data, by registered name. Lens natives are separate. */
-    const simpleNative = (op: string, args: string[], result: string): string | undefined => {
+    const simpleNative = (op: string, args: Expr[], result: string): Expr | undefined => {
         if (['+', '-', '*', '/', '==', '>=', '<='].includes(op))
             return activeLocals
                 ? activeLocals.binary(op, args[0]!, args[1]!)
@@ -469,8 +472,8 @@ export function lowerGo(program: ConcreteProgram): GoFile {
                 ],
             });
         if (op === 'print')
-            return helper(go`hostPrint_${type(result)}`, {
-                signature: go`func hostPrint_${type(result)}(value string) ${type(result)}`,
+            return helper(goText`hostPrint_${type(result)}`, {
+                signature: goText`func hostPrint_${type(result)}(value string) ${type(result)}`,
                 body: ['fmt.Print(value + "\\n")', go`return ${zero(result)}`],
             });
         if (op === 'getInput') {
@@ -499,15 +502,15 @@ export function lowerGo(program: ConcreteProgram): GoFile {
     for (const w of program.wrappers) {
         if (w.kind !== 'native' || !nativeEntries.has(w.id)) continue;
         const abi = program.abis.find((a) => a.id === w.abi)!;
-        const name = go`native${nativeCodes.size}`;
+        const name = goText`native${nativeCodes.size}`;
         nativeCodes.set(w.id, name);
         const args = joinCode(
             abi.arguments.map((id, i) => go`, arg${i} ${type(id)}`),
             '',
         );
-        const signature = go`func ${name}(environment any${args}) ${type(abi.result)}`;
+        const signature = goText`func ${name}(environment any${args}) ${type(abi.result)}`;
         const body: Statement[] = [];
-        let result: string;
+        let result: Expr;
         const op = requireImport(w.definition, 'go').name;
         const simple = simpleNative(
             op,
@@ -540,7 +543,7 @@ export function lowerGo(program: ConcreteProgram): GoFile {
                 }
                 result = go`${type(abi.result)}{read: &arg0.read.item0${output.fields.some((f) => f.name === 'replacement') ? go`, replacement: &arg0.${replacement ? 'replacement' : 'read'}.item0` : ''}}`;
             } else result = 'arg0.item0';
-        } else return unsupported(go`Native import ${w.definition}`);
+        } else return unsupported(goText`Native import ${w.definition}`);
         body.push(go`return ${result}`);
         helpers.push({ signature, body });
     }
@@ -566,7 +569,7 @@ export function lowerGo(program: ConcreteProgram): GoFile {
             abi.arguments.map((id, n) => go`, arg${n} ${type(id)}`),
             '',
         );
-        const signature = go`func ${resultAdapters.get(w.id)}(environment any${args}) ${type(abi.result)}`;
+        const signature = goText`func ${resultAdapters.get(w.id)}(environment any${args}) ${type(abi.result)}`;
 
         {
             const raw = program.abis.find((a) => a.id === source.abi)!;
@@ -636,7 +639,7 @@ export function lowerGo(program: ConcreteProgram): GoFile {
             const parts = slots
                 .map((slot) => sourceBinding(irUnit.bindings, slot)?.name)
                 .filter((n): n is string => !!n);
-            return localNames.source(parts.length ? joinCode(parts, '_') : go`argument${n}`);
+            return localNames.source(parts.length ? parts.join('_') : `argument${n}`);
         });
         parameterNames.forEach((name) => locals.reference(name));
         const sourceSlots = c.parameters.flatMap((p) => patternSlots(p.pattern));
@@ -692,22 +695,22 @@ export function lowerGo(program: ConcreteProgram): GoFile {
         // Known tuple components remain logical data until a consumer needs
         // their representation. A projection need not build discarded siblings.
         const dataValues = new Map<string, Data>();
-        const constants = new Set<string>();
+        const constants = new Set<string>(); // spellings of literal constants
         const lenses = new Map<string, Lens>();
         const places = new Map<string, View>();
         const loans = new Map<string, Lens>();
         let counter = 0;
-        const fresh = () => locals.reference(go`v${counter++}`);
+        const fresh = () => locals.reference(`v${counter++}`);
 
         const declare = (
             id: string,
-            expression: string,
+            expression: Expr,
             body: Statement[],
             name = fresh(),
         ): string => {
             body.push(
                 locals.declaration(name, type(id), expression, {
-                    zeroInitial: expression === zero(id),
+                    zeroInitial: same(expression, zero(id)),
                 }),
             );
             return name;
@@ -717,7 +720,7 @@ export function lowerGo(program: ConcreteProgram): GoFile {
         // delayed load still precedes the calls/restoration that followed it in IR.
         const defer = (
             id: string,
-            compute: (into: Statement[]) => string,
+            compute: (into: Statement[]) => Expr,
             body: Statement[],
             name = fresh(),
             pure = false,
@@ -740,7 +743,7 @@ export function lowerGo(program: ConcreteProgram): GoFile {
                                 pure,
                                 inline,
                                 load,
-                                zeroInitial: expr === zero(id),
+                                zeroInitial: same(expr, zero(id)),
                             }),
                         );
                     }
@@ -821,8 +824,8 @@ export function lowerGo(program: ConcreteProgram): GoFile {
             return result;
         };
 
-        const parameters: { expression: string; layout: string; view: View }[] = [];
-        const physicalLenses: { expression: string; layout: string; data: Data }[] = [];
+        const parameters: { expression: Expr; layout: string; view: View }[] = [];
+        const physicalLenses: { expression: Expr; layout: string; data: Data }[] = [];
         const setup: Statement[] = [];
         const bind = (p: IRPattern, data: Data, body: Statement[] = setup) => {
             if (p.kind === 'bind') {
@@ -870,7 +873,7 @@ export function lowerGo(program: ConcreteProgram): GoFile {
                 fallback: () => requests.forEach((p) => flush(p.expression, p.layout, p.data, at)),
                 destinations: () => {
                     const writes: WriteDestination[] = [];
-                    const value = (pointer: string, id: string, data: Data) => {
+                    const value = (pointer: Expr, id: string, data: Data) => {
                         if (Array.isArray(data))
                             layout(id).fields.forEach((f, n) =>
                                 value(
@@ -881,7 +884,7 @@ export function lowerGo(program: ConcreteProgram): GoFile {
                             );
                         else writes.push({ pointer, layout: id, data });
                     };
-                    const lens = (expression: string, id: string, data: Data) => {
+                    const lens = (expression: Expr, id: string, data: Data) => {
                         const l = layout(id);
                         const f =
                             l.fields.find((f) => f.name === 'replacement') ??
@@ -905,7 +908,7 @@ export function lowerGo(program: ConcreteProgram): GoFile {
             });
         };
 
-        const matches = (p: IRPattern, data: Data, id: string): string => {
+        const matches = (p: IRPattern, data: Data, id: string): Expr => {
             if (p.kind === 'literal')
                 return go`${read(data, id)} == ${layout(id).kind === 'string' && typeof p.value === 'string' ? goBytes(p.value) : literal(p.value, unit.id)}`;
             const fields = layout(id).fields as { layout: string }[];
@@ -936,7 +939,7 @@ export function lowerGo(program: ConcreteProgram): GoFile {
                           );
                 return (
                     joinCode(
-                        checks.filter((c) => c !== 'true'),
+                        checks.filter((c) => !same(c, 'true')),
                         ' && ',
                     ) || 'true'
                 );
@@ -958,7 +961,7 @@ export function lowerGo(program: ConcreteProgram): GoFile {
             return joinCode(
                 [
                     go`(${read(data, id)}).tag == ${tagValue(id, n)}`,
-                    ...items.filter((m) => m !== 'true'),
+                    ...items.filter((m) => !same(m, 'true')),
                 ],
                 ' && ',
             );
@@ -1074,7 +1077,7 @@ export function lowerGo(program: ConcreteProgram): GoFile {
                 !Array.isArray(b) &&
                 a.layout === b.layout &&
                 a.address &&
-                a.address === b.address
+                same(a.address, b.address)
             )
                 return true;
             if (!Array.isArray(a) && !Array.isArray(b)) return false;
@@ -1087,7 +1090,7 @@ export function lowerGo(program: ConcreteProgram): GoFile {
             id: string,
             escapes: boolean,
             body: Statement[],
-        ): { expression: string; finish: (body: Statement[]) => void } => {
+        ): { expression: Expr; finish: (body: Statement[]) => void } => {
             const reusable = !escapes && lens.finish === noFinish && homogeneous(id);
             if (reusable) {
                 const data = storage.get(lens.view);
@@ -1097,13 +1100,13 @@ export function lowerGo(program: ConcreteProgram): GoFile {
                 if (existing) return { expression: existing.expression, finish: noFinish };
             }
             const index = helperCounter++;
-            const name = locals.reference(go`back${index}`);
+            const name = locals.reference(goText`back${index}`);
             locals.mutable(name);
             const fields: string[] = [];
             const init: Statement[] = [];
             const live = new Map<string, Data>();
 
-            const build = (id: string, path: string): string => {
+            const build = (id: string, path: string): Expr => {
                 const l = layout(id);
                 const input = l.fields.find((f) => f.name === 'read');
                 if (input?.kind === 'pointer' && input.layout) {
@@ -1123,8 +1126,8 @@ export function lowerGo(program: ConcreteProgram): GoFile {
                         return go`${type(id)}{read: ${d.address}}`;
                     }
                     const n = fields.length;
-                    const r = go`read${n}`;
-                    const w = output ? go`write${n}` : r;
+                    const r = `read${n}`;
+                    const w = output ? `write${n}` : r;
                     live.set(path, {
                         expression: go`${name}.${field(w)}`,
                         address: go`&${name}.${field(w)}`,
@@ -1133,12 +1136,12 @@ export function lowerGo(program: ConcreteProgram): GoFile {
                                 ? output.layout
                                 : input.layout,
                     });
-                    fields.push(go`${field(r)} ${type(input.layout)}`);
+                    fields.push(goText`${field(r)} ${type(input.layout)}`);
                     const initial = read(d, input.layout);
-                    if (initial !== zero(input.layout))
+                    if (!same(initial, zero(input.layout)))
                         init.push(go`${name}.${field(r)} = ${initial}`);
                     if (output?.kind === 'pointer' && output.layout) {
-                        fields.push(go`${field(w)} ${type(output.layout)}`);
+                        fields.push(goText`${field(w)} ${type(output.layout)}`);
                         // Every adapter creates (or resets) its backing before
                         // filling the read fields. Replacement fields start zero.
                     }
@@ -1168,7 +1171,7 @@ export function lowerGo(program: ConcreteProgram): GoFile {
                 backingType = packageNames.unique(`Backing_${label}_${fingerprint(backingKey)}`);
                 backingTypes.set(backingKey, backingType);
                 declarations.push(
-                    go`type ${backingType} struct {\n${joinCode(
+                    goText`type ${backingType} struct {\n${joinCode(
                         fields.map((f) => go`\t${f}`),
                         '\n',
                     )}\n}`,
@@ -1205,7 +1208,7 @@ export function lowerGo(program: ConcreteProgram): GoFile {
             }
 
             const arg = declare(id, expression, body);
-            const outputs = (expr: string, id: string): Data => {
+            const outputs = (expr: Expr, id: string): Data => {
                 const l = layout(id);
                 const f =
                     l.fields.find((f) => f.name === 'replacement') ??
@@ -1266,7 +1269,7 @@ export function lowerGo(program: ConcreteProgram): GoFile {
             };
         };
 
-        const literal = (v: unknown, id: string): string => {
+        const literal = (v: unknown, id: string): Expr => {
             if (v === null) return zero(id);
             if (typeof v === 'boolean') return v ? 'true' : 'false';
             if (typeof v === 'number') {
@@ -1372,10 +1375,10 @@ export function lowerGo(program: ConcreteProgram): GoFile {
                 switch (i.op) {
                     case 'constant':
                         expr = literal(i.value, id);
-                        constants.add(expr);
+                        constants.add(String(expr));
                         if (i.value !== null)
-                            locals.scalar(
-                                expr,
+                            expr = locals.scalar(
+                                String(expr),
                                 typeof i.value === 'boolean' ? i.value : decodeNumber(i.value),
                             );
                         break;
@@ -1392,7 +1395,7 @@ export function lowerGo(program: ConcreteProgram): GoFile {
                                         ),
                                         goBytes(part.tail),
                                     ]),
-                                ].filter((piece) => piece !== '""'),
+                                ].filter((piece) => !same(piece, '""')),
                                 ' + ',
                             ) || '""';
                         break;
@@ -1430,7 +1433,7 @@ export function lowerGo(program: ConcreteProgram): GoFile {
                                 construction.push(
                                     locals.declaration(
                                         box,
-                                        go`*${type(v.layout)}`,
+                                        goText`*${type(v.layout)}`,
                                         go`new(${type(v.layout)})`,
                                     ),
                                 );
@@ -1524,7 +1527,7 @@ export function lowerGo(program: ConcreteProgram): GoFile {
                             }),
                             '',
                         );
-                        if (!i.captures.length && !entries) {
+                        if (!i.captures.length && !String(entries)) {
                             values.set(i.out.id, zero(id));
                             continue;
                         }
@@ -1571,7 +1574,7 @@ export function lowerGo(program: ConcreteProgram): GoFile {
                                     (at) => {
                                         const args = i.args.map((v) => {
                                             const expr = value(v);
-                                            return constants.has(expr)
+                                            return constants.has(String(expr))
                                                 ? declare(outputLayouts.get(v)!, expr, at)
                                                 : expr;
                                         });
@@ -1580,7 +1583,7 @@ export function lowerGo(program: ConcreteProgram): GoFile {
                                                 requireImport(w.definition, 'go').name,
                                                 args,
                                                 id,
-                                            ) ?? unsupported(go`Native import ${w.definition}`)
+                                            ) ?? unsupported(goText`Native import ${w.definition}`)
                                         );
                                     },
                                     body,
@@ -1591,7 +1594,7 @@ export function lowerGo(program: ConcreteProgram): GoFile {
                             );
                             continue;
                         }
-                        let args: string[] = [];
+                        let args: Expr[] = [];
                         let duplicate: Data | undefined;
                         if (
                             w?.kind === 'native' &&
@@ -1635,7 +1638,7 @@ export function lowerGo(program: ConcreteProgram): GoFile {
                             body.push(
                                 locals.declaration(
                                     at,
-                                    go`*${type(item)}`,
+                                    goText`*${type(item)}`,
                                     go`${vectorAt(vector)}(${read(storage.get(parent.view), vector)}, ${value(i.args[0]!)})`,
                                 ),
                             );
@@ -1649,7 +1652,7 @@ export function lowerGo(program: ConcreteProgram): GoFile {
                                 finish: (body) => {
                                     const d = storage.get(view);
                                     // Restoring the element's own live contents changes nothing.
-                                    if (Array.isArray(d) || d.address !== at)
+                                    if (Array.isArray(d) || !same(d.address, at))
                                         body.push(go`*${at} = ${read(d, item)}`);
                                     parent.finish(body);
                                 },
@@ -1681,7 +1684,7 @@ export function lowerGo(program: ConcreteProgram): GoFile {
                                         : w.kind === 'invoke'
                                           ? codes.get(w.code)
                                           : (resultAdapters.get(w.id) ??
-                                            unsupported(go`Direct ${w.kind} call`));
+                                            unsupported(goText`Direct ${w.kind} call`));
                                 expr =
                                     direct && w.kind === 'invoke'
                                         ? callCode(
@@ -1704,9 +1707,9 @@ export function lowerGo(program: ConcreteProgram): GoFile {
                                         requireImport(w.definition, 'go').name,
                                         args,
                                         id,
-                                    ) ?? unsupported(go`Native import ${w.definition}`);
+                                    ) ?? unsupported(goText`Native import ${w.definition}`);
                             } else {
-                                return unsupported(go`Wrapper kind ${w?.kind}`);
+                                return unsupported(goText`Wrapper kind ${w?.kind}`);
                             }
                         }
                         if (duplicate) {
@@ -1966,7 +1969,7 @@ export function lowerGo(program: ConcreteProgram): GoFile {
                         continue;
                     }
                     default:
-                        return unsupported(go`Unknown operation ${(i as { op: string }).op}`);
+                        return unsupported(goText`Unknown operation ${(i as { op: string }).op}`);
                 }
 
                 values.set(
@@ -2039,7 +2042,7 @@ export function lowerGo(program: ConcreteProgram): GoFile {
         const result = block(c.body, body);
         if (lenses.has(c.body.result)) {
             const lens = lenses.get(c.body.result)!;
-            const build = (view: View, id: string): string => {
+            const build = (view: View, id: string): Expr => {
                 const l = layout(id),
                     input = l.fields.find((f) => f.name === 'read');
                 if (input?.kind === 'pointer' && input.layout) {
@@ -2100,7 +2103,7 @@ export function lowerGo(program: ConcreteProgram): GoFile {
         );
         const placed = locals.place(body);
         activeLocals = undefined;
-        return { signature: sig, body: placed };
+        return { signature: String(sig), body: placed };
     });
 
     // Helper functions
@@ -2133,7 +2136,7 @@ export function lowerGo(program: ConcreteProgram): GoFile {
     const printers = new Set<string>();
     const printerNames = new Map<string, string>();
     let printLoops = 0;
-    const print = (expr: string, id: string, body: Statement[]) => {
+    const print = (expr: Expr, id: string, body: Statement[]) => {
         const l = layout(id);
         if (l.kind === 'f64') {
             body.push(go`printNumber(${expr})`);
@@ -2192,11 +2195,11 @@ export function lowerGo(program: ConcreteProgram): GoFile {
                         ];
                         const arity = (
                             program.semantic.generic.imports.find(
-                                (s) => s.definition === go`constructor/${f.name}`,
+                                (s) => s.definition === `constructor/${f.name}`,
                             )?.type as { args?: unknown[] } | undefined
                         )?.args?.length;
                         if (arity === undefined)
-                            return unsupported(go`Unknown constructor ${f.name}`);
+                            return unsupported(goText`Unknown constructor ${f.name}`);
                         const contents = payload('value', id, n);
                         if (arity === 1) print(contents, v.layout, arm);
                         else
@@ -2214,7 +2217,7 @@ export function lowerGo(program: ConcreteProgram): GoFile {
                             body: arm,
                         });
                     });
-                helpers.push({ signature: go`func ${name}(value ${type(id)})`, body });
+                helpers.push({ signature: goText`func ${name}(value ${type(id)})`, body });
             }
             body.push(go`${name}(${expr})`);
         } else {

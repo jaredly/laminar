@@ -1,25 +1,8 @@
 import type { Statement, LocalDeclaration, LocalAssignment } from './syntax.ts';
+import { Code, children, isExpr, refs, type Expr, type Node } from './code.ts';
 
-class LiteralCode {
-    constructor(readonly text: string) {}
-    toString() {
-        return this.text;
-    }
-}
+type Recipe = Node;
 
-type Recipe =
-    | { kind: 'text'; text: string }
-    | { kind: 'ref'; name: string }
-    | { kind: 'scalar'; value: number | boolean }
-    | { kind: 'binary'; op: string; left: Recipe; right: Recipe }
-    | {
-          kind: 'compose';
-          parts: Recipe[];
-          emit: (parts: string[]) => string;
-          returns?: boolean;
-          aggregate?: Recipe[];
-      }
-    | { kind: 'opaque'; text: string; refs: Set<string> };
 const scalarText = (v: number | boolean): string =>
     typeof v === 'boolean'
         ? String(v)
@@ -61,108 +44,91 @@ type Point = { array: Statement[]; index: number; scope: Scope; order: number };
 /** Preserve expression references while assembling code; never infer them by
  * parsing printed text. Names are unique within a generated function. */
 export class GoLocals {
-    private reads = new Map<string, Set<string>>();
     private references = new Set<string>();
-    private recipes = new Map<string, Recipe>();
     private blocked = new Set<string>();
     private declarations = new Map<string, LocalDeclaration>();
 
-    literal(text: string) {
-        return new LiteralCode(text);
+    private code(node: Node, text: string): Expr {
+        // A spelling identical to a local is that local, as a read. Empty code
+        // stays falsy, so `joinCode(parts) || fallback` still works.
+        if (this.references.has(text) || !text) return text;
+        return new Code(node, text);
+    }
+    literal(text: string): Code {
+        return new Code({ kind: 'text', text }, text);
     }
     reference(name: string): string {
-        this.recipes.set(name, { kind: 'ref', name });
         this.references.add(name);
-        this.reads.set(name, new Set([name]));
         return name;
     }
-    private combine(text: string, parts: readonly unknown[]): string {
-        const refs = new Set<string>();
-        for (const part of parts)
-            if (!(part instanceof LiteralCode))
-                for (const ref of this.reads.get(String(part)) ?? []) refs.add(ref);
-        // Assembling a field/type spelling must not overwrite the intrinsic
-        // reference attached to a local with the same name. Field positions use
-        // LiteralCode explicitly, so that namespace does not count as a read.
-        if (!this.references.has(text)) this.reads.set(text, refs);
-        return text;
-    }
     private recipe(value: unknown): Recipe {
-        if (value instanceof LiteralCode) return { kind: 'text', text: value.text };
+        if (value instanceof Code) return value.node;
         const text = String(value);
-        return (
-            this.recipes.get(text) ?? {
-                kind: 'opaque',
-                text,
-                refs: this.reads.get(text) ?? new Set(),
-            }
-        );
+        // Any other plain string is literal text with no reads.
+        return this.references.has(text)
+            ? { kind: 'ref', name: text }
+            : { kind: 'opaque', text, refs: new Set() };
     }
-    private composed(emit: (parts: string[]) => string, parts: unknown[]): string {
+    private composed(emit: (parts: string[]) => string, parts: unknown[]): Expr {
         const text = emit(parts.map(String));
-        const children = parts.map((p) => this.recipe(p));
-        this.combine(text, parts);
-        if (!this.references.has(text))
-            this.recipes.set(text, { kind: 'compose', parts: children, emit });
-        return text;
+        return this.code({ kind: 'compose', parts: parts.map((p) => this.recipe(p)), emit }, text);
     }
-    derive(text: string, ...parts: unknown[]): string {
-        const result = this.combine(text, parts);
-        if (!this.references.has(text))
-            this.recipes.set(text, { kind: 'opaque', text, refs: this.reads.get(text)! });
-        return result;
+    derive(text: string, ...parts: unknown[]): Expr {
+        const reads = new Set(parts.flatMap((p) => refs(this.recipe(p))));
+        return this.code({ kind: 'opaque', text, refs: reads }, text);
     }
-    format(emit: (...parts: string[]) => string, ...parts: unknown[]): string {
+    format(emit: (...parts: string[]) => string, ...parts: unknown[]): Expr {
         return this.composed((values) => emit(...values), parts);
     }
-    template(strings: TemplateStringsArray, ...parts: unknown[]): string {
+    template(strings: TemplateStringsArray, ...parts: unknown[]): Expr {
         return this.composed(
             (values) => strings.reduce((s, piece, i) => s + (i ? values[i - 1] : '') + piece, ''),
             parts,
         );
     }
-    join(parts: readonly unknown[], separator = ','): string {
+    join(parts: readonly unknown[], separator = ','): Expr {
         return this.composed((values) => values.join(separator), [...parts]);
     }
-    scalar(text: string, value: number | boolean): string {
-        this.recipes.set(text, { kind: 'scalar', value });
-        this.reads.set(text, new Set());
-        return text;
+    scalar(text: string, value: number | boolean): Expr {
+        return this.code({ kind: 'scalar', value }, text);
     }
-    binary(op: string, left: string, right: string): string {
-        const text = this.template`(${left} ${this.literal(op)} ${right})`;
-        this.recipes.set(text, {
-            kind: 'binary',
-            op,
-            left: this.recipe(left),
-            right: this.recipe(right),
-        });
-        return text;
+    binary(op: string, left: Expr, right: Expr): Expr {
+        const text = `(${left} ${op} ${right})`;
+        return this.code(
+            { kind: 'binary', op, left: this.recipe(left), right: this.recipe(right) },
+            text,
+        );
     }
-    aggregate(value: string, items: string[]): string {
+    aggregate(value: Expr, items: Expr[]): Expr {
         const r = this.recipe(value);
-        if (r.kind === 'compose') r.aggregate = items.map((v) => this.recipe(v));
-        return value;
+        if (r.kind !== 'compose') return value;
+        return this.code({ ...r, aggregate: items.map((v) => this.recipe(v)) }, String(value));
     }
-    returnValue(value: string): string {
-        const text = this.template`return ${value}`;
-        const r = this.recipes.get(text)!;
-        if (r.kind === 'compose') r.returns = true;
-        return text;
+    returnValue(value: Expr): Expr {
+        const text = `return ${value}`;
+        return this.code(
+            {
+                kind: 'compose',
+                parts: [this.recipe(value)],
+                emit: ([v]) => `return ${v}`,
+                returns: true,
+            },
+            text,
+        );
     }
     /** Field/pointee mutations not represented by a bare assignment node. */
     mutable(name: string): void {
         this.blocked.add(name);
     }
     /** Preserve the identity of a local cell whose address escapes an expression. */
-    address(name: string): string {
+    address(name: string): Expr {
         this.blocked.add(name);
         return this.template`&${this.reference(name)}`;
     }
     declaration(
         name: string,
         type: string,
-        value?: string,
+        value?: Expr,
         options: { pure?: boolean; inline?: boolean; zeroInitial?: boolean; load?: boolean } = {},
     ): LocalDeclaration {
         this.reference(name);
@@ -171,7 +137,7 @@ export class GoLocals {
         this.declarations.set(name, declaration);
         return declaration;
     }
-    assign(name: string, value: string): LocalAssignment {
+    assign(name: string, value: Expr): LocalAssignment {
         return { kind: 'set', name, value };
     }
 
@@ -186,24 +152,18 @@ export class GoLocals {
                 if (Array.isArray(s)) visit(s, fn);
                 else {
                     fn(s);
-                    if (typeof s !== 'string' && !('kind' in s)) visit(s.body, fn);
+                    if (!isExpr(s) && !('kind' in s)) visit(s.body, fn);
                 }
             }
         };
         visit(body, (s) => {
-            if (typeof s !== 'string' && 'kind' in s) {
+            if (!isExpr(s) && 'kind' in s) {
                 if (s.kind === 'local') defs.set(s.name, s);
                 else blocked.add(s.name);
             }
         });
-        const children = (r: Recipe): Recipe[] =>
-            r.kind === 'compose' ? r.parts : r.kind === 'binary' ? [r.left, r.right] : [];
-        const refs = (r: Recipe): string[] =>
-            r.kind === 'ref'
-                ? [r.name]
-                : r.kind === 'opaque'
-                  ? [...r.refs]
-                  : children(r).flatMap(refs);
+        const contents = (s: Exclude<Statement, Statement[]>): unknown =>
+            isExpr(s) ? s : 'kind' in s ? (s.value ?? '') : s.head;
         // Legacy opaque formatter fragments cannot be rewritten. Their referenced
         // variables remain materialized, rather than guessing at printed text.
         const protect = (r: Recipe) => {
@@ -211,10 +171,7 @@ export class GoLocals {
             children(r).forEach(protect);
         };
         visit(body, (s) => {
-            const r = this.recipe(
-                typeof s === 'string' ? s : 'kind' in s ? (s.value ?? '') : s.head,
-            );
-            protect(r);
+            protect(this.recipe(contents(s)));
         });
         const substitutions = new Map<string, Recipe>();
         for (const d of defs.values()) {
@@ -238,14 +195,9 @@ export class GoLocals {
             else children(r).forEach(count);
         };
         visit(body, (s) => {
-            if (
-                typeof s !== 'string' &&
-                'kind' in s &&
-                s.kind === 'local' &&
-                substitutions.has(s.name)
-            )
+            if (!isExpr(s) && 'kind' in s && s.kind === 'local' && substitutions.has(s.name))
                 return;
-            count(this.recipe(typeof s === 'string' ? s : 'kind' in s ? (s.value ?? '') : s.head));
+            count(this.recipe(contents(s)));
         });
         const removable = (d: LocalDeclaration): boolean =>
             !!d.pure || this.recipe(d.value ?? '').kind === 'scalar';
@@ -303,19 +255,14 @@ export class GoLocals {
                     : r.kind === 'binary'
                       ? `(${text(r.left)} ${r.op} ${text(r.right)})`
                       : r.emit(r.parts.map(text));
-        const render = (s: string): string => {
+        const render = (s: unknown): Expr => {
             const r = normalize(this.recipe(s));
-            const result = text(r);
-            if (!this.references.has(result)) {
-                this.recipes.set(result, r);
-                this.reads.set(result, new Set(refs(r)));
-            }
-            return result;
+            return this.code(r, text(r));
         };
         const rewritten = (array: Statement[]): Statement[] =>
             array.flatMap((s): Statement[] => {
                 if (Array.isArray(s)) return [rewritten(s)];
-                if (typeof s === 'string') return [render(s)];
+                if (isExpr(s)) return [render(s)];
                 if ('kind' in s) {
                     if (s.kind === 'local' && substitutions.has(s.name)) return [];
                     return [
@@ -332,9 +279,7 @@ export class GoLocals {
         const firstPass = rewritten(body);
         const occurrences = new Map<string, number>();
         visit(firstPass, (s) => {
-            const r = this.recipe(
-                typeof s === 'string' ? s : 'kind' in s ? (s.value ?? '') : s.head,
-            );
+            const r = this.recipe(contents(s));
             refs(r).forEach((name) => occurrences.set(name, (occurrences.get(name) ?? 0) + 1));
         });
         const adjacent = (array: Statement[]): Statement[] => {
@@ -344,9 +289,7 @@ export class GoLocals {
                     if (Array.isArray(s)) flatten(s);
                     else
                         flat.push(
-                            typeof s !== 'string' && !('kind' in s)
-                                ? { ...s, body: adjacent(s.body) }
-                                : s,
+                            !isExpr(s) && !('kind' in s) ? { ...s, body: adjacent(s.body) } : s,
                         );
                 });
             flatten(array);
@@ -354,7 +297,7 @@ export class GoLocals {
                 const d = flat[n]!,
                     next = flat[n + 1]!;
                 if (
-                    typeof d === 'string' ||
+                    isExpr(d) ||
                     Array.isArray(d) ||
                     !('kind' in d) ||
                     d.kind !== 'local' ||
@@ -364,7 +307,7 @@ export class GoLocals {
                 )
                     continue;
                 if (
-                    typeof next !== 'string' &&
+                    !isExpr(next) &&
                     !Array.isArray(next) &&
                     'kind' in next &&
                     next.kind === 'set'
@@ -374,7 +317,7 @@ export class GoLocals {
                         flat[n + 1] = { ...next, value: d.value };
                         flat.splice(n--, 1);
                     }
-                } else if (typeof next === 'string') {
+                } else if (isExpr(next)) {
                     const r = this.recipe(next);
                     if (
                         r.kind === 'compose' &&
@@ -392,7 +335,7 @@ export class GoLocals {
             // consisting only of aggregates and stable values. Cross no other
             // statements, calls or control-flow boundaries, and keep load order.
             const tail = flat.at(-1);
-            if (typeof tail === 'string') {
+            if (isExpr(tail)) {
                 const original = this.recipe(tail);
                 const safe = (r: Recipe): boolean =>
                     r.kind === 'ref' ||
@@ -408,7 +351,7 @@ export class GoLocals {
                     while (start > 0) {
                         const d = flat[start - 1]!;
                         if (
-                            typeof d === 'string' ||
+                            isExpr(d) ||
                             Array.isArray(d) ||
                             !('kind' in d) ||
                             d.kind !== 'local' ||
@@ -434,11 +377,8 @@ export class GoLocals {
                                   : r.kind === 'binary'
                                     ? { ...r, left: replace(r.left), right: replace(r.right) }
                                     : r;
-                        const r = replace(original),
-                            code = text(r);
-                        this.recipes.set(code, r);
-                        this.reads.set(code, new Set(refs(r)));
-                        flat.splice(start, loads.length + 1, code);
+                        const r = replace(original);
+                        flat.splice(start, loads.length + 1, this.code(r, text(r)));
                     }
                 }
             }
@@ -448,11 +388,10 @@ export class GoLocals {
         const remaining = new Map<string, LocalDeclaration>();
         const live = new Set<string>();
         visit(result, (s) => {
-            if (typeof s !== 'string' && 'kind' in s && s.kind === 'local')
-                remaining.set(s.name, s);
+            if (!isExpr(s) && 'kind' in s && s.kind === 'local') remaining.set(s.name, s);
             else {
-                roots.push(this.recipe(typeof s === 'string' ? s : 'kind' in s ? s.value : s.head));
-                if (typeof s !== 'string' && 'kind' in s) live.add(s.name);
+                roots.push(this.recipe(contents(s)));
+                if (!isExpr(s) && 'kind' in s) live.add(s.name);
             }
         });
         const retain = (name: string) => {
@@ -471,7 +410,7 @@ export class GoLocals {
         const prune = (array: Statement[]): Statement[] =>
             array.flatMap((s): Statement[] => {
                 if (Array.isArray(s)) return [prune(s)];
-                if (typeof s === 'string') return [s];
+                if (isExpr(s)) return [s];
                 if ('kind' in s) return s.kind === 'local' && !live.has(s.name) ? [] : [s];
                 return [{ ...s, body: prune(s.body) }];
             });
@@ -491,8 +430,8 @@ export class GoLocals {
             points.push(point);
             uses.set(name, points);
         };
-        const read = (text: string, point: Point) => {
-            for (const name of this.reads.get(text) ?? []) use(name, point);
+        const read = (value: unknown, point: Point) => {
+            for (const name of new Set(refs(this.recipe(value)))) use(name, point);
         };
         const conditional = new Map<Scope, Point>();
         const walk = (array: Statement[], scope: Scope) => {
@@ -502,27 +441,29 @@ export class GoLocals {
                     return;
                 }
                 const point = { array, index, scope, order: order++ };
-                if (typeof s === 'string') {
+                if (isExpr(s)) {
                     read(s, point);
-                    if (s.trim()) conditional.delete(scope);
+                    if (String(s).trim()) conditional.delete(scope);
                 } else if ('kind' in s) {
                     conditional.delete(scope);
                     if (s.kind === 'local') definitions.set(s.name, point);
                     else use(s.name, point);
                     if (s.value !== undefined) read(s.value, point);
                 } else {
-                    const isElse = s.head.startsWith('else');
+                    const head = String(s.head);
+                    const isElse = head.startsWith('else');
                     const boundary = isElse ? (conditional.get(scope) ?? point) : point;
-                    if (s.head.startsWith('if ') || s.head.startsWith('if('))
+                    if (head.startsWith('if ') || head.startsWith('if('))
                         conditional.set(scope, point);
                     else if (!isElse) conditional.delete(scope);
                     read(s.head, boundary);
-                    if (s.head.startsWith('switch ')) {
+                    if (head.startsWith('switch ')) {
                         // A switch's clause list is not a declaration scope.
                         // Shared cells belong before the entire switch.
                         for (const clause of s.body) {
                             if (
                                 typeof clause === 'object' &&
+                                !(clause instanceof Code) &&
                                 !Array.isArray(clause) &&
                                 !('kind' in clause)
                             ) {
@@ -577,7 +518,7 @@ export class GoLocals {
                     (name) => `var ${name} ${this.declarations.get(name)!.type}`,
                 );
                 if (Array.isArray(s)) result.push(rewrite(s));
-                else if (typeof s === 'string') result.push(s);
+                else if (isExpr(s)) result.push(s);
                 else if ('kind' in s) {
                     if (s.kind === 'set') result.push(`${s.name} = ${s.value}`);
                     else if (moved.has(s.name)) {

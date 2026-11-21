@@ -126,7 +126,7 @@ it('does not lose a local reference when a generated field has the same spelling
     const field = l.template`read${0}`;
     const body: Statement[] = [
         { head: 'if flag', body: [declaration] },
-        l.template`use(T{${l.literal(field)}: 1.0})`,
+        l.template`use(T{${l.literal(String(field))}: 1.0})`,
         l.template`use(${read0})`,
     ];
     expect(print(l, body)).toStartWith('var read0 float64\nif flag');

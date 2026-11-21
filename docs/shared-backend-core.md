@@ -123,6 +123,42 @@ Replace the text-keyed `Recipe` map with an expression tree in the style of
 `zig/ast.ts`, still printed only as Go. This is a pure refactoring, checked by
 byte-identical `ok.go` and the focused Go tests.
 
+Implementation:
+
+- `src/go/code.ts` defines `Node` (text, ref, scalar, binary, compose, opaque),
+  `Code` (a node plus its Go spelling), `Expr = string | Code`, and `same`
+  for comparing spellings. A plain string in an expression position is either a
+  registered local name (a read) or literal text with no reads. Nothing looks up
+  structure by printed text any more.
+- `GoLocals` builds `Code` values from its template, join, format, binary,
+  scalar and return helpers. `simplify` and `place` read structure from the
+  nodes. The `reads` and `recipes` maps keyed by text are gone.
+- `go/lower.ts` passes `Expr` through its expression helpers (`read`, `zero`,
+  `incoming`, `flush`, `payload`, `declare`, `defer`, call building). Package
+  text that is never optimized (type declarations, signatures, generated names,
+  diagnostics) uses a separate `goText` tag that returns a plain string.
+- Places that compared expressions by `===`, or relied on an empty string being
+  falsy, now compare spellings with `same`. The text-equality checks on storage
+  addresses in `lower.ts` and `writeback.ts` were among them. Empty code is
+  still `''`, so `joinCode(parts) || fallback` keeps working.
+
+Migration check: a temporary fallback resolved unknown strings by their text and
+could be switched off. Corpus output was identical with and without it, so it
+was deleted.
+
+Output: `ok.go` is byte-identical. Of the 769 corpus and sample programs, 764
+are byte-identical. The other 5 now inline a literal constant they previously
+kept in a local, for example `if 4.0 == 4.0` instead of `v1 := 4.0` followed by
+`if v1 == 4.0`, and `seek((k - 1.0), v19)`. The old code keyed a scalar's
+recipe by its spelling. A later, unrelated expression with the same spelling,
+such as a one-argument call's argument list `1.0`, overwrote that recipe, so
+inlining depended on unrelated code. Constant folding still prevents Go constant
+arithmetic between two literals.
+
+Still Go-specific in `GoLocals`, for step 3: scalar spellings (`math.NaN()`),
+declaration printing (`var x T`, `x := v`), and control-flow structure
+recovered from `head` text (`if`, `else`, `switch`).
+
 ### Step 3: move the tree and passes into `src/backend/imperative/`
 
 Replace `{ head: string; body }` statements with structured `if`, `switch` and

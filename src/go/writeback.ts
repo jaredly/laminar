@@ -1,5 +1,6 @@
 import type { Data } from './storage.ts';
 import type { Statement } from './syntax.ts';
+import { isExpr, same, type Expr } from './code.ts';
 
 export type JoinGroup = { boundary: Statement[] };
 export type PendingJoin = {
@@ -7,7 +8,7 @@ export type PendingJoin = {
     inputs: () => { data: Data; body: Statement[] }[];
     materialized: boolean;
 };
-export type WriteDestination = { pointer: string; layout: string; data: Data };
+export type WriteDestination = { pointer: Expr; layout: string; data: Data };
 export type Writeback = {
     body: Statement[];
     destinations: () => WriteDestination[];
@@ -21,8 +22,8 @@ export function lowerWritebacks(
     body: Statement[],
     sites: Writeback[],
     pending: WeakMap<object, PendingJoin>,
-    read: (data: Data, layout: string) => string,
-    assign: (pointers: string[], values: string[]) => Statement,
+    read: (data: Data, layout: string) => Expr,
+    assign: (pointers: Expr[], values: Expr[]) => Statement,
 ) {
     const columns = new Map(sites.map((s) => [s, s.destinations()]));
     const groups = new Map<Statement[], JoinGroup>();
@@ -51,9 +52,9 @@ export function lowerWritebacks(
                         walk(s);
                         const group = groups.get(s);
                         if (group) previous = group;
-                    } else if (typeof s !== 'string' || s.trim()) {
+                    } else if (!isExpr(s) || String(s).trim()) {
                         previous = undefined;
-                        if (typeof s !== 'string' && !('kind' in s)) scope(s.body);
+                        if (!isExpr(s) && !('kind' in s)) scope(s.body);
                     }
                 }
             };
@@ -63,7 +64,7 @@ export function lowerWritebacks(
         return result;
     };
     const unresolved = new Set(sites);
-    const prepared = new Map<Writeback, { body: Statement[]; values: string[] }[]>();
+    const prepared = new Map<Writeback, { body: Statement[]; values: Expr[] }[]>();
     while (unresolved.size) {
         const before = predecessors();
         const plans = new Map<Writeback, { body: Statement[]; data: Data[] }[]>();
@@ -79,7 +80,7 @@ export function lowerWritebacks(
                         ? j.group !== first.group || j.materialized
                         : Array.isArray(writes[n]!.data) ||
                           writes[n]!.data.layout !== writes[n]!.layout ||
-                          writes[n]!.data.address !== writes[n]!.pointer,
+                          !same(writes[n]!.data.address, writes[n]!.pointer),
                 )
             )
                 continue;
@@ -126,7 +127,7 @@ export function lowerWritebacks(
                                 (d, n) =>
                                     !Array.isArray(d) &&
                                     d.layout === writes[n]!.layout &&
-                                    d.address === writes[n]!.pointer,
+                                    same(d.address, writes[n]!.pointer),
                             ),
                     )
                     .map((arm) => ({
