@@ -650,3 +650,48 @@ signatures and calls, and its scripted result remains `[[75,82,79],4]`.
 Validation: TypeScript and scoped diff checks pass. The regular suite passes
 3180 tests with all 39 snapshots. The Go corpus passes all 1592 tests, and all
 176 focused Go execution tests pass (304 assertions). No remote CI was run.
+
+
+## Follow-up: write-back destinations for storage joins
+
+Ordinary branch storage joins now retain their per-arm values and sequencing
+boundary without immediately demanding phi locals. A subsequent read still uses
+the existing phi materialization path. Function-exit write-back can instead
+consume a terminal join by appending stores directly to its arms.
+
+`handleResponse` no longer declares `v47`, `v48` or `v49`, or copies them into
+`state` after the switch. Its higher arm ends with a parallel write-back:
+
+```go
+*state.item0.read, *state.item1.read, *state.item2.read = last, *state.item1.read, next
+```
+
+Parallel assignment evaluates every right-hand side before writing destinations,
+preserving swaps and potentially aliased endpoints. Mixed updates conservatively
+retain unchanged endpoints in that assignment; an entirely unchanged arm needs
+no stores. Source snapshots such as `last` retain their original sequencing points.
+The Boolean result still uses its independent join.
+
+Promotion requires one shared branch boundary immediately before the write-back
+in the same lexical scope, with no intervening statements or materialized reads
+of the participating joins. Thin aggregate destinations are decomposed into their
+typed field destinations; scattered lenses use their existing pointers. Other
+cases, including selected-lens joins and write-back in an outer returned
+restoration closure, retain the ordinary phi path.
+
+Planning runs after result materialization. Fallback reads are resolved first,
+and adjacency and read demand are rechecked before committing any promoted stores.
+This matters because a fallback can fill an earlier deferred load anchor or
+materialize another join. A cleanup body retained on multiple edges must satisfy
+the terminal-boundary check at every occurrence. The optimization uses statement
+structure and storage metadata, without rewriting printed Go.
+
+`test/go/writeback.test.ts` covers thin and scattered writes, unchanged arms,
+swaps, aliased destinations, reads and effect barriers, nested branches,
+type-changing destinations, cleanup reads and late fallback materialization. It
+is included in the CI execution gate. Regenerated `ok.go` is 252 lines and retains
+the scripted result `[[75,82,79],4]`.
+
+Validation: TypeScript and scoped diff checks pass. The regular suite passes
+3184 tests with all 39 snapshots. The Go corpus passes all 1592 tests, and all
+193 focused Go execution tests pass (324 assertions). No remote CI was run.

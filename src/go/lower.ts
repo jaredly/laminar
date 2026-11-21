@@ -16,6 +16,13 @@ import { GoNames, functionNames, patternSlots, sourceBinding } from './names.ts'
 import { GoLocals } from './locals.ts';
 import { goTypes, fingerprint } from './types.ts';
 import { reachableGo } from './reachable.ts';
+import {
+    lowerWritebacks,
+    type JoinGroup,
+    type PendingJoin,
+    type Writeback,
+    type WriteDestination,
+} from './writeback.ts';
 
 type Completion = (body: Statement[]) => void;
 type Lens = { view: View; finish: Completion; stage?: (body: Statement[]) => Completion };
@@ -557,6 +564,8 @@ export function lowerGo(program: ConcreteProgram): GoFile {
             return localNames.unique(base);
         };
         const values = new Map<string, Expression>();
+        const pendingJoins = new WeakMap<object, PendingJoin>();
+        const writebacks: Writeback[] = [];
         // Known tuple components remain logical data until a consumer needs
         // their representation. A projection need not build discarded siblings.
         const dataValues = new Map<string, Data>();
@@ -620,6 +629,7 @@ export function lowerGo(program: ConcreteProgram): GoFile {
                 | { data: Data; body: Statement[] }[]
                 | (() => { data: Data; body: Statement[] }[]),
             body: Statement[],
+            group?: JoinGroup,
         ): Data => {
             const items = () => (typeof inputs === 'function' ? inputs() : inputs);
             const l = layout(id);
@@ -637,12 +647,15 @@ export function lowerGo(program: ConcreteProgram): GoFile {
                                 body: input.body,
                             })),
                         body,
+                        group,
                     ),
                 );
             const name = fresh();
-            return defer(
+            const pending = { group, inputs: items, materialized: false };
+            const result = defer(
                 id,
                 () => {
+                    pending.materialized = true;
                     items().forEach((input) =>
                         input.body.push(locals.assign(name, read(input.data, id))),
                     );
@@ -651,6 +664,8 @@ export function lowerGo(program: ConcreteProgram): GoFile {
                 body,
                 name,
             );
+            if (group) pendingJoins.set(result, pending as PendingJoin);
+            return result;
         };
 
         const snapshot = (data: Data, id: string, body: Statement[], name = fresh()): Data => {
@@ -713,8 +728,49 @@ export function lowerGo(program: ConcreteProgram): GoFile {
             }
         });
 
-        const flushParameters = (body: Statement[]) =>
-            parameters.forEach((p) => flush(p.expression, p.layout, storage.get(p.view), body));
+        const flushParameters = (body: Statement[]) => {
+            const requests = parameters.map((p) => ({ ...p, data: storage.get(p.view) }));
+            const at: Statement[] = [];
+            body.push(at);
+            writebacks.push({
+                body: at,
+                fallback: () => requests.forEach((p) => flush(p.expression, p.layout, p.data, at)),
+                destinations: () => {
+                    const writes: WriteDestination[] = [];
+                    const value = (pointer: string, id: string, data: Data) => {
+                        if (Array.isArray(data))
+                            layout(id).fields.forEach((f, n) =>
+                                value(
+                                    go`&(*${pointer}).${field(f.name)}`,
+                                    (f as { layout: string }).layout,
+                                    data[n]!,
+                                ),
+                            );
+                        else writes.push({ pointer, layout: id, data });
+                    };
+                    const lens = (expression: string, id: string, data: Data) => {
+                        const l = layout(id);
+                        const f =
+                            l.fields.find((f) => f.name === 'replacement') ??
+                            l.fields.find((f) => f.name === 'read');
+                        if (f?.kind === 'pointer' && f.layout)
+                            value(go`(${expression}).${field(f.name)}`, f.layout, data);
+                        else
+                            l.fields
+                                .filter((f) => f.name.startsWith('item'))
+                                .forEach((f, n) =>
+                                    lens(
+                                        go`(${expression}).${field(f.name)}`,
+                                        (f as { layout: string }).layout,
+                                        storage.parts(data)[n]!,
+                                    ),
+                                );
+                    };
+                    requests.forEach((p) => lens(p.expression, p.layout, p.data));
+                    return writes;
+                },
+            });
+        };
 
         const matches = (p: IRPattern, data: Data, id: string): string => {
             if (p.kind === 'literal')
@@ -1715,6 +1771,7 @@ export function lowerGo(program: ConcreteProgram): GoFile {
                             continue;
                         }
                         const resultInputs: { data: Data; body: Statement[] }[] = [];
+                        const group: JoinGroup = { boundary: [] };
                         const resultData = phi(id, resultInputs, body);
                         const before = storage.snapshot();
                         const arms = i.cases.map((arm, armIndex) => {
@@ -1750,6 +1807,7 @@ export function lowerGo(program: ConcreteProgram): GoFile {
                                     first.layout,
                                     arms.map((arm, n) => ({ data: data[n]!, body: arm.nested })),
                                     body,
+                                    group,
                                 );
                             }
                             const parts = data.map((d) => storage.parts(d));
@@ -1772,12 +1830,13 @@ export function lowerGo(program: ConcreteProgram): GoFile {
                                     previous,
                                 )),
                         );
+                        body.push(group.boundary);
                         emitMatch(
                             i.cases.map((arm) => arm.pattern),
                             datum(i.value),
                             outputLayouts.get(i.value)!,
                             arms,
-                            body,
+                            group.boundary,
                         );
                         dataValues.set(i.out.id, resultData);
                         values.set(i.out.id, () => read(resultData, id));
@@ -1912,6 +1971,17 @@ export function lowerGo(program: ConcreteProgram): GoFile {
             ],
             ', ',
         )}) ${type(c.body.layout)}`;
+        lowerWritebacks(
+            body,
+            writebacks,
+            pendingJoins,
+            read,
+            (pointers, values) =>
+                go`${joinCode(
+                    pointers.map((p) => go`*${p}`),
+                    ', ',
+                )} = ${joinCode(values, ', ')}`,
+        );
         const placed = locals.place(body);
         activeLocals = undefined;
         return { signature: sig, body: placed };

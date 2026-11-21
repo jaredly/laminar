@@ -76,40 +76,25 @@ func step_scattered(steps float64, min_max_lastGuess Scattered_Lens_float64_Lens
 
 func handleResponse(response string, state Scattered_Lens_float64_Lens_float64_Lens_float64) bool {
 	var v1 bool
-	var v47 float64
-	var v48 float64
-	var v49 float64
 	switch response {
 	case "higher":
 		v4 := Direction{tag: Direction_Higher, v0: Unit{}}
 		next := nextGuess(v4, state)
-		v47 = *((state).item2).read
-		v48 = *((state).item1).read
-		v49 = next
+		last := *((state).item2).read
 		v1 = false
+		*((state).item0).read, *((state).item1).read, *((state).item2).read = last, *((state).item1).read, next
 	case "lower":
 		v21 := Direction{tag: Direction_Lower, v1: Unit{}}
 		next_2 := nextGuess(v21, state)
 		last_2 := *((state).item2).read
-		v47 = *((state).item0).read
-		v48 = last_2
-		v49 = next_2
 		v1 = false
+		*((state).item0).read, *((state).item1).read, *((state).item2).read = *((state).item0).read, last_2, next_2
 	case "match":
-		v47 = *((state).item0).read
-		v48 = *((state).item1).read
-		v49 = *((state).item2).read
 		v1 = true
 	default:
 		hostPrint_Unit("I'm sorry, I didn't understand that. Please say 'higher', 'lower', or 'match'")
-		v47 = *((state).item0).read
-		v48 = *((state).item1).read
-		v49 = *((state).item2).read
 		v1 = false
 	}
-	*((state).item0).read = v47
-	*((state).item1).read = v48
-	*((state).item2).read = v49
 	return v1
 }
 
