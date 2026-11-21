@@ -17,9 +17,10 @@ const runtime =
 // The discarded list parameter needs the generated drop_List_Number helper.
 const helper = 'fn drop_List_Number(l) {3}\ndrop_List_Number([4, 5, 6])';
 
-it('preserves source function names and descriptive layout names', () => {
+it('preserves source function, parameter and layout names', () => {
     const { code } = compile(scalar);
-    expect(code).toMatch(/^\S+ nextGuess\(void \*environment, double arg0\)/m);
+    expect(code).toMatch(/^\S+ nextGuess\(void \*environment, double lastGuess\)/m);
+    expect(code).not.toMatch(/\barg\d+\b/);
     expect(code).not.toMatch(/\bfn\d+\(/);
     expect(code).not.toMatch(/\bL\d+\b/);
     expect(code).toContain('struct Tuple_Number_Number { double item0; double item1; };');

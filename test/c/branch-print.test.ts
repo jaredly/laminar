@@ -52,8 +52,8 @@ Tuple_Bool_Number entry(void *environment) {
     else {
         abort();
     }
-    double v15 = v7;
-    (void)v15;
+    double v14 = v7;
+    (void)v14;
     if (v6 == 0) {
     }
     else if (v6 == 1) {
@@ -61,8 +61,8 @@ Tuple_Bool_Number entry(void *environment) {
     else {
         abort();
     }
-    Unit v19 = {0};
-    (void)v19;
+    Unit v18 = {0};
+    (void)v18;
     return (Tuple_Bool_Number){1, 3};
 }
 void *allocate_context(size_t size) {

@@ -12,7 +12,8 @@ import {
 } from './syntax.ts';
 import { goBytes, goPart, goStringRuntime } from './strings.ts';
 import { requireImport, usesHost } from '../runtime-imports.ts';
-import { GoNames, functionNames, patternSlots, sourceBinding } from './names.ts';
+import { GoNames, functionNames } from './names.ts';
+import { localNames, takesName } from '../backend/local-names.ts';
 import { GoLocals } from './locals.ts';
 import { same, type Expr } from '../backend/imperative/code.ts';
 import { goTypes, fingerprint } from './types.ts';
@@ -609,86 +610,23 @@ export function lowerGo(program: ConcreteProgram): GoFile {
     const functions: GoFunction[] = program.code.map((c) => {
         const locals = new GoLocals();
         activeLocals = locals;
-        const irUnit = program.semantic.program.units.find((u) => u.id === c.unit)!;
-        const localNames = new GoNames([
-            ...codes.values(),
-            ...callableEntries.values(),
-            ...names.values(),
-            ...abiNames.values(),
-            ...[...tags.values()].flat(),
-            'environment',
-            'replacement',
-            'focus',
-            'write',
-            'result',
-        ]);
-        const bindingNames = new Map<string, string>();
-        const bindingName = (slot: SlotRef): string | undefined => {
-            const binding = sourceBinding(irUnit.bindings, slot);
-            if (!binding) return undefined;
-            if (!bindingNames.has(binding.id))
-                bindingNames.set(binding.id, localNames.source(binding.name));
-            return bindingNames.get(binding.id)!;
-        };
-        const parameterNames = c.parameters.map((p, n) => {
-            const slots = patternSlots(p.pattern);
-            if (slots.length === 1 && !slots[0]!.path.length) {
-                const name = bindingName(slots[0]!);
-                if (name) return name;
-            }
-            const parts = slots
-                .map((slot) => sourceBinding(irUnit.bindings, slot)?.name)
-                .filter((n): n is string => !!n);
-            return localNames.source(parts.length ? parts.join('_') : `argument${n}`);
-        });
-        parameterNames.forEach((name) => locals.reference(name));
-        const sourceSlots = c.parameters.flatMap((p) => patternSlots(p.pattern));
-        sourceSlots.push(...c.captures.map((p) => ({ place: p.place, path: [] })));
-        const producers = new Map<string, ConcreteBlock['instructions'][number]>();
-        const localBindings: Extract<ConcreteBlock['instructions'][number], { op: 'bind' }>[] = [];
-        const scanNames = (b: ConcreteBlock) => {
-            for (const i of b.instructions) {
-                if ('out' in i) producers.set(i.out.id, i);
-                if (i.op === 'bind') {
-                    localBindings.push(i);
-                    sourceSlots.push(...patternSlots(i.pattern));
-                }
-                if (i.op === 'move' || i.op === 'acquire') sourceSlots.push(i.slot);
-                if (i.op === 'scope') scanNames(i.body);
-                if (i.op === 'aslens') scanNames(i.cleanup);
-                if (i.op === 'case') i.cases.forEach((a) => scanNames(a.body));
-            }
-        };
-        scanNames(c.body);
-        const referencedBindings = new Set(
-            sourceSlots.map((slot) => sourceBinding(irUnit.bindings, slot)?.id),
+        const { parameterNames, bindingName, versionName, hint } = localNames(
+            program,
+            c,
+            new GoNames([
+                ...codes.values(),
+                ...callableEntries.values(),
+                ...names.values(),
+                ...abiNames.values(),
+                ...[...tags.values()].flat(),
+                'environment',
+                'replacement',
+                'focus',
+                'write',
+                'result',
+            ]),
         );
-        // Give source declarations their names before allocating any versions or
-        // temporaries, including destructured parameters and captured bindings.
-        for (const binding of irUnit.bindings)
-            if (referencedBindings.has(binding.id) && !bindingNames.has(binding.id))
-                bindingNames.set(binding.id, localNames.source(binding.name));
-        const preferred = new Map<string, string>();
-        const prefer = (id: string, name: string) => {
-            const i = producers.get(id);
-            if (i?.op === 'scope') prefer(i.body.result, name);
-            else if (!preferred.has(id)) preferred.set(id, name);
-        };
-        for (const i of localBindings) {
-            for (const slot of patternSlots(i.pattern)) bindingName(slot);
-            if (i.pattern.kind === 'bind') {
-                const name = bindingName(i.pattern.slot);
-                if (name) prefer(i.value, name);
-            }
-        }
-        const namedVersions = new Set(parameterNames);
-        const versionName = (base: string) => {
-            if (!namedVersions.has(base)) {
-                namedVersions.add(base);
-                return base;
-            }
-            return localNames.unique(base);
-        };
+        parameterNames.forEach((name) => locals.reference(name));
         const values = new Map<string, Expression>();
         const pendingJoins = new WeakMap<object, PendingJoin>();
         const writebacks: Writeback[] = [];
@@ -1354,23 +1292,8 @@ export function lowerGo(program: ConcreteProgram): GoFile {
                 }
 
                 const id = i.out.layout;
-                const hinted =
-                    preferred.get(i.out.id) ??
-                    (i.op === 'move'
-                        ? bindingName(i.slot)
-                        : i.op === 'invoke' &&
-                            program.wrappers.find((w) => w.id === i.wrapper)?.kind === 'native'
-                          ? (() => {
-                                const slot = lensSlots.get(i.args[0]!);
-                                return slot && bindingName(slot);
-                            })()
-                          : undefined);
-                const name =
-                    hinted &&
-                    i.op !== 'constant' &&
-                    !(i.op === 'make-callable' && !i.captures.length)
-                        ? versionName(hinted)
-                        : fresh();
+                const hinted = hint(i, (id) => lensSlots.get(id));
+                const name = hinted && takesName(i) ? versionName(hinted) : fresh();
                 let expr!: Expression;
                 let constructed: { name: string; payload: Data } | undefined;
 

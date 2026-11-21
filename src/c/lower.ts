@@ -16,6 +16,7 @@ import { isLocal, isScope, mapScope } from '../backend/imperative/statements.ts'
 import { appendPart, cBytes, stringRuntime, stringType } from './strings.ts';
 import { requireImport, usesHost } from '../runtime-imports.ts';
 import { functionNames } from '../backend/names.ts';
+import { localNames, takesName } from '../backend/local-names.ts';
 import { layoutNames } from '../backend/type-names.ts';
 import { CNames, cScalars } from './names.ts';
 
@@ -26,6 +27,10 @@ const unsupported = (message: string): never => {
     throw new BackendDiagnostic('unsupported-c', message);
 };
 /** Resolve logical places and homogeneous restoration before printing any C. */
+/** A string literal, or an identifier that can name a frame local: not a member
+ * after `.` or `->`. Source names may coincide with field names such as `read`,
+ * and with words inside literals; callers leave literal matches unchanged. */
+const frameIdentifier = /"(?:[^"\\]|\\.)*"|(?<![.>A-Za-z_0-9])[A-Za-z_][A-Za-z_0-9]*\b/g;
 /** -Wall -Werror rejects unread locals and parameters; mark exactly those as used. */
 function suppressUnused(
     locals: Locals,
@@ -66,6 +71,10 @@ export function lowerC(
     const packageNames = new CNames((options.exports ?? []).map((e) => e.symbol));
     const codes = functionNames(program, packageNames);
     const { names, abis: abiNames } = layoutNames(program, packageNames, cScalars);
+    // Each body's parameter and local names avoid every package name it can call.
+    const naming = new Map(
+        program.code.map((c) => [c.id, localNames(program, c, new CNames(packageNames.taken))]),
+    );
     const type = (id: string) => names.get(id)!;
     const layout = (id: string) => layouts.get(id)!;
     // Unit captures carry no information or ownership. Keep the concrete ABI and
@@ -95,7 +104,11 @@ export function lowerC(
         layout(s.layout).fields.map((f, i) => {
             if (f.kind !== 'value' || !f.name.startsWith('item'))
                 return unsupported('Non-data projection');
-            return { expression: field(s.expression, i), layout: f.layout };
+            return {
+                expression: field(s.expression, i),
+                layout: f.layout,
+                ...(s.address ? { address: cc`&(*${s.address}).item${i}` } : {}),
+            };
         }),
     );
     const read = (data: Data, id: string): Expr => {
@@ -137,7 +150,11 @@ export function lowerC(
         const l = layout(id),
             f = l.fields.find((f) => f.name === 'read');
         if (f?.kind === 'pointer' && f.layout)
-            return storage.own({ expression: cc`*(${expression}).read`, layout: f.layout });
+            return storage.own({
+                expression: cc`*(${expression}).read`,
+                layout: f.layout,
+                address: cc`(${expression}).read`,
+            });
         return l.fields
             .filter((f) => f.name.startsWith('item'))
             .map((f) =>
@@ -153,6 +170,14 @@ export function lowerC(
                 l.fields.find((f) => f.name === 'replacement') ??
                 l.fields.find((f) => f.name === 'read');
         if (f?.kind === 'pointer' && f.layout) {
+            // An address denotes a live read of that exact storage, not a
+            // snapshot. Restoring it to itself cannot change the owner.
+            if (
+                !Array.isArray(data) &&
+                data.layout === f.layout &&
+                same(data.address, cc`(${expression}).${f.name}`)
+            )
+                return;
             body.push(cc`*(${expression}).${f.name} = ${read(data, f.layout)};`);
             return;
         }
@@ -215,7 +240,7 @@ export function lowerC(
             );
         }
     const signature = (c: ConcreteProgram['code'][number]) =>
-        cText`${type(c.body.layout)} ${codes.get(c.id)}(void *environment${c.parameters.map((p, i) => `, ${type(p.layout)} arg${i}`).join('')})`;
+        cText`${type(c.body.layout)} ${codes.get(c.id)}(void *environment${c.parameters.map((p, i) => `, ${type(p.layout)} ${naming.get(c.id)!.parameterNames[i]}`).join('')})`;
     declarations.push(
         'static size_t live_contexts = 0;',
         'void *allocate_context(size_t size);',
@@ -715,12 +740,14 @@ export function lowerC(
         activeLocals = locals;
         let counter = 0;
         const fresh = () => locals.reference(`v${counter++}`);
-        const parameterNames = ['environment', ...c.parameters.map((_, i) => `arg${i}`)];
+        const { parameterNames: sources, bindingName, versionName, hint } = naming.get(c.id)!;
+        const parameterNames = ['environment', ...sources];
         parameterNames.forEach((n) => locals.reference(n));
         const variables: Variable[] = c.parameters.map((p, i) => ({
-            name: `arg${i}`,
+            name: sources[i]!,
             type: type(p.layout),
         }));
+        const lensSlots = new Map<string, SlotRef>();
         const declare = (
             id: string,
             expression: Expr,
@@ -773,10 +800,10 @@ export function lowerC(
         const parameters: { expression: string; layout: string; view: View }[] = [];
         c.parameters.forEach((p, i) => {
             if (p.lensPlace) {
-                const view = incoming(`arg${i}`, p.layout);
+                const view = incoming(sources[i]!, p.layout);
                 places.set(p.lensPlace, view);
-                parameters.push({ expression: `arg${i}`, layout: p.layout, view });
-            } else bind(p.pattern, { expression: cc`arg${i}`, layout: p.layout });
+                parameters.push({ expression: sources[i]!, layout: p.layout, view });
+            } else bind(p.pattern, { expression: sources[i]!, layout: p.layout });
         });
         const flushParameters = (body: Statement[]) =>
             parameters.forEach((p) => flush(p.expression, p.layout, storage.get(p.view), body));
@@ -982,8 +1009,9 @@ export function lowerC(
                     loans.set(i.loan, lens);
                     continue;
                 }
+                const hinted = hint(i, (id) => lensSlots.get(id));
                 const id = i.out.layout,
-                    name = fresh();
+                    name = hinted && takesName(i) ? locals.reference(versionName(hinted)) : fresh();
                 let expr!: Expr;
                 // Only side-effect-free values that read no memory may be inlined or pruned.
                 let pure = false;
@@ -1113,6 +1141,7 @@ export function lowerC(
                         storage.put(ref(i.slot), { expression: zero(unit.id), layout: unit.id });
                         break;
                     case 'acquire':
+                        lensSlots.set(i.out.id, i.slot);
                         lenses.set(i.out.id, { view: ref(i.slot), finish: noFinish });
                         continue;
                     case 'lens-tuple':
@@ -1415,11 +1444,18 @@ export function lowerC(
                                 cc`${vectorAt(vector)}(${read(storage.get(parent.view), vector)}, ${value(i.args[0]!)})`,
                                 body,
                             );
-                            const view = storage.own({ expression: cc`(*${at})`, layout: item });
+                            const view = storage.own({
+                                expression: cc`(*${at})`,
+                                layout: item,
+                                address: at,
+                            });
                             lenses.set(i.out.id, {
                                 view,
                                 finish: (body) => {
-                                    body.push(cc`*${at} = ${read(storage.get(view), item)};`);
+                                    // Restoring the element's own live contents changes nothing.
+                                    const d = storage.get(view);
+                                    if (Array.isArray(d) || !same(d.address, at))
+                                        body.push(cc`*${at} = ${read(d, item)};`);
                                     parent.finish(body);
                                 },
                             });
@@ -1514,12 +1550,14 @@ export function lowerC(
         index(c.body);
         const body: Statement[] = [...setup];
         c.captures.forEach((capture, i) => {
+            const base = bindingName({ place: capture.place, path: [] });
             const name = declare(
                 capture.layout,
                 erasedEnvironment(c.captures)
                     ? zero(capture.layout)
                     : cc`((${type(c.environment)} *)${'environment'})->capture${i}`,
                 body,
+                base ? locals.reference(versionName(base)) : fresh(),
             );
             places.set(capture.place, storage.own({ expression: name, layout: capture.layout }));
         });
@@ -1571,13 +1609,13 @@ export function lowerC(
             // here; the frame's locals it mentions are copied into its context.
             const lines = printStatements(suppressUnused(locals, cleanup, []));
             for (const line of lines)
-                for (const name of line.matchAll(/\b[A-Za-z_][A-Za-z_0-9]*\b/g))
-                    references.add(name[0]);
+                for (const [name] of line.matchAll(frameIdentifier))
+                    if (!name.startsWith('"')) references.add(name);
             const captured = candidates.filter((v) => references.has(v.name));
             contextFields.unshift(...captured.map((v) => `${v.type} ${v.name};`));
             const names = new Set(captured.map((v) => v.name));
             const rewrite = (s: string) =>
-                s.replace(/\b[A-Za-z_][A-Za-z_0-9]*\b/g, (n) => (names.has(n) ? `ctx->${n}` : n));
+                s.replace(frameIdentifier, (n) => (names.has(n) ? `ctx->${n}` : n));
             declarations.push(
                 cText`typedef struct { ${contextFields.join(' ') || 'unsigned char inhabitant;'} } ${context};`,
             );

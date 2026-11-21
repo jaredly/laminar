@@ -247,12 +247,45 @@ Still C-specific or text-based:
 
 - The returned-lens restoration helper is printed, then has its captured frame
   locals rewritten to `ctx->name` by regex. Its body is not simplified.
-- Self-assignments such as `*(x).read = *(x).read;` remain. Go's redundant-write
-  removal (item 8) is lowering-side and has not been ported.
 - C still materializes every instruction eagerly. Go's demand-driven
   materialization and partial aggregates (items 1, 6, 9) live in `go/lower.ts`.
-- Parameter and local source names (`arg0`, `v12`) and named union tags are still
-  numbered.
+- Union tags are still numeric.
+
+### Follow-up: source names and redundant writes in C
+
+`src/backend/local-names.ts` now holds the per-function naming that Go used
+(readability item 3): parameter names from binding records (`min_max_lastGuess`
+for a destructured parameter), the source name each bound value prefers, the
+binding a move or native lens operation reads, and versioned suffixes for later
+storage versions (`lastGuess_2`). `hint` returns the raw binding and `takesName`
+excludes constants and capture-free callables, which Go keeps distinct for its
+inlining decision. Go uses it unchanged; its output is byte-identical.
+
+C computes each body's names before declaring signatures, from a `CNames`
+namespace that reserves every package name the body can call. A local declared
+after a call to `inc` becomes `inc_2`. Parameters, bound values, moved
+bindings, native lens reads and captures use these names; compiler temporaries
+remain `vN`.
+
+Source names can coincide with C field names (`read`, `tag`) or words in string
+literals. The restoration helper's capture rewriting therefore skips members after
+`.` or `->` and whole string literals. Before this, every frame local was `vN` or
+`argN`, so plain identifier matching was enough.
+
+Redundant restoration (item 8): C storage leaves carry Go's live-address fact.
+`incoming` marks a parameter lens's endpoint reads with their pointers,
+projections extend that address, and vector element lenses mark `*at`.
+`flush` and element restoration skip a write whose data is still a live read of
+the destination with the same layout. Snapshots carry no address, so swaps,
+updates and type-changing replacements are still written. `ok.lm`'s
+`nextGuess` no longer ends with three self-assignments, and now returns
+`round_double(v1)` directly.
+
+`test/c/locals.test.ts` covers source-named and unread locals, omitted and
+retained restoration writes (unchanged, partially updated and swapped scattered
+lenses), captured names matching C fields, and locals that would shadow a
+called function. Each execution case runs natively against the reference
+interpreter.
 
 Validation: Go output is byte-identical to step 3. The native corpus passes all
 1549 cases under ASan/UBSan at `-O0` and at `-O2`. Exact-text C expectations were
