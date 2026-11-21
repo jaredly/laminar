@@ -1,6 +1,6 @@
 
 fn fillRange(n, end, ~arr) {
-    match dup(~n) >= dup(~end) {
+    match (dup(~n) >= dup(~end)) {
         true -> ()
         false -> {
             arr[dup(~n)] = dup(~n)

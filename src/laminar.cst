@@ -125,6 +125,7 @@ Linear {
     ["["] -> ({type: "constructor", name: "nil",args:[], loc: node.loc})
     ["[," ...items:Linear] -> econs([...items, ({type: "constructor", name: "nil",args:[], loc: node.loc})], node.loc)
     ["[," ...items:Linear ["" "..." ...tail:*Linear]] -> econs([...items, tail], node.loc)
+    ["[:" ["," ...items:Linear]] -> ({type: "vector", items, loc:node.loc})
 
     /* Would be nice to have an Ann() fn to allow reducing these cases by half */
     [" " "fn" [":" ["" name:id ["(," ...args:FnArg]] ann:Type] body:Term] -> ({type: "fn", name: name.text, args, ann, body,loc:node.loc})
@@ -146,7 +147,7 @@ Linear {
 
 LinearOps {
     // ["" "." attr:id] -> ({type: "attr", attr: attr.text})
-    // ["" ["[" index:Linear]] -> ({type: "index", index})
+    ["" ["[" index:Linear]] -> ({type: "index", index})
     ["" ["(," ...args:Term]] -> ({type: "apply", args})
     ["" ["("]] -> ({type: "apply", args: []})
 }
@@ -155,7 +156,7 @@ function handleSuffixes(head: Linear, suffixes: LinearOps[]): Linear {
     return suffixes.reduce((head, suffix): Linear => {
         switch (suffix.type) {
             // case "attr": return {type: "attr", target: head, attr: suffix.attr,loc:head.loc}
-            // case "index": return {type: "index", index: suffix.index, target: head,loc:head.loc}
+            case "index": return {type: "index", index: suffix.index, target: head,loc:head.loc}
             case "apply": return {type: "apply", fn: head, args: suffix.args,loc:head.loc}
         }
         throw new Error("bad suffix" + JSON.stringify(suffix))

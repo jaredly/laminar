@@ -2,14 +2,14 @@ import { Checker } from '../src/check.ts';
 import { Solver, TypeDiagnostic } from '../src/types.ts';
 import { closeSync, existsSync, openSync, readFileSync, readSync, writeFileSync } from 'fs';
 import { Decl, FileItem, Linear } from '../src/ast.ts';
-import { findDeepest, showDeepest, showFailure } from '../parser-generator/debugFailures.ts';
+import { findDeepest, showDeepest, showFailure } from '../src/debugFailures.ts';
 import { lexpr, linearToExpr, Scope } from '../src/decompose.ts';
 import { Ctx, dupAt, evalExpr, Frame, LocError, Mem, Pointer } from '../src/eval.ts';
 import { Expr } from '../src/expr.ts';
-import * as g from '../parser-generator/grammar-lexer.ts';
+import * as g from '../src/grammar-lexer.ts';
 import { grammar as ir } from '../src/ir-parser.ts';
 import { grammar } from '../src/laminar-parser.ts';
-import { defaultConfig, locLines, readLines, stringify } from '../parser-generator/lexer.ts';
+import { defaultConfig, locLines, readLines, stringify } from '../src/lexer.ts';
 
 /**
  * What does this do?

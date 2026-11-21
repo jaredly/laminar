@@ -57,8 +57,7 @@ export type LensCase = { pat: Pat; body: Lens };
 
 export type LinearOps =
     // | { type: 'attr'; attr: string }
-    // | { type: 'index'; index: Linear }
-    { type: 'apply'; args: Term[] };
+    { type: 'index'; index: Term } | { type: 'apply'; args: Term[] };
 
 export type Op = { type: 'op'; text: string; loc: Loc };
 export type FnArg = { pat: Pat; typ?: Type };
@@ -86,8 +85,10 @@ export type Linear =
           body: Term;
           loc: Loc;
       }
+    | { type: 'index'; target: Linear; index: Term; loc: Loc }
     | { type: 'apply'; fn: Linear; args: Term[]; isLens?: boolean; loc: Loc }
     | { type: 'tuple'; items: Linear[]; loc: Loc }
+    | { type: 'vector'; items: Linear[]; loc: Loc }
     | { type: 'constructor'; name: string; args: Linear[]; loc: Loc }
     | { type: 'case'; value: Term; cases: { pat: Pat; body: Linear }[]; loc: Loc };
 
@@ -154,6 +155,7 @@ export const free = (expr: Term | Lens): string[] => {
         }
         // case "additive_product":
         //     throw new Error("not uet");
+        case 'vector':
         case 'tuple':
             return expr.items.flatMap(free);
         // case "ifs":
