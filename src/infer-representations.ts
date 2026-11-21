@@ -19,6 +19,12 @@ import { verifyTypedProgram } from './verify-ir.ts';
 import { memberKey, representationKey } from './representation-key.ts';
 import { escapes } from './callable-escape.ts';
 import { verifyRepresentations } from './verify-representations.ts';
+import {
+    canonicalCallLensTopology,
+    canonicalLensPolicies,
+    lensSpecializationSelectors,
+    specializeLensCall,
+} from './lens-specialization.ts';
 
 export type ValueRepresentation =
     | { kind: 'data'; layout: LayoutId }
@@ -64,6 +70,8 @@ export type EntryRepresentationArgument =
     | { kind: 'lens'; topology: LensTopology };
 export type RepresentationAnalysis = {
     schemaVersion: 1;
+    /** Absent/empty uses canonical call ABIs; selectors opt into legal topology variants. */
+    specializeLenses?: readonly string[];
     layoutDefinitions: readonly NominalLayoutDefinition[];
     roots: { unit: string; result: ValueRepresentation }[];
     variants: RepresentationVariant[];
@@ -96,6 +104,7 @@ type State = {
 export function inferRepresentations(
     input: SpecializedProgram,
     options: {
+        specializeLenses?: readonly string[];
         maxVariants?: number;
         maxWorkItems?: number;
         layoutDefinitions?: readonly NominalLayoutDefinition[];
@@ -109,6 +118,17 @@ export function inferRepresentations(
     // Operate on a detached verified snapshot, including when the caller deserialized it.
     const source = freezeTree(structuredClone(input));
     verifyTypedProgram(source.program);
+    const selected = options.specializeLenses ?? [];
+    const validSelectors = lensSpecializationSelectors(source);
+    if (
+        !Array.isArray(selected) ||
+        selected.some((n) => typeof n !== 'string' || !validSelectors.has(n))
+    )
+        throw new BackendDiagnostic(
+            'invalid-lens-specialization',
+            'Lens specialization selectors must name source definitions, function IDs, or *',
+        );
+    const specializeLenses = [...new Set(selected)].sort();
     const limit = options.maxVariants ?? 256;
     if (!Number.isSafeInteger(limit) || limit < 1)
         throw new BackendDiagnostic(
@@ -247,6 +267,55 @@ export function inferRepresentations(
         return reps.tuple(
             r.items.map((child, i) => retype(child, read.items[i]!, write.items[i]!)),
         );
+    };
+    const canonicalPolicies = canonicalLensPolicies(source);
+    const canonicalArgument = (
+        v: ValueRepresentation,
+        type: string,
+        argument: number,
+        preserve = false,
+    ): ValueRepresentation => {
+        if (v.kind !== 'lens') return v;
+        const topology = (id: LensRepId): LensTopology => {
+            const r = reps.get(id);
+            return r.kind === 'thin'
+                ? { kind: 'thin' }
+                : { kind: 'tuple', items: r.items.map(topology) };
+        };
+        const s = reps.get(v.shape),
+            read = layouts.get(s.read).type,
+            write = layouts.get(s.replacement).type;
+        const build = (
+            topology: LensTopology,
+            read: SemanticType,
+            write: SemanticType,
+        ): LensRepId =>
+            topology.kind === 'thin'
+                ? reps.thin(read, write)
+                : reps.tuple(
+                      topology.items.map((t, n) =>
+                          build(
+                              t,
+                              (read as Extract<SemanticType, { tag: 'tuple' }>).items[n]!,
+                              (write as Extract<SemanticType, { tag: 'tuple' }>).items[n]!,
+                          ),
+                      ),
+                  );
+        return {
+            kind: 'lens',
+            shape: build(
+                canonicalCallLensTopology(
+                    canonicalPolicies,
+                    type,
+                    argument,
+                    read,
+                    write,
+                    preserve ? topology(v.shape) : undefined,
+                ),
+                read,
+                write,
+            ),
+        };
     };
     const nativeCall = (
         name: string,
@@ -455,7 +524,7 @@ export function inferRepresentations(
                 case 'call': {
                     s.knownPlaces.clear();
                     const value = get(s, i.callee),
-                        args = i.args.map((id) => get(s, id));
+                        incoming = i.args.map((id) => get(s, id));
                     if (value.kind !== 'callable') return fail('Call operand is not callable');
                     depend(`members:${value.type}`);
                     const options = membersOf(value.type);
@@ -464,6 +533,17 @@ export function inferRepresentations(
                         (options.length === 1 && options[0]!.kind === 'native'
                             ? options[0]
                             : undefined);
+                    const args =
+                        direct?.kind === 'native'
+                            ? incoming
+                            : incoming.map((a, n) =>
+                                  canonicalArgument(
+                                      a,
+                                      value.type,
+                                      n,
+                                      specializeLensCall(source, specializeLenses, direct),
+                                  ),
+                              );
                     const called = invoke(
                         direct ?? { kind: 'dispatch', type: value.type, options },
                         args,
@@ -606,6 +686,7 @@ export function inferRepresentations(
     finalExports.forEach((e) => visit(e.variant));
     const analysis: RepresentationAnalysis = {
         schemaVersion: 1,
+        ...(specializeLenses.length ? { specializeLenses } : {}),
         layoutDefinitions: layouts.definitions,
         roots,
         entries,

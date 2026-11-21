@@ -8,6 +8,7 @@ export type LocalDeclaration = {
     value?: string;
     pure?: boolean;
     inline?: boolean;
+    load?: boolean;
     // The initializer equals this type's default value. It may be omitted only
     // when the declaration stays here; hoisted cells still need their reset.
     zeroInitial?: boolean;

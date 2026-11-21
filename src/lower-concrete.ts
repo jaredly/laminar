@@ -579,6 +579,7 @@ export function compileConcreteProgram(
     target: TargetConfig,
     roots: readonly (SpecializationRoot & { parameters?: EntryRepresentationArgument[] })[],
     options: {
+        specializeLenses?: readonly string[];
         maxInstances?: number;
         maxVariants?: number;
         maxWorkItems?: number;
@@ -589,6 +590,7 @@ export function compileConcreteProgram(
         maxInstances: options.maxInstances,
     });
     const analysis = inferRepresentations(semantic, {
+        specializeLenses: options.specializeLenses,
         maxVariants: options.maxVariants,
         maxWorkItems: options.maxWorkItems,
         layoutDefinitions: options.layoutDefinitions,

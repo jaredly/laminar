@@ -117,16 +117,12 @@ export function lowerGo(program: ConcreteProgram): GoFile {
         if (!fields.length || parts.length !== fields.length) {
             return unsupported('Mismatched storage read');
         }
-        return go`${type(id)}{${joinCode(
-            parts.map(
-                (d, i) =>
-                    go`${field(fields[i]!.name)}: ${read(
-                        d,
-                        (fields[i] as { layout: string }).layout,
-                    )}`,
-            ),
+        const items = parts.map((d, i) => read(d, (fields[i] as { layout: string }).layout));
+        const value = go`${type(id)}{${joinCode(
+            items.map((item, i) => go`${field(fields[i]!.name)}: ${item}`),
             ', ',
         )}}`;
+        return activeLocals ? activeLocals.aggregate(value, items) : value;
     };
 
     const endpoint = (id: string, which: 'read' | 'replacement'): string => {
@@ -597,6 +593,7 @@ export function lowerGo(program: ConcreteProgram): GoFile {
             name = fresh(),
             pure = false,
             inline = false,
+            load = false,
         ): Exclude<Data, Data[]> => {
             locals.reference(name);
             const at: Statement[] = [];
@@ -613,6 +610,7 @@ export function lowerGo(program: ConcreteProgram): GoFile {
                             locals.declaration(name, type(id), expr, {
                                 pure,
                                 inline,
+                                load,
                                 zeroInitial: expr === zero(id),
                             }),
                         );
@@ -672,7 +670,15 @@ export function lowerGo(program: ConcreteProgram): GoFile {
                 return data.map((d, n) =>
                     snapshot(d, (layout(id).fields[n] as { layout: string }).layout, body),
                 );
-            const result = defer(id, () => read(data, id), body, name);
+            const result = defer(
+                id,
+                () => read(data, id),
+                body,
+                name,
+                false,
+                false,
+                !!data.address,
+            );
             if (data.constructed) {
                 const variantLayout = variant(id, tagOf(id, data.constructed.name)).layout;
                 return {
@@ -1313,10 +1319,14 @@ export function lowerGo(program: ConcreteProgram): GoFile {
                             if (!l.fields.length) {
                                 return go`${type(id)}{}`;
                             } else {
-                                const fieldInits = i.items.map(
-                                    (it, idx) => go`${field(l.fields[idx]!.name)}: ${value(it)}`,
+                                const items = i.items.map(value);
+                                const fieldInits = items.map(
+                                    (item, idx) => go`${field(l.fields[idx]!.name)}: ${item}`,
                                 );
-                                return go`${type(id)}{${joinCode(fieldInits, ', ')}}`;
+                                return locals.aggregate(
+                                    go`${type(id)}{${joinCode(fieldInits, ', ')}}`,
+                                    items,
+                                );
                             }
                         };
                         break;
@@ -1334,11 +1344,7 @@ export function lowerGo(program: ConcreteProgram): GoFile {
                         lenses.set(i.out.id, { view: ref(i.slot), finish: noFinish });
                         continue;
                     case 'lens-tuple':
-                        if (
-                            i.items.every(
-                                (v) => lenses.get(v)!.finish === noFinish,
-                            )
-                        ) {
+                        if (i.items.every((v) => lenses.get(v)!.finish === noFinish)) {
                             lenses.set(i.out.id, {
                                 view: i.items.map((v) => lenses.get(v)!.view),
                                 finish: noFinish,

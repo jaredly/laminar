@@ -932,6 +932,11 @@ panics) are backend runtime, not imports.
   representations and emits C or Go (chosen by the target's ABI) for the last
   top-level expression. It never invokes a compiler. Symbol names (`L0`, `fn0`, …)
   depend only on the program and target, so emission is deterministic.
+- Lens representation specialization is off by default. Pass
+  `specializeLenses: ['step']` to `compileSource` or `compileLibrary` to tune a
+  source definition, or `['*']` to opt in globally. Exact typed-IR function IDs
+  can select individual local functions. Semantic type specialization remains
+  enabled, and explicit host ABI contracts are preserved.
 - `buildCompiled(compiled, target, { optimize, sanitize })` builds emitted code
   with the target's toolchain (clang, emcc or go) using the harness's strict flags,
   and returns the command that runs it. Failed builds keep their directory.
@@ -961,6 +966,14 @@ through, removes the build directory afterwards, and exits with the program's
 status. `--target reference` runs the typed-IR evaluator instead. Program output
 streams as produced and the entry result is printed last as a JSON line; the
 result-protocol record separator is stripped. Native is the default target.
+
+`emit` and compiled `run` also accept `--specialize-lenses step,other` or
+`--specialize-lenses '*'`. Ordinary calls otherwise use a canonical lens ABI
+chosen from the function type and its storage-transition requirements. Thin and
+scattered local storage still exist; call boundaries adapt them to that ABI.
+Tuning never bypasses the constraints required for empty slots, reconstruction
+or restoration. The selection policy is serialized and checked with the
+representation analysis.
 
 ## Phase 7: corpus runner and backend selection
 

@@ -9,7 +9,8 @@ const semantic = (text: string) => {
     const p = typedProgram(text);
     return specializeProgram(p, target, [{ unit: p.units.at(-1)!.id, arguments: [] }]);
 };
-const analyze = (text: string) => inferRepresentations(semantic(text));
+const analyze = (text: string, specializeLenses?: readonly string[]) =>
+    inferRepresentations(semantic(text), { specializeLenses });
 for (const sample of backendCorpus.filter((s) => s.phase <= 6))
     it(`infers representations: ${sample.name}`, () => {
         const result = analyze(sample.source);
@@ -25,6 +26,7 @@ it('reuses variants for equivalent calls', () => {
 it('separates thin and scattered variants at identical semantic types', () => {
     const r = analyze(
         'fn inc(~(x, y)) {x := x + 1}\n{let pair = (1, 2)\n let a = 1\n let b = 2\n inc(~pair)\n inc(~(a, b))\n (pair, a, b)}',
+        ['inc'],
     );
     expect(r.variants).toHaveLength(2);
     const args = r.variants.map((v) => v.arguments[0]!);
@@ -133,6 +135,7 @@ it('specializes recursive changes from thin to scattered arguments', () => {
     expect(() =>
         analyze(
             'fn rec(n, ~(x, y)) (match dup(~n) {0 -> (); _ -> rec(n - 1, ~(x, y))})\n{let pair = (1, 2)\n rec(2, ~pair)}',
+            ['rec'],
         ),
     ).not.toThrow();
 });

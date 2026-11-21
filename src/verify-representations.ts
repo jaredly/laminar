@@ -16,6 +16,13 @@ import type {
 } from './infer-representations.ts';
 import type { Layout } from './layouts.ts';
 import type { LensRep } from './representations.ts';
+import {
+    canonicalLensTopology,
+    canonicalCallLensTopology,
+    canonicalLensPolicies,
+    lensSpecializationSelectors,
+    specializeLensCall,
+} from './lens-specialization.ts';
 
 /** Independent validation of serialized analysis against semantic IR; never invokes inference. */
 export function verifyRepresentations(
@@ -53,6 +60,13 @@ export function verifyRepresentations(
     }
     verifyTypedProgram(source.program);
     if (analysis.schemaVersion !== 1) fail('Unknown representation analysis version');
+    const selected = analysis.specializeLenses ?? [];
+    const validSelectors = lensSpecializationSelectors(source);
+    if (
+        !Array.isArray(selected) ||
+        selected.some((n) => typeof n !== 'string' || !validSelectors.has(n))
+    )
+        fail('Invalid lens specialization policy');
     if (
         !Array.isArray(analysis.roots) ||
         !Array.isArray(analysis.entries) ||
@@ -233,6 +247,58 @@ export function verifyRepresentations(
     shapes.forEach((s) => checkShape(s.id));
     const fnFor = (unit: string, id: string) =>
         units.get(unit)?.functions.find((f) => f.id === id) ?? fail('Unknown callable function');
+    const canonicalPolicies = canonicalLensPolicies(source);
+    const canonicalArgument = (
+        v: ValueRepresentation,
+        type: string,
+        argument: number,
+        preserve = false,
+    ): ValueRepresentation => {
+        if (v.kind !== 'lens') return v;
+        const topology = (id: string): ReturnType<typeof canonicalLensTopology> => {
+            const r = shape(id);
+            return r.kind === 'thin'
+                ? { kind: 'thin' }
+                : { kind: 'tuple', items: r.items.map(topology) };
+        };
+        const s = shape(v.shape),
+            read = layout(s.read).type,
+            write = layout(s.replacement).type;
+        const build = (
+            t: ReturnType<typeof canonicalLensTopology>,
+            r: SemanticType,
+            w: SemanticType,
+        ): string =>
+            t.kind === 'thin'
+                ? JSON.stringify(['thin', JSON.stringify(['backing', layoutId(r), layoutId(w)])])
+                : JSON.stringify([
+                      'lens-tuple',
+                      t.items.map((child, n) =>
+                          build(
+                              child,
+                              (r as Extract<SemanticType, { tag: 'tuple' }>).items[n]!,
+                              (w as Extract<SemanticType, { tag: 'tuple' }>).items[n]!,
+                          ),
+                      ),
+                  ]);
+        const result: ValueRepresentation = {
+            kind: 'lens',
+            shape: build(
+                canonicalCallLensTopology(
+                    canonicalPolicies,
+                    type,
+                    argument,
+                    read,
+                    write,
+                    preserve ? topology(v.shape) : undefined,
+                ),
+                read,
+                write,
+            ),
+        };
+        shape(result.shape);
+        return result;
+    };
     const containsCallable = (t: SemanticType): boolean =>
         t.tag === 'fn' || (t.tag === 'tuple' && t.items.some(containsCallable));
     function fitMember(m: CallableMember, t: SemanticType): void {
@@ -501,7 +567,7 @@ export function verifyRepresentations(
                             fail('Unexpected call annotation');
                         usedCalls.add(i.out.id);
                         const calleeValue = get(s, i.callee),
-                            args = i.args.map((id) => get(s, id));
+                            incoming = i.args.map((id) => get(s, id));
                         if (calleeValue.kind !== 'callable')
                             return fail('Call operand is not callable');
                         const members = membersOf(calleeValue.type);
@@ -515,6 +581,17 @@ export function verifyRepresentations(
                             known && memberKey(known),
                             'Call callee provenance changed',
                         );
+                        const args =
+                            known?.kind === 'native'
+                                ? incoming
+                                : incoming.map((a, n) =>
+                                      canonicalArgument(
+                                          a,
+                                          calleeValue.type,
+                                          n,
+                                          specializeLensCall(source, selected, known),
+                                      ),
+                                  );
                         requireEqual(call.arguments, args, 'Call argument representations changed');
                         requireEqual(call.result, v, 'Call result annotation mismatch');
                         const options = known ? [known] : members,

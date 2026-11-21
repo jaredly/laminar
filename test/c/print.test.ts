@@ -3,12 +3,15 @@ import { typedProgram } from '../backend/typed-program.ts';
 import { compileConcreteProgram } from '../../src/lower-concrete.ts';
 import { wasm32Emscripten } from '../../src/backend/target.ts';
 import { emitC } from '../../src/c/emit.ts';
-function compile(source: string) {
+function compile(source: string, specializeLenses?: readonly string[]) {
     const p = typedProgram(source);
     return emitC(
-        compileConcreteProgram(p, wasm32Emscripten('test'), [
-            { unit: p.units.at(-1)!.id, arguments: [] },
-        ]),
+        compileConcreteProgram(
+            p,
+            wasm32Emscripten('test'),
+            [{ unit: p.units.at(-1)!.id, arguments: [] }],
+            { specializeLenses },
+        ),
     );
 }
 
@@ -495,7 +498,7 @@ int main(void) {
 });
 
 it('prints complete user-focus-thin C', () => {
-    expect(compile('fn first(~(x, y)) ~x\n{let x = (1, 2)\n first(~x) := true\n x}'))
+    expect(compile('fn first(~(x, y)) ~x\n{let x = (1, 2)\n first(~x) := true\n x}', ['first']))
         .toBe(`#include <stdio.h>
 #include <stdlib.h>
 #include <math.h>

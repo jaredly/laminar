@@ -101,8 +101,8 @@ it('prints nested lens topology, loans, and deferred restoration cleanup', () =>
       toolchain emscripten "test" features ()
       entries (entry0)
       forward {
-          layouts (L2, L4, L5, L3, L0, L6, L7, L8, L1, L9)
-          abis (abi0, abi1, abi2, abi3, abi4)
+          layouts (L2, L4, L5, L3, L0, L6, L7, L8, L1, L9, L10, L11)
+          abis (abi0, abi1, abi2, abi3, abi4, abi5)
           code (first0, entry0)
       }
       layouts {
@@ -124,43 +124,55 @@ it('prints nested lens topology, loans, and deferred restoration cleanup', () =>
           L6 = record thin {
               read: ptr<L3>
               replacement: ptr<L0>
-              restore: code<abi4>
+              restore: code<abi5>
               context: ptr<void>
           }
           L7 = record environment
           L8 = record thin {
               read: ptr<L4>
               replacement: ptr<L2>
+              restore: code<abi1>
+              context: ptr<void>
+          }
+          L9 = record thin {
+              read: ptr<L1>
               restore: code<abi0>
               context: ptr<void>
           }
-          L9 = record callable {
+          L10 = record callable {
               environment: ptr<void>
-              dispose: code<abi3>
+              dispose: code<abi4>
+          }
+          L11 = record scattered {
+              item0: L6
+              item1: L9
+              restore: code<abi1>
+              context: ptr<void>
           }
       }
       abis {
-          abi0 = (env: ptr<void>, L2) -> L5
-          abi1 = (env: ptr<void>, L8) -> L6
-          abi2 = (env: ptr<void>) -> L2
-          abi3 = (env: ptr<void>) -> L5
-          abi4 = (env: ptr<void>, L0) -> L5
+          abi0 = (env: ptr<void>, L1) -> L5
+          abi1 = (env: ptr<void>, L2) -> L5
+          abi2 = (env: ptr<void>, L11) -> L6
+          abi3 = (env: ptr<void>) -> L2
+          abi4 = (env: ptr<void>) -> L5
+          abi5 = (env: ptr<void>, L0) -> L5
       }
       wrappers {
-          wrap0 : abi3 env L7 = dispose () drop-captures-and-free
-          wrap1 : abi1 env L7 = invoke first0 transfer-captures-and-free
-          wrap2 : abi3 env L7 = dispose () drop-captures-and-free
+          wrap0 : abi4 env L7 = dispose () drop-captures-and-free
+          wrap1 : abi4 env L7 = dispose () drop-captures-and-free
+          wrap2 : abi2 env L7 = invoke first0 transfer-captures-and-free
       }
       callables {
-          callable0 : L9 env L7 {dispose wrap0}
-          callable1 : L9 env L7 {dispose wrap2}
+          callable0 : L10 env L7 {dispose wrap0}
+          callable1 : L10 env L7 {dispose wrap1}
       }
-      fn first0(lens $p0 ($p0.0, $p0.1): L8) : abi1 env L7 {
+      fn first0(lens $p0 ($p0.0, $p0.1): L11) : abi2 env L7 {
           %0: L6 = acquire $p0.0
           return %0 : L6
           cleanup after-restore {restored $p0 : (Bool, Number)}
       }
-      fn entry0() : abi2 env L5 {
+      fn entry0() : abi3 env L5 {
           %0: L1 = 1
           %1: L1 = 2
           %2: L3 = (%0, %1)
@@ -169,8 +181,8 @@ it('prints nested lens topology, loans, and deferred restoration cleanup', () =>
           %5: L2 = scope {
               bind $pair = %4
               %6: L8 = acquire $pair
-              %7: L9 = make-callable callable1 {}
-              %8: L6 = %7(%6) via wrap1 : abi1
+              %7: L10 = make-callable callable1 {}
+              %8: L6 = %7(%6) via wrap2 : abi2
               %9: L0 = true
               %10: L3 = swap(%8, %9)
               %11: L2 = scope {
@@ -755,84 +767,95 @@ it('prints all concrete instructions: thin-pair-update', () => {
       toolchain emscripten "test" features ()
       entries (entry0)
       forward {
-          layouts (L0, L2, L3, L4, L5, L1, L6)
+          layouts (L1, L2, L4, L5, L6, L7, L3, L0, L8)
           abis (abi0, abi1, abi2, abi3, abi4, abi5)
           code (inc0, entry0)
       }
       layouts {
-          L0 = unit
-          L1 = f64
-          L2 = record {
-              item0: L1
-              item1: L1
-          }
-          L3 = record environment
-          L4 = record thin {
-              read: ptr<L0>
-              replacement: ptr<L1>
-              restore: code<abi1>
+          L0 = record thin {
+              read: ptr<L3>
+              restore: code<abi0>
               context: ptr<void>
           }
-          L5 = record thin {
+          L1 = record scattered {
+              item0: L0
+              item1: L0
+              restore: code<abi3>
+              context: ptr<void>
+          }
+          L2 = unit
+          L3 = f64
+          L4 = record {
+              item0: L3
+              item1: L3
+          }
+          L5 = record environment
+          L6 = record thin {
               read: ptr<L2>
-              restore: code<abi4>
+              replacement: ptr<L3>
+              restore: code<abi0>
               context: ptr<void>
           }
-          L6 = record callable {
+          L7 = record thin {
+              read: ptr<L4>
+              restore: code<abi3>
+              context: ptr<void>
+          }
+          L8 = record callable {
               environment: ptr<void>
-              dispose: code<abi5>
+              dispose: code<abi4>
           }
       }
       abis {
-          abi0 = (env: ptr<void>, L5) -> L0
-          abi1 = (env: ptr<void>, L1) -> L0
-          abi2 = (env: ptr<void>, L1, L1) -> L1
-          abi3 = (env: ptr<void>) -> L2
-          abi4 = (env: ptr<void>, L2) -> L0
-          abi5 = (env: ptr<void>) -> L0
+          abi0 = (env: ptr<void>, L3) -> L2
+          abi1 = (env: ptr<void>, L3, L3) -> L3
+          abi2 = (env: ptr<void>) -> L4
+          abi3 = (env: ptr<void>, L4) -> L2
+          abi4 = (env: ptr<void>) -> L2
+          abi5 = (env: ptr<void>, L1) -> L2
       }
       wrappers {
-          wrap0 : abi5 env L3 = dispose () drop-captures-and-free
-          wrap1 : abi5 env L3 = dispose () drop-captures-and-free
-          wrap2 : abi0 env L3 = invoke inc0 transfer-captures-and-free
-          wrap3 : abi5 env L3 = dispose () drop-captures-and-free
-          wrap4 : abi2 env L3 = native "native/+" no-environment
-          wrap5 : abi5 env L3 = dispose () drop-captures-and-free
+          wrap0 : abi4 env L5 = dispose () drop-captures-and-free
+          wrap1 : abi5 env L5 = invoke inc0 transfer-captures-and-free
+          wrap2 : abi4 env L5 = dispose () drop-captures-and-free
+          wrap3 : abi1 env L5 = native "native/+" no-environment
+          wrap4 : abi4 env L5 = dispose () drop-captures-and-free
+          wrap5 : abi4 env L5 = dispose () drop-captures-and-free
       }
       callables {
-          callable0 : L6 env L3 {dispose wrap3}
-          callable1 : L6 env L3 {dispose wrap5}
-          callable2 : L6 env L3 {dispose wrap1}
-          callable3 : L6 env L3 {dispose wrap0}
+          callable0 : L8 env L5 {dispose wrap4}
+          callable1 : L8 env L5 {dispose wrap5}
+          callable2 : L8 env L5 {dispose wrap2}
+          callable3 : L8 env L5 {dispose wrap0}
       }
-      fn inc0(lens $p0 ($p0.0, $p0.1): L5) : abi0 env L3 {
-          %0: L4 = acquire $p0.0
-          %1: L6 = make-callable callable3 {}
-          %2: L1 = move $p0.0
-          %3: L1 = 1
-          %4: L1 = %1(%2, %3) via wrap4 : abi2
-          %5: L0 = swap(%0, %4)
-          return %5 : L0
+      fn inc0(lens $p0 ($p0.0, $p0.1): L1) : abi5 env L5 {
+          %0: L6 = acquire $p0.0
+          %1: L8 = make-callable callable3 {}
+          %2: L3 = move $p0.0
+          %3: L3 = 1
+          %4: L3 = %1(%2, %3) via wrap3 : abi1
+          %5: L2 = swap(%0, %4)
+          return %5 : L2
           cleanup {restored $p0 : (Number, Number)}
       }
-      fn entry0() : abi3 env L0 {
-          %0: L1 = 1
-          %1: L1 = 2
-          %2: L2 = (%0, %1)
-          %3: L2 = scope {
+      fn entry0() : abi2 env L2 {
+          %0: L3 = 1
+          %1: L3 = 2
+          %2: L4 = (%0, %1)
+          %3: L4 = scope {
               bind $x = %2
-              %4: L5 = acquire $x
-              %5: L6 = make-callable callable1 {}
-              %6: L0 = %5(%4) via wrap2 : abi0
-              %7: L2 = scope {
+              %4: L7 = acquire $x
+              %5: L8 = make-callable callable1 {}
+              %6: L2 = %5(%4) via wrap1 : abi5
+              %7: L4 = scope {
                   bind _ = %6
-                  %8: L2 = move $x
-                  return %8 : L2
+                  %8: L4 = move $x
+                  return %8 : L4
               }
-              return %7 : L2
+              return %7 : L4
               cleanup {drop $x}
           }
-          return %3 : L2
+          return %3 : L4
       }"
     `);
     expect(JSON.stringify(p)).toBe(before);

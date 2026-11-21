@@ -142,3 +142,47 @@ for (const [name, source, expected, output] of [
         },
         60000,
     );
+
+it('forwards a terminal load suffix into nested aggregate returns', () => {
+    const l = new GoLocals();
+    const a = l.reference('a'),
+        b = l.reference('b'),
+        backing = l.reference('backing'),
+        steps = l.reference('steps');
+    const inner = l.aggregate(l.template`Pair{${b}, ${steps}}`, [b, steps]);
+    const outer = l.aggregate(l.template`Pair{${a}, ${inner}}`, [a, inner]);
+    expect(
+        print(l, [
+            l.declaration(a, 'float64', l.template`${backing}.first`, { load: true }),
+            l.declaration(b, 'float64', l.template`${backing}.second`, { load: true }),
+            l.returnValue(outer),
+        ]),
+    ).toBe('return Pair{backing.first, Pair{backing.second, steps}}');
+});
+it('keeps snapshot loads before cleanup and opaque return computations', () => {
+    for (const cleanup of [true, false]) {
+        const l = new GoLocals();
+        const a = l.reference('a');
+        const result = cleanup
+            ? l.aggregate(l.template`Pair{${a}}`, [a])
+            : l.template`effect(${a})`;
+        const code = print(l, [
+            l.declaration(a, 'float64', 'backing.first', { load: true }),
+            ...(cleanup ? ['cleanup()'] : []),
+            l.returnValue(result),
+        ]);
+        expect(code).toContain('a := backing.first');
+    }
+});
+it('preserves the order of snapshot loads when return fields are reordered', () => {
+    const l = new GoLocals();
+    const a = l.reference('a'),
+        b = l.reference('b');
+    const value = l.aggregate(l.template`Pair{${b}, ${a}}`, [b, a]);
+    const code = print(l, [
+        l.declaration(a, 'float64', 'backing.first', { load: true }),
+        l.declaration(b, 'float64', 'backing.second', { load: true }),
+        l.returnValue(value),
+    ]);
+    expect(code).toContain('a := backing.first\nb := backing.second');
+});

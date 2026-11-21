@@ -5,6 +5,7 @@
  *   laminar check <file>
  *   laminar emit  <file> [--target native|wasm32|go] [-o <path>]
  *                        [--export <name,...> --header <path>] [--concrete]
+ *                        [--specialize-lenses <name,...|*>]
  *   laminar run   <file> [--target native|wasm32|go|reference] [--optimize] [--sanitize]
  *
  * `emit` writes C (native, wasm32) or Go source without invoking a compiler. With
@@ -30,7 +31,8 @@ import { printConcreteProgram } from '../src/print-concrete.ts';
 
 const usage = `usage: laminar check <file>
        laminar emit <file> [--target native|wasm32|go] [-o <path>] [--export <name,...> --header <path>] [--concrete]
-       laminar run <file> [--target native|wasm32|go|reference] [--optimize] [--sanitize]`;
+       laminar run <file> [--target native|wasm32|go|reference] [--optimize] [--sanitize]
+       emit/run: [--specialize-lenses <definition,...|*>] (default: off)`;
 
 function parseArgs(argv: string[]) {
     const [command, file, ...rest] = argv;
@@ -42,6 +44,7 @@ function parseArgs(argv: string[]) {
         concrete: false,
         optimize: false,
         sanitize: false,
+        specializeLenses: [] as string[],
     };
     for (let i = 0; i < rest.length; i++) {
         const arg = rest[i]!;
@@ -53,7 +56,16 @@ function parseArgs(argv: string[]) {
             flags.exports.push(...(rest[++i] ?? '').split(',').filter(Boolean));
         else if (arg === '--optimize') flags.optimize = true;
         else if (arg === '--sanitize') flags.sanitize = true;
-        else throw new CompileError('usage', 'usage', `Unknown option ${arg}\n${usage}`);
+        else if (arg === '--specialize-lenses') {
+            const names = rest[++i];
+            if (!names || names.startsWith('--') || names.split(',').some((n) => !n.trim()))
+                throw new CompileError(
+                    'usage',
+                    'usage',
+                    '--specialize-lenses requires definition names or *',
+                );
+            flags.specializeLenses.push(...names.split(',').map((n) => n.trim()));
+        } else throw new CompileError('usage', 'usage', `Unknown option ${arg}\n${usage}`);
     }
     if (!command || !file || !['check', 'emit', 'run'].includes(command))
         throw new CompileError('usage', 'usage', usage);
@@ -101,13 +113,14 @@ async function main(argv: string[]): Promise<number> {
             const library = compileLibrary(source, {
                 target,
                 exports: args.exports.map((name) => ({ name })),
+                specializeLenses: args.specializeLenses,
             });
             writeFileSync(args.header!, library.header);
             if (args.output) writeFileSync(args.output, library.code);
             else process.stdout.write(library.code);
             return 0;
         }
-        const compiled = compileSource(source, { target });
+        const compiled = compileSource(source, { target, specializeLenses: args.specializeLenses });
         if (args.command === 'emit') {
             const text = args.concrete
                 ? printConcreteProgram(compiled.concrete) + '\n'

@@ -1,27 +1,35 @@
-// This is a snake game I think
-fn rangeTo(at, end) {
-    match (dup(~at) >= dup(~end)) {
-        true -> []
-        _ -> [dup(~at), ...rangeTo(at + 1, end)]
+
+fn fillRange(n, end, ~arr) {
+    match dup(~n) >= dup(~end) {
+        true -> ()
+        false -> {
+            arr[dup(~n)] = dup(~n)
+            fillRange(n + 1, end, ~arr)
+        }
     }
 }
 
-ir-> (*at0, *end1)=>(
-    match >=(dup(&at0), dup(&end1)) {
-        *true -> []
-        *_2 -> [dup(&at0), ...rangeTo(+(*at0, 1), *end1)]
-    }
-)
+fn range(n) {
+    let arr = array(n, 0)
+    fillRange(0, n, ~arr)
+    arr
+}
 
-fn range(n) {rangeTo(0, 10)}
-
-ir-> (*n0)=>rangeTo(0, 10)
+// // This is a snake game I think
+// fn rangeTo(at, end) {
+//     match (dup(~at) >= dup(~end)) {
+//         true -> []
+//         _ -> [dup(~at), ...rangeTo(at + 1, end)]
+//     }
+// }
+//
+// fn range(n) {rangeTo(0, 10)}
 
 {range(10)}
 
-[0, 1, 2, 3, 4, 5, 6, 7, 8, 9]
+[:0, 1, 2, 3, 4, 5, 6, 7, 8, 9:]
 
-ir-> range(10)
+// ir-> range(10)
 
 /*
 oh snap

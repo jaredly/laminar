@@ -19,12 +19,6 @@ type Tuple_Tuple_Number_Number_Number_Number struct {
 	item1 float64
 }
 
-type Lens_Tuple_Number_Number_Number struct {
-	read *Tuple_Number_Number_Number
-	restore Func_Tuple_Number_Number_Number_to_Unit_31b28240d9
-	context any
-}
-
 type Unit struct{}
 
 type Lens_float64 struct {
@@ -55,23 +49,20 @@ type Func_Tuple_Number_Number_Number_to_Unit_31b28240d9 func(environment any, ar
 
 type Func_float64_to_Unit_e8b5a11084 func(environment any, arg0 float64) Unit
 
-var stdin *bufio.Reader
-
-type Backing_Tuple_Number_Number_Number_d63659393c struct {
-	read0 Tuple_Number_Number_Number
+type Backing_float64_float64_float64_104b591eaf struct {
+	read0 float64
+	read1 float64
+	read2 float64
 }
 
-func step_scattered(steps float64, min_max_lastGuess Scattered_Lens_float64_Lens_float64_Lens_float64) float64 {
-	lastGuess := *((min_max_lastGuess).item2).read
-	input := hostInput("My guess is " + formatNumber(lastGuess) + " (higher/lower/match): ")
-	next := handleResponse(input, min_max_lastGuess)
-	var v20 float64
-	if next {
-		v20 = steps
-	} else {
-		v20 = step_scattered((steps + 1.0), min_max_lastGuess)
-	}
-	return v20
+var stdin *bufio.Reader
+
+func game() Tuple_Tuple_Number_Number_Number_Number {
+	var back0 Backing_float64_float64_float64_104b591eaf
+	back0.read1 = 100.0
+	back0.read2 = 50.0
+	steps := step(0.0, Scattered_Lens_float64_Lens_float64_Lens_float64{item0: Lens_float64{read: &back0.read0}, item1: Lens_float64{read: &back0.read1}, item2: Lens_float64{read: &back0.read2}})
+	return Tuple_Tuple_Number_Number_Number_Number{item0: Tuple_Number_Number_Number{item0: back0.read0, item1: back0.read1, item2: back0.read2}, item1: steps}
 }
 
 func handleResponse(response string, state Scattered_Lens_float64_Lens_float64_Lens_float64) bool {
@@ -98,25 +89,17 @@ func handleResponse(response string, state Scattered_Lens_float64_Lens_float64_L
 	return v1
 }
 
-func step_thin(steps float64, min_max_lastGuess Lens_Tuple_Number_Number_Number) float64 {
-	lastGuess := (*(min_max_lastGuess).read).item2
+func step(steps float64, min_max_lastGuess Scattered_Lens_float64_Lens_float64_Lens_float64) float64 {
+	lastGuess := *((min_max_lastGuess).item2).read
 	input := hostInput("My guess is " + formatNumber(lastGuess) + " (higher/lower/match): ")
-	next := handleResponse(input, Scattered_Lens_float64_Lens_float64_Lens_float64{item0: Lens_float64{read: &(*(min_max_lastGuess).read).item0}, item1: Lens_float64{read: &(*(min_max_lastGuess).read).item1}, item2: Lens_float64{read: &(*(min_max_lastGuess).read).item2}})
+	next := handleResponse(input, min_max_lastGuess)
 	var v20 float64
 	if next {
 		v20 = steps
 	} else {
-		v20 = step_scattered((steps + 1.0), Scattered_Lens_float64_Lens_float64_Lens_float64{item0: Lens_float64{read: &(*(min_max_lastGuess).read).item0}, item1: Lens_float64{read: &(*(min_max_lastGuess).read).item1}, item2: Lens_float64{read: &(*(min_max_lastGuess).read).item2}})
+		v20 = step((steps + 1.0), min_max_lastGuess)
 	}
 	return v20
-}
-
-func game() Tuple_Tuple_Number_Number_Number_Number {
-	var back2 Backing_Tuple_Number_Number_Number_d63659393c
-	back2.read0 = Tuple_Number_Number_Number{item0: 0.0, item1: 100.0, item2: 50.0}
-	steps := step_thin(0.0, Lens_Tuple_Number_Number_Number{read: &back2.read0})
-	state_2 := back2.read0
-	return Tuple_Tuple_Number_Number_Number_Number{item0: state_2, item1: steps}
 }
 
 func nextGuess(direction Direction, min_max_lastGuess Scattered_Lens_float64_Lens_float64_Lens_float64) float64 {
@@ -138,6 +121,11 @@ func entry() Tuple_Tuple_Number_Number_Number_Number {
 	return game()
 }
 
+func hostPrint_Unit(value string) Unit {
+	fmt.Print(value + "\n")
+	return Unit{}
+}
+
 func hostInput(prompt string) string {
 	fmt.Print(prompt)
 	if stdin == nil {
@@ -148,11 +136,6 @@ func hostInput(prompt string) string {
 		line = line[:len(line)-1]
 	}
 	return line
-}
-
-func hostPrint_Unit(value string) Unit {
-	fmt.Print(value + "\n")
-	return Unit{}
 }
 
 func laminarRound(x float64) float64 {

@@ -2,18 +2,17 @@ import { expect, it } from 'bun:test';
 import { typedProgram } from './backend/typed-program.ts';
 import { backendCorpus } from './backend/corpus.ts';
 import { specializeProgram } from '../src/specialize.ts';
-import { inferRepresentations } from '../src/infer-representations.ts';
 import { lowerConcreteProgram, compileConcreteProgram } from '../src/lower-concrete.ts';
 import { verifyConcreteProgram } from '../src/verify-concrete.ts';
 import { wasm32Emscripten, BackendDiagnostic } from '../src/backend/target.ts';
+import { inferRepresentations } from '../src/infer-representations.ts';
 import { ConcreteLayoutTable } from '../src/concrete-layouts.ts';
 import type { ConcreteProgram, ConcreteBlock, ConcreteInstruction } from '../src/concrete-ir.ts';
 const target = wasm32Emscripten('test');
-function compile(text: string) {
+function compile(text: string, specializeLenses?: readonly string[]) {
     const p = typedProgram(text);
-    return lowerConcreteProgram(
-        specializeProgram(p, target, [{ unit: p.units.at(-1)!.id, arguments: [] }]),
-    );
+    const semantic = specializeProgram(p, target, [{ unit: p.units.at(-1)!.id, arguments: [] }]);
+    return lowerConcreteProgram(semantic, inferRepresentations(semantic, { specializeLenses }));
 }
 function instructions(b: ConcreteBlock): ConcreteInstruction[] {
     return b.instructions.flatMap((i) => [
@@ -50,6 +49,7 @@ it('emits wrappers for first-class and higher-order function values', () => {
 it('gives identical semantic types distinct thin/scattered call ABIs', () => {
     const p = compile(
         'fn inc(~(x, y)) {x := x + 1}\n{let pair = (1, 2)\n let a = 1\n let b = 2\n inc(~pair)\n inc(~(a, b))\n (pair, a, b)}',
+        ['inc'],
     );
     const invokes = p.wrappers.filter((w) => w.kind === 'invoke');
     expect(invokes).toHaveLength(2);

@@ -121,7 +121,7 @@ function backendError(error: unknown, source: string, program?: TypedProgram): C
     );
 }
 
-export type CompileOptions = { target: TargetConfig };
+export type CompileOptions = { target: TargetConfig; specializeLenses?: readonly string[] };
 export type Compiled = {
     program: TypedProgram;
     concrete: ConcreteProgram;
@@ -140,9 +140,12 @@ export function compileSource(source: string, options: CompileOptions): Compiled
     if (!entry)
         throw new CompileError('backend', 'missing-entry', 'No top-level expression to run');
     try {
-        const concrete = compileConcreteProgram(program, options.target, [
-            { unit: entry.id, arguments: [] },
-        ]);
+        const concrete = compileConcreteProgram(
+            program,
+            options.target,
+            [{ unit: entry.id, arguments: [] }],
+            { specializeLenses: options.specializeLenses },
+        );
         const language = options.target.abi === 'go' ? 'go' : 'c';
         return {
             program,
@@ -226,7 +229,11 @@ export type CompiledLibrary = {
  */
 export function compileLibrary(
     source: string,
-    options: { target: TargetConfig; exports: readonly HostExport[] },
+    options: {
+        target: TargetConfig;
+        exports: readonly HostExport[];
+        specializeLenses?: readonly string[];
+    },
 ): CompiledLibrary {
     const program = checkSource(source);
     if (options.target.abi !== 'c11')
@@ -262,7 +269,9 @@ export function compileLibrary(
         };
     });
     try {
-        const concrete = compileConcreteProgram(program, options.target, roots);
+        const concrete = compileConcreteProgram(program, options.target, roots, {
+            specializeLenses: options.specializeLenses,
+        });
         const unit = lowerC(concrete, {
             exports: options.exports.map((e, entry) => ({
                 symbol: e.symbol ?? `laminar_${e.name}`,

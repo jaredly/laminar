@@ -1,9 +1,50 @@
 
+
+---
+
+Do we really need _scattered vs _thin? It seems like all we're saving is a little unboxing, and the expense of rather more code?
+
+
+For handleResponse, we could inline the final assignments and save the tmp variables v47, v48, v49. Is there a structured approach that would avoid producing those tmp variables in the first place?
+
+let's have a plan for Arrays?
+
+---
+
+Vector support!
+-> I should write up the builtins for the evalTypeed thing, and then ask AI to bring it to go & c.
+
+
+
+----
+
 Cleanup of the generated go:
 - `var` hoisting seems uselessss
 - `type L0 = float64` is useless why would you even do that
 - let's do better type names, `L1` should be like float3tuple or something
 - `L2` can be named after the first variable that uses it, in this case `state`
+
+```
+Ok so
+this:
+next = handleResponse(nil, input_2, L10{item0: L9{read: ((min_max_lastGuess).item0).read}, item1: L9{read: ((min_max_lastGuess).item1).read}, item2: L9{read: ((min_max_lastGuess).item2).read}})
+should just be
+next = handleResponse(nil, input_2, min_max_lastGuess)
+
+We've got some places where `~(min, max, lastGuess)` is being passed along verbatim
+so instead of 
+L10{item0: L9{read: ((min_max_lastGuess).item0).read}, item1: L9{read: ((min_max_lastGuess).item1).read}, item2: L9{read: ((min_max_lastGuess).item2).read}}
+we can just do
+min_max_lastGuess
+
+same with
+next = nextGuess(nil, v5, L10{item0: L9{read: ((state).item0).read}, item1: L9{read: ((state).item1).read}, item2: L9{read: ((state).item2).read}})
+we can just pass `state`, there's no reason to unpack and repack it.
+
+in handleResponse, `v49 =` could be replaced by `*((state).item0).read =`, right?
+
+```
+
 
 ---
 

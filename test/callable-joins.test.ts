@@ -71,9 +71,12 @@ it('counts every reachable alternative against the representation budget', () =>
 
 it('gives a callable type one entry per call ABI', () => {
     const p = typedProgram(callableJoinSamples.at(-1)!.source);
-    const c = compileConcreteProgram(p, wasm32Emscripten('test'), [
-        { unit: p.units.at(-1)!.id, arguments: [] },
-    ]);
+    const c = compileConcreteProgram(
+        p,
+        wasm32Emscripten('test'),
+        [{ unit: p.units.at(-1)!.id, arguments: [] }],
+        { specializeLenses: ['*'] },
+    );
     const types = c.callables.filter(
         (c) => c.descriptor.kind === 'callable' && c.entries.length === 2,
     );
@@ -132,9 +135,12 @@ it('gives a dynamic lens-returning callable type both lens ABIs', () => {
         callableResultSamples.find((s) => s.name === 'dynamic callable result with both lens ABIs')!
             .source,
     );
-    const c = compileConcreteProgram(p, wasm32Emscripten('test'), [
-        { unit: p.units.at(-1)!.id, arguments: [] },
-    ]);
+    const c = compileConcreteProgram(
+        p,
+        wasm32Emscripten('test'),
+        [{ unit: p.units.at(-1)!.id, arguments: [] }],
+        { specializeLenses: ['*'] },
+    );
     expect(
         c.callables.some((c) => c.descriptor.kind === 'callable' && c.entries.length === 2),
     ).toBe(true);

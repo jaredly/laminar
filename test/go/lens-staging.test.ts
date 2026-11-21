@@ -2,7 +2,8 @@ import { expect, it } from 'bun:test';
 import { compileSource } from '../../src/compiler.ts';
 import { goTarget } from '../../src/backend/target.ts';
 import { buildAndRunGo } from '../../src/go/build.ts';
-const emit = (source: string) => compileSource(source, { target: goTarget('test') }).code;
+const emit = (source: string, specializeLenses?: readonly string[]) =>
+    compileSource(source, { target: goTarget('test'), specializeLenses }).code;
 const execute = process.env.LAMINAR_EXEC ? it : it.skip;
 const bump = 'fn bump(~x) {x := dup(~x) + 1}\n';
 const bumpPair = 'fn bumpPair(~(a, b)) {a := dup(~a) + 1\n b := dup(~b) + 2}\n';
@@ -20,7 +21,9 @@ it('reuses backing across sequential homogeneous calls', () => {
     expect(code).toContain('return back0.read0');
 });
 it('keeps a whole tuple in its existing backing after a call', () => {
-    const code = emit(bumpPair + '{let p = (1, 2)\n bumpPair(~p)\n bumpPair(~p)\n p}');
+    const code = emit(bumpPair + '{let p = (1, 2)\n bumpPair(~p)\n bumpPair(~p)\n p}', [
+        'bumpPair',
+    ]);
     expect(code.match(/type Backing_[A-Za-z_0-9]+ struct/g)).toHaveLength(1);
     expect(code).toMatch(/return back\d+\.read0/);
 });
@@ -114,7 +117,8 @@ for (const [name, source, expected, output] of [
     ],
     [
         'temporary restoration order',
-        bump + '{let x = 0\n bump(~{{lens finalFocus <- x\nx := finalFocus\n{print("cleanup")}}})\n bump(~x)\n x}',
+        bump +
+            '{let x = 0\n bump(~{{lens finalFocus <- x\nx := finalFocus\n{print("cleanup")}}})\n bump(~x)\n x}',
         2,
         'cleanup\n',
     ],

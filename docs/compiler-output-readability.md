@@ -23,8 +23,9 @@ The generated functions are currently:
 | `fn4` | `nextGuess` |
 | `fn5` | Top-level entry expression |
 
-Two `step` implementations have different lens representations, so naming alone
-cannot make them one function. Distinct specializations should remain identifiable.
+The inspected artifact specialized `step` for two lens representations; naming
+alone could not merge them. Lens representation specialization is now opt-in, as
+described in the follow-up below. Enabled specializations remain identifiable.
 
 ## Proposed changes
 
@@ -695,3 +696,53 @@ the scripted result `[[75,82,79],4]`.
 Validation: TypeScript and scoped diff checks pass. The regular suite passes
 3184 tests with all 39 snapshots. The Go corpus passes all 1592 tests, and all
 193 focused Go execution tests pass (324 assertions). No remote CI was run.
+
+
+## Follow-up: opt-in lens representation specialization
+
+Call boundaries now use a canonical lens topology by default, so a contiguous
+tuple and separately owned components do not by themselves require different
+copies of a function body. Local storage can still be thin or scattered, and
+the existing call adapters bridge it to the requested ABI. Semantic type
+specialization remains enabled.
+
+The canonical topology is shared by a semantic callable type, keeping direct and
+indirect calls compatible. Tuples normally use scattered component pointers.
+Typed-IR acquisitions and reconstruction loans constrain tuple nodes that must
+remain thin, including slots temporarily emptied and rebuilt during restoration.
+Those requirements are merged across bodies of the same callable type. Separate
+typed read/replacement endpoints remain where storage changes type. Explicit
+host-entry ABI contracts retain their requested topology.
+
+Representation specialization remains available for targeted tuning:
+
+```sh
+bun cli/laminar.ts emit ok.lm --target go --specialize-lenses step
+bun cli/laminar.ts emit ok.lm --target go --specialize-lenses '*'
+```
+
+The programmatic equivalent is `compileSource(source, { target,
+specializeLenses: ['step'] })`. The option is also accepted by `compileLibrary`,
+`compileConcreteProgram` and `inferRepresentations`. Names select source
+definitions; exact typed-IR function IDs select individual local functions.
+Unknown selectors are diagnosed. Selected direct calls may use their incoming
+topology; indirect calls retain a common canonical ABI unless `*` opts in
+globally. Tuning never bypasses the storage-transition constraints above.
+The policy is serialized with representation analysis and independently checked
+against the source IR and call annotations.
+
+Default `ok.go` now has one `step` body and 238 lines. Selecting `step` restores
+the thin/scattered variants for that definition. The default game still produces
+`[[75,82,79],4]` for the scripted input.
+
+`test/lens-specialization.test.ts` covers the default, targeted definitions,
+function IDs, global opt-in, semantic specialization, selector diagnostics,
+serialized policy verification, CLI flags, reconstruction constraints and C/Go
+execution. Existing topology-specific tests opt in explicitly, retaining coverage
+of the specialized lowering path. The CI execution gate includes the new tests.
+
+Validation: TypeScript and scoped diff checks pass. The current regular suite
+passes 3009 tests with all 37 snapshots. Both Go and native C corpora pass all
+1494 tests each; native C executes under ASan/UBSan at `-O0` and at `-O2`.
+The combined focused suite passes all 214 tests (389 assertions), including native
+and Wasm host integration. No remote CI was run.

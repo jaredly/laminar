@@ -5,7 +5,8 @@ import { emitGo } from '../../src/go/emit.ts';
 import { buildAndRunGo } from '../../src/go/build.ts';
 import { GoNames } from '../../src/go/names.ts';
 
-const compile = (source: string) => compileSource(source, { target: goTarget('test') });
+const compile = (source: string, specializeLenses?: readonly string[]) =>
+    compileSource(source, { target: goTarget('test'), specializeLenses });
 const execute = process.env.LAMINAR_EXEC ? it : it.skip;
 const scalar =
     'fn nextGuess(lastGuess) {let next = lastGuess + 1\n (dup(~next), next)}\nnextGuess(3)';
@@ -32,7 +33,7 @@ it('names semantic and lens-representation specializations', () => {
     const { code } = compile(generic);
     expect(code).toContain('func id_number(');
     expect(code).toContain('func id_bool(');
-    const lenses = compile(forwarding).code;
+    const lenses = compile(forwarding, ['run']).code;
     expect(lenses).toContain('func run_thin(');
     expect(lenses).toContain('func run_scattered(');
 });

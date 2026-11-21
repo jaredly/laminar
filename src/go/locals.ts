@@ -12,7 +12,13 @@ type Recipe =
     | { kind: 'ref'; name: string }
     | { kind: 'scalar'; value: number | boolean }
     | { kind: 'binary'; op: string; left: Recipe; right: Recipe }
-    | { kind: 'compose'; parts: Recipe[]; emit: (parts: string[]) => string; returns?: boolean }
+    | {
+          kind: 'compose';
+          parts: Recipe[];
+          emit: (parts: string[]) => string;
+          returns?: boolean;
+          aggregate?: Recipe[];
+      }
     | { kind: 'opaque'; text: string; refs: Set<string> };
 const scalarText = (v: number | boolean): string =>
     typeof v === 'boolean'
@@ -133,6 +139,11 @@ export class GoLocals {
         });
         return text;
     }
+    aggregate(value: string, items: string[]): string {
+        const r = this.recipe(value);
+        if (r.kind === 'compose') r.aggregate = items.map((v) => this.recipe(v));
+        return value;
+    }
     returnValue(value: string): string {
         const text = this.template`return ${value}`;
         const r = this.recipes.get(text)!;
@@ -152,7 +163,7 @@ export class GoLocals {
         name: string,
         type: string,
         value?: string,
-        options: { pure?: boolean; inline?: boolean; zeroInitial?: boolean } = {},
+        options: { pure?: boolean; inline?: boolean; zeroInitial?: boolean; load?: boolean } = {},
     ): LocalDeclaration {
         this.reference(name);
         if (this.declarations.has(name)) throw Error(`Duplicate Go local ${name}`);
@@ -275,7 +286,11 @@ export class GoLocals {
                 return { ...r, left: normalize(r.left, seen), right: normalize(r.right, seen) };
             }
             if (r.kind === 'compose')
-                return { ...r, parts: r.parts.map((p) => normalize(p, seen)) };
+                return {
+                    ...r,
+                    parts: r.parts.map((p) => normalize(p, seen)),
+                    aggregate: r.aggregate?.map((p) => normalize(p, seen)),
+                };
             return r;
         };
         const text = (r: Recipe): string =>
@@ -370,6 +385,60 @@ export class GoLocals {
                     ) {
                         flat[n + 1] = this.returnValue(d.value);
                         flat.splice(n--, 1);
+                    }
+                }
+            }
+            // A suffix of single-use snapshot loads can flow into a return
+            // consisting only of aggregates and stable values. Cross no other
+            // statements, calls or control-flow boundaries, and keep load order.
+            const tail = flat.at(-1);
+            if (typeof tail === 'string') {
+                const original = this.recipe(tail);
+                const safe = (r: Recipe): boolean =>
+                    r.kind === 'ref' ||
+                    r.kind === 'scalar' ||
+                    r.kind === 'text' ||
+                    (r.kind === 'binary' && safe(r.left) && safe(r.right)) ||
+                    (r.kind === 'compose' &&
+                        (r.returns
+                            ? r.parts.every(safe)
+                            : !!r.aggregate && r.aggregate.every(safe)));
+                if (original.kind === 'compose' && original.returns && safe(original)) {
+                    let start = flat.length - 1;
+                    while (start > 0) {
+                        const d = flat[start - 1]!;
+                        if (
+                            typeof d === 'string' ||
+                            Array.isArray(d) ||
+                            !('kind' in d) ||
+                            d.kind !== 'local' ||
+                            !d.load ||
+                            d.value === undefined ||
+                            blocked.has(d.name) ||
+                            occurrences.get(d.name) !== 1
+                        )
+                            break;
+                        start--;
+                    }
+                    const loads = flat.slice(start, -1) as LocalDeclaration[];
+                    const order = refs(original).filter((n) => loads.some((d) => d.name === n));
+                    if (loads.length && order.join(',') === loads.map((d) => d.name).join(',')) {
+                        const replacements = new Map(
+                            loads.map((d) => [d.name, this.recipe(d.value!)]),
+                        );
+                        const replace = (r: Recipe): Recipe =>
+                            r.kind === 'ref'
+                                ? (replacements.get(r.name) ?? r)
+                                : r.kind === 'compose'
+                                  ? { ...r, parts: r.parts.map(replace) }
+                                  : r.kind === 'binary'
+                                    ? { ...r, left: replace(r.left), right: replace(r.right) }
+                                    : r;
+                        const r = replace(original),
+                            code = text(r);
+                        this.recipes.set(code, r);
+                        this.reads.set(code, new Set(refs(r)));
+                        flat.splice(start, loads.length + 1, code);
                     }
                 }
             }
