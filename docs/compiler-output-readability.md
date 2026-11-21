@@ -452,3 +452,35 @@ Validation: TypeScript and scoped diff checks pass. The regular suite passes
 3152 tests with 97 skips and all 39 snapshots. The Go corpus passes all 1592
 tests. With `LAMINAR_EXEC=1`, all 93 focused Go tests pass (165 assertions).
 No remote CI was run.
+
+
+## Item 7: control flow
+
+Exhaustive Boolean matches now emit `if condition { ... } else { ... }`, including
+matches that list `false` first. Individual Boolean tests also use the condition
+or its negation. A wildcard ends the chain with `else`, or becomes `default` in
+a switch; a leading wildcard emits its body directly.
+
+String literal matches with distinct labels use `switch`. Dynamic union matches
+use a switch on the tag when every payload pattern is irrefutable. Payload guards
+and duplicate labels retain ordered tests. Locally known constructor payloads keep
+item 6's logical representation rather than building a union merely to switch on
+its tag. Partial matches retain an unmatched-case panic; complete Boolean and
+union-tag matches omit it.
+
+Both value matches and selected-lens matches use this lowering. Arm bodies still
+join before subsequent cleanup and restoration; no early returns are introduced.
+Declaration placement treats each switch clause as a scope and lifts shared cells
+before the whole switch, never between case labels.
+
+`test/go/control-flow.test.ts` covers Boolean arm order, string and union switches,
+payload guards, duplicate labels, shared declarations, effects, selected-lens
+restoration and partial-match traps. It is included in the CI execution gate.
+Regenerated `ok.go` is 332 lines and still produces `[[75,82,79],4]` for the
+scripted game.
+
+Validation: TypeScript and scoped diff checks pass. The regular suite passes
+3158 tests with all 39 snapshots. The Go corpus passes all 1592 tests.
+The focused Go execution suite passes all 111
+tests (200 assertions), including selected-lens restoration through string
+switches. No remote CI was run.

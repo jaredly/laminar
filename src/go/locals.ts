@@ -448,6 +448,21 @@ export class GoLocals {
                         conditional.set(scope, point);
                     else if (!isElse) conditional.delete(scope);
                     read(s.head, boundary);
+                    if (s.head.startsWith('switch ')) {
+                        // A switch's clause list is not a declaration scope.
+                        // Shared cells belong before the entire switch.
+                        for (const clause of s.body) {
+                            if (
+                                typeof clause === 'object' &&
+                                !Array.isArray(clause) &&
+                                !('kind' in clause)
+                            ) {
+                                read(clause.head, point);
+                                walk(clause.body, { parent: scope, boundary: point });
+                            }
+                        }
+                        return;
+                    }
                     // No declaration may split an if/else chain. All arm scopes
                     // project to the chain's first if when lifted to their parent.
                     walk(s.body, { parent: scope, boundary });

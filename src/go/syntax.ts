@@ -52,6 +52,11 @@ export const printGoStatements = (body: Statement[], depth = 0): string[] => {
                       : `${s.name} := ${s.value}`;
             lines.push('\t'.repeat(depth) + text);
         } else {
+            if (s.head.startsWith('case ') || s.head === 'default:') {
+                lines.push('\t'.repeat(Math.max(0, depth - 1)) + s.head);
+                lines.push(...printGoStatements(s.body, depth));
+                continue;
+            }
             const isElse = s.head.startsWith('else');
             if (isElse && lines.length > 0 && lines[lines.length - 1]!.trimEnd().endsWith('}')) {
                 lines[lines.length - 1] = `${lines[lines.length - 1]!} ${s.head} {`;

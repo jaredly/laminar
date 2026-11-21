@@ -692,6 +692,94 @@ export function lowerGo(program: ConcreteProgram): GoFile {
             );
         };
 
+        const irrefutable = (p: IRPattern): boolean =>
+            p.kind === 'bind' ||
+            p.kind === 'drop' ||
+            (p.kind === 'tuple' && p.items.every(irrefutable));
+        const emitMatch = (
+            patterns: IRPattern[],
+            data: Data,
+            id: string,
+            arms: { nested: Statement[] }[],
+            body: Statement[],
+        ) => {
+            // A catch-all ends ordered matching. Later arms cannot run.
+            const wildcard = patterns.findIndex(irrefutable);
+            const count = wildcard < 0 ? patterns.length : wildcard + 1;
+            patterns = patterns.slice(0, count);
+            const tests = patterns.slice(0, wildcard < 0 ? count : count - 1);
+            if (
+                layout(id).kind === 'bool' &&
+                tests.length === 2 &&
+                tests.every((p) => p.kind === 'literal' && typeof p.value === 'boolean') &&
+                (tests[0] as { value: boolean }).value !== (tests[1] as { value: boolean }).value
+            ) {
+                const condition = read(data, id);
+                body.push({
+                    head: (tests[0] as { value: boolean }).value
+                        ? go`if ${condition}`
+                        : go`if !(${condition})`,
+                    body: arms[0]!.nested,
+                });
+                body.push({ head: 'else', body: arms[1]!.nested });
+                return;
+            }
+            const strings =
+                layout(id).kind === 'string' &&
+                tests.every((p) => p.kind === 'literal' && typeof p.value === 'string');
+            const tags =
+                layout(id).kind === 'union' &&
+                (Array.isArray(data) || !data.constructed) &&
+                tests.every((p) => p.kind === 'constructor' && p.items.every(irrefutable));
+            const labels = tests.map((p) =>
+                strings && p.kind === 'literal'
+                    ? goBytes(p.value as string)
+                    : tags && p.kind === 'constructor'
+                      ? String(tagOf(id, p.name))
+                      : '',
+            );
+            // Duplicate labels need ordered matching, which Go switches reject.
+            if (tests.length && (strings || tags) && new Set(labels).size === labels.length) {
+                const selector = read(data, id);
+                const clauses: Statement[] = labels.map((label, n) => ({
+                    head: go`case ${label}:`,
+                    body: arms[n]!.nested,
+                }));
+                if (wildcard >= 0)
+                    clauses.push({ head: 'default:', body: arms[count - 1]!.nested });
+                else if (!tags || labels.length !== layout(id).fields.length)
+                    clauses.push({ head: 'default:', body: ['panic("unmatched case")'] });
+                body.push({
+                    head: tags ? go`switch (${selector}).tag` : go`switch ${selector}`,
+                    body: clauses,
+                });
+                return;
+            }
+            patterns.forEach((p, n) => {
+                if (irrefutable(p)) {
+                    if (n) body.push({ head: 'else', body: arms[n]!.nested });
+                    else body.push(arms[n]!.nested);
+                } else if (
+                    layout(id).kind === 'bool' &&
+                    p.kind === 'literal' &&
+                    typeof p.value === 'boolean'
+                ) {
+                    const condition = read(data, id);
+                    body.push({
+                        head: p.value
+                            ? go`${n ? 'else if' : 'if'} ${condition}`
+                            : go`${n ? 'else if' : 'if'} !(${condition})`,
+                        body: arms[n]!.nested,
+                    });
+                } else
+                    body.push({
+                        head: go`${n ? 'else if' : 'if'} ${matches(p, data, id)}`,
+                        body: arms[n]!.nested,
+                    });
+            });
+            if (wildcard < 0) body.push({ head: 'else', body: ['panic("unmatched case")'] });
+        };
+
         const ref = (s: SlotRef) =>
             storage.project(places.get(s.place) ?? unsupported('Unavailable Go place'), s.path);
 
@@ -1358,13 +1446,13 @@ export function lowerGo(program: ConcreteProgram): GoFile {
                             });
                             storage.reset(before);
                             merge(arms, body);
-                            i.cases.forEach((arm, n) =>
-                                body.push({
-                                    head: go`${n ? 'else if' : 'if'} (${matches(arm.pattern, datum(i.value), outputLayouts.get(i.value)!)})`,
-                                    body: arms[n]!.nested,
-                                }),
+                            emitMatch(
+                                i.cases.map((arm) => arm.pattern),
+                                datum(i.value),
+                                outputLayouts.get(i.value)!,
+                                arms,
+                                body,
                             );
-                            body.push({ head: 'else', body: ['panic("unmatched case")'] });
                             lenses.set(i.out.id, {
                                 view: joined,
                                 stage: (output) => {
@@ -1515,13 +1603,13 @@ export function lowerGo(program: ConcreteProgram): GoFile {
                                     previous,
                                 )),
                         );
-                        i.cases.forEach((arm, n) =>
-                            body.push({
-                                head: go`${n ? 'else if' : 'if'} ${matches(arm.pattern, datum(i.value), outputLayouts.get(i.value)!)}`,
-                                body: arms[n]!.nested,
-                            }),
+                        emitMatch(
+                            i.cases.map((arm) => arm.pattern),
+                            datum(i.value),
+                            outputLayouts.get(i.value)!,
+                            arms,
+                            body,
                         );
-                        body.push({ head: 'else', body: ['panic("unmatched case")'] });
                         dataValues.set(i.out.id, resultData);
                         values.set(i.out.id, () => read(resultData, id));
                         continue;

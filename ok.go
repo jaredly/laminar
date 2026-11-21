@@ -106,12 +106,10 @@ func step_scattered(environment any, steps L0, min_max_lastGuess L10) L0 {
 	input := hostInput("My guess is " + formatNumber(lastGuess) + " (higher/lower/match): ")
 	next := handleResponse(nil, input, L10{item0: L9{read: ((min_max_lastGuess).item0).read}, item1: L9{read: ((min_max_lastGuess).item1).read}, item2: L9{read: ((min_max_lastGuess).item2).read}})
 	v20 := 0.0
-	if next == true {
+	if next {
 		v20 = steps
-	} else if next == false {
-		v20 = step_scattered(nil, (steps + 1.0), L10{item0: L9{read: ((min_max_lastGuess).item0).read}, item1: L9{read: ((min_max_lastGuess).item1).read}, item2: L9{read: ((min_max_lastGuess).item2).read}})
 	} else {
-		panic("unmatched case")
+		v20 = step_scattered(nil, (steps + 1.0), L10{item0: L9{read: ((min_max_lastGuess).item0).read}, item1: L9{read: ((min_max_lastGuess).item1).read}, item2: L9{read: ((min_max_lastGuess).item2).read}})
 	}
 	*((min_max_lastGuess).item0).read = *((min_max_lastGuess).item0).read
 	*((min_max_lastGuess).item1).read = *((min_max_lastGuess).item1).read
@@ -124,14 +122,15 @@ func handleResponse(environment any, response L6, state L10) L8 {
 	v47 := 0.0
 	v48 := 0.0
 	v49 := 0.0
-	if response == "higher" {
+	switch response {
+	case "higher":
 		v4 := L11{tag: 0, v0: L7{}}
 		next := nextGuess(nil, v4, L10{item0: L9{read: ((state).item0).read}, item1: L9{read: ((state).item1).read}, item2: L9{read: ((state).item2).read}})
 		v47 = *((state).item2).read
 		v48 = *((state).item1).read
 		v49 = next
 		v1 = false
-	} else if response == "lower" {
+	case "lower":
 		v21 := L11{tag: 1, v1: L7{}}
 		next_2 := nextGuess(nil, v21, L10{item0: L9{read: ((state).item0).read}, item1: L9{read: ((state).item1).read}, item2: L9{read: ((state).item2).read}})
 		last_2 := *((state).item2).read
@@ -139,19 +138,17 @@ func handleResponse(environment any, response L6, state L10) L8 {
 		v48 = last_2
 		v49 = next_2
 		v1 = false
-	} else if response == "match" {
+	case "match":
 		v47 = *((state).item0).read
 		v48 = *((state).item1).read
 		v49 = *((state).item2).read
 		v1 = true
-	} else if true {
+	default:
 		hostPrint_L7("I'm sorry, I didn't understand that. Please say 'higher', 'lower', or 'match'")
 		v47 = *((state).item0).read
 		v48 = *((state).item1).read
 		v49 = *((state).item2).read
 		v1 = false
-	} else {
-		panic("unmatched case")
 	}
 	*((state).item0).read = v47
 	*((state).item1).read = v48
@@ -164,12 +161,10 @@ func step_thin(environment any, steps L0, min_max_lastGuess L5) L0 {
 	input := hostInput("My guess is " + formatNumber(lastGuess) + " (higher/lower/match): ")
 	next := handleResponse(nil, input, L10{item0: L9{read: &(*(min_max_lastGuess).read).item0}, item1: L9{read: &(*(min_max_lastGuess).read).item1}, item2: L9{read: &(*(min_max_lastGuess).read).item2}})
 	v20 := 0.0
-	if next == true {
+	if next {
 		v20 = steps
-	} else if next == false {
-		v20 = step_scattered(nil, (steps + 1.0), L10{item0: L9{read: &(*(min_max_lastGuess).read).item0}, item1: L9{read: &(*(min_max_lastGuess).read).item1}, item2: L9{read: &(*(min_max_lastGuess).read).item2}})
 	} else {
-		panic("unmatched case")
+		v20 = step_scattered(nil, (steps + 1.0), L10{item0: L9{read: &(*(min_max_lastGuess).read).item0}, item1: L9{read: &(*(min_max_lastGuess).read).item1}, item2: L9{read: &(*(min_max_lastGuess).read).item2}})
 	}
 	*(min_max_lastGuess).read = *(min_max_lastGuess).read
 	return v20
@@ -186,16 +181,15 @@ func game(environment any) L2 {
 
 func nextGuess(environment any, direction L11, min_max_lastGuess L10) L0 {
 	v2 := 0.0
-	if (direction).tag == 0 {
+	switch (direction).tag {
+	case 0:
 		max := *((min_max_lastGuess).item1).read
 		lastGuess := *((min_max_lastGuess).item2).read
 		v2 = ((max + lastGuess) / 2.0)
-	} else if (direction).tag == 1 {
+	case 1:
 		lastGuess_2 := *((min_max_lastGuess).item2).read
 		min := *((min_max_lastGuess).item0).read
 		v2 = ((lastGuess_2 + min) / 2.0)
-	} else {
-		panic("unmatched case")
 	}
 	v42 := laminarRound(v2)
 	*((min_max_lastGuess).item0).read = *((min_max_lastGuess).item0).read
