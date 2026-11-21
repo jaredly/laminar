@@ -1,0 +1,59 @@
+// Bun Snapshot v1, https://bun.sh/docs/test/snapshots
+
+exports[`negative checker results classifies the snapshot corpus 1`] = `
+[
+  {
+    "accepted": 36,
+    "file": "src/systematic.test.lm",
+    "rejectedCases": [
+      "src/systematic.test.lm:375 unbound-name",
+      "src/systematic.test.lm:401 unbound-name",
+      "src/systematic.test.lm:572 use-while-borrowed",
+      "src/systematic.test.lm:672 unbound-name",
+      "src/systematic.test.lm:687 unbound-name",
+      "src/systematic.test.lm:768 unbound-name",
+      "src/systematic.test.lm:812 unbound-name",
+      "src/systematic.test.lm:825 unbound-name",
+      "src/systematic.test.lm:838 unbound-name",
+    ],
+    "rejectedDefinitions": [
+      "src/systematic.test.lm:353 unbound-name",
+      "src/systematic.test.lm:696 unbound-name",
+      "src/systematic.test.lm:789 unbound-name",
+    ],
+  },
+  {
+    "accepted": 27,
+    "file": "test/flow.test.lm",
+    "rejectedCases": [
+      "test/flow.test.lm:157 unbound-name",
+      "test/flow.test.lm:424 unbound-name",
+      "test/flow.test.lm:644 unbound-name",
+      "test/flow.test.lm:654 unbound-name",
+      "test/flow.test.lm:710 unbound-name",
+      "test/flow.test.lm:778 unbound-name",
+      "test/flow.test.lm:784 unbound-name",
+      "test/flow.test.lm:808 unbound-name",
+      "test/flow.test.lm:857 unbound-name",
+      "test/flow.test.lm:911 unbound-name",
+    ],
+    "rejectedDefinitions": [
+      "test/flow.test.lm:26 duplicate-definition",
+      "test/flow.test.lm:137 unbound-name",
+      "test/flow.test.lm:410 type-mismatch",
+      "test/flow.test.lm:565 unbound-name",
+      "test/flow.test.lm:629 unbound-name",
+      "test/flow.test.lm:691 unbound-name",
+      "test/flow.test.lm:739 unbound-name",
+      "test/flow.test.lm:789 unbound-name",
+      "test/flow.test.lm:813 unbound-name",
+      "test/flow.test.lm:818 unbound-name",
+      "test/flow.test.lm:823 unbound-name",
+      "test/flow.test.lm:828 unbound-name",
+      "test/flow.test.lm:833 unbound-name",
+      "test/flow.test.lm:875 unrestored-lens",
+      "test/flow.test.lm:886 unbound-name",
+    ],
+  },
+]
+`;

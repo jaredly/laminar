@@ -123,10 +123,13 @@ traps, malformed results and expected-result mismatches retain their temporary
 compiler/runtime versions. Successful runs remove their directories.
 
 Run `bun test test/c` for the backend tests, `bun test` for all regressions, and
-`bunx tsc --noEmit` for TypeScript checks. Native execution tests in
-`test/c/execute.test.ts` are skipped unless `LAMINAR_EXEC=1` is set (for example
-`LAMINAR_EXEC=1 bun test test/c/execute.test.ts`). When enabled, missing local
-compiler tools produce explicit execution skips; `CI` makes them failures.
+`bunx tsc --noEmit` for TypeScript checks. `test/corpus.test.ts` runs the accepted
+corpus (see *Phase 7: corpus runner and backend selection*). Ordinary runs execute
+it on the typed-IR reference and check C and Go emission; `LAMINAR_EXEC=1 bun test
+test/corpus.test.ts` also builds and runs it natively and on Go, and
+`LAMINAR_BACKENDS=native` (or any comma list of `reference`, `native`, `go`)
+selects backends explicitly. Missing local toolchains produce explicit skips; `CI`
+makes them failures.
 
 `.github/workflows/backend.yml` provisions Bun 1.4.2, runs the tests and
 TypeScript checks, and uploads failure artifacts. This configuration is checked
@@ -987,3 +990,34 @@ through, removes the build directory afterwards, and exits with the program's
 status. `--target reference` runs the typed-IR evaluator instead. Program output
 streams as produced and the entry result is printed last as a JSON line; the
 result-protocol record separator is stripped. Native is the default target.
+
+## Phase 7: corpus runner and backend selection
+
+`test/corpus.test.ts` is the one runner for the accepted corpus. It replaces the
+separate native (`test/c/execute.test.ts`) and Go (`test/go/abi-migration.test.ts`)
+sample loops. The corpus is:
+
+- the shared execution samples (`test/backend/execution-samples.ts`), with their
+  stdin and expected host output; and
+- the test cases of the `.test.lm` snapshot files that the legacy fixture runner
+  executes (`src/systematic.test.lm`, `test/flow.test.lm`). `test/backend/lm-corpus.ts`
+  extracts them with the fixture runner's pairing rules. Each case's source is the
+  file's checker-accepted definitions followed by its body. Its expected value is
+  the literal expected expression: snapshot files write tuples with list syntax,
+  which prints as the same JSON array.
+
+`test/backend/backends.ts` defines the backends: `reference` (typed-IR
+evaluator), `native` (C through clang, sanitized `-O0` and plain `-O2`) and `go`.
+`LAMINAR_BACKENDS` selects them explicitly; otherwise the reference always runs and
+`LAMINAR_EXEC=1` selects all three. Each compiled backend also checks two expected
+runtime traps. When a compiled backend is not selected, the runner still checks
+that every case emits its code.
+
+Two groups keep failures apart. *Negative checker results* is a snapshot that
+classifies the `.test.lm` corpus: accepted cases, rejected cases and rejected
+definitions, each with its checker code. Most rejections name legacy fixture
+builtins (`log`, `makelens`, `heap`, files) that are not runtime imports, or
+definitions that depend on them. *Backend restrictions* lists programs that pass
+the checker and the reference but that a backend rejects, with the expected code
+for C and Go: non-scalar interpolation and callable entry results. Missing host
+capabilities are tested per target.

@@ -7,7 +7,7 @@ executes affine closures, typed indirect calls and representation joins through
 [ABI-keyed, type-determined callable representations](abi-callable-representations.md);
 see [*Phase 6 completion*](#phase-6-completion-2026-11-20). Phase 7 runtime and host
 integration and phase 8 optimization remain broader work. Phase 7 is in progress:
-slices 1 (nominal union data), 2 (strings), 3 (runtime import registry) and 4 (compiler command/API) are complete (see
+slices 1 (nominal union data), 2 (strings), 3 (runtime import registry), 4 (compiler command/API) and 5 (corpus runner with backend selection) are complete (see
 [*Phase 7 progress*](#phase-7-progress)).
 
 The scoped lens extensions are complete as of `707521c`; see the
@@ -1456,3 +1456,31 @@ passed, 775 skipped, no failures, all 38 snapshots passing (4825 assertions);
 Remaining phase-7 work: backend selection in the test runner (slice 5), host
 exports (slice 6), then documentation and the CI exit gate. Interpolation of
 non-scalar parts remains a tested restriction.
+
+### Slice 5: corpus runner and backend selection (2026-11-20)
+
+Work item 6: `test/corpus.test.ts` runs one accepted corpus on explicitly selected
+backends (`LAMINAR_BACKENDS=reference,native,go`; by default the reference, with
+`LAMINAR_EXEC=1` selecting all). It replaces the separate native and Go sample
+loops (`test/c/execute.test.ts`, `test/go/abi-migration.test.ts`). The corpus
+is the shared execution samples plus the 63 checker-accepted test cases of the
+existing fixture runner's `.test.lm` files, extracted with that runner's pairing
+rules. Wasm is not a corpus backend (see slice 2). Ordinary runs now execute the
+whole corpus on the reference and check C and Go emission for every case. See
+[the C backend](c-backend.md#phase-7-corpus-runner-and-backend-selection).
+
+Negative checker results are separate from backend restrictions: a snapshot
+classifies the `.test.lm` corpus into accepted cases, rejected cases and rejected
+definitions with checker codes (19 rejected cases, almost all because of legacy
+fixture builtins such as `log`, `makelens` and `heap`, which are not runtime
+imports). A list of checked programs that backends reject records the expected C
+and Go codes: non-scalar interpolation and callable entry results.
+
+Validation: TypeScript and `git diff --check` pass. The regular suite reports 3105
+passed, 42 skipped, no failures, 39 snapshots passing (4835 assertions).
+`LAMINAR_EXEC=1 bun test test/corpus.test.ts` passes all 3178 tests: 792 corpus
+cases on each of reference, native and Go, four expected traps, the emission and
+classification groups (465.57 seconds). Remote CI was not run.
+
+Remaining phase-7 work: host exports (slice 6), then documentation and the CI exit
+gate.
