@@ -1,5 +1,5 @@
 import * as shared from '../backend/storage.ts';
-import type { Expr } from './code.ts';
+import type { Expr } from '../backend/imperative/code.ts';
 
 export type Expression = Expr | (() => Expr);
 export const expression = (value: Expression): Expr =>

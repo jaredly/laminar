@@ -57,9 +57,14 @@ it('lifts declarations before the entire if/else chain', () => {
     const l = new GoLocals();
     const x = l.reference('x');
     const body: Statement[] = [
-        { head: 'if flag', body: ['first()'] },
-        { head: 'else if other', body: [l.declaration(x, 'float64', 'read()')] },
-        { head: 'else', body: ['last()'] },
+        {
+            kind: 'if',
+            arms: [
+                { condition: 'flag', body: ['first()'] },
+                { condition: 'other', body: [l.declaration(x, 'float64', 'read()')] },
+                { body: ['last()'] },
+            ],
+        },
         l.template`use(${x})`,
     ];
     const code = print(l, body);

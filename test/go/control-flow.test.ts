@@ -63,10 +63,11 @@ it('hoists shared switch cells before the selector', () => {
     const code = printGoStatements(
         l.place([
             {
-                head: 'switch flag',
-                body: [
-                    { head: 'case true:', body: [l.declaration(x, 'float64', 'read()')] },
-                    { head: 'default:', body: [l.template`use(${x})`] },
+                kind: 'switch',
+                subject: 'flag',
+                cases: [
+                    { label: 'true', body: [l.declaration(x, 'float64', 'read()')] },
+                    { body: [l.template`use(${x})`] },
                 ],
             },
             l.template`use(${x})`,

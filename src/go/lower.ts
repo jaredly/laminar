@@ -14,7 +14,7 @@ import { goBytes, goPart, goStringRuntime } from './strings.ts';
 import { requireImport, usesHost } from '../runtime-imports.ts';
 import { GoNames, functionNames, patternSlots, sourceBinding } from './names.ts';
 import { GoLocals } from './locals.ts';
-import { same, type Expr } from './code.ts';
+import { same, type Expr } from '../backend/imperative/code.ts';
 import { goTypes, fingerprint } from './types.ts';
 import { reachableGo } from './reachable.ts';
 import {
@@ -991,12 +991,17 @@ export function lowerGo(program: ConcreteProgram): GoFile {
             ) {
                 const condition = read(data, id);
                 body.push({
-                    head: (tests[0] as { value: boolean }).value
-                        ? go`if ${condition}`
-                        : go`if !(${condition})`,
-                    body: arms[0]!.nested,
+                    kind: 'if',
+                    arms: [
+                        {
+                            condition: (tests[0] as { value: boolean }).value
+                                ? condition
+                                : go`!(${condition})`,
+                            body: arms[0]!.nested,
+                        },
+                        { body: arms[1]!.nested },
+                    ],
                 });
-                body.push({ head: 'else', body: arms[1]!.nested });
                 return;
             }
             const strings =
@@ -1016,43 +1021,42 @@ export function lowerGo(program: ConcreteProgram): GoFile {
             // Duplicate labels need ordered matching, which Go switches reject.
             if (tests.length && (strings || tags) && new Set(labels).size === labels.length) {
                 const selector = read(data, id);
-                const clauses: Statement[] = labels.map((label, n) => ({
-                    head: go`case ${label}:`,
+                const cases: { label?: Expr; body: Statement[] }[] = labels.map((label, n) => ({
+                    label,
                     body: arms[n]!.nested,
                 }));
-                if (wildcard >= 0)
-                    clauses.push({ head: 'default:', body: arms[count - 1]!.nested });
+                if (wildcard >= 0) cases.push({ body: arms[count - 1]!.nested });
                 else if (!tags || labels.length !== layout(id).fields.length)
-                    clauses.push({ head: 'default:', body: ['panic("unmatched case")'] });
+                    cases.push({ body: ['panic("unmatched case")'] });
                 body.push({
-                    head: tags ? go`switch (${selector}).tag` : go`switch ${selector}`,
-                    body: clauses,
+                    kind: 'switch',
+                    subject: tags ? go`(${selector}).tag` : selector,
+                    cases,
                 });
                 return;
             }
-            patterns.forEach((p, n) => {
-                if (irrefutable(p)) {
-                    if (n) body.push({ head: 'else', body: arms[n]!.nested });
-                    else body.push(arms[n]!.nested);
-                } else if (
+            // A leading catch-all needs no test at all.
+            if (irrefutable(patterns[0]!)) {
+                body.push(arms[0]!.nested);
+                return;
+            }
+            const chain: { condition?: Expr; body: Statement[] }[] = patterns.map((p, n) => {
+                if (irrefutable(p)) return { body: arms[n]!.nested };
+                if (
                     layout(id).kind === 'bool' &&
                     p.kind === 'literal' &&
                     typeof p.value === 'boolean'
                 ) {
                     const condition = read(data, id);
-                    body.push({
-                        head: p.value
-                            ? go`${n ? 'else if' : 'if'} ${condition}`
-                            : go`${n ? 'else if' : 'if'} !(${condition})`,
+                    return {
+                        condition: p.value ? condition : go`!(${condition})`,
                         body: arms[n]!.nested,
-                    });
-                } else
-                    body.push({
-                        head: go`${n ? 'else if' : 'if'} ${matches(p, data, id)}`,
-                        body: arms[n]!.nested,
-                    });
+                    };
+                }
+                return { condition: matches(p, data, id), body: arms[n]!.nested };
             });
-            if (wildcard < 0) body.push({ head: 'else', body: ['panic("unmatched case")'] });
+            if (wildcard < 0) chain.push({ body: ['panic("unmatched case")'] });
+            body.push({ kind: 'if', arms: chain });
         };
 
         const ref = (s: SlotRef) =>
@@ -1250,20 +1254,18 @@ export function lowerGo(program: ConcreteProgram): GoFile {
                         read(storage.get(view), endpoint(id, 'replacement')),
                         body,
                     );
-                    body.push(
-                        {
-                            head: go`if (${name}).restore != nil`,
-                            body: [go`(${name}).restore((${name}).context, ${replacement})`],
-                        },
-                        {
-                            head: 'else',
-                            body: (() => {
-                                const b: Statement[] = [];
-                                flush(name, id, storage.get(view), b);
-                                return b;
-                            })(),
-                        },
-                    );
+                    const fallback: Statement[] = [];
+                    flush(name, id, storage.get(view), fallback);
+                    body.push({
+                        kind: 'if',
+                        arms: [
+                            {
+                                condition: go`(${name}).restore != nil`,
+                                body: [go`(${name}).restore((${name}).context, ${replacement})`],
+                            },
+                            { body: fallback },
+                        ],
+                    });
                     after(body);
                 },
             };
@@ -1882,15 +1884,15 @@ export function lowerGo(program: ConcreteProgram): GoFile {
                                     });
                                     storage.reset(current);
                                     merge(restored, output);
-                                    restored.forEach((arm, n) =>
-                                        output.push({
-                                            head: go`${n ? 'else if' : 'if'} (${selected} == ${n})`,
-                                            body: arm.nested,
-                                        }),
-                                    );
                                     output.push({
-                                        head: 'else',
-                                        body: ['panic("unmatched case")'],
+                                        kind: 'if',
+                                        arms: [
+                                            ...restored.map((arm, n) => ({
+                                                condition: go`(${selected} == ${n})`,
+                                                body: arm.nested,
+                                            })),
+                                            { body: ['panic("unmatched case")'] },
+                                        ],
                                     });
                                 },
                             });

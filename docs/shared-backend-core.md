@@ -165,6 +165,37 @@ Replace `{ head: string; body }` statements with structured `if`, `switch` and
 `case` nodes. Base reachability on declaration dependencies instead of lexing
 printed text. Go prints from the shared tree.
 
+Implementation:
+
+- `src/backend/imperative/code.ts`: expression nodes, `Code`, `Expr`, `same`.
+- `src/backend/imperative/statements.ts`: the statement tree. It has
+  declarations and assignments, `IfChain` (one node per `if`/`else if`/`else`
+  chain, where an arm without a condition is the `else`), `Switch` (a case
+  without a label is the default), and opaque `Block` scopes for target-specific
+  loops and closures. Traversal helpers: `expressions`, `bodies`, `mapScope`,
+  `visit`.
+- `src/backend/imperative/locals.ts`: the `Locals` passes (simplification,
+  folding, adjacency fusion, pruning, declaration placement), parameterized by a
+  `Syntax` that spells scalars and binary operations. `place` returns declaration
+  and assignment nodes instead of Go text. A hoisted cell becomes a
+  value-less `local` at the insertion point plus a `set` at its original point.
+  Placement reads an `IfChain` or `Switch` as a single statement, so no
+  declaration can split its arms. It no longer recognizes `if`/`else`/`switch`
+  by their spelling.
+- `src/backend/imperative/writeback.ts`: terminal join write-back, generic over a
+  storage leaf that has `layout` and an optional `address`.
+- Go keeps only its spelling: `goSyntax` and the printer in `go/syntax.ts`, the
+  `GoLocals` subclass in `go/locals.ts`, and type aliases in
+  `go/writeback.ts`. Go's runtime helpers, which never go through the passes,
+  still spell their own control flow as `Block` heads.
+
+Go output is byte-identical to step 2 across all 769 corpus and sample programs.
+
+Not done: structural reachability. `go/reachable.ts` still lexes package-level
+text. Making it structural requires each package declaration to record what it
+references. That is its own slice, and C (which has no pruning yet) should
+adopt it at the same time.
+
 ### Step 4: port C onto the tree
 
 First, emit nodes instead of strings. This removes the `(void)` suppressions and

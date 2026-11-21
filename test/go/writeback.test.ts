@@ -247,8 +247,13 @@ it('requires every retained cleanup occurrence to have a terminal join', () => {
         inputs: () => [{ body: arm, data: { expression: '2.0', layout: 'number' } }],
     });
     const body: Statement[] = [
-        { head: 'if outer', body: [boundary, 'effect()', at] },
-        { head: 'else', body: [boundary, at] },
+        {
+            kind: 'if',
+            arms: [
+                { condition: 'outer', body: [boundary, 'effect()', at] },
+                { body: [boundary, at] },
+            ],
+        },
     ];
     lowerWritebacks(
         body,
