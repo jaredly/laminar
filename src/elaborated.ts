@@ -1,4 +1,5 @@
 import { normalizeBorrowed } from './normalize-borrowed.ts';
+import { normalizeVectors } from './normalize-vectors.ts';
 import type { Decl, Linear } from './ast.ts';
 import { type FlowTy, type Scheme, type Solver, type Ty } from './types.ts';
 
@@ -189,7 +190,10 @@ export class ElaborationBuilder {
         return id;
     }
     prepare(ast: Linear, declaration?: Decl): { ast: Linear; declaration?: Decl } {
-        const copy = structuredClone({ ast: normalizeBorrowed(ast), declaration });
+        const copy = structuredClone({
+            ast: normalizeBorrowed(normalizeVectors(ast)),
+            declaration,
+        });
         const visit = (value: unknown): void => {
             if (!value || typeof value !== 'object') return;
             if (Array.isArray(value)) {

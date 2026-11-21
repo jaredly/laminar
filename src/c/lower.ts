@@ -45,6 +45,13 @@ export function lowerC(
     const unit = program.layouts.find((l) => l.kind === 'unit')!;
     const zero = (id: string) => `(${type(id)}){0}`;
     const field = (expr: string, n: number) => `(${expr}).item${n}`;
+    /** Element layout of a vector layout. */
+    const element = (id: string): string => {
+        const f = layout(id).fields[0];
+        return f?.kind === 'pointer' && f.layout
+            ? f.layout
+            : unsupported('Malformed vector layout');
+    };
     const storage = new Storage((s) =>
         layout(s.layout).fields.map((f, i) => {
             if (f.kind !== 'value' || !f.name.startsWith('item'))
@@ -122,7 +129,12 @@ export function lowerC(
     ];
     const strings = program.layouts.some((l) => l.kind === 'string');
     const runtime = strings ? stringRuntime() : undefined;
-    if (runtime) declarations.push('#include <string.h>', runtime.declarations[0]!, runtime.declarations[1]!);
+    if (runtime)
+        declarations.push(
+            '#include <string.h>',
+            runtime.declarations[0]!,
+            runtime.declarations[1]!,
+        );
     for (const l of program.layouts)
         declarations.push(
             l.kind === 'f64'
@@ -149,6 +161,11 @@ export function lowerC(
             );
             declarations.push(
                 `struct ${type(l.id)} { uint32_t tag; union { ${variants.join(' ')} } as; };`,
+            );
+        } else if (l.kind === 'vector') {
+            // Owned element buffer; the struct itself moves by value.
+            declarations.push(
+                `struct ${type(l.id)} { ${type(element(l.id))} *elements; size_t length; size_t capacity; };`,
             );
         } else if (!['f64', 'bool', 'string'].includes(l.kind)) {
             declarations.push(
@@ -190,6 +207,87 @@ export function lowerC(
         helpers.push({ signature, body });
         return name;
     };
+    /** Vector operations are C functions generated once per vector layout on first use. */
+    const vectorHelpers = new Map<string, string>();
+    const vectorHelper = (
+        kind: string,
+        id: string,
+        result: string,
+        parameters: string,
+        generate: (body: Statement[]) => void,
+    ): string => {
+        const key = `${kind}:${id}`;
+        const existing = vectorHelpers.get(key);
+        if (existing) return existing;
+        const name = `vector_${kind}_${type(id)}`;
+        vectorHelpers.set(key, name);
+        const signature = `${result} ${name}(${parameters})`;
+        declarations.push(signature + ';');
+        const body: Statement[] = [];
+        generate(body);
+        helpers.push({ signature, body });
+        return name;
+    };
+    /** `[:push:]` consumes the vector and appends, doubling the buffer when it is full. */
+    const vectorPush = (id: string): string =>
+        vectorHelper('push', id, type(id), `${type(id)} value, ${type(element(id))} item`, (body) =>
+            body.push(
+                {
+                    head: 'if (value.length == value.capacity)',
+                    body: [
+                        'size_t capacity = value.capacity ? value.capacity * 2 : 4;',
+                        `${type(element(id))} *elements = allocate_context(capacity * sizeof *elements);`,
+                        {
+                            head: 'for (size_t i = 0; i < value.length; i++)',
+                            body: ['elements[i] = value.elements[i];'],
+                        },
+                        { head: 'if (value.elements)', body: ['release_context(value.elements);'] },
+                        'value.elements = elements;',
+                        'value.capacity = capacity;',
+                    ],
+                },
+                'value.elements[value.length++] = item;',
+                'return value;',
+            ),
+        );
+    /** `array(n, init)`: n deep copies of init; the last element takes init itself. */
+    const vectorArray = (id: string): string =>
+        vectorHelper('array', id, type(id), `double length, ${type(element(id))} init`, (body) => {
+            const none: Statement[] = [];
+            drop({ expression: 'init', layout: element(id) }, none);
+            body.push(
+                {
+                    head: 'if (!(length >= 0) || length != floor(length) || length > (double)(SIZE_MAX / sizeof init))',
+                    body: ['abort();'],
+                },
+                `${type(id)} value = {0};`,
+                { head: 'if (length == 0)', body: [...none, 'return value;'] },
+                'value.length = value.capacity = (size_t)length;',
+                'value.elements = allocate_context(value.length * sizeof *value.elements);',
+                {
+                    head: 'for (size_t i = 0; i + 1 < value.length; i++)',
+                    body: [`value.elements[i] = ${duplicate('init', element(id))};`],
+                },
+                'value.elements[value.length - 1] = init;',
+                'return value;',
+            );
+        });
+    /** Address of element `index`, trapping unless it is an integer in range. */
+    const vectorAt = (id: string): string =>
+        vectorHelper(
+            'at',
+            id,
+            `${type(element(id))} *`,
+            `${type(id)} value, double index`,
+            (body) =>
+                body.push(
+                    {
+                        head: 'if (!(index >= 0) || index != floor(index) || index >= (double)value.length)',
+                        body: ['abort();'],
+                    },
+                    'return &value.elements[(size_t)index];',
+                ),
+        );
     const variant = (id: string, n: number) => {
         const f = layout(id).fields[n]!;
         if (f.kind === 'code' || !f.layout)
@@ -225,6 +323,22 @@ export function lowerC(
                 body.push('return copy;');
             })}(${expr})`;
         if (l.kind === 'string') return `string_dup(${expr})`;
+        if (l.kind === 'vector')
+            return `${vectorHelper('dup', id, type(id), `${type(id)} value`, (body) =>
+                body.push(
+                    `${type(id)} copy = {0};`,
+                    { head: 'if (!value.length)', body: ['return copy;'] },
+                    'copy.length = copy.capacity = value.length;',
+                    'copy.elements = allocate_context(copy.length * sizeof *copy.elements);',
+                    {
+                        head: 'for (size_t i = 0; i < value.length; i++)',
+                        body: [
+                            `copy.elements[i] = ${duplicate('value.elements[i]', element(id))};`,
+                        ],
+                    },
+                    'return copy;',
+                ),
+            )}(${expr})`;
         if (l.kind === 'record' && l.fields.every((f) => f.kind === 'value'))
             return `(${type(id)}){${l.fields.map((f, n) => duplicate(field(expr, n), (f as { layout: string }).layout)).join(', ')}}`;
         return expr;
@@ -251,6 +365,19 @@ export function lowerC(
             body.push(`${name}(${data.expression});`);
         } else if (l.kind === 'string') {
             body.push(`string_drop(${data.expression});`);
+        } else if (l.kind === 'vector') {
+            const id = data.layout;
+            const name = vectorHelper('drop', id, 'void', `${type(id)} value`, (body) => {
+                const each: Statement[] = [];
+                drop({ expression: 'value.elements[i]', layout: element(id) }, each);
+                if (each.length)
+                    body.push({ head: 'for (size_t i = 0; i < value.length; i++)', body: each });
+                body.push({
+                    head: 'if (value.elements)',
+                    body: ['release_context(value.elements);'],
+                });
+            });
+            body.push(`${name}(${data.expression});`);
         } else if (l.fields.some((f) => f.name === 'dispose')) {
             body.push({
                 head: `if ((${data.expression}).dispose)`,
@@ -270,30 +397,36 @@ export function lowerC(
             cell = variant(result, cons);
         if (!cell.boxed) return unsupported('List cells must be boxed');
         const text = (layout(cell.layout).fields[0] as { layout: string }).layout;
-        return unionHelper('char_list', result, type(result), (body) => {
-            body.pop();
-            body.push(
-                `${type(result)} out = (${type(result)}){.tag=${nil}, .as.v${nil}=${zero(variant(result, nil).layout)}};`,
-                'size_t end = value ? value->length : 0;',
-                {
-                    head: 'while (end > 0)',
-                    body: [
-                        'size_t start = end - 1;',
-                        {
-                            // Step back over UTF-8 continuation bytes to the code point's lead byte.
-                            head: 'while (start > 0 && (value->bytes[start] & 0xC0) == 0x80)',
-                            body: ['start--;'],
-                        },
-                        `${type(cell.layout)} *cell = allocate_context(sizeof *cell);`,
-                        `*cell = (${type(cell.layout)}){(${type(text)})string_new((const char *)value->bytes + start, end - start), out};`,
-                        `out = (${type(result)}){.tag=${cons}, .as.v${cons}=cell};`,
-                        'end = start;',
-                    ],
-                },
-                'string_drop(value);',
-                'return out;',
-            );
-        }, type(text));
+        return unionHelper(
+            'char_list',
+            result,
+            type(result),
+            (body) => {
+                body.pop();
+                body.push(
+                    `${type(result)} out = (${type(result)}){.tag=${nil}, .as.v${nil}=${zero(variant(result, nil).layout)}};`,
+                    'size_t end = value ? value->length : 0;',
+                    {
+                        head: 'while (end > 0)',
+                        body: [
+                            'size_t start = end - 1;',
+                            {
+                                // Step back over UTF-8 continuation bytes to the code point's lead byte.
+                                head: 'while (start > 0 && (value->bytes[start] & 0xC0) == 0x80)',
+                                body: ['start--;'],
+                            },
+                            `${type(cell.layout)} *cell = allocate_context(sizeof *cell);`,
+                            `*cell = (${type(cell.layout)}){(${type(text)})string_new((const char *)value->bytes + start, end - start), out};`,
+                            `out = (${type(result)}){.tag=${cons}, .as.v${cons}=cell};`,
+                            'end = start;',
+                        ],
+                    },
+                    'string_drop(value);',
+                    'return out;',
+                );
+            },
+            type(text),
+        );
     };
     /** Natives that take and return plain data, by registered name. Lens natives are separate. */
     const simpleNative = (
@@ -306,6 +439,9 @@ export function lowerC(
             return `(${args[0]} ${op} ${args[1]})`;
         if (op === 'charList') return `${charList(result)}(${args[0]})`;
         if (op === 'heapsize') return '0.0';
+        if (op === '[::]') return zero(result);
+        if (op === '[:push:]') return `${vectorPush(result)}(${args[0]}, ${args[1]})`;
+        if (op === 'array') return `${vectorArray(result)}(${args[0]}, ${args[1]})`;
         if (op === 'round')
             return `${unionHelper('round', result, type(result), (body) =>
                 body.push(
@@ -323,7 +459,10 @@ export function lowerC(
                 type(result),
                 (body) =>
                     body.push(
-                        { head: 'if (value)', body: ['fwrite(value->bytes, 1, value->length, stdout);'] },
+                        {
+                            head: 'if (value)',
+                            body: ['fwrite(value->bytes, 1, value->length, stdout);'],
+                        },
                         'putchar(10);',
                         'string_drop(value);',
                         `return ${zero(result)};`,
@@ -337,7 +476,10 @@ export function lowerC(
                 type(result),
                 (body) =>
                     body.push(
-                        { head: 'if (value)', body: ['fwrite(value->bytes, 1, value->length, stdout);'] },
+                        {
+                            head: 'if (value)',
+                            body: ['fwrite(value->bytes, 1, value->length, stdout);'],
+                        },
                         'fflush(stdout);',
                         'string_drop(value);',
                         'string_builder line = {0};',
@@ -397,7 +539,10 @@ export function lowerC(
             abi.arguments,
         );
         if (simple !== undefined) result = simple;
-        else if (op === 'dup')
+        else if (op === 'size') {
+            const vector = endpoint(abi.arguments[0]!, 'read');
+            result = `(double)(${read(storage.get(incoming('arg0', abi.arguments[0]!)), vector)}).length`;
+        } else if (op === 'dup')
             result = duplicate(
                 read(storage.get(incoming('arg0', abi.arguments[0]!)), abi.result),
                 abi.result,
@@ -700,8 +845,7 @@ export function lowerC(
                       : unsupported('Literal');
         const matches = (p: IRPattern, expr: string, id: string): string => {
             if (p.kind === 'literal') {
-                if (layout(id).kind !== 'string')
-                    return `${expr} == ${literal(p.value, unit.id)}`;
+                if (layout(id).kind !== 'string') return `${expr} == ${literal(p.value, unit.id)}`;
                 if (typeof p.value !== 'string') return unsupported('String literal pattern');
                 const text = cBytes(p.value);
                 return `string_equals(${expr}, ${text.literal}, ${text.length})`;
@@ -1164,6 +1308,31 @@ export function lowerC(
                             const lens = lenses.get(i.args[0]!)!;
                             expr = duplicate(read(storage.get(lens.view), id), id);
                             adapters.push({ finish: lens.finish });
+                        } else if (w?.kind === 'native' && w.definition === 'native/size') {
+                            const lens = lenses.get(i.args[0]!)!,
+                                vector = endpoint(outputLayouts.get(i.args[0]!)!, 'read');
+                            expr = `(double)(${read(storage.get(lens.view), vector)}).length`;
+                            adapters.push({ finish: lens.finish });
+                        } else if (w?.kind === 'native' && w.definition === 'native/[]') {
+                            // The element lives in the heap buffer, so writing through its
+                            // address updates the vector without changing the vector struct.
+                            const parent = lenses.get(i.args[1]!)!,
+                                vector = endpoint(outputLayouts.get(i.args[1]!)!, 'read'),
+                                item = element(vector);
+                            const at = fresh();
+                            variables.push({ name: at, type: `${type(item)} *` });
+                            body.push(
+                                `${type(item)} *${at} = ${vectorAt(vector)}(${read(storage.get(parent.view), vector)}, ${value(i.args[0]!)});`,
+                            );
+                            const view = storage.own({ expression: `(*${at})`, layout: item });
+                            lenses.set(i.out.id, {
+                                view,
+                                finish: (body) => {
+                                    body.push(`*${at} = ${read(storage.get(view), item)};`);
+                                    parent.finish(body);
+                                },
+                            });
+                            continue;
                         } else if (w?.kind === 'native' && w.definition === 'native/fst') {
                             const parent = lenses.get(i.args[0]!)!;
                             lenses.set(i.out.id, {
@@ -1387,13 +1556,24 @@ export function lowerC(
         },
     );
     // Test-only structured result adapter; never exports borrowed storage.
+    let printLoops = 0;
     const print = (expr: string, id: string, body: Statement[]) => {
         const l = layout(id);
         if (l.kind === 'f64') body.push(`print_number(${expr});`);
         else if (l.kind === 'bool') body.push(`fputs(${expr} ? "true" : "false", stdout);`);
         else if (l.kind === 'unit') body.push('fputs("null", stdout);');
         else if (l.kind === 'string') body.push(`print_string(${expr});`);
-        else if (l.fields.every((f) => f.kind === 'value' && f.name.startsWith('item'))) {
+        else if (l.kind === 'vector') {
+            // Nested vectors nest loops; each needs its own index.
+            const i = `i${printLoops++}`;
+            const each: Statement[] = [{ head: `if (${i})`, body: ['putchar(44);'] }];
+            print(`(${expr}).elements[${i}]`, element(id), each);
+            body.push(
+                'putchar(91);',
+                { head: `for (size_t ${i} = 0; ${i} < (${expr}).length; ${i}++)`, body: each },
+                'putchar(93);',
+            );
+        } else if (l.fields.every((f) => f.kind === 'value' && f.name.startsWith('item'))) {
             body.push('putchar(91);');
             l.fields.forEach((f, i) => {
                 if (i) body.push('putchar(44);');
@@ -1523,10 +1703,7 @@ export function lowerC(
             const name = claim(`laminar_${readable}`);
             handles.set(id, name);
             const drop_ = claim(`laminar_drop_${readable}`);
-            header.push(
-                `typedef struct ${name} ${name};`,
-                `void ${drop_}(${name} *handle);`,
-            );
+            header.push(`typedef struct ${name} ${name};`, `void ${drop_}(${name} *handle);`);
             const body: Statement[] = [`${type(id)} *cell = (${type(id)} *)(void *)handle;`];
             drop({ expression: '*cell', layout: id }, body);
             body.push('release_context(cell);');

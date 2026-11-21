@@ -84,7 +84,7 @@ export function verifyConcreteProgram(p: ConcreteProgram): void {
         }
         if (parts[0] !== 'physical-layout' || parts[1] !== target)
             fail('Wrong-target physical layout');
-        if (!['f64', 'bool', 'string', 'unit', 'record', 'union'].includes(l.kind))
+        if (!['f64', 'bool', 'string', 'unit', 'record', 'union', 'vector'].includes(l.kind))
             fail('Unknown concrete storage kind');
         unique(l.fields, (f) => f.name, 'layout field');
         for (const f of l.fields) {
@@ -146,11 +146,7 @@ export function verifyConcreteProgram(p: ConcreteProgram): void {
                 t.items.length ? 'record' : 'unit',
                 t.items.map((x, i) => ({ name: `item${i}`, kind: 'value', layout: data(x) })),
             );
-        else if (
-            t.tag === 'con' &&
-            !t.args.length &&
-            ['Number', 'Bool', 'String'].includes(t.name)
-        )
+        else if (t.tag === 'con' && !t.args.length && ['Number', 'Bool', 'String'].includes(t.name))
             concreteFields(
                 id,
                 t.name === 'Number' ? 'f64' : t.name === 'Bool' ? 'bool' : 'string',
@@ -290,6 +286,26 @@ export function verifyConcreteProgram(p: ConcreteProgram): void {
     ): ValueRepresentation | undefined {
         const variant = p.analysis.variants.find((v) => v.id === contract.target);
         if (variant) return variant.result;
+        if (
+            descriptor.kind === 'native' &&
+            descriptor.definition === 'native/[]' &&
+            contract.result.kind === 'lens'
+        ) {
+            const arg = contract.arguments[1];
+            if (arg?.kind !== 'lens') return undefined;
+            const parent = shapes.get(arg.shape)!;
+            if (parent.kind !== 'thin') return fail('Invalid native index argument');
+            const vector = semanticLayouts.get(parent.read)!.type;
+            if (vector.tag !== 'con' || vector.name !== 'Vector')
+                return fail('Invalid native index endpoints');
+            const e = p.analysis.layouts.find(
+                (l) => typeKey(l.type) === typeKey(vector.args[0]!),
+            )!.id;
+            return {
+                kind: 'lens',
+                shape: JSON.stringify(['thin', JSON.stringify(['backing', e, e])]),
+            };
+        }
         if (
             descriptor.kind !== 'native' ||
             descriptor.definition !== 'native/fst' ||

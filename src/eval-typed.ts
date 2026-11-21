@@ -27,6 +27,8 @@ type FunctionValue = {
     used: boolean;
 };
 type NativeValue = { kind: 'native'; name: string };
+/** Elements are always initialized: index lenses keep every element full. */
+type VectorValue = { kind: 'vector'; items: Data[] };
 export type ReferenceValue =
     | number
     | boolean
@@ -45,6 +47,7 @@ type Data =
     | Variant
     | FunctionValue
     | NativeValue
+    | VectorValue
     | typeof EMPTY;
 type Lens = {
     kind: 'lens';
@@ -208,7 +211,7 @@ export function executeTypedProgram(
     const dispose = (v: Data): void => {
         if (Array.isArray(v)) v.forEach(dispose);
         else if (v && typeof v === 'object') {
-            if (v.kind === 'variant') v.items.forEach(dispose);
+            if (v.kind === 'variant' || v.kind === 'vector') v.items.forEach(dispose);
             else if (v.kind === 'function' && !v.reusable) {
                 if (v.used) return error('Closure disposed or invoked twice');
                 v.used = true;
@@ -321,7 +324,8 @@ export function executeTypedProgram(
     const copy = (v: Data): Data => {
         if (Array.isArray(v)) return v.map(copy);
         if (v && typeof v === 'object') {
-            if (v.kind === 'variant') return { ...v, items: v.items.map(copy) };
+            if (v.kind === 'variant' || v.kind === 'vector')
+                return { ...v, items: v.items.map(copy) };
             throw new BackendDiagnostic(
                 'unsupported-reference-dup',
                 'Duplication of callable values requires a separate language feature',
@@ -329,6 +333,10 @@ export function executeTypedProgram(
         }
         return v;
     };
+    const vector = (v: Data): VectorValue =>
+        v && typeof v === 'object' && !Array.isArray(v) && v.kind === 'vector'
+            ? v
+            : error('Expected a vector');
     const invoke = (callee: Data, args: Argument[]): Argument => {
         if (
             !callee ||
@@ -381,6 +389,42 @@ export function executeTypedProgram(
                         () => parent.peek(),
                         (value) => parent.replace(value),
                     ).project([0]);
+                }
+                case 'array': {
+                    const length = number(0),
+                        init = owned(data(args[1]));
+                    if (!Number.isInteger(length) || length < 0)
+                        return error('array length must be a non-negative integer');
+                    const items = Array.from({ length }, () => copy(init));
+                    dispose(init);
+                    return { kind: 'vector', items };
+                }
+                case 'size':
+                    return vector(lens(args[0]).peek()).items.length;
+                case '[::]':
+                    return { kind: 'vector', items: [] };
+                case '[:push:]': {
+                    const v = vector(owned(data(args[0])));
+                    return { kind: 'vector', items: [...v.items, owned(data(args[1]))] };
+                }
+                case '[]': {
+                    const at = number(0),
+                        parent = lens(args[1]);
+                    const items = () => vector(parent.peek()).items;
+                    if (!Number.isInteger(at) || at < 0 || at >= items().length)
+                        return error('Vector index out of bounds');
+                    // As with fst, argument completion belongs to the call boundary.
+                    return view(
+                        () => items()[at]!,
+                        (value) => {
+                            const old = items()[at]!;
+                            parent.replace({
+                                kind: 'vector',
+                                items: items().map((v, i) => (i === at ? value : v)),
+                            });
+                            return old;
+                        },
+                    );
                 }
                 case 'charList': {
                     const s = data(args[0]);
@@ -602,5 +646,15 @@ export function executeTypedProgram(
             definitions.set(u.definition, value);
         }
     }
-    return owned(data(result)) as ReferenceValue;
+    return report(owned(data(result)));
+}
+
+/** Result values: vectors are reported as arrays, as the result protocol prints them. */
+function report(v: Data): ReferenceValue {
+    if (Array.isArray(v)) return v.map(report);
+    if (v && typeof v === 'object') {
+        if (v.kind === 'vector') return v.items.map(report);
+        if (v.kind === 'variant') return { ...v, items: v.items.map(report) as Data[] };
+    }
+    return v as ReferenceValue;
 }

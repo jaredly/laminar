@@ -610,6 +610,21 @@ export function verifyRepresentations(
                             if (option.kind === 'native') {
                                 if (targets[n] !== option.definition)
                                     fail('Wrong native call target');
+                                if (v.kind === 'lens' && option.definition === 'native/[]') {
+                                    if (i.out.type.tag !== 'flow')
+                                        return fail('Native lens result type mismatch');
+                                    return {
+                                        kind: 'lens',
+                                        shape: JSON.stringify([
+                                            'thin',
+                                            JSON.stringify([
+                                                'backing',
+                                                layoutId(i.out.type.read),
+                                                layoutId(i.out.type.write),
+                                            ]),
+                                        ]),
+                                    };
+                                }
                                 if (v.kind === 'lens') {
                                     if (option.definition !== 'native/fst' || !args[0])
                                         return fail('Missing native returned-lens contract');

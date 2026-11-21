@@ -48,16 +48,21 @@ Run `bun test test/infer.test.ts` for inference/checked integration tests, `bun 
 
 ## Vectors
 
-`[:a, b, c:]` builds a homogeneous `Vector<a>` (`[::]` is `Vector<a>`), and
-`array(n, init)` makes one of length `n`. Elements are only reached through an
-index lens: `dup(~v[i])`, `v[i] := x`, `f(~v[i])`, `let x = ~v[i]`, and chains such
-as `v[i][j]`. The vector is set up as a lens first, then the index is evaluated as a
-`Number` value; an index that changes the vector is rejected (`alias-conflict`).
-Elements cannot change type or be left empty, so the vector stays whole: the
-index lens's replacement must be an element, and the owner is rewritten as
-`Vector<a>`. A bare `v[i]` in value position is rejected (`index-value`). Typed
-lowering and the backends do not support vectors yet, and `array` has no backend
-implementation.
+`[:a, b, c:]` builds a homogeneous `Vector<a>` (`[::]` is `Vector<a>`),
+`array(n, init)` makes one of length `n`, and `size(~v)` is its length. Elements
+are only reached through an index lens: `dup(~v[i])`, `v[i] := x`, `f(~v[i])`,
+`let x = ~v[i]`, and chains such as `v[i][j]`. A bare `v[i]` in value position is
+rejected (`index-value`).
+
+`src/normalize-vectors.ts` expands this syntax before inference, so the checked
+snapshot, elaboration and typed IR contain only ordinary calls. `v[i]` becomes
+`[](i, ~v)`, a lens-returning runtime import typed
+`(Number, Vector<a>/Vector<a>) => a/a`, and a literal becomes
+`[:push:]([:push:]([::](), a), b)`, evaluating items left to right. These import
+names are not source identifiers, so definitions cannot shadow them. Because the
+index lens reads and writes the element type, elements cannot change type or be
+left empty, and the vector stays whole. As for any final lens argument, the vector
+lens is set up before the index is evaluated.
 
 ## Backend elaboration
 

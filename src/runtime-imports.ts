@@ -93,8 +93,53 @@ export const runtimeImports: readonly RuntimeImport[] = [
         },
         arguments: ['owned', 'owned'],
         result: 'owned',
-        backends: [],
-        semantics: 'A vector of the given length, each element a deep copy of the consumed value',
+        backends: all,
+        semantics:
+            'A vector of the given length (a non-negative integer, else trap), each element a deep copy of the consumed value',
+    },
+    {
+        name: 'size',
+        signature: (s) => {
+            const v = con('Vector', s.fresh());
+            return fn([flow(v, v)], plain(number));
+        },
+        arguments: ['lens'],
+        result: 'owned',
+        backends: all,
+        semantics: 'Number of elements of the focused vector, which is restored unchanged',
+    },
+    {
+        name: '[]',
+        signature: (s) => {
+            const a = s.fresh(),
+                v = con('Vector', a);
+            return fn([plain(number), flow(v, v)], flow(a, a));
+        },
+        arguments: ['owned', 'lens'],
+        result: 'lens',
+        backends: all,
+        semantics:
+            'Source `v[i]`: focuses element i of the vector focus; traps unless i is an integer in [0, length)',
+    },
+    {
+        name: '[::]',
+        signature: (s) => fn([], plain(con('Vector', s.fresh()))),
+        arguments: [],
+        result: 'owned',
+        backends: all,
+        semantics: 'Source `[::]`: an empty vector',
+    },
+    {
+        name: '[:push:]',
+        signature: (s) => {
+            const a = s.fresh(),
+                v = con('Vector', a);
+            return fn([plain(v), plain(a)], plain(v));
+        },
+        arguments: ['owned', 'owned'],
+        result: 'owned',
+        backends: all,
+        semantics: 'Source `[:a, b:]` items: consumes a vector and appends one element',
     },
     {
         name: 'charList',

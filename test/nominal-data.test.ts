@@ -48,6 +48,8 @@ it('derives complete ordered union schemas from constructor imports', () => {
                 ['Node', true],
             ],
         ],
+        // The builtin vector element buffer is always available.
+        ['Vector', ['p0'], [['elements', true]]],
     ]);
     // Multi-argument payloads are tuples; single payloads are the argument itself.
     const node = defs[2]!.fields[1]!.type;

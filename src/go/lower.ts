@@ -86,6 +86,13 @@ export function lowerGo(program: ConcreteProgram): GoFile {
     };
     const layout = (id: string) => layouts.get(id)!;
     const unit = program.layouts.find((l) => l.kind === 'unit')!;
+    /** Element layout of a vector layout. */
+    const element = (id: string): string => {
+        const f = layout(id).fields[0];
+        return f?.kind === 'pointer' && f.layout
+            ? f.layout
+            : unsupported('Malformed vector layout');
+    };
 
     const zero = (id: string): string => {
         const l = layout(id);
@@ -208,6 +215,8 @@ export function lowerGo(program: ConcreteProgram): GoFile {
                 return go`\t${field(f.name)} ${abiNames.get(f.abi)}`;
             });
             declarations.push(go`type ${type(l.id)} struct {\n${joinCode(fields, '\n')}\n}`);
+        } else if (l.kind === 'vector') {
+            declarations.push(go`type ${type(l.id)} []${type(element(l.id))}`);
         } else if (l.kind === 'union') {
             l.fields.forEach((_, n) =>
                 declarations.push(go`const ${tagValue(l.id, n)} uint32 = ${n}`),
@@ -313,6 +322,117 @@ export function lowerGo(program: ConcreteProgram): GoFile {
         return name;
     };
 
+    /** Vector operations are Go functions generated once per vector layout on first use. */
+    const vectorHelpers = new Map<string, string>();
+    const vectorHelper = (kind: string, id: string, make: (name: string) => GoFunction): string => {
+        const key = `${kind}:${id}`;
+        const existing = vectorHelpers.get(key);
+        if (existing) return existing;
+        const name = packageNames.unique(`vector_${kind}_${type(id)}`);
+        vectorHelpers.set(key, name);
+        helpers.push(make(name));
+        return name;
+    };
+    /** Whether values of a layout can reach a vector, whose elements are written in place. */
+    const vectorReach = new Map<string, boolean>();
+    const reachesVector = (id: string): boolean => {
+        const known = vectorReach.get(id);
+        if (known !== undefined) return known;
+        vectorReach.set(id, false);
+        const l = layout(id);
+        const result =
+            l.kind === 'vector' ||
+            l.fields.some((f) => f.kind !== 'code' && !!f.layout && reachesVector(f.layout));
+        vectorReach.set(id, result);
+        return result;
+    };
+    /**
+     * Copy for affine `dup`. Immutable data may be shared under Go's GC, but vector
+     * elements are written in place, so every vector reached gets its own buffer.
+     */
+    const copyValue = (expr: string, id: string): string => {
+        if (!reachesVector(id)) return expr;
+        const l = layout(id);
+        if (l.kind === 'vector')
+            return go`${vectorHelper('dup', id, (name) => ({
+                signature: go`func ${name}(value ${type(id)}) ${type(id)}`,
+                body: [
+                    go`out := make(${type(id)}, len(value))`,
+                    {
+                        head: 'for i := range value',
+                        body: [go`out[i] = ${copyValue('value[i]', element(id))}`],
+                    },
+                    'return out',
+                ],
+            }))}(${expr})`;
+        if (l.kind === 'union')
+            return go`${vectorHelper('dup', id, (name) => ({
+                signature: go`func ${name}(value ${type(id)}) ${type(id)}`,
+                body: [
+                    ...l.fields.flatMap((_, n): Statement[] => {
+                        const v = variant(id, n);
+                        if (!reachesVector(v.layout)) return [];
+                        return [
+                            {
+                                head: go`if value.tag == ${tagValue(id, n)}`,
+                                body: v.boxed
+                                    ? [
+                                          go`box := new(${type(v.layout)})`,
+                                          go`*box = ${copyValue(go`(*value.v${n})`, v.layout)}`,
+                                          go`value.v${n} = box`,
+                                      ]
+                                    : [go`value.v${n} = ${copyValue(go`value.v${n}`, v.layout)}`],
+                            },
+                        ];
+                    }),
+                    'return value',
+                ],
+            }))}(${expr})`;
+        if (l.kind === 'record')
+            return go`${type(id)}{${joinCode(
+                l.fields.map((f) =>
+                    f.kind === 'value'
+                        ? go`${field(f.name)}: ${copyValue(go`(${expr}).${field(f.name)}`, f.layout)}`
+                        : go`${field(f.name)}: (${expr}).${field(f.name)}`,
+                ),
+                ', ',
+            )}}`;
+        return expr;
+    };
+    const vectorArray = (id: string): string =>
+        vectorHelper('array', id, (name) => ({
+            signature: go`func ${name}(length float64, init ${type(element(id))}) ${type(id)}`,
+            body: [
+                {
+                    head: 'if !(length >= 0) || length != math.Floor(length) || length > float64(math.MaxInt32)',
+                    body: ['panic("array length must be a non-negative integer")'],
+                },
+                go`out := make(${type(id)}, int(length))`,
+                {
+                    head: 'for i := range out',
+                    body: [
+                        {
+                            head: 'if i+1 == len(out)',
+                            body: ['out[i] = init'],
+                        },
+                        { head: 'else', body: [go`out[i] = ${copyValue('init', element(id))}`] },
+                    ],
+                },
+                'return out',
+            ],
+        }));
+    /** Address of element `index`, trapping unless it is an integer in range. */
+    const vectorAt = (id: string): string =>
+        vectorHelper('at', id, (name) => ({
+            signature: go`func ${name}(value ${type(id)}, index float64) *${type(element(id))}`,
+            body: [
+                {
+                    head: 'if !(index >= 0) || index != math.Floor(index) || index >= float64(len(value))',
+                    body: ['panic("vector index out of bounds")'],
+                },
+                'return &value[int(index)]',
+            ],
+        }));
     const hostHelpers = new Map<string, string>();
     /** Natives that take and return plain data, by registered name. Lens natives are separate. */
     const simpleNative = (op: string, args: string[], result: string): string | undefined => {
@@ -322,6 +442,9 @@ export function lowerGo(program: ConcreteProgram): GoFile {
                 : go`(${args[0]} ${op} ${args[1]})`;
         if (op === 'charList') return go`${charList(result)}(${args[0]})`;
         if (op === 'heapsize') return activeLocals ? activeLocals.scalar('0.0', 0) : '0.0';
+        if (op === '[::]') return zero(result);
+        if (op === '[:push:]') return go`append(${args[0]}, ${args[1]})`;
+        if (op === 'array') return go`${vectorArray(result)}(${args[0]}, ${args[1]})`;
         const helper = (name: string, fn: GoFunction, declaration?: string) => {
             if (!hostHelpers.has(name)) {
                 const actual = name.startsWith('hostPrint_') ? packageNames.unique(name) : name;
@@ -392,8 +515,14 @@ export function lowerGo(program: ConcreteProgram): GoFile {
             abi.result,
         );
         if (simple !== undefined) result = simple;
-        else if (op === 'dup')
-            result = read(storage.get(incoming('arg0', abi.arguments[0]!)), abi.result);
+        else if (op === 'size') {
+            const vector = endpoint(abi.arguments[0]!, 'read');
+            result = go`float64(len(${read(storage.get(incoming('arg0', abi.arguments[0]!)), vector)}))`;
+        } else if (op === 'dup')
+            result = copyValue(
+                read(storage.get(incoming('arg0', abi.arguments[0]!)), abi.result),
+                abi.result,
+            );
         else if (op === 'fst') {
             const input = layout(abi.arguments[0]!),
                 output = layout(abi.result);
@@ -1431,6 +1560,8 @@ export function lowerGo(program: ConcreteProgram): GoFile {
                                 'round',
                                 'heapsize',
                                 'charList',
+                                '[::]',
+                                '[:push:]',
                             ].includes(requireImport(w.definition, 'go').name)
                         ) {
                             values.set(
@@ -1462,11 +1593,68 @@ export function lowerGo(program: ConcreteProgram): GoFile {
                         }
                         let args: string[] = [];
                         let duplicate: Data | undefined;
-                        if (w?.kind === 'native' && w.definition === 'native/dup') {
+                        if (
+                            w?.kind === 'native' &&
+                            w.definition === 'native/dup' &&
+                            reachesVector(id)
+                        ) {
+                            const lens = lenses.get(i.args[0]!)!;
+                            declare(
+                                id,
+                                copyValue(read(storage.get(lens.view), id), id),
+                                body,
+                                name,
+                            );
+                            values.set(i.out.id, name);
+                            lens.finish(body);
+                            continue;
+                        } else if (w?.kind === 'native' && w.definition === 'native/dup') {
                             const lens = lenses.get(i.args[0]!)!;
                             duplicate = snapshot(storage.get(lens.view), id, body, name);
                             expr = () => read(duplicate!, id);
                             adapters.push({ finish: lens.finish });
+                        } else if (w?.kind === 'native' && w.definition === 'native/size') {
+                            const lens = lenses.get(i.args[0]!)!,
+                                vector = endpoint(outputLayouts.get(i.args[0]!)!, 'read');
+                            declare(
+                                id,
+                                go`float64(len(${read(storage.get(lens.view), vector)}))`,
+                                body,
+                                name,
+                            );
+                            values.set(i.out.id, name);
+                            lens.finish(body);
+                            continue;
+                        } else if (w?.kind === 'native' && w.definition === 'native/[]') {
+                            // The element lives in the slice's backing array, so writing
+                            // through its address updates the vector in place.
+                            const parent = lenses.get(i.args[1]!)!,
+                                vector = endpoint(outputLayouts.get(i.args[1]!)!, 'read'),
+                                item = element(vector);
+                            const at = fresh();
+                            body.push(
+                                locals.declaration(
+                                    at,
+                                    go`*${type(item)}`,
+                                    go`${vectorAt(vector)}(${read(storage.get(parent.view), vector)}, ${value(i.args[0]!)})`,
+                                ),
+                            );
+                            const view = storage.own({
+                                expression: go`*${at}`,
+                                layout: item,
+                                address: at,
+                            });
+                            lenses.set(i.out.id, {
+                                view,
+                                finish: (body) => {
+                                    const d = storage.get(view);
+                                    // Restoring the element's own live contents changes nothing.
+                                    if (Array.isArray(d) || d.address !== at)
+                                        body.push(go`*${at} = ${read(d, item)}`);
+                                    parent.finish(body);
+                                },
+                            });
+                            continue;
                         } else if (w?.kind === 'native' && w.definition === 'native/fst') {
                             const parent = lenses.get(i.args[0]!)!;
                             lenses.set(i.out.id, {
@@ -1944,6 +2132,7 @@ export function lowerGo(program: ConcreteProgram): GoFile {
 
     const printers = new Set<string>();
     const printerNames = new Map<string, string>();
+    let printLoops = 0;
     const print = (expr: string, id: string, body: Statement[]) => {
         const l = layout(id);
         if (l.kind === 'f64') {
@@ -1954,6 +2143,16 @@ export function lowerGo(program: ConcreteProgram): GoFile {
             body.push('fmt.Print("null")');
         } else if (l.kind === 'string') {
             body.push(go`printString(${expr})`);
+        } else if (l.kind === 'vector') {
+            // Nested vectors nest loops; each needs its own index.
+            const i = `i${printLoops++}`;
+            const each: Statement[] = [{ head: go`if ${i} > 0`, body: ['fmt.Print(",")'] }];
+            print(go`(${expr})[${i}]`, element(id), each);
+            body.push(
+                'fmt.Print("[")',
+                { head: go`for ${i} := range ${expr}`, body: each },
+                'fmt.Print("]")',
+            );
         } else if (l.fields.every((f) => f.kind === 'value' && f.name.startsWith('item'))) {
             body.push('fmt.Print("[")');
             l.fields.forEach((f, i) => {

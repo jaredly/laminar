@@ -4,8 +4,18 @@ import { BackendDiagnostic } from './backend/target.ts';
 export type NominalLayoutDefinition = {
     name: string;
     parameters: string[];
-    kind: 'record' | 'union';
+    /** A `vector` holds a runtime-length array of its single `elements` field's type. */
+    kind: 'record' | 'union' | 'vector';
     fields: { name: string; type: SemanticType; indirect?: boolean }[];
+};
+/** The builtin `Vector<a>`: an owned, heap-allocated, runtime-length element array. */
+export const vectorLayoutDefinition: NominalLayoutDefinition = {
+    name: 'Vector',
+    parameters: ['p0'],
+    kind: 'vector',
+    fields: [
+        { name: 'elements', type: { tag: 'variable', id: 'p0', rigid: false }, indirect: true },
+    ],
 };
 /** Registry identity ignores generic parameter spelling; field order is ABI relevant. */
 export function layoutDefinitionsKey(definitions: readonly NominalLayoutDefinition[]): string {
@@ -14,7 +24,7 @@ export function layoutDefinitionsKey(definitions: readonly NominalLayoutDefiniti
         if (
             names.has(d.name) ||
             !d.name ||
-            !['record', 'union'].includes(d.kind) ||
+            !['record', 'union', 'vector'].includes(d.kind) ||
             new Set(d.parameters).size !== d.parameters.length ||
             new Set(d.fields.map((f) => f.name)).size !== d.fields.length
         )
@@ -112,7 +122,7 @@ export function deriveNominalLayoutDefinitions(
             ...(mentionsNominal(payload) ? { indirect: true } : {}),
         });
     }
-    return [...unions.values()];
+    return [...unions.values(), vectorLayoutDefinition];
 }
 
 /** Definitions a set of types reaches, transitively through definition fields. */

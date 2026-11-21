@@ -110,6 +110,26 @@ export function lowerConcreteProgram(
     function rawResult(g: Group, c: Contract): ValueRepresentation | undefined {
         const variant = variants.get(c.target);
         if (variant) return variant.result;
+        if (
+            g.descriptor.kind === 'native' &&
+            c.target === 'native/[]' &&
+            c.result.kind === 'lens'
+        ) {
+            const argument = c.arguments[1];
+            if (argument?.kind !== 'lens') return undefined;
+            const shape = shapes.get(argument.shape)!;
+            if (shape.kind !== 'thin') return fail('Invalid native index argument');
+            const vector = dataLayouts.get(shape.read)!.type;
+            if (vector.tag !== 'con' || vector.name !== 'Vector')
+                return fail('Invalid native index endpoints');
+            const e = analysis.layouts.find(
+                (l) => typeKey(l.type) === typeKey(vector.args[0]!),
+            )!.id;
+            return {
+                kind: 'lens',
+                shape: JSON.stringify(['thin', JSON.stringify(['backing', e, e])]),
+            };
+        }
         if (g.descriptor.kind !== 'native' || c.target !== 'native/fst' || c.result.kind !== 'lens')
             return undefined;
         const argument = c.arguments[0]!;

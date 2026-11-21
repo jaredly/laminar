@@ -328,6 +328,8 @@ export function inferRepresentations(
                 kind: 'lens',
                 shape: retype(reps.project(shape(args[0]), 0), type.read, type.write),
             };
+        // An element focus is a thin pointer into the vector's buffer.
+        if (name === 'native/[]') return { kind: 'lens', shape: reps.thin(type.read, type.write) };
         return fail(`No returned-lens representation contract for ${name}`);
     };
     const invoke = (

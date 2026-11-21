@@ -56,11 +56,18 @@ backend restrictions listed below. That includes:
   and lenses.
 - User unions and the builtin `List` and `Option`: construction, matching,
   borrowed matching and constructor patterns.
+- Vectors: `[:a, b:]` literals, `array(n, init)`, `size(~v)` and index lenses
+  (`v[i] := x`, `dup(~v[i])`, `f(~v[i])`, `v[i][j]`). An index must be an integer
+  in range, and `array` needs a non-negative integer length; otherwise the program
+  traps. A vector owns a heap element buffer (C: pointer, length and capacity,
+  allocated through the counted allocator; Go: a slice). `dup` copies every buffer
+  it reaches.
 - Strings: literals, interpolation of `String`, `Number` (ECMAScript formatting)
   and `Bool` parts, and literal patterns.
 - Every registered runtime import (`src/runtime-imports.ts`): arithmetic and
-  numeric comparisons, `round`, `heapsize`, `fst`, `dup`, `charList`, `print` and
-  `getInput`.
+  numeric comparisons, `round`, `heapsize`, `fst`, `dup`, `charList`, `print`,
+  `getInput`, `array` and `size`, plus the vector syntax imports `[]`, `[::]` and
+  `[:push:]`.
 
 ## Backend restrictions
 

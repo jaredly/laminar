@@ -6,6 +6,7 @@
  */
 import { describe, expect, it } from 'bun:test';
 import { samples } from './backend/execution-samples.ts';
+import { vectorTraps } from './backend/vector-samples.ts';
 import { corpusCases, corpusFiles, rejection } from './backend/lm-corpus.ts';
 import {
     backendAvailable,
@@ -63,6 +64,7 @@ for (const backend of selectedBackends()) {
             for (const [name, source] of [
                 ['unmatched case', 'match 1 {2 -> 3}'],
                 ['unmatched temporary cleanup', '{let f = ~{lens 4 <- 1\n ()}\n f := 3}'],
+                ...vectorTraps,
             ] as const)
                 test(
                     `${backend}: ${name} traps`,

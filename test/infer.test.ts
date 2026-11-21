@@ -635,15 +635,18 @@ describe('vectors', () => {
         ).toBe('(Vector<Number>/Vector<Number>) => Number');
         rejects('{let v = [:1:]\nlet x = ~v[0]\nv}', 'use-while-borrowed');
         expect(type('array(3, "x")')).toBe('Vector<String>');
+        expect(type('fn (~v) {v[dup(~v[0])] := 1}')).toBe(
+            '(Vector<Number>/Vector<Number>) => Number',
+        );
+        expect(type('fn (~v) size(~v)')).toBe('(Vector<a>/Vector<a>) => Number');
     });
     it('keeps elements full and of the element type', () => {
         rejects('fn (v) v[0]', 'index-value');
         rejects('fn (~v) {v[0] := 1\nv[1] := true}', 'type-mismatch');
         rejects('fn (~v) {let x = ~v[0]\nlet y = x\n()}', 'unrestored-lens');
-        rejects('fn (~v) {v[~v] := 1}', 'index-lens');
+        rejects('fn (~v) {v[~v] := 1}', 'lens-position');
         rejects('fn (~v) {v[true] := 1}', 'type-mismatch');
-        rejects('fn (~v) {v[dup(~v[0])] := 1}', 'alias-conflict');
-        rejects('{let v = [:1:]\nlet w = v\nv[0] := 2}', 'use-after-move');
+        rejects('{let v = [:1:]\nlet w = v\nv[0] := 2}', 'type-mismatch');
     });
     it('checks the snake range example', () => {
         const checker = new Checker();

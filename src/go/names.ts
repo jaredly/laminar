@@ -151,7 +151,9 @@ export function functionNames(program: ConcreteProgram): Map<string, string> {
                 ? l.kind
                 : l.kind === 'record'
                   ? 'tuple'
-                  : 'union';
+                  : l.kind === 'vector'
+                    ? 'vector'
+                    : 'union';
     };
     const fn = (c: ConcreteCode) =>
         program.semantic.program.units
