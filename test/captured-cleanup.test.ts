@@ -90,33 +90,16 @@ it('prints the complete captured callable environment lifecycle', () => {
       Unit dispose0(void *environment);
       void print_number(double x);
       double cleanup(void *environment) {
-          (void)environment;
           double v0 = ((Environment_double_8f01c970ea *)environment)->capture0;
-          (void)v0;
           release_context(environment);
-          double v1 = v0;
-          (void)v1;
-          return v1;
+          return v0;
       }
       double entry(void *environment) {
           (void)environment;
-          double v0 = 2;
-          (void)v0;
-          double v2 = v0;
-          (void)v2;
-          Environment_double_8f01c970ea *v4 = allocate_context(sizeof *v4);
-          v4->capture0 = v2;
+          Environment_double_8f01c970ea * v4 = allocate_context(sizeof *v4);
+          v4->capture0 = 2;
           Callable_Value_d6f73c1cde v3 = (Callable_Value_d6f73c1cde){.environment=v4, .dispose=dispose0};
-          (void)v3;
-          Callable_Value_d6f73c1cde v6 = v3;
-          (void)v6;
-          double v7 = cleanup((v6).environment);
-          (void)v7;
-          double v5 = v7;
-          (void)v5;
-          double v1 = v5;
-          (void)v1;
-          return v1;
+          return cleanup((v3).environment);
       }
       Unit dispose0(void *environment) {
           Environment_double_8f01c970ea *captured = environment;
@@ -177,5 +160,5 @@ for (const sample of indirectCallSamples)
         const source = emitC(c);
         // Calls through first-class values use their type record's typed entry;
         // direct calls of known code may name the code symbol.
-        expect(source).toMatch(/\.invoke\d+\(\(v\d+\)\.environment/);
+        expect(source).toMatch(/\.invoke\d+\(\((?:v|arg)\d+\)\.environment/);
     });

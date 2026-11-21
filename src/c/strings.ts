@@ -129,7 +129,10 @@ export function stringRuntime(): Pick<TranslationUnit, 'declarations' | 'functio
                     head: 'if (count <= point && point <= 21)',
                     body: [
                         'builder_bytes(b, digits, (size_t)count);',
-                        { head: 'for (int i = count; i < point; i++)', body: ['builder_bytes(b, "0", 1);'] },
+                        {
+                            head: 'for (int i = count; i < point; i++)',
+                            body: ['builder_bytes(b, "0", 1);'],
+                        },
                     ],
                 },
                 {
@@ -144,7 +147,10 @@ export function stringRuntime(): Pick<TranslationUnit, 'declarations' | 'functio
                     head: 'else if (-6 < point && point <= 0)',
                     body: [
                         'builder_bytes(b, "0.", 2);',
-                        { head: 'for (int i = point; i < 0; i++)', body: ['builder_bytes(b, "0", 1);'] },
+                        {
+                            head: 'for (int i = point; i < 0; i++)',
+                            body: ['builder_bytes(b, "0", 1);'],
+                        },
                         'builder_bytes(b, digits, (size_t)count);',
                     ],
                 },
@@ -204,7 +210,7 @@ export function stringRuntime(): Pick<TranslationUnit, 'declarations' | 'functio
 }
 
 /** Statements appending one interpolated part, by its physical storage kind. */
-export function appendPart(builder: string, kind: string, expression: string): Statement {
+export function appendPart(builder: string, kind: string, expression: string): string {
     switch (kind) {
         case 'string':
             return `builder_string(&${builder}, ${expression});`;

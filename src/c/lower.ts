@@ -1,9 +1,18 @@
 import type { ConcreteProgram, ConcreteBlock } from '../concrete-ir.ts';
 import { Storage, type Data, type View } from './storage.ts';
-import type { IRPattern, SlotRef } from '../typed-ir.ts';
+import { decodeNumber, type IRPattern, type SlotRef } from '../typed-ir.ts';
 import { verifyConcreteProgram } from '../verify-concrete.ts';
 import { BackendDiagnostic } from '../backend/target.ts';
-import { identifier, type Statement, type TranslationUnit } from './syntax.ts';
+import {
+    cSyntax,
+    identifier,
+    printStatements,
+    type Statement,
+    type TranslationUnit,
+} from './syntax.ts';
+import { Locals } from '../backend/imperative/locals.ts';
+import { same, type Expr } from '../backend/imperative/code.ts';
+import { isLocal, isScope, mapScope } from '../backend/imperative/statements.ts';
 import { appendPart, cBytes, stringRuntime, stringType } from './strings.ts';
 import { requireImport, usesHost } from '../runtime-imports.ts';
 import { functionNames } from '../backend/names.ts';
@@ -17,6 +26,23 @@ const unsupported = (message: string): never => {
     throw new BackendDiagnostic('unsupported-c', message);
 };
 /** Resolve logical places and homogeneous restoration before printing any C. */
+/** -Wall -Werror rejects unread locals and parameters; mark exactly those as used. */
+function suppressUnused(
+    locals: Locals,
+    body: Statement[],
+    parameters: readonly string[],
+): Statement[] {
+    const used = locals.reads(body);
+    const walk = (array: Statement[]): Statement[] =>
+        array.flatMap((s): Statement[] => {
+            if (Array.isArray(s)) return [walk(s)];
+            if (isLocal(s) && s.kind === 'local' && !used.has(s.name))
+                return [s, `(void)${s.name};`];
+            if (isScope(s)) return [mapScope(s, (e) => e, walk)];
+            return [s];
+        });
+    return [...parameters.filter((n) => !used.has(n)).map((n) => `(void)${n};`), ...walk(body)];
+}
 /** A host export: the program entry at `entry` becomes the public C function `symbol`. */
 export type CExport = { symbol: string; entry: number };
 
@@ -47,8 +73,17 @@ export function lowerC(
     const erasedEnvironment = (captures: readonly { layout: string }[]) =>
         !!options.optimize && captures.every((c) => layout(c.layout).kind === 'unit');
     const unit = program.layouts.find((l) => l.kind === 'unit')!;
-    const zero = (id: string) => `(${type(id)}){0}`;
-    const field = (expr: string, n: number) => `(${expr}).item${n}`;
+    // Function bodies assemble expressions as trees for the shared passes. Package
+    // text (declarations, signatures, helper bodies) needs no structure.
+    let activeLocals: Locals | undefined;
+    const cText = (strings: TemplateStringsArray, ...parts: unknown[]): string =>
+        strings.reduce((s, piece, i) => s + (i ? String(parts[i - 1]) : '') + piece, '');
+    const cc = (strings: TemplateStringsArray, ...parts: unknown[]): Expr =>
+        activeLocals ? activeLocals.template(strings, ...parts) : cText(strings, ...parts);
+    const joinCode = (parts: readonly unknown[], separator: string): Expr =>
+        activeLocals ? activeLocals.join(parts, separator) : parts.join(separator);
+    const zero = (id: string): Expr => cc`(${type(id)}){0}`;
+    const field = (expr: Expr, n: number): Expr => cc`(${expr}).item${n}`;
     /** Element layout of a vector layout. */
     const element = (id: string): string => {
         const f = layout(id).fields[0];
@@ -63,14 +98,19 @@ export function lowerC(
             return { expression: field(s.expression, i), layout: f.layout };
         }),
     );
-    const read = (data: Data, id: string): string => {
+    const read = (data: Data, id: string): Expr => {
         if (layout(id).kind === 'unit') return zero(id);
         if (!Array.isArray(data) && data.layout === id) return data.expression;
         const parts = storage.parts(data),
             fields = layout(id).fields;
         if (!fields.length || parts.length !== fields.length)
             return unsupported('Mismatched storage read');
-        return `(${type(id)}){${parts.map((d, i) => read(d, (fields[i] as { layout: string }).layout)).join(', ') || '0'}}`;
+        return cc`(${type(id)}){${
+            joinCode(
+                parts.map((d, i) => read(d, (fields[i] as { layout: string }).layout)),
+                ', ',
+            ) || '0'
+        }}`;
     };
     const endpoint = (id: string, which: 'read' | 'replacement'): string => {
         const l = layout(id),
@@ -93,24 +133,27 @@ export function lowerC(
         );
     };
     const noFinish = (_body: Statement[]) => {};
-    const incoming = (expression: string, id: string): View => {
+    const incoming = (expression: Expr, id: string): View => {
         const l = layout(id),
             f = l.fields.find((f) => f.name === 'read');
         if (f?.kind === 'pointer' && f.layout)
-            return storage.own({ expression: `*(${expression}).read`, layout: f.layout });
+            return storage.own({ expression: cc`*(${expression}).read`, layout: f.layout });
         return l.fields
             .filter((f) => f.name.startsWith('item'))
             .map((f) =>
-                incoming(`(${expression}).${identifier(f.name)}`, (f as { layout: string }).layout),
+                incoming(
+                    cc`(${expression}).${identifier(f.name)}`,
+                    (f as { layout: string }).layout,
+                ),
             );
     };
-    const flush = (expression: string, id: string, data: Data, body: Statement[]) => {
+    const flush = (expression: Expr, id: string, data: Data, body: Statement[]) => {
         const l = layout(id),
             f =
                 l.fields.find((f) => f.name === 'replacement') ??
                 l.fields.find((f) => f.name === 'read');
         if (f?.kind === 'pointer' && f.layout) {
-            body.push(`*(${expression}).${f.name} = ${read(data, f.layout)};`);
+            body.push(cc`*(${expression}).${f.name} = ${read(data, f.layout)};`);
             return;
         }
         const parts = storage.parts(data);
@@ -118,7 +161,7 @@ export function lowerC(
             .filter((f) => f.name.startsWith('item'))
             .forEach((f, i) =>
                 flush(
-                    `(${expression}).${identifier(f.name)}`,
+                    cc`(${expression}).${identifier(f.name)}`,
                     (f as { layout: string }).layout,
                     parts[i]!,
                     body,
@@ -141,38 +184,38 @@ export function lowerC(
             runtime.declarations[1]!,
         );
     for (const l of program.layouts)
-        if (l.kind === 'string') declarations.push(`typedef ${stringType} *${type(l.id)};`);
+        if (l.kind === 'string') declarations.push(cText`typedef ${stringType} *${type(l.id)};`);
         else if (l.kind !== 'f64' && l.kind !== 'bool')
-            declarations.push(`typedef struct ${type(l.id)} ${type(l.id)};`);
+            declarations.push(cText`typedef struct ${type(l.id)} ${type(l.id)};`);
     for (const a of program.abis)
         declarations.push(
-            `typedef ${type(a.result)} (*${abiNames.get(a.id)})(void *${a.arguments.map((id) => `, ${type(id)}`).join('')});`,
+            cText`typedef ${type(a.result)} (*${abiNames.get(a.id)})(void *${a.arguments.map((id) => `, ${type(id)}`).join('')});`,
         );
     for (const l of program.layouts)
         if (l.kind === 'union') {
             // Tagged union; boxed variants hold an owned heap payload.
             const variants = l.fields.map((f, n) =>
                 f.kind === 'value'
-                    ? `${type(f.layout)} v${n};`
+                    ? cc`${type(f.layout)} v${n};`
                     : f.kind === 'pointer' && f.layout
-                      ? `${type(f.layout)} *v${n};`
+                      ? cc`${type(f.layout)} *v${n};`
                       : unsupported('Union variant requires data storage'),
             );
             declarations.push(
-                `struct ${type(l.id)} { uint32_t tag; union { ${variants.join(' ')} } as; };`,
+                cText`struct ${type(l.id)} { uint32_t tag; union { ${variants.join(' ')} } as; };`,
             );
         } else if (l.kind === 'vector') {
             // Owned element buffer; the struct itself moves by value.
             declarations.push(
-                `struct ${type(l.id)} { ${type(element(l.id))} *elements; size_t length; size_t capacity; };`,
+                cText`struct ${type(l.id)} { ${type(element(l.id))} *elements; size_t length; size_t capacity; };`,
             );
         } else if (!['f64', 'bool', 'string'].includes(l.kind)) {
             declarations.push(
-                `struct ${type(l.id)} { ${l.fields.map((f) => (f.kind === 'value' ? `${type(f.layout)} ${identifier(f.name)};` : f.kind === 'pointer' ? `${f.layout ? type(f.layout) : 'void'} *${identifier(f.name)};` : `${abiNames.get(f.abi)} ${identifier(f.name)};`)).join(' ') || 'unsigned char inhabitant;'} };`,
+                cText`struct ${type(l.id)} { ${l.fields.map((f) => (f.kind === 'value' ? cc`${type(f.layout)} ${identifier(f.name)};` : f.kind === 'pointer' ? cc`${f.layout ? type(f.layout) : 'void'} *${identifier(f.name)};` : cc`${abiNames.get(f.abi)} ${identifier(f.name)};`)).join(' ') || 'unsigned char inhabitant;'} };`,
             );
         }
     const signature = (c: ConcreteProgram['code'][number]) =>
-        `${type(c.body.layout)} ${codes.get(c.id)}(void *environment${c.parameters.map((p, i) => `, ${type(p.layout)} arg${i}`).join('')})`;
+        cText`${type(c.body.layout)} ${codes.get(c.id)}(void *environment${c.parameters.map((p, i) => `, ${type(p.layout)} arg${i}`).join('')})`;
     declarations.push(
         'static size_t live_contexts = 0;',
         'void *allocate_context(size_t size);',
@@ -183,7 +226,7 @@ export function lowerC(
     const helpers: TranslationUnit['functions'] = [];
     let helperCounter = 0;
     const disposers = new Map(
-        program.wrappers.filter((w) => w.kind === 'dispose').map((w, i) => [w.id, `dispose${i}`]),
+        program.wrappers.filter((w) => w.kind === 'dispose').map((w, i) => [w.id, cc`dispose${i}`]),
     );
     // Union operations are recursive C functions, generated once per layout on first use.
     const unionHelpers = new Map<string, string>();
@@ -194,12 +237,12 @@ export function lowerC(
         generate: (body: Statement[]) => void,
         parameter = type(id),
     ): string => {
-        const key = `${kind}:${id}`;
+        const key = cText`${kind}:${id}`;
         const existing = unionHelpers.get(key);
         if (existing) return existing;
-        const name = `${kind}_${type(id)}`;
+        const name = cText`${kind}_${type(id)}`;
         unionHelpers.set(key, name);
-        const signature = `${result} ${name}(${parameter} value)`;
+        const signature = cText`${result} ${name}(${parameter} value)`;
         declarations.push(signature + ';');
         const body: Statement[] = ['(void)value;'];
         generate(body);
@@ -215,12 +258,12 @@ export function lowerC(
         parameters: string,
         generate: (body: Statement[]) => void,
     ): string => {
-        const key = `${kind}:${id}`;
+        const key = cText`${kind}:${id}`;
         const existing = vectorHelpers.get(key);
         if (existing) return existing;
-        const name = `vector_${kind}_${type(id)}`;
+        const name = cText`vector_${kind}_${type(id)}`;
         vectorHelpers.set(key, name);
-        const signature = `${result} ${name}(${parameters})`;
+        const signature = cText`${result} ${name}(${parameters})`;
         declarations.push(signature + ';');
         const body: Statement[] = [];
         generate(body);
@@ -229,55 +272,69 @@ export function lowerC(
     };
     /** `[:push:]` consumes the vector and appends, doubling the buffer when it is full. */
     const vectorPush = (id: string): string =>
-        vectorHelper('push', id, type(id), `${type(id)} value, ${type(element(id))} item`, (body) =>
-            body.push(
-                {
-                    head: 'if (value.length == value.capacity)',
-                    body: [
-                        'size_t capacity = value.capacity ? value.capacity * 2 : 4;',
-                        `${type(element(id))} *elements = allocate_context(capacity * sizeof *elements);`,
-                        {
-                            head: 'for (size_t i = 0; i < value.length; i++)',
-                            body: ['elements[i] = value.elements[i];'],
-                        },
-                        { head: 'if (value.elements)', body: ['release_context(value.elements);'] },
-                        'value.elements = elements;',
-                        'value.capacity = capacity;',
-                    ],
-                },
-                'value.elements[value.length++] = item;',
-                'return value;',
-            ),
+        vectorHelper(
+            'push',
+            id,
+            type(id),
+            cText`${type(id)} value, ${type(element(id))} item`,
+            (body) =>
+                body.push(
+                    {
+                        head: 'if (value.length == value.capacity)',
+                        body: [
+                            'size_t capacity = value.capacity ? value.capacity * 2 : 4;',
+                            cc`${type(element(id))} *elements = allocate_context(capacity * sizeof *elements);`,
+                            {
+                                head: 'for (size_t i = 0; i < value.length; i++)',
+                                body: ['elements[i] = value.elements[i];'],
+                            },
+                            {
+                                head: 'if (value.elements)',
+                                body: ['release_context(value.elements);'],
+                            },
+                            'value.elements = elements;',
+                            'value.capacity = capacity;',
+                        ],
+                    },
+                    'value.elements[value.length++] = item;',
+                    'return value;',
+                ),
         );
     /** `array(n, init)`: n deep copies of init; the last element takes init itself. */
     const vectorArray = (id: string): string =>
-        vectorHelper('array', id, type(id), `double length, ${type(element(id))} init`, (body) => {
-            const none: Statement[] = [];
-            drop({ expression: 'init', layout: element(id) }, none);
-            body.push(
-                {
-                    head: 'if (!(length >= 0) || length != floor(length) || length > (double)(SIZE_MAX / sizeof init))',
-                    body: ['abort();'],
-                },
-                `${type(id)} value = {0};`,
-                { head: 'if (length == 0)', body: [...none, 'return value;'] },
-                'value.length = value.capacity = (size_t)length;',
-                'value.elements = allocate_context(value.length * sizeof *value.elements);',
-                {
-                    head: 'for (size_t i = 0; i + 1 < value.length; i++)',
-                    body: [`value.elements[i] = ${duplicate('init', element(id))};`],
-                },
-                'value.elements[value.length - 1] = init;',
-                'return value;',
-            );
-        });
+        vectorHelper(
+            'array',
+            id,
+            type(id),
+            cText`double length, ${type(element(id))} init`,
+            (body) => {
+                const none: Statement[] = [];
+                drop({ expression: 'init', layout: element(id) }, none);
+                body.push(
+                    {
+                        head: 'if (!(length >= 0) || length != floor(length) || length > (double)(SIZE_MAX / sizeof init))',
+                        body: ['abort();'],
+                    },
+                    cc`${type(id)} value = {0};`,
+                    { head: 'if (length == 0)', body: [...none, 'return value;'] },
+                    'value.length = value.capacity = (size_t)length;',
+                    'value.elements = allocate_context(value.length * sizeof *value.elements);',
+                    {
+                        head: 'for (size_t i = 0; i + 1 < value.length; i++)',
+                        body: [cc`value.elements[i] = ${duplicate('init', element(id))};`],
+                    },
+                    'value.elements[value.length - 1] = init;',
+                    'return value;',
+                );
+            },
+        );
     /** Address of element `index`, trapping unless it is an integer in range. */
     const vectorAt = (id: string): string =>
         vectorHelper(
             'at',
             id,
-            `${type(element(id))} *`,
-            `${type(id)} value, double index`,
+            cText`${type(element(id))} *`,
+            cText`${type(id)} value, double index`,
             (body) =>
                 body.push(
                     {
@@ -295,51 +352,54 @@ export function lowerC(
     };
     const tagOf = (id: string, name: string): number => {
         const n = layout(id).fields.findIndex((f) => f.name === name);
-        return n < 0 ? unsupported(`Constructor ${name} is absent from its union layout`) : n;
+        return n < 0 ? unsupported(cText`Constructor ${name} is absent from its union layout`) : n;
     };
     /** Payload of variant `n`, read through its box when the variant is boxed. */
-    const payload = (expr: string, id: string, n: number): string =>
-        variant(id, n).boxed ? `(*(${expr}).as.v${n})` : `(${expr}).as.v${n}`;
+    const payload = (expr: Expr, id: string, n: number): Expr =>
+        variant(id, n).boxed ? cc`(*(${expr}).as.v${n})` : cc`(${expr}).as.v${n}`;
     /** Deep copy for affine `dup`: each boxed payload gets its own allocation. */
-    const duplicate = (expr: string, id: string): string => {
+    const duplicate = (expr: Expr, id: string): Expr => {
         const l = layout(id);
         if (l.kind === 'union')
-            return `${unionHelper('dup', id, type(id), (body) => {
-                body.push(`${type(id)} copy = value;`);
+            return cc`${unionHelper('dup', id, type(id), (body) => {
+                body.push(cc`${type(id)} copy = value;`);
                 l.fields.forEach((_, n) => {
                     const v = variant(id, n);
                     const copied = duplicate(payload('value', id, n), v.layout);
                     body.push({
-                        head: `${n ? 'else if' : 'if'} (value.tag == ${n})`,
+                        head: cc`${n ? 'else if' : 'if'} (value.tag == ${n})`,
                         body: v.boxed
                             ? [
-                                  `copy.as.v${n} = allocate_context(sizeof *copy.as.v${n});`,
-                                  `*copy.as.v${n} = ${copied};`,
+                                  cc`copy.as.v${n} = allocate_context(sizeof *copy.as.v${n});`,
+                                  cc`*copy.as.v${n} = ${copied};`,
                               ]
-                            : [`copy.as.v${n} = ${copied};`],
+                            : [cc`copy.as.v${n} = ${copied};`],
                     });
                 });
                 body.push('return copy;');
             })}(${expr})`;
-        if (l.kind === 'string') return `string_dup(${expr})`;
+        if (l.kind === 'string') return cc`string_dup(${expr})`;
         if (l.kind === 'vector')
-            return `${vectorHelper('dup', id, type(id), `${type(id)} value`, (body) =>
+            return cc`${vectorHelper('dup', id, type(id), cText`${type(id)} value`, (body) =>
                 body.push(
-                    `${type(id)} copy = {0};`,
+                    cc`${type(id)} copy = {0};`,
                     { head: 'if (!value.length)', body: ['return copy;'] },
                     'copy.length = copy.capacity = value.length;',
                     'copy.elements = allocate_context(copy.length * sizeof *copy.elements);',
                     {
                         head: 'for (size_t i = 0; i < value.length; i++)',
                         body: [
-                            `copy.elements[i] = ${duplicate('value.elements[i]', element(id))};`,
+                            cc`copy.elements[i] = ${duplicate('value.elements[i]', element(id))};`,
                         ],
                     },
                     'return copy;',
                 ),
             )}(${expr})`;
         if (l.kind === 'record' && l.fields.every((f) => f.kind === 'value'))
-            return `(${type(id)}){${l.fields.map((f, n) => duplicate(field(expr, n), (f as { layout: string }).layout)).join(', ')}}`;
+            return cc`(${type(id)}){${joinCode(
+                l.fields.map((f, n) => duplicate(field(expr, n), (f as { layout: string }).layout)),
+                ', ',
+            )}}`;
         return expr;
     };
     const drop = (data: Data, body: Statement[]): void => {
@@ -352,21 +412,21 @@ export function lowerC(
                     const v = variant(id, n);
                     const arm: Statement[] = [];
                     drop({ expression: payload('value', id, n), layout: v.layout }, arm);
-                    if (v.boxed) arm.push(`release_context(value.as.v${n});`);
+                    if (v.boxed) arm.push(cc`release_context(value.as.v${n});`);
                     if (arm.length)
                         body.push({
-                            head: `${body.length > 1 ? 'else if' : 'if'} (value.tag == ${n})`,
+                            head: cc`${body.length > 1 ? 'else if' : 'if'} (value.tag == ${n})`,
                             body: arm,
                         });
                 });
-                body.push(`return ${zero(unit.id)};`);
+                body.push(cc`return ${zero(unit.id)};`);
             });
-            body.push(`${name}(${data.expression});`);
+            body.push(cc`${name}(${data.expression});`);
         } else if (l.kind === 'string') {
-            body.push(`string_drop(${data.expression});`);
+            body.push(cc`string_drop(${data.expression});`);
         } else if (l.kind === 'vector') {
             const id = data.layout;
-            const name = vectorHelper('drop', id, 'void', `${type(id)} value`, (body) => {
+            const name = vectorHelper('drop', id, 'void', cText`${type(id)} value`, (body) => {
                 const each: Statement[] = [];
                 drop({ expression: 'value.elements[i]', layout: element(id) }, each);
                 if (each.length)
@@ -376,11 +436,11 @@ export function lowerC(
                     body: ['release_context(value.elements);'],
                 });
             });
-            body.push(`${name}(${data.expression});`);
+            body.push(cc`${name}(${data.expression});`);
         } else if (l.fields.some((f) => f.name === 'dispose')) {
             body.push({
-                head: `if ((${data.expression}).dispose)`,
-                body: [`(${data.expression}).dispose((${data.expression}).environment);`],
+                head: cc`if ((${data.expression}).dispose)`,
+                body: [cc`(${data.expression}).dispose((${data.expression}).environment);`],
             });
         } else if (l.kind === 'record') {
             l.fields.forEach((f, i) => {
@@ -403,7 +463,7 @@ export function lowerC(
             (body) => {
                 body.pop();
                 body.push(
-                    `${type(result)} out = (${type(result)}){.tag=${nil}, .as.v${nil}=${zero(variant(result, nil).layout)}};`,
+                    cc`${type(result)} out = (${type(result)}){.tag=${nil}, .as.v${nil}=${zero(variant(result, nil).layout)}};`,
                     'size_t end = value ? value->length : 0;',
                     {
                         head: 'while (end > 0)',
@@ -414,9 +474,9 @@ export function lowerC(
                                 head: 'while (start > 0 && (value->bytes[start] & 0xC0) == 0x80)',
                                 body: ['start--;'],
                             },
-                            `${type(cell.layout)} *cell = allocate_context(sizeof *cell);`,
-                            `*cell = (${type(cell.layout)}){(${type(text)})string_new((const char *)value->bytes + start, end - start), out};`,
-                            `out = (${type(result)}){.tag=${cons}, .as.v${cons}=cell};`,
+                            cc`${type(cell.layout)} *cell = allocate_context(sizeof *cell);`,
+                            cc`*cell = (${type(cell.layout)}){(${type(text)})string_new((const char *)value->bytes + start, end - start), out};`,
+                            cc`out = (${type(result)}){.tag=${cons}, .as.v${cons}=cell};`,
                             'end = start;',
                         ],
                     },
@@ -430,19 +490,21 @@ export function lowerC(
     /** Natives that take and return plain data, by registered name. Lens natives are separate. */
     const simpleNative = (
         op: string,
-        args: string[],
+        args: Expr[],
         result: string,
         parameters: readonly string[],
-    ): string | undefined => {
+    ): Expr | undefined => {
         if (['+', '-', '*', '/', '==', '>=', '<='].includes(op))
-            return `(${args[0]} ${op} ${args[1]})`;
-        if (op === 'charList') return `${charList(result)}(${args[0]})`;
+            return activeLocals
+                ? activeLocals.binary(op, args[0]!, args[1]!)
+                : cc`(${args[0]} ${op} ${args[1]})`;
+        if (op === 'charList') return cc`${charList(result)}(${args[0]})`;
         if (op === 'heapsize') return '0.0';
         if (op === '[::]') return zero(result);
-        if (op === '[:push:]') return `${vectorPush(result)}(${args[0]}, ${args[1]})`;
-        if (op === 'array') return `${vectorArray(result)}(${args[0]}, ${args[1]})`;
+        if (op === '[:push:]') return cc`${vectorPush(result)}(${args[0]}, ${args[1]})`;
+        if (op === 'array') return cc`${vectorArray(result)}(${args[0]}, ${args[1]})`;
         if (op === 'round')
-            return `${unionHelper('round', result, type(result), (body) =>
+            return cc`${unionHelper('round', result, type(result), (body) =>
                 body.push(
                     'double rounded = floor(value);',
                     { head: 'if (value - rounded >= 0.5)', body: ['rounded += 1;'] },
@@ -452,7 +514,7 @@ export function lowerC(
                 ),
             )}(${args[0]})`;
         if (op === 'print')
-            return `${unionHelper(
+            return cc`${unionHelper(
                 'host_print',
                 result,
                 type(result),
@@ -464,12 +526,12 @@ export function lowerC(
                         },
                         'putchar(10);',
                         'string_drop(value);',
-                        `return ${zero(result)};`,
+                        cc`return ${zero(result)};`,
                     ),
                 type(parameters[0]!),
             )}(${args[0]})`;
         if (op === 'getInput')
-            return `${unionHelper(
+            return cc`${unionHelper(
                 'host_input',
                 result,
                 type(result),
@@ -495,13 +557,13 @@ export function lowerC(
     };
     for (const w of program.wrappers) {
         if (w.kind !== 'dispose' || !w.captures.length) continue;
-        const signature = `${type(unit.id)} ${disposers.get(w.id)}(void *environment)`;
+        const signature = cText`${type(unit.id)} ${disposers.get(w.id)}(void *environment)`;
         declarations.push(signature + ';');
-        const body: Statement[] = [`${type(w.environment)} *captured = environment;`];
+        const body: Statement[] = [cc`${type(w.environment)} *captured = environment;`];
         w.captures.forEach((id, i) =>
-            drop({ expression: `captured->capture${i}`, layout: id }, body),
+            drop({ expression: cc`captured->capture${i}`, layout: id }, body),
         );
-        body.push('release_context(captured);', `return ${zero(unit.id)};`);
+        body.push('release_context(captured);', cc`return ${zero(unit.id)};`);
         helpers.push({ signature, body });
     }
     // Native values fill their type's ABI entries; direct intrinsics retain the
@@ -521,15 +583,15 @@ export function lowerC(
     for (const w of program.wrappers) {
         if (w.kind !== 'native' || !nativeEntries.has(w.id)) continue;
         const abi = program.abis.find((a) => a.id === w.abi)!;
-        const name = `native${nativeCodes.size}`;
+        const name = cText`native${nativeCodes.size}`;
         nativeCodes.set(w.id, name);
-        const signature = `${type(abi.result)} ${name}(void *environment${abi.arguments.map((id, i) => `, ${type(id)} arg${i}`).join('')})`;
+        const signature = cText`${type(abi.result)} ${name}(void *environment${abi.arguments.map((id, i) => cText`, ${type(id)} arg${i}`).join('')})`;
         declarations.push(signature + ';');
         const body: Statement[] = [
             '(void)environment;',
-            ...abi.arguments.map((_, i) => `(void)arg${i};`),
+            ...abi.arguments.map((_, i) => cc`(void)arg${i};`),
         ];
-        let result: string;
+        let result: Expr;
         const op = requireImport(w.definition, 'c').name;
         const simple = simpleNative(
             op,
@@ -540,7 +602,7 @@ export function lowerC(
         if (simple !== undefined) result = simple;
         else if (op === 'size') {
             const vector = endpoint(abi.arguments[0]!, 'read');
-            result = `(double)(${read(storage.get(incoming('arg0', abi.arguments[0]!)), vector)}).length`;
+            result = cc`(double)(${read(storage.get(incoming('arg0', abi.arguments[0]!)), vector)}).length`;
         } else if (op === 'dup')
             result = duplicate(
                 read(storage.get(incoming('arg0', abi.arguments[0]!)), abi.result),
@@ -566,14 +628,14 @@ export function lowerC(
                         )
                             return unsupported('Native fst changed an untouched field');
                         body.push(
-                            `arg0.replacement->${identifier(to.name)} = arg0.read->${identifier(from.name)};`,
+                            cc`arg0.replacement->${identifier(to.name)} = arg0.read->${identifier(from.name)};`,
                         );
                     }
                 }
-                result = `(${type(abi.result)}){.read=&arg0.read->item0${output.fields.some((f) => f.name === 'replacement') ? `, .replacement=&arg0.${replacement ? 'replacement' : 'read'}->item0` : ''}}`;
+                result = cc`(${type(abi.result)}){.read=&arg0.read->item0${output.fields.some((f) => f.name === 'replacement') ? cc`, .replacement=&arg0.${replacement ? 'replacement' : 'read'}->item0` : ''}}`;
             } else result = 'arg0.item0';
-        } else return unsupported(`Native import ${w.definition}`);
-        body.push(`return ${result};`);
+        } else return unsupported(cText`Native import ${w.definition}`);
+        body.push(cc`return ${result};`);
         helpers.push({ signature, body });
     }
     const resultAdapters = new Map(
@@ -588,20 +650,20 @@ export function lowerC(
         if (source.kind !== 'invoke' && source.kind !== 'native')
             return unsupported('Result adapter requires a concrete body or native import');
         const raw = program.abis.find((a) => a.id === source.abi)!;
-        const signature = `${type(abi.result)} ${resultAdapters.get(w.id)}(void *environment${abi.arguments.map((id, n) => `, ${type(id)} arg${n}`).join('')})`;
+        const signature = cText`${type(abi.result)} ${resultAdapters.get(w.id)}(void *environment${abi.arguments.map((id, n) => cText`, ${type(id)} arg${n}`).join('')})`;
         declarations.push(signature + ';');
         const sourceCode =
             source.kind === 'invoke' ? codes.get(source.code)! : nativeCodes.get(source.id)!;
         if (w.kind === 'adapt-lens-result') {
-            const context = `LensResult${resultAdapters.get(w.id)}`,
-                restore = `restore_${resultAdapters.get(w.id)}`;
+            const context = cc`LensResult${resultAdapters.get(w.id)}`,
+                restore = cc`restore_${resultAdapters.get(w.id)}`;
             const input = endpoint(abi.result, 'read'),
                 replacement = endpoint(abi.result, 'replacement');
             const separate = layout(abi.result).fields.some((f) => f.name === 'replacement');
             declarations.push(
-                `typedef struct { ${type(raw.result)} source; ${type(input)} read; ${separate ? `${type(replacement)} write;` : ''} } ${context};`,
+                cText`typedef struct { ${type(raw.result)} source; ${type(input)} read; ${separate ? cc`${type(replacement)} write;` : ''} } ${context};`,
             );
-            const restoreSignature = `${type(unit.id)} ${restore}(void *environment, ${type(replacement)} replacement)`;
+            const restoreSignature = cText`${type(unit.id)} ${restore}(void *environment, ${type(replacement)} replacement)`;
             declarations.push(restoreSignature + ';');
             const fallback: Statement[] = [];
             flush(
@@ -613,24 +675,24 @@ export function lowerC(
             helpers.push({
                 signature: restoreSignature,
                 body: [
-                    `${context} *ctx = environment;`,
+                    cc`${context} *ctx = environment;`,
                     {
                         head: 'if (ctx->source.restore)',
                         body: ['ctx->source.restore(ctx->source.context, replacement);'],
                     },
                     { head: 'else', body: fallback },
                     'release_context(ctx);',
-                    `return ${zero(unit.id)};`,
+                    cc`return ${zero(unit.id)};`,
                 ],
             });
             helpers.push({
                 signature,
                 body: [
-                    `${type(raw.result)} result = ${sourceCode}(environment${abi.arguments.map((_, n) => `, arg${n}`).join('')});`,
-                    `${context} *ctx = allocate_context(sizeof *ctx);`,
+                    cc`${type(raw.result)} result = ${sourceCode}(environment${abi.arguments.map((_, n) => cc`, arg${n}`).join('')});`,
+                    cc`${context} *ctx = allocate_context(sizeof *ctx);`,
                     'ctx->source = result;',
-                    `ctx->read = ${read(storage.get(incoming('ctx->source', raw.result)), input)};`,
-                    `return (${type(abi.result)}){.read=&ctx->read${separate ? ', .replacement=&ctx->write' : ''}, .restore=${restore}, .context=ctx};`,
+                    cc`ctx->read = ${read(storage.get(incoming('ctx->source', raw.result)), input)};`,
+                    cc`return (${type(abi.result)}){.read=&ctx->read${separate ? ', .replacement=&ctx->write' : ''}, .restore=${restore}, .context=ctx};`,
                 ],
             });
             continue;
@@ -646,23 +708,40 @@ export function lowerC(
         );
     };
     const functions = program.code.map((c) => {
-        const values = new Map<string, string>(),
+        const values = new Map<string, Expr>(),
             lenses = new Map<string, Lens>(),
             places = new Map<string, View>();
+        const locals = new Locals(cSyntax);
+        activeLocals = locals;
         let counter = 0;
-        const fresh = () => `v${counter++}`;
+        const fresh = () => locals.reference(`v${counter++}`);
+        const parameterNames = ['environment', ...c.parameters.map((_, i) => `arg${i}`)];
+        parameterNames.forEach((n) => locals.reference(n));
         const variables: Variable[] = c.parameters.map((p, i) => ({
             name: `arg${i}`,
             type: type(p.layout),
         }));
         const declare = (
             id: string,
-            expression: string,
+            expression: Expr,
             body: Statement[],
             name = fresh(),
+            options: { pure?: boolean; inline?: boolean } = {},
         ): string => {
             variables.push({ name, type: type(id) });
-            body.push(`${type(id)} ${name} = ${expression};`, `(void)${name};`);
+            body.push(
+                locals.declaration(name, type(id), expression, {
+                    ...options,
+                    zeroInitial: same(expression, zero(id)),
+                }),
+            );
+            return name;
+        };
+        /** A local that raw statements write through or address: never substituted or pruned. */
+        const cell = (name: string, ctype: string, init: Expr | undefined, body: Statement[]) => {
+            variables.push({ name, type: ctype });
+            body.push(locals.declaration(name, ctype, init));
+            locals.mutable(name);
             return name;
         };
         const setup: Statement[] = [];
@@ -685,7 +764,7 @@ export function lowerC(
                         expression: declare(v.layout, contents.expression, body),
                         layout: v.layout,
                     };
-                    body.push(`release_context((${data.expression}).as.v${n});`);
+                    body.push(cc`release_context((${data.expression}).as.v${n});`);
                 }
                 if (p.items.length === 1) bind(p.items[0]!, contents, body);
                 else p.items.forEach((item, k) => bind(item, storage.parts(contents)[k]!, body));
@@ -697,7 +776,7 @@ export function lowerC(
                 const view = incoming(`arg${i}`, p.layout);
                 places.set(p.lensPlace, view);
                 parameters.push({ expression: `arg${i}`, layout: p.layout, view });
-            } else bind(p.pattern, { expression: `arg${i}`, layout: p.layout });
+            } else bind(p.pattern, { expression: cc`arg${i}`, layout: p.layout });
         });
         const flushParameters = (body: Statement[]) =>
             parameters.forEach((p) => flush(p.expression, p.layout, storage.get(p.view), body));
@@ -714,10 +793,10 @@ export function lowerC(
             body: Statement[],
         ): { expression: string; finish: (body: Statement[]) => void } => {
             const index = helperCounter++,
-                name = `back${index}`,
+                name = locals.reference(`back${index}`),
                 fields: string[] = [],
                 init: Statement[] = [];
-            const build = (id: string, path: string): string => {
+            const build = (id: string, path: string): Expr => {
                 const l = layout(id),
                     input = l.fields.find((f) => f.name === 'read');
                 if (input?.kind === 'pointer' && input.layout) {
@@ -725,52 +804,54 @@ export function lowerC(
                     const n = fields.length,
                         r = `read${n}`,
                         w = output ? `write${n}` : r;
-                    fields.push(`${type(input.layout)} ${r};`);
+                    fields.push(cText`${type(input.layout)} ${r};`);
                     const d = storage.get(
                         storage.project(lens.view, path ? path.split('.').map(Number) : []),
                     );
-                    init.push(`${name}${escapes ? '->' : '.'}${r} = ${read(d, input.layout)};`);
+                    init.push(cc`${name}${escapes ? '->' : '.'}${r} = ${read(d, input.layout)};`);
                     if (output?.kind === 'pointer' && output.layout) {
-                        fields.push(`${type(output.layout)} ${w};`);
-                        init.push(`${name}${escapes ? '->' : '.'}${w} = ${zero(output.layout)};`);
+                        fields.push(cText`${type(output.layout)} ${w};`);
+                        init.push(cc`${name}${escapes ? '->' : '.'}${w} = ${zero(output.layout)};`);
                     }
-                    return `(${type(id)}){.read=&${name}${escapes ? '->' : '.'}${r}${output ? `, .replacement=&${name}${escapes ? '->' : '.'}${w}` : ''}}`;
+                    return cc`(${type(id)}){.read=&${name}${escapes ? '->' : '.'}${r}${output ? cc`, .replacement=&${name}${escapes ? '->' : '.'}${w}` : ''}}`;
                 }
-                return `(${type(id)}){${
-                    l.fields
-                        .filter((f) => f.name.startsWith('item'))
-                        .map(
-                            (f, i) =>
-                                `.${f.name}=${build((f as { layout: string }).layout, path ? path + '.' + i : String(i))}`,
-                        )
-                        .join(', ') || '0'
+                return cc`(${type(id)}){${
+                    joinCode(
+                        l.fields
+                            .filter((f) => f.name.startsWith('item'))
+                            .map(
+                                (f, i) =>
+                                    cc`.${f.name}=${build((f as { layout: string }).layout, path ? path + '.' + i : String(i))}`,
+                            ),
+                        ', ',
+                    ) || '0'
                 }}`;
             };
             const expression = build(id, '');
             const backingType = `Backing${index}`;
             declarations.push(
-                `typedef struct { ${fields.join(' ') || 'unsigned char inhabitant;'} } ${backingType};`,
+                cText`typedef struct { ${fields.join(' ') || 'unsigned char inhabitant;'} } ${backingType};`,
             );
-            variables.push({ name, type: backingType + (escapes ? ' *' : '') });
-            body.push(
-                escapes
-                    ? `${backingType} *${name} = allocate_context(sizeof *${name});`
-                    : `${backingType} ${name} = {0};`,
+            cell(
+                name,
+                backingType + (escapes ? ' *' : ''),
+                escapes ? cc`allocate_context(sizeof *${name})` : undefined,
+                body,
             );
-            body.push(`(void)${name};`);
-            if (escapes) body.push({ head: `if (!${name})`, body: ['abort();'] });
+            if (escapes)
+                body.push({ kind: 'if', arms: [{ condition: cc`!${name}`, body: ['abort();'] }] });
             body.push(...init);
             const arg = declare(id, expression, body);
-            const outputs = (expr: string, id: string): Data => {
+            const outputs = (expr: Expr, id: string): Data => {
                 const l = layout(id),
                     f =
                         l.fields.find((f) => f.name === 'replacement') ??
                         l.fields.find((f) => f.name === 'read');
                 if (f?.kind === 'pointer' && f.layout)
-                    return { expression: `*(${expr}).${f.name}`, layout: f.layout };
+                    return { expression: cc`*(${expr}).${f.name}`, layout: f.layout };
                 return l.fields
                     .filter((f) => f.name.startsWith('item'))
-                    .map((f) => outputs(`(${expr}).${f.name}`, (f as { layout: string }).layout));
+                    .map((f) => outputs(cc`(${expr}).${f.name}`, (f as { layout: string }).layout));
             };
             return {
                 expression: arg,
@@ -786,8 +867,7 @@ export function lowerC(
                         layout: endpoint(id, 'replacement'),
                     });
                     lens.finish(body);
-                    body.push(`(void)${name};`);
-                    if (escapes) body.push(`release_context(${name});`);
+                    if (escapes) body.push(cc`release_context(${name});`);
                 },
             };
         };
@@ -807,8 +887,8 @@ export function lowerC(
                     );
                     body.push(
                         {
-                            head: `if ((${name}).restore)`,
-                            body: [`(${name}).restore((${name}).context, ${replacement});`],
+                            head: cc`if ((${name}).restore)`,
+                            body: [cc`(${name}).restore((${name}).context, ${replacement});`],
                         },
                         {
                             head: 'else',
@@ -824,7 +904,7 @@ export function lowerC(
             };
         };
         const loans = new Map<string, Lens>();
-        const literal = (v: unknown, id: string): string =>
+        const literal = (v: unknown, id: string): Expr =>
             v === null
                 ? zero(id)
                 : typeof v === 'boolean'
@@ -833,7 +913,7 @@ export function lowerC(
                     ? // Integral literals beyond the safe range exceed every C integer type.
                       Number.isSafeInteger(v) || /[.e]/.test(String(v))
                         ? String(v)
-                        : `${v}.0`
+                        : cc`${v}.0`
                     : v && typeof v === 'object' && 'number' in v
                       ? {
                             NaN: 'NAN',
@@ -842,19 +922,21 @@ export function lowerC(
                             '-0': '(-0.0)',
                         }[String(v.number)]!
                       : unsupported('Literal');
-        const matches = (p: IRPattern, expr: string, id: string): string => {
+        const matches = (p: IRPattern, expr: Expr, id: string): Expr => {
             if (p.kind === 'literal') {
-                if (layout(id).kind !== 'string') return `${expr} == ${literal(p.value, unit.id)}`;
+                if (layout(id).kind !== 'string')
+                    return cc`${expr} == ${literal(p.value, unit.id)}`;
                 if (typeof p.value !== 'string') return unsupported('String literal pattern');
                 const text = cBytes(p.value);
-                return `string_equals(${expr}, ${text.literal}, ${text.length})`;
+                return cc`string_equals(${expr}, ${text.literal}, ${text.length})`;
             }
             const fields = layout(id).fields as { layout: string }[];
             if (p.kind === 'tuple')
                 return (
-                    p.items
-                        .map((p, i) => matches(p, field(expr, i), fields[i]!.layout))
-                        .join(' && ') || '1'
+                    joinCode(
+                        p.items.map((p, i) => matches(p, field(expr, i), fields[i]!.layout)),
+                        ' && ',
+                    ) || '1'
                 );
             if (p.kind !== 'constructor') return '1';
             const n = tagOf(id, p.name),
@@ -870,9 +952,12 @@ export function lowerC(
                               (layout(v.layout).fields[k] as { layout: string }).layout,
                           ),
                       );
-            return [`(${expr}).tag == ${n}`, ...items.filter((m) => m !== '1')].join(' && ');
+            return joinCode(
+                [cc`(${expr}).tag == ${n}`, ...items.filter((m) => !same(m, '1'))],
+                ' && ',
+            );
         };
-        const block = (b: ConcreteBlock, body: Statement[]): string => {
+        const block = (b: ConcreteBlock, body: Statement[]): Expr => {
             for (const i of b.instructions) {
                 if (i.op === 'bind') {
                     bind(
@@ -899,7 +984,9 @@ export function lowerC(
                 }
                 const id = i.out.layout,
                     name = fresh();
-                let expr!: string;
+                let expr!: Expr;
+                // Only side-effect-free values that read no memory may be inlined or pruned.
+                let pure = false;
                 switch (i.op) {
                     case 'aslens': {
                         const view = storage.own({
@@ -923,11 +1010,11 @@ export function lowerC(
                                 const w = program.wrappers.find((w) => w.id === e.wrapper)!;
                                 // Runtime joins reify native entries; ordinary intrinsics keep their storage lowering.
                                 return w.kind === 'invoke'
-                                    ? `, .${e.field}=${codes.get(w.code)}`
+                                    ? cc`, .${e.field}=${codes.get(w.code)}`
                                     : w.kind === 'adapt-lens-result'
-                                      ? `, .${e.field}=${resultAdapters.get(w.id)}`
+                                      ? cc`, .${e.field}=${resultAdapters.get(w.id)}`
                                       : w.kind === 'native' && nativeCodes.has(w.id)
-                                        ? `, .${e.field}=${nativeCodes.get(w.id)}`
+                                        ? cc`, .${e.field}=${nativeCodes.get(w.id)}`
                                         : '';
                             })
                             .join('');
@@ -942,50 +1029,57 @@ export function lowerC(
                                     (f) => f.kind === 'value' && layout(f.layout).kind === 'unit',
                                 ))
                         ) {
-                            expr = `(${type(id)}){.environment=NULL${entries}}`;
+                            expr = cc`(${type(id)}){.environment=NULL${entries}}`;
                             break;
                         }
                         const environment = fresh();
-                        variables.push({
-                            name: environment,
-                            type: `${type(callable.environment)} *`,
-                        });
-                        body.push(
-                            `${type(callable.environment)} *${environment} = allocate_context(sizeof *${environment});`,
+                        cell(
+                            environment,
+                            `${type(callable.environment)} *`,
+                            cc`allocate_context(sizeof *${environment})`,
+                            body,
                         );
                         i.captures.forEach((capture, n) =>
-                            body.push(`${environment}->capture${n} = ${value(capture.value)};`),
+                            body.push(cc`${environment}->capture${n} = ${value(capture.value)};`),
                         );
-                        expr = `(${type(id)}){.environment=${environment}, .dispose=${disposers.get(callable.dispose)}${entries}}`;
+                        expr = cc`(${type(id)}){.environment=${environment}, .dispose=${disposers.get(callable.dispose)}${entries}}`;
                         break;
                     }
                     case 'constant':
                         expr = literal(i.value, id);
+                        if (i.value !== null)
+                            expr = locals.scalar(
+                                String(expr),
+                                typeof i.value === 'boolean' ? i.value : decodeNumber(i.value),
+                            );
+                        pure = true;
                         break;
                     case 'string': {
                         const head = cBytes(i.head);
                         if (!i.parts.length) {
-                            expr = `string_new(${head.literal}, ${head.length})`;
+                            expr = cc`string_new(${head.literal}, ${head.length})`;
                             break;
                         }
                         // Parts were evaluated in source order; appending consumes each one.
                         const builder = fresh();
-                        body.push(
-                            `string_builder ${builder} = {0};`,
-                            `builder_bytes(&${builder}, ${head.literal}, ${head.length});`,
-                        );
+                        cell(builder, 'string_builder', undefined, body);
+                        body.push(cc`builder_bytes(&${builder}, ${head.literal}, ${head.length});`);
                         for (const part of i.parts) {
                             const tail = cBytes(part.tail);
+                            const appended = value(part.value);
                             body.push(
-                                appendPart(
-                                    builder,
-                                    layout(outputLayouts.get(part.value)!).kind,
-                                    value(part.value),
+                                locals.derive(
+                                    appendPart(
+                                        builder,
+                                        layout(outputLayouts.get(part.value)!).kind,
+                                        String(appended),
+                                    ),
+                                    appended,
                                 ),
-                                `builder_bytes(&${builder}, ${tail.literal}, ${tail.length});`,
+                                cc`builder_bytes(&${builder}, ${tail.literal}, ${tail.length});`,
                             );
                         }
-                        expr = `builder_finish(&${builder})`;
+                        expr = cc`builder_finish(&${builder})`;
                         break;
                     }
                     case 'construct': {
@@ -996,21 +1090,23 @@ export function lowerC(
                                 ? zero(v.layout)
                                 : i.items.length === 1
                                   ? value(i.items[0]!)
-                                  : `(${type(v.layout)}){${i.items.map(value).join(', ')}}`;
+                                  : cc`(${type(v.layout)}){${joinCode(i.items.map(value), ', ')}}`;
                         if (v.boxed) {
                             const box = fresh();
-                            variables.push({ name: box, type: `${type(v.layout)} *` });
-                            body.push(
-                                `${type(v.layout)} *${box} = allocate_context(sizeof *${box});`,
-                                `*${box} = ${contents};`,
+                            cell(
+                                box,
+                                `${type(v.layout)} *`,
+                                cc`allocate_context(sizeof *${box})`,
+                                body,
                             );
+                            body.push(cc`*${box} = ${contents};`);
                             contents = box;
                         }
-                        expr = `(${type(id)}){.tag=${n}, .as.v${n}=${contents}}`;
+                        expr = cc`(${type(id)}){.tag=${n}, .as.v${n}=${contents}}`;
                         break;
                     }
                     case 'tuple':
-                        expr = `(${type(id)}){${i.items.map(value).join(', ') || '0'}}`;
+                        expr = cc`(${type(id)}){${joinCode(i.items.map(value), ', ') || '0'}}`;
                         break;
                     case 'move':
                         expr = read(storage.get(ref(i.slot)), id);
@@ -1051,7 +1147,7 @@ export function lowerC(
                             const before = storage.snapshot();
                             const selected = fresh();
                             variables.push({ name: selected, type: 'int' });
-                            body.push(`int ${selected} = 0;`, `(void)${selected};`);
+                            body.push(locals.declaration(selected, 'int', '0'));
                             const input = endpoint(id, 'read');
                             const focus = declare(input, zero(input), body);
                             const joined = storage.own({ expression: focus, layout: input });
@@ -1096,7 +1192,7 @@ export function lowerC(
                                         const phi = declare(first.layout, zero(first.layout), into);
                                         arms.forEach((arm, n) =>
                                             arm.nested.push(
-                                                `${phi} = ${read(data[n]!, first.layout)};`,
+                                                locals.assign(phi, read(data[n]!, first.layout)),
                                             ),
                                         );
                                         return { expression: phi, layout: first.layout };
@@ -1140,38 +1236,13 @@ export function lowerC(
                                 normalize(arm.setup, nested);
                                 const lens = lenses.get(arm.body.result)!;
                                 nested.push(
-                                    `${selected} = ${n};`,
-                                    `${focus} = ${read(storage.get(lens.view), input)};`,
+                                    locals.assign(selected, String(n)),
+                                    locals.assign(focus, read(storage.get(lens.view), input)),
                                 );
-                                // Lift setup storage out of the conditional so deferred cleanup can
-                                // retain it. Only the selected arm assigns or allocates its backing.
-                                const locals = variables.slice(start);
-                                locals.forEach((v) =>
-                                    body.push(`${v.type} ${v.name} = {0};`, `(void)${v.name};`),
-                                );
-                                const lift = (statements: Statement[]): Statement[] =>
-                                    statements.map((s) => {
-                                        if (typeof s !== 'string')
-                                            return { ...s, body: lift(s.body) };
-                                        for (const v of locals) {
-                                            const match = s.match(
-                                                new RegExp(`^(.+?)\\b${v.name}\\s*=\\s*(.*);$`),
-                                            );
-                                            if (
-                                                match &&
-                                                match[1]!.replace(/\s/g, '') ===
-                                                    v.type.replace(/\s/g, '')
-                                            ) {
-                                                const rhs = match[2]!.startsWith('{')
-                                                    ? `(${v.type})${match[2]}`
-                                                    : match[2];
-                                                return `${v.name} = ${rhs};`;
-                                            }
-                                        }
-                                        return s;
-                                    });
+                                // Setup storage used by deferred cleanup is declared in the arm;
+                                // declaration placement lifts it out of the conditional.
                                 return {
-                                    nested: lift(nested),
+                                    nested,
                                     state: storage.snapshot(),
                                     lens,
                                     arm,
@@ -1180,13 +1251,20 @@ export function lowerC(
                             });
                             storage.reset(before);
                             merge(arms, body);
-                            i.cases.forEach((arm, n) =>
-                                body.push({
-                                    head: `${n ? 'else if' : 'if'} (${matches(arm.pattern, value(i.value), outputLayouts.get(i.value)!)})`,
-                                    body: arms[n]!.nested,
-                                }),
-                            );
-                            body.push({ head: 'else', body: ['abort();'] });
+                            body.push({
+                                kind: 'if',
+                                arms: [
+                                    ...i.cases.map((arm, n) => ({
+                                        condition: matches(
+                                            arm.pattern,
+                                            value(i.value),
+                                            outputLayouts.get(i.value)!,
+                                        ),
+                                        body: arms[n]!.nested,
+                                    })),
+                                    { body: ['abort();'] },
+                                ],
+                            });
                             lenses.set(i.out.id, {
                                 view: joined,
                                 finish: (output) => {
@@ -1205,13 +1283,16 @@ export function lowerC(
                                     });
                                     storage.reset(current);
                                     merge(restored, output);
-                                    restored.forEach((arm, n) =>
-                                        output.push({
-                                            head: `${n ? 'else if' : 'if'} (${selected} == ${n})`,
-                                            body: arm.nested,
-                                        }),
-                                    );
-                                    output.push({ head: 'else', body: ['abort();'] });
+                                    output.push({
+                                        kind: 'if',
+                                        arms: [
+                                            ...restored.map((arm, n) => ({
+                                                condition: cc`${selected} == ${n}`,
+                                                body: arm.nested,
+                                            })),
+                                            { body: ['abort();'] },
+                                        ],
+                                    });
                                 },
                             });
                             continue;
@@ -1231,7 +1312,7 @@ export function lowerC(
                                 nested,
                             );
                             const result = block(arm.body, nested);
-                            nested.push(`${name} = ${result};`);
+                            nested.push(locals.assign(name, result));
                             const state = storage.snapshot();
                             variables.length = outerVariables;
                             return { nested, state };
@@ -1252,7 +1333,9 @@ export function lowerC(
                             ) {
                                 const phi = declare(first.layout, zero(first.layout), body);
                                 arms.forEach((arm, n) =>
-                                    arm.nested.push(`${phi} = ${read(data[n]!, first.layout)};`),
+                                    arm.nested.push(
+                                        locals.assign(phi, read(data[n]!, first.layout)),
+                                    ),
                                 );
                                 return { expression: phi, layout: first.layout };
                             }
@@ -1276,13 +1359,20 @@ export function lowerC(
                                     previous,
                                 )),
                         );
-                        i.cases.forEach((arm, n) =>
-                            body.push({
-                                head: `${n ? 'else if' : 'if'} (${matches(arm.pattern, value(i.value), outputLayouts.get(i.value)!)})`,
-                                body: arms[n]!.nested,
-                            }),
-                        );
-                        body.push({ head: 'else', body: ['abort();'] });
+                        body.push({
+                            kind: 'if',
+                            arms: [
+                                ...i.cases.map((arm, n) => ({
+                                    condition: matches(
+                                        arm.pattern,
+                                        value(i.value),
+                                        outputLayouts.get(i.value)!,
+                                    ),
+                                    body: arms[n]!.nested,
+                                })),
+                                { body: ['abort();'] },
+                            ],
+                        });
                         values.set(i.out.id, name);
                         continue;
                     }
@@ -1302,7 +1392,7 @@ export function lowerC(
                         const abi = program.abis.find((a) => a.id === i.abi)!;
                         const isLens = layout(id).fields.some((f) => f.name === 'restore');
                         const adapters: { finish: (body: Statement[]) => void }[] = [];
-                        let args: string[] = [];
+                        let args: Expr[] = [];
                         if (w?.kind === 'native' && w.definition === 'native/dup') {
                             const lens = lenses.get(i.args[0]!)!;
                             expr = duplicate(read(storage.get(lens.view), id), id);
@@ -1310,7 +1400,7 @@ export function lowerC(
                         } else if (w?.kind === 'native' && w.definition === 'native/size') {
                             const lens = lenses.get(i.args[0]!)!,
                                 vector = endpoint(outputLayouts.get(i.args[0]!)!, 'read');
-                            expr = `(double)(${read(storage.get(lens.view), vector)}).length`;
+                            expr = cc`(double)(${read(storage.get(lens.view), vector)}).length`;
                             adapters.push({ finish: lens.finish });
                         } else if (w?.kind === 'native' && w.definition === 'native/[]') {
                             // The element lives in the heap buffer, so writing through its
@@ -1319,15 +1409,17 @@ export function lowerC(
                                 vector = endpoint(outputLayouts.get(i.args[1]!)!, 'read'),
                                 item = element(vector);
                             const at = fresh();
-                            variables.push({ name: at, type: `${type(item)} *` });
-                            body.push(
-                                `${type(item)} *${at} = ${vectorAt(vector)}(${read(storage.get(parent.view), vector)}, ${value(i.args[0]!)});`,
+                            cell(
+                                at,
+                                `${type(item)} *`,
+                                cc`${vectorAt(vector)}(${read(storage.get(parent.view), vector)}, ${value(i.args[0]!)})`,
+                                body,
                             );
-                            const view = storage.own({ expression: `(*${at})`, layout: item });
+                            const view = storage.own({ expression: cc`(*${at})`, layout: item });
                             lenses.set(i.out.id, {
                                 view,
                                 finish: (body) => {
-                                    body.push(`*${at} = ${read(storage.get(view), item)};`);
+                                    body.push(cc`*${at} = ${read(storage.get(view), item)};`);
                                     parent.finish(body);
                                 },
                             });
@@ -1353,19 +1445,23 @@ export function lowerC(
                             )
                                 expr =
                                     i.field === undefined
-                                        ? `${wrapperFunction(i.wrapper!)}((${value(i.callee)}).environment${args.map((a) => `, ${a}`).join('')})`
-                                        : `(${value(i.callee)}).${identifier(i.field)}((${value(i.callee)}).environment${args.map((a) => `, ${a}`).join('')})`;
+                                        ? cc`${wrapperFunction(i.wrapper!)}((${value(i.callee)}).environment${joinCode(
+                                              args.map((a) => cc`, ${a}`),
+                                              '',
+                                          )})`
+                                        : cc`(${value(i.callee)}).${identifier(i.field)}((${value(i.callee)}).environment${joinCode(
+                                              args.map((a) => cc`, ${a}`),
+                                              '',
+                                          )})`;
                             else if (w?.kind === 'native') {
+                                const op = requireImport(w.definition, 'c').name;
+                                pure = ['+', '-', '*', '/', '==', '>=', '<='].includes(op);
                                 expr =
-                                    simpleNative(
-                                        requireImport(w.definition, 'c').name,
-                                        args,
-                                        id,
-                                        abi.arguments,
-                                    ) ?? unsupported(`Native import ${w.definition}`);
+                                    simpleNative(op, args, id, abi.arguments) ??
+                                    unsupported(cText`Native import ${w.definition}`);
                             } else return unsupported('Disposer invocation');
                         }
-                        declare(id, expr, body, name);
+                        declare(id, expr, body, name, { pure, inline: pure });
                         values.set(i.out.id, name);
                         if (isLens)
                             lenses.set(
@@ -1378,9 +1474,9 @@ export function lowerC(
                         continue;
                     }
                     default:
-                        return unsupported(`Unknown operation ${(i as { op: string }).op}`);
+                        return unsupported(cText`Unknown operation ${(i as { op: string }).op}`);
                 }
-                declare(id, expr, body, name);
+                declare(id, expr, body, name, { pure });
                 values.set(i.out.id, name);
             }
             const finish = (body: Statement[]) =>
@@ -1416,17 +1512,13 @@ export function lowerC(
                 if (i.op === 'case') i.cases.forEach((a) => index(a.body));
             });
         index(c.body);
-        const body: Statement[] = [
-            '(void)environment;',
-            ...c.parameters.map((_, i) => `(void)arg${i};`),
-            ...setup,
-        ];
+        const body: Statement[] = [...setup];
         c.captures.forEach((capture, i) => {
             const name = declare(
                 capture.layout,
                 erasedEnvironment(c.captures)
                     ? zero(capture.layout)
-                    : `((${type(c.environment)} *)environment)->capture${i}`,
+                    : cc`((${type(c.environment)} *)${'environment'})->capture${i}`,
                 body,
             );
             places.set(capture.place, storage.own({ expression: name, layout: capture.layout }));
@@ -1442,26 +1534,28 @@ export function lowerC(
             const candidates = [...variables];
             const contextFields: string[] = [];
             const initial: Statement[] = [];
-            const build = (view: View, id: string, path: string): string => {
+            const build = (view: View, id: string, path: string): Expr => {
                 const l = layout(id),
                     input = l.fields.find((f) => f.name === 'read');
                 if (input?.kind === 'pointer' && input.layout) {
                     const r = `focus${path}`,
                         output = l.fields.find((f) => f.name === 'replacement');
-                    contextFields.push(`${type(input.layout)} ${r};`);
-                    initial.push(`ctx->${r} = ${read(storage.get(view), input.layout)};`);
+                    contextFields.push(cText`${type(input.layout)} ${r};`);
+                    initial.push(cc`ctx->${r} = ${read(storage.get(view), input.layout)};`);
                     if (output?.kind === 'pointer' && output.layout)
-                        contextFields.push(`${type(output.layout)} ${r}out;`);
-                    return `(${type(id)}){.read=&ctx->${r}${output ? `, .replacement=&ctx->${r}out` : ''}}`;
+                        contextFields.push(cText`${type(output.layout)} ${r}out;`);
+                    return cc`(${type(id)}){.read=&ctx->${r}${output ? cc`, .replacement=&ctx->${r}out` : ''}}`;
                 }
-                return `(${type(id)}){${
-                    l.fields
-                        .filter((f) => f.name.startsWith('item'))
-                        .map(
-                            (f, i) =>
-                                `.${f.name}=${build(storage.project(view, [i]), (f as { layout: string }).layout, path + '_' + i)}`,
-                        )
-                        .join(', ') || '0'
+                return cc`(${type(id)}){${
+                    joinCode(
+                        l.fields
+                            .filter((f) => f.name.startsWith('item'))
+                            .map(
+                                (f, i) =>
+                                    cc`.${f.name}=${build(storage.project(view, [i]), (f as { layout: string }).layout, path + '_' + i)}`,
+                            ),
+                        ', ',
+                    ) || '0'
                 }}`;
             };
             const resultExpression = build(lens.view, c.body.layout, '');
@@ -1473,63 +1567,53 @@ export function lowerC(
             flushParameters(cleanup);
             storage.reset(saved);
             const references = new Set<string>();
-            const inspect = (body: Statement[]) =>
-                body.forEach((s) => {
-                    if (typeof s === 'string')
-                        for (const name of s.matchAll(/\b[A-Za-z_][A-Za-z_0-9]*\b/g))
-                            references.add(name[0]);
-                    else {
-                        for (const name of s.head.matchAll(/\b[A-Za-z_][A-Za-z_0-9]*\b/g))
-                            references.add(name[0]);
-                        inspect(s.body);
-                    }
-                });
-            inspect(cleanup);
+            // The restoration helper runs after this frame returns. It is printed
+            // here; the frame's locals it mentions are copied into its context.
+            const lines = printStatements(suppressUnused(locals, cleanup, []));
+            for (const line of lines)
+                for (const name of line.matchAll(/\b[A-Za-z_][A-Za-z_0-9]*\b/g))
+                    references.add(name[0]);
             const captured = candidates.filter((v) => references.has(v.name));
             contextFields.unshift(...captured.map((v) => `${v.type} ${v.name};`));
             const names = new Set(captured.map((v) => v.name));
             const rewrite = (s: string) =>
                 s.replace(/\b[A-Za-z_][A-Za-z_0-9]*\b/g, (n) => (names.has(n) ? `ctx->${n}` : n));
-            const translate = (b: Statement[]): Statement[] =>
-                b.map((s) =>
-                    typeof s === 'string'
-                        ? rewrite(s)
-                        : { head: rewrite(s.head), body: translate(s.body) },
-                );
             declarations.push(
-                `typedef struct { ${contextFields.join(' ') || 'unsigned char inhabitant;'} } ${context};`,
+                cText`typedef struct { ${contextFields.join(' ') || 'unsigned char inhabitant;'} } ${context};`,
             );
             declarations.push(
-                `${type(unit.id)} ${restore}(void *opaque, ${type(replacement)} replacement);`,
+                cText`${type(unit.id)} ${restore}(void *opaque, ${type(replacement)} replacement);`,
             );
             helpers.push({
-                signature: `${type(unit.id)} ${restore}(void *opaque, ${type(replacement)} replacement)`,
+                signature: cText`${type(unit.id)} ${restore}(void *opaque, ${type(replacement)} replacement)`,
                 body: [
-                    `${context} *ctx = opaque;`,
+                    cc`${context} *ctx = opaque;`,
                     '(void)replacement;',
-                    ...translate(cleanup),
+                    ...lines.map(rewrite),
                     'release_context(ctx);',
-                    `return ${zero(unit.id)};`,
+                    cc`return ${zero(unit.id)};`,
                 ],
             });
             body.push(`${context} *ctx = allocate_context(sizeof *ctx);`, {
-                head: 'if (!ctx)',
-                body: ['abort();'],
+                kind: 'if',
+                arms: [{ condition: '!ctx', body: ['abort();'] }],
             });
-            captured.forEach((v) => body.push(`ctx->${v.name} = ${v.name};`));
+            captured.forEach((v) => body.push(cc`ctx->${locals.literal(v.name)} = ${v.name};`));
             body.push(...initial);
             const out = fresh();
             body.push(
-                `${type(c.body.layout)} ${out} = ${resultExpression};`,
-                `${out}.restore = ${restore};`,
-                `${out}.context = ctx;`,
-                `return ${out};`,
+                cc`${type(c.body.layout)} ${out} = ${resultExpression};`,
+                cc`${out}.restore = ${restore};`,
+                cc`${out}.context = ctx;`,
+                cc`return ${out};`,
             );
         } else {
             flushParameters(body);
-            body.push(`return ${result};`);
+            body.push(locals.returnValue(result));
         }
-        return { signature: signature(c), body };
+        const placed = locals.place(body);
+        activeLocals = undefined;
+        return { signature: signature(c), body: suppressUnused(locals, placed, parameterNames) };
     });
     // Helpers generated while emitting the entry adapter (result printing and drops) follow.
     const emittedHelpers = helpers.length;
@@ -1556,7 +1640,7 @@ export function lowerC(
     );
     // Test-only structured result adapter; never exports borrowed storage.
     let printLoops = 0;
-    const print = (expr: string, id: string, body: Statement[]) => {
+    const print = (expr: Expr, id: string, body: Statement[]) => {
         const l = layout(id);
         if (l.kind === 'f64') body.push(`print_number(${expr});`);
         else if (l.kind === 'bool') body.push(`fputs(${expr} ? "true" : "false", stdout);`);
@@ -1725,7 +1809,7 @@ export function lowerC(
             code.parameters.forEach((p, n) => {
                 if (p.lensPlace) unsupported('Lens parameters need a host borrow contract');
                 const kind = hostKind(p.layout);
-                if (kind === 'unit') return args.push(zero(p.layout));
+                if (kind === 'unit') return args.push(String(zero(p.layout)));
                 if (kind === 'f64' || kind === 'bool') {
                     params.push(`${kind === 'f64' ? 'double' : '_Bool'} arg${n}`);
                     hostParams.push(`${kind === 'f64' ? 'double' : 'bool'} arg${n}`);

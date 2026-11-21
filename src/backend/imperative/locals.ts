@@ -18,6 +18,8 @@ type Recipe = Node;
 export type Syntax = {
     scalar: (value: number | boolean) => string;
     binary: (op: string, left: string, right: string) => string;
+    /** A return statement; `return value` when absent. */
+    returns?: (value: string) => string;
 };
 const numeric = (op: string, a: number, b: number): number | boolean => {
     switch (op) {
@@ -112,16 +114,24 @@ export class Locals {
         return this.code({ ...r, aggregate: items.map((v) => this.recipe(v)) }, String(value));
     }
     returnValue(value: Expr): Expr {
-        const text = `return ${value}`;
+        const spell = this.syntax.returns ?? ((v: string) => `return ${v}`);
         return this.code(
             {
                 kind: 'compose',
                 parts: [this.recipe(value)],
-                emit: ([v]) => `return ${v}`,
+                emit: ([v]) => spell(v!),
                 returns: true,
             },
-            text,
+            spell(String(value)),
         );
+    }
+    /** Every local some expression in `body` reads. Assignment targets are not reads. */
+    reads(body: Statement[]): Set<string> {
+        const result = new Set<string>();
+        visit(body, (s) =>
+            expressions(s).forEach((e) => refs(this.recipe(e)).forEach((n) => result.add(n))),
+        );
+        return result;
     }
     /** Field/pointee mutations not represented by a bare assignment node. */
     mutable(name: string): void {

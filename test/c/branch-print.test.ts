@@ -38,20 +38,10 @@ void print_number(double x);
 Tuple_Bool_Number entry(void *environment) {
     (void)environment;
     double v0 = 1;
-    (void)v0;
-    double v2 = 2;
-    (void)v2;
     bool v4 = 0;
-    (void)v4;
     int v6 = 0;
-    (void)v6;
-    double v7 = (double){0};
-    (void)v7;
-    double v8 = {0};
-    (void)v8;
+    double v7 = {0};
     if (v4 == 1) {
-        v8 = v2;
-        (void)v8;
         v6 = 0;
         v7 = v0;
     }
@@ -62,8 +52,6 @@ Tuple_Bool_Number entry(void *environment) {
     else {
         abort();
     }
-    bool v14 = 1;
-    (void)v14;
     double v15 = v7;
     (void)v15;
     if (v6 == 0) {
@@ -73,27 +61,9 @@ Tuple_Bool_Number entry(void *environment) {
     else {
         abort();
     }
-    double v12 = v15;
-    (void)v12;
-    double v18 = 3;
-    (void)v18;
-    Unit v19 = (Unit){0};
+    Unit v19 = {0};
     (void)v19;
-    bool v21 = v14;
-    (void)v21;
-    double v22 = v18;
-    (void)v22;
-    Tuple_Bool_Number v23 = (Tuple_Bool_Number){v21, v22};
-    (void)v23;
-    Tuple_Bool_Number v20 = v23;
-    (void)v20;
-    Tuple_Bool_Number v16 = v20;
-    (void)v16;
-    Tuple_Bool_Number v3 = v16;
-    (void)v3;
-    Tuple_Bool_Number v1 = v3;
-    (void)v1;
-    return v1;
+    return (Tuple_Bool_Number){1, 3};
 }
 void *allocate_context(size_t size) {
     void *context = malloc(size);

@@ -204,6 +204,61 @@ operations as explicit nodes, so that demand and dead-value logic can see them
 and retain them. The ASan/UBSan C corpus is the safety net: a leaked or
 double-freed value fails loudly.
 
+Implementation:
+
+- `c/syntax.ts` provides `cSyntax` (C literal spelling, shared with lowering,
+  plus `return v;`) and prints the shared tree. A value-less declaration prints
+  as `T x = {0};`, since C locals have no default value. A switch case ends with
+  `break;`. Restore and runtime helpers still use opaque `Block` heads.
+- `lowerC` builds function bodies with a per-function `Locals(cSyntax)`. A `cc`
+  template tag and `joinCode` track references. Package text (typedefs, struct
+  declarations, signatures, helper names) uses a plain `cText` tag.
+- `declare()` emits `Locals` declarations. Only literal constants and arithmetic
+  natives are marked pure, and only arithmetic is marked inlinable. Loads,
+  dereferences, calls and allocations keep their sequencing points, so nothing
+  is ever evaluated after a `release_context`. Arithmetic natives use
+  `Locals.binary`, so constant pairs fold. Otherwise C's integer literals
+  could meet inline as integer division.
+- Locals that raw statements write through or address are declared with
+  `cell()`, which marks them mutable: closure environments, union boxes, lens
+  backing, string builders and vector element pointers. They are never
+  substituted or pruned, but placement can still hoist them.
+- Phis, branch results, the selected-lens index and the focus cell are written
+  with `locals.assign`. That blocks them from copy substitution automatically.
+- Branches, selected-lens dispatch and restore dispatch emit `IfChain` nodes.
+- The selected-lens "lift" pass is gone. It regex-matched `T v = rhs;` lines to
+  hoist arm-local storage that deferred cleanup uses. Declaration placement now
+  does this from tracked references.
+- `(void)` suppression is computed, not blanket. After placement, `suppressUnused`
+  marks only parameters and locals that no expression reads. C compiles with
+  `-Wall -Wextra -Werror`, which rejects unused ones.
+
+Effect on `ok.lm`'s C: 588 → 453 lines, and 110 → 15 `(void)` suppressions.
+Copy chains, single-use constants and arithmetic temporaries are gone, and
+branch results are assigned directly in their arms.
+
+Ownership: drops, frees and disposals are expression statements that read the
+values they release. That makes them roots for pruning, and copy substitution
+never crosses them because only aliases (not loads) are substituted. They are not
+separate node kinds. Making them explicit nodes is needed only once C adopts
+demand-driven materialization, which can defer a load past a release.
+
+Still C-specific or text-based:
+
+- The returned-lens restoration helper is printed, then has its captured frame
+  locals rewritten to `ctx->name` by regex. Its body is not simplified.
+- Self-assignments such as `*(x).read = *(x).read;` remain. Go's redundant-write
+  removal (item 8) is lowering-side and has not been ported.
+- C still materializes every instruction eagerly. Go's demand-driven
+  materialization and partial aggregates (items 1, 6, 9) live in `go/lower.ts`.
+- Parameter and local source names (`arg0`, `v12`) and named union tags are still
+  numbered.
+
+Validation: Go output is byte-identical to step 3. The native corpus passes all
+1549 cases under ASan/UBSan at `-O0` and at `-O2`. Exact-text C expectations were
+regenerated. One regex was relaxed, because copy substitution now calls an
+indirect callee through its parameter directly (`(arg0).invoke0(...)`).
+
 ### Step 5: unify the per-instruction lowering
 
 Merge the two per-op lowerers behind the capability interface. Decide after
