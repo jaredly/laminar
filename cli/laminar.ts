@@ -4,22 +4,30 @@
  *
  *   laminar check <file>
  *   laminar emit  <file> [--target native|wasm32|go] [-o <path>]
+ *                        [--export <name,...> --header <path>]
  *   laminar run   <file> [--target native|wasm32|go|reference] [--optimize] [--sanitize]
  *
- * `emit` writes C (native, wasm32) or Go source without invoking a compiler.
+ * `emit` writes C (native, wasm32) or Go source without invoking a compiler. With
+ * `--export`, it writes a C library exporting those definitions, and its header.
  * `run` builds with the target's toolchain and executes; `--target reference` runs
  * the typed-IR evaluator instead. Program output and input pass through; the
  * entry's result is printed last, as a JSON line.
  */
 import { readFileSync, readSync, rmSync, writeFileSync } from 'node:fs';
 import { spawn } from 'node:child_process';
-import { CompileError, buildCompiled, checkSource, compileSource } from '../src/compiler.ts';
+import {
+    CompileError,
+    buildCompiled,
+    checkSource,
+    compileLibrary,
+    compileSource,
+} from '../src/compiler.ts';
 import { detectTarget, targetNames, type TargetName } from '../src/backend/host.ts';
 import { BackendDiagnostic } from '../src/backend/target.ts';
 import { executeTypedProgram } from '../src/eval-typed.ts';
 
 const usage = `usage: laminar check <file>
-       laminar emit <file> [--target native|wasm32|go] [-o <path>]
+       laminar emit <file> [--target native|wasm32|go] [-o <path>] [--export <name,...> --header <path>]
        laminar run <file> [--target native|wasm32|go|reference] [--optimize] [--sanitize]`;
 
 function parseArgs(argv: string[]) {
@@ -27,6 +35,8 @@ function parseArgs(argv: string[]) {
     const flags = {
         target: 'native',
         output: undefined as string | undefined,
+        header: undefined as string | undefined,
+        exports: [] as string[],
         optimize: false,
         sanitize: false,
     };
@@ -34,6 +44,9 @@ function parseArgs(argv: string[]) {
         const arg = rest[i]!;
         if (arg === '--target') flags.target = rest[++i] ?? '';
         else if (arg === '-o') flags.output = rest[++i];
+        else if (arg === '--header') flags.header = rest[++i];
+        else if (arg === '--export')
+            flags.exports.push(...(rest[++i] ?? '').split(',').filter(Boolean));
         else if (arg === '--optimize') flags.optimize = true;
         else if (arg === '--sanitize') flags.sanitize = true;
         else throw new CompileError('usage', 'usage', `Unknown option ${arg}\n${usage}`);
@@ -47,6 +60,8 @@ function parseArgs(argv: string[]) {
             'usage',
             `Unknown target ${flags.target}; expected ${targets.join(', ')}`,
         );
+    if (flags.exports.length && (command !== 'emit' || !flags.header))
+        throw new CompileError('usage', 'usage', `--export needs emit and --header\n${usage}`);
     return { command, file, ...flags };
 }
 
@@ -78,6 +93,16 @@ async function main(argv: string[]): Promise<number> {
             return 0;
         }
         const target = detectTarget(args.target as TargetName);
+        if (args.exports.length) {
+            const library = compileLibrary(source, {
+                target,
+                exports: args.exports.map((name) => ({ name })),
+            });
+            writeFileSync(args.header!, library.header);
+            if (args.output) writeFileSync(args.output, library.code);
+            else process.stdout.write(library.code);
+            return 0;
+        }
         const compiled = compileSource(source, { target });
         if (args.command === 'emit') {
             if (args.output) writeFileSync(args.output, compiled.code);

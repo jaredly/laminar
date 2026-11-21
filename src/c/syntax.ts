@@ -3,6 +3,8 @@ export type Statement = string | { head: string; body: Statement[] };
 export type TranslationUnit = {
     declarations: string[];
     functions: { signature: string; body: Statement[] }[];
+    /** Library mode: the host-facing header for the exported functions. */
+    header?: string[];
 };
 export function identifier(name: string): string {
     if (!/^[A-Za-z_][A-Za-z_0-9]*$/.test(name)) throw Error(`Invalid C identifier: ${name}`);

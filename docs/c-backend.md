@@ -1021,3 +1021,43 @@ definitions that depend on them. *Backend restrictions* lists programs that pass
 the checker and the reference but that a backend rejects, with the expected code
 for C and Go: non-scalar interpolation and callable entry results. Missing host
 capabilities are tested per target.
+
+## Phase 7: host exports
+
+`compileLibrary(source, { target, exports })` (`src/compiler.ts`) compiles
+top-level definitions into a C library with a generated header, instead of a test
+program. The library has no `main` and prints nothing. From the command line:
+`laminar emit <file> --export inc,greet --header laminar.h -o laminar.c`.
+
+Each export names a definition; its symbol defaults to `laminar_<name>`, and a
+generic definition needs explicit `typeArguments` (and its own `symbol` when it is
+exported more than once). Exports are ordinary function entries: every parameter
+gets a data representation contract, and `lowerC(program, { exports })` wraps each
+entry's code in a public function with this host ABI:
+
+| Laminar value | Argument | Result |
+| --- | --- | --- |
+| `Number`, `Bool` | `double`, `bool` by value | `double`, `bool` |
+| `()` | omitted | `void` |
+| `String` | borrowed `(const char *bytes, size_t length)`, copied; the host keeps its buffer | owned `laminar_string *`: read with `laminar_string_data`/`laminar_string_length`, free with `laminar_string_free` |
+| anything else | owned handle; passing it transfers ownership | owned handle; pass it to an export or dispose with `laminar_drop_<T>` |
+
+Strings are length-delimited, so embedded NUL bytes are data, and the empty string
+is a NULL result that both accessors accept. Handle types are opaque and named from
+the semantic type (`laminar_List_Number`, `laminar_Tuple_String_Number`); a handle is
+one heap cell holding the value. `laminar_live_allocations()` reports live
+Laminar heap cells, so a host can check that it released everything.
+
+Rejected with diagnostics: lens parameters and lens results (`Lens parameters need
+a host borrow contract`), generic exports without type arguments, unknown
+definitions, duplicate symbols, and non-C targets (`unsupported-export`; the Go
+backend has no host ABI).
+
+Two tests under `LAMINAR_EXEC=1` exercise the ABI. A native C host, built with the
+library under ASan/UBSan, covers scalars, a buffer with an embedded NUL, UTF-8
+input, string results, handle ownership transfer (`laminar_sum(laminar_range(4))`),
+disposal of kept handles, and unit, and ends with no live allocations. A
+Wasm/Node host is the one relevant case for memory growth: a 24 MiB input makes an
+export grow linear memory, the test checks that the view taken before the call is
+stale, and it reads the result through the current `HEAPU8`. There is no browser
+profile test yet; browser Emscripten is a compile-time target with `stdout` only.

@@ -14,6 +14,9 @@ import { compileConcreteProgram } from './lower-concrete.ts';
 import { BackendDiagnostic, type TargetConfig } from './backend/target.ts';
 import { TypeDiagnostic } from './types.ts';
 import { emitC } from './c/emit.ts';
+import { lowerC } from './c/lower.ts';
+import { printC } from './c/syntax.ts';
+import type { SemanticType } from './elaborated.ts';
 import { emitGo } from './go/emit.ts';
 
 export type CompileStage = 'usage' | 'parse' | 'type' | 'backend' | 'build';
@@ -205,4 +208,76 @@ export function buildCompiled(
     return wasm
         ? { command: 'node', args: [output], directory }
         : { command: output, args: [], directory };
+}
+
+/** A top-level definition exported to the host; generic ones need type arguments. */
+export type HostExport = { name: string; symbol?: string; typeArguments?: SemanticType[] };
+export type CompiledLibrary = {
+    program: TypedProgram;
+    concrete: ConcreteProgram;
+    code: string;
+    /** C declarations for the host: exports, handle types and disposal functions. */
+    header: string;
+};
+
+/**
+ * Compile definitions into a C library with a host ABI and header (see the C
+ * backend's host export notes). The library has no `main` and prints nothing.
+ */
+export function compileLibrary(
+    source: string,
+    options: { target: TargetConfig; exports: readonly HostExport[] },
+): CompiledLibrary {
+    const program = checkSource(source);
+    if (options.target.abi !== 'c11')
+        throw new CompileError('backend', 'unsupported-export', 'Host exports use the C ABI');
+    if (!options.exports.length)
+        throw new CompileError('backend', 'missing-export', 'No definitions to export');
+    const roots = options.exports.map((e) => {
+        const unit = program.units.find((u) => u.definition === `unit/definition/${e.name}`);
+        if (!unit)
+            throw new CompileError(
+                'backend',
+                'unknown-export',
+                `No top-level definition ${e.name}`,
+            );
+        const type = unit.signature.type;
+        if (type.tag !== 'fn')
+            throw new CompileError('backend', 'unsupported-export', `${e.name} is not a function`);
+        const args = e.typeArguments ?? [];
+        if (args.length !== unit.signature.quantified.length)
+            throw new CompileError(
+                'backend',
+                'unsupported-export',
+                `Export ${e.name} needs ${unit.signature.quantified.length} type argument(s)`,
+            );
+        return {
+            unit: unit.id,
+            arguments: args,
+            parameters: type.args.map((a) =>
+                a.tag === 'plain'
+                    ? ({ kind: 'data' } as const)
+                    : ({ kind: 'lens', topology: { kind: 'thin' } } as const),
+            ),
+        };
+    });
+    try {
+        const concrete = compileConcreteProgram(program, options.target, roots);
+        const unit = lowerC(concrete, {
+            exports: options.exports.map((e, entry) => ({
+                symbol: e.symbol ?? `laminar_${e.name}`,
+                entry,
+            })),
+        });
+        const header = [
+            '#ifndef LAMINAR_H',
+            '#define LAMINAR_H',
+            ...unit.header!,
+            '#endif',
+            '',
+        ].join('\n');
+        return { program, concrete, code: printC(unit), header };
+    } catch (error) {
+        throw backendError(error, source, program);
+    }
 }

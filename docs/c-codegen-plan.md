@@ -7,7 +7,7 @@ executes affine closures, typed indirect calls and representation joins through
 [ABI-keyed, type-determined callable representations](abi-callable-representations.md);
 see [*Phase 6 completion*](#phase-6-completion-2026-11-20). Phase 7 runtime and host
 integration and phase 8 optimization remain broader work. Phase 7 is in progress:
-slices 1 (nominal union data), 2 (strings), 3 (runtime import registry), 4 (compiler command/API) and 5 (corpus runner with backend selection) are complete (see
+slices 1 (nominal union data), 2 (strings), 3 (runtime import registry), 4 (compiler command/API), 5 (corpus runner with backend selection) and 6 (host exports) are complete (see
 [*Phase 7 progress*](#phase-7-progress)).
 
 The scoped lens extensions are complete as of `707521c`; see the
@@ -1484,3 +1484,28 @@ classification groups (465.57 seconds). Remote CI was not run.
 
 Remaining phase-7 work: host exports (slice 6), then documentation and the CI exit
 gate.
+
+### Slice 6: host exports (2026-11-20)
+
+Work item 7: `compileLibrary` and `laminar emit --export` compile definitions into a
+C library and header with a host ABI of scalars, length-delimited string buffers and
+opaque owned handles (`laminar_drop_<T>`, ownership transfer into exports,
+`laminar_live_allocations`). See [the C backend](c-backend.md#phase-7-host-exports).
+Lens parameters and results, generic exports without type arguments and non-C
+targets are diagnosed.
+
+Tests: five in `test/host-exports.test.ts`: header contents and deterministic
+emission, export diagnostics, the command line, and under `LAMINAR_EXEC=1` a
+sanitized native C host (ownership transfer, disposal, embedded NUL, no leaks) and a
+Wasm/Node host whose export grows memory, checking the memory-view refresh. No
+browser host test exists because there is no executed browser profile.
+
+Validation: TypeScript and `git diff --check` pass. The regular suite reports 3108
+passed, 44 skipped, no failures, 39 snapshots passing (4857 assertions).
+`LAMINAR_EXEC=1 bun test test/host-exports.test.ts` passes all 5 tests. Program-mode
+lowering is unchanged; `LAMINAR_BACKENDS=native bun test test/corpus.test.ts` passes
+all 1592 tests (306.68 seconds). Go was not rerun, since this slice changes only C.
+Remote CI was not run.
+
+Remaining phase-7 work: documentation of supported features and artifact
+inspection (work item 8), and the CI exit gate.

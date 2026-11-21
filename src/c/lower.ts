@@ -18,7 +18,18 @@ const unsupported = (message: string): never => {
     throw new BackendDiagnostic('unsupported-c', message);
 };
 /** Resolve logical places and homogeneous restoration before printing any C. */
-export function lowerC(program: ConcreteProgram): TranslationUnit {
+/** A host export: the program entry at `entry` becomes the public C function `symbol`. */
+export type CExport = { symbol: string; entry: number };
+
+/**
+ * Lower to C. Without exports, the translation unit is a test program whose `main`
+ * prints each entry's result. With exports, it is a library: each export is a public
+ * function with a host ABI, described by the returned header, and there is no `main`.
+ */
+export function lowerC(
+    program: ConcreteProgram,
+    options: { exports?: readonly CExport[] } = {},
+): TranslationUnit {
     verifyConcreteProgram(program);
     // Every import reaching C must be registered, implemented and available on the target.
     const imports = program.semantic.program.imports
@@ -1500,6 +1511,158 @@ export function lowerC(program: ConcreteProgram): TranslationUnit {
             body.push(`${name}(${expr});`);
         } else unsupported('Entry result requires a host contract');
     };
+    /**
+     * Host ABI. Number and Bool pass by value; unit is omitted. A String argument is
+     * a borrowed (bytes, length) pair that is copied; a String result is an owned
+     * length-delimited `laminar_string *`, read with `laminar_string_data/length`
+     * and freed with `laminar_string_free`. Any other value is an opaque owned
+     * handle: passing it to an export transfers ownership, and `laminar_drop_<T>`
+     * disposes of one the host keeps.
+     */
+    function libraryExports(exports: readonly CExport[]) {
+        const header = [
+            '#include <stddef.h>',
+            '#include <stdbool.h>',
+            '/* Live Laminar heap cells; zero once every result has been released. */',
+            'size_t laminar_live_allocations(void);',
+        ];
+        const out: TranslationUnit['functions'] = [
+            {
+                signature: 'size_t laminar_live_allocations(void)',
+                body: ['return live_contexts;'],
+            },
+        ];
+        if (strings) {
+            header.push(
+                'typedef struct laminar_string laminar_string;',
+                '/* The empty string is NULL; both accessors accept it. */',
+                'const char *laminar_string_data(const laminar_string *s);',
+                'size_t laminar_string_length(const laminar_string *s);',
+                'void laminar_string_free(laminar_string *s);',
+            );
+            out.push(
+                {
+                    signature: `const char *laminar_string_data(const ${stringType} *s)`,
+                    body: ['return s ? (const char *)s->bytes : "";'],
+                },
+                {
+                    signature: `size_t laminar_string_length(const ${stringType} *s)`,
+                    body: ['return s ? s->length : 0;'],
+                },
+                {
+                    signature: `void laminar_string_free(${stringType} *s)`,
+                    body: ['string_drop(s);'],
+                },
+            );
+        }
+        const symbols = new Set<string>(),
+            handles = new Map<string, string>();
+        const claim = (symbol: string) => {
+            identifier(symbol);
+            if (symbols.has(symbol)) unsupported(`Duplicate host symbol ${symbol}`);
+            symbols.add(symbol);
+            return symbol;
+        };
+        // Handle names come from the semantic type, so they are stable and readable.
+        const handle = (id: string): string => {
+            const existing = handles.get(id);
+            if (existing) return existing;
+            // A data layout key is ['physical-layout', target, 'data', typeKey, ...].
+            const key = JSON.parse(layout(id).key) as unknown[];
+            const describe = (k: string): string => {
+                const [tag, ...rest] = JSON.parse(k) as [string, ...unknown[]];
+                if (tag === 'con')
+                    return [rest[0] as string, ...(rest[1] as string[]).map(describe)].join('_');
+                if (tag === 'tuple')
+                    return ['Tuple', ...(rest[0] as string[]).map(describe)].join('_');
+                return type(id);
+            };
+            const readable =
+                key[2] === 'data' && typeof key[3] === 'string' ? describe(key[3]) : type(id);
+            const name = claim(`laminar_${readable}`);
+            handles.set(id, name);
+            const drop_ = claim(`laminar_drop_${readable}`);
+            header.push(
+                `typedef struct ${name} ${name};`,
+                `void ${drop_}(${name} *handle);`,
+            );
+            const body: Statement[] = [`${type(id)} *cell = (${type(id)} *)(void *)handle;`];
+            drop({ expression: '*cell', layout: id }, body);
+            body.push('release_context(cell);');
+            declarations.push(`struct ${name};`);
+            out.push({ signature: `void ${drop_}(struct ${name} *handle)`, body });
+            return name;
+        };
+        const hostKind = (id: string) => {
+            const l = layout(id);
+            if (l.fields.some((f) => f.name === 'restore'))
+                return unsupported('Lens values need a host borrow contract');
+            return l.kind;
+        };
+        for (const e of exports) {
+            const code = program.code.find((c) => c.id === program.entries[e.entry])!;
+            const params: string[] = [],
+                hostParams: string[] = [],
+                body: Statement[] = [],
+                args: string[] = [];
+            code.parameters.forEach((p, n) => {
+                if (p.lensPlace) unsupported('Lens parameters need a host borrow contract');
+                const kind = hostKind(p.layout);
+                if (kind === 'unit') return args.push(zero(p.layout));
+                if (kind === 'f64' || kind === 'bool') {
+                    params.push(`${kind === 'f64' ? 'double' : '_Bool'} arg${n}`);
+                    hostParams.push(`${kind === 'f64' ? 'double' : 'bool'} arg${n}`);
+                    return args.push(`(${type(p.layout)})arg${n}`);
+                }
+                if (kind === 'string') {
+                    params.push(`const char *arg${n}`, `size_t arg${n}_length`);
+                    hostParams.push(`const char *arg${n}`, `size_t arg${n}_length`);
+                    return args.push(`string_new(arg${n}, arg${n}_length)`);
+                }
+                const name = handle(p.layout);
+                params.push(`struct ${name} *arg${n}`);
+                hostParams.push(`${name} *arg${n}`);
+                body.push(
+                    `${type(p.layout)} *cell${n} = (${type(p.layout)} *)(void *)arg${n};`,
+                    `${type(p.layout)} value${n} = *cell${n};`,
+                    `release_context(cell${n});`,
+                );
+                args.push(`value${n}`);
+            });
+            const result = code.body.layout,
+                kind = hostKind(result);
+            const call = `${codes.get(code.id)}(NULL${args.map((a) => `, ${a}`).join('')})`;
+            let returns: string, hostReturns: string;
+            if (kind === 'unit') {
+                returns = hostReturns = 'void';
+                body.push(`(void)${call};`);
+            } else if (kind === 'f64' || kind === 'bool') {
+                returns = kind === 'f64' ? 'double' : '_Bool';
+                hostReturns = kind === 'f64' ? 'double' : 'bool';
+                body.push(`return ${call};`);
+            } else if (kind === 'string') {
+                returns = `${stringType} *`;
+                hostReturns = 'laminar_string *';
+                body.push(`return ${call};`);
+            } else {
+                const name = handle(result);
+                returns = `struct ${name} *`;
+                hostReturns = `${name} *`;
+                body.push(
+                    `${type(result)} *cell = allocate_context(sizeof *cell);`,
+                    `*cell = ${call};`,
+                    `return (struct ${name} *)(void *)cell;`,
+                );
+            }
+            const symbol = claim(e.symbol);
+            const list = (p: string[]) => p.join(', ') || 'void';
+            const declare = (r: string, p: string[]) =>
+                `${r}${r.endsWith('*') ? '' : ' '}${symbol}(${list(p)})`;
+            header.push(`${declare(hostReturns, hostParams)};`);
+            out.push({ signature: declare(returns, params), body });
+        }
+        return { header, functions: out };
+    }
     declarations.push('void print_number(double x);');
     functions.push({
         signature: 'void print_number(double x)',
@@ -1518,6 +1681,11 @@ export function lowerC(program: ConcreteProgram): TranslationUnit {
             { head: 'else', body: ['printf("%.17g", x);'] },
         ],
     });
+    if (options.exports) {
+        const unit = libraryExports(options.exports);
+        functions.push(...helpers.slice(emittedHelpers), ...unit.functions);
+        return { declarations, functions, header: unit.header };
+    }
     const main: Statement[] = [];
     const host = usesHost(imports);
     for (const entry of program.entries) {
