@@ -263,9 +263,8 @@ type-changing and restoration-bearing cases keep their explicit storage path.
 Regenerating the reviewed `ok.lm` produces 431 lines of Go instead of 854, with
 zero blanket blank assignments instead of 250 and one backing struct instead of
 seven. The scripted responses `higher`, `higher`, `lower`, `lower`, `match` still
-produce `[[75,82,79],4]`. Source naming and declaration placement are implemented below. General copy
-propagation, declaration reachability and control-flow simplification remain
-subsequent work.
+produce `[[75,82,79],4]`. Source naming and declaration placement are implemented below. Copy propagation is implemented in item 5 below. Declaration reachability
+and control-flow simplification remain subsequent work.
 
 Focused tests in `test/go/demand.test.ts` cover dead pure computations, discarded
 constructor scrutinees, unused effectful calls, unit results, preserved load order,
@@ -352,8 +351,8 @@ so a declaration can never split its arms.
 Returned restoration functions remain structured statement bodies through this
 placement step, allowing their captures to participate in scope decisions. The
 transparent sequencing lists from item 1 do not introduce artificial Go scopes.
-Copy chains, initial zero assignments, match simplification and representation
-choices remain separate work.
+Copy chains are handled in item 5 below. Initial zero assignments, match
+simplification and representation choices remain separate work.
 
 Regenerated `ok.go` has 371 lines, down from 431 after naming. The scripted game
 still produces `[[75,82,79],4]`. `test/go/locals.test.ts` exercises local and shared
@@ -366,3 +365,51 @@ The regular suite passed 3132 tests with 69 skips and all 39 snapshots; the adde
 field-spelling regression also passes separately. The Go corpus passes all 1592
 tests. With `LAMINAR_EXEC=1`, declaration placement, naming and materialization
 pass all 46 focused tests (94 assertions). No remote CI was run.
+
+
+## Item 5: copies, constants and simple expressions
+
+The Go expression builder now retains recipes for references, composed fragments,
+scalar literals and numeric operations. Simplification operates on these recipes
+and explicit declaration/assignment nodes, rather than replacing identifier text
+in printed Go. It runs before declaration placement, so surviving operands still
+get the required lexical scope.
+
+Immutable copies such as `input_2 := input` and chains ending in `return next_2`
+collapse to the original value. Single-use unnamed pure expressions can appear at
+their consumer, for example `(steps + 1.0)` directly in the recursive call and the
+prompt expression directly in `hostInput`. Canonical source bindings remain where
+they help represent a value used by later work; unnecessary source aliases can
+disappear along with generated ones.
+
+Constant numeric operations use double-precision evaluation, including intermediate
+rounding, infinities, NaN and signed zero. Dead pure operand declarations disappear
+after folding. This avoids accidentally asking Go to evaluate source numeric
+operations as arbitrary-precision constants: for example,
+`9007199254740992 + 1 - 9007199254740992` produces `0`, and division by zero
+produces the documented IEEE values. The constant `heapsize` import participates
+under its current specified value of zero.
+
+General calls and mutable loads retain their sequencing points. An immediately
+following bare assignment or direct return can consume the initializer directly,
+but forwarding never crosses cleanup, another statement, a branch boundary or an
+effectful lvalue computation. Copies of reassigned values, mutable records and
+addressed cells remain distinct. A pure expression is moved only when its referenced
+values are stable; address-taking and field mutations are explicit optimizer facts.
+Opaque external formatter fragments remain conservative, while formatters with
+reconstruction recipes can participate in substitution.
+
+The game now uses `input` and `next` directly and assigns recursive call results
+directly to the branch result. `ok.go` is 339 lines, down from 371 after item 4,
+and its scripted result remains `[[75,82,79],4]`.
+
+`test/go/simplify.test.ts` covers copy chains, mutable snapshots, addressed cells,
+pure expressions over stable inputs, immediate result forwarding, cleanup barriers,
+double rounding, IEEE special values, overflow and effect/load order. The naming
+tests now distinguish preserved source bindings from aliases that optimization can
+remove. The CI execution gate includes the simplification tests.
+
+Validation for simplification: TypeScript and scoped diff checks pass. The regular
+suite passes 3142 tests with 75 skips and all 39 snapshots. The Go corpus passes
+all 1592 tests. With `LAMINAR_EXEC=1`, all 61 simplification, placement, naming and
+materialization tests pass (113 assertions). No remote CI was run.

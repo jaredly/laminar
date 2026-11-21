@@ -1,7 +1,14 @@
 /** Syntax-only statement tree for Go. Storage decisions belong to lower.ts. */
 // Nested lists are transparent sequencing points. Lowering can reserve a point
 // and materialize a value there only when an IR consumer actually needs it.
-export type LocalDeclaration = { kind: 'local'; name: string; type: string; value?: string };
+export type LocalDeclaration = {
+    kind: 'local';
+    name: string;
+    type: string;
+    value?: string;
+    pure?: boolean;
+    inline?: boolean;
+};
 export type LocalAssignment = { kind: 'set'; name: string; value: string };
 export type Statement =
     | string

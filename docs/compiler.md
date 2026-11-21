@@ -131,6 +131,9 @@ opaque owned handles with explicit disposal. See
   helper names are disambiguated. Unnamed compiler temporaries keep generated names.
   Locals are declared at their materialization points; cells shared by branches or
   restoration closures are declared in their nearest common scope.
+  Immutable copies and simple pure temporaries are simplified; constant numeric
+  operations preserve double-precision semantics. Calls and mutable loads retain
+  their evaluation order.
 - `emit --concrete` prints the verified concrete IR the backends consume: layouts,
   call ABIs, callable records and code.
 - For Wasm, `emit --target wasm32 -o program.c` gives the C that `emcc` builds;

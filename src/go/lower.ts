@@ -1,6 +1,6 @@
 import type { ConcreteProgram, ConcreteBlock } from '../concrete-ir.ts';
 import { Storage, expression as code, type Expression, type Data, type View } from './storage.ts';
-import type { IRPattern, SlotRef } from '../typed-ir.ts';
+import { decodeNumber, type IRPattern, type SlotRef } from '../typed-ir.ts';
 import { verifyConcreteProgram } from '../verify-concrete.ts';
 import { BackendDiagnostic } from '../backend/target.ts';
 import {
@@ -29,7 +29,7 @@ const unsupported = (message: string): never => {
 export function lowerGo(program: ConcreteProgram): GoFile {
     // Keep references attached to emitted expressions as they are assembled.
     // Local-bearing templates/joins use these helpers; external formatters must
-    // supply their input references with derive, and field names are literals.
+    // supply their input references with format/derive; field names are literals.
     let activeLocals: GoLocals | undefined;
     const go = (strings: TemplateStringsArray, ...parts: unknown[]) =>
         activeLocals
@@ -39,7 +39,7 @@ export function lowerGo(program: ConcreteProgram): GoFile {
         activeLocals ? activeLocals.join(parts, separator) : parts.join(separator);
     const stringPart = (kind: string, value: string) => {
         const text = goPart(kind, value);
-        return activeLocals ? activeLocals.derive(text, value) : text;
+        return activeLocals ? activeLocals.format((v) => goPart(kind, v), value) : text;
     };
     const field = (name: string) =>
         activeLocals ? activeLocals.literal(identifier(name)) : identifier(name);
@@ -268,9 +268,11 @@ export function lowerGo(program: ConcreteProgram): GoFile {
     /** Natives that take and return plain data, by registered name. Lens natives are separate. */
     const simpleNative = (op: string, args: string[], result: string): string | undefined => {
         if (['+', '-', '*', '/', '==', '>=', '<='].includes(op))
-            return go`(${args[0]} ${op} ${args[1]})`;
+            return activeLocals
+                ? activeLocals.binary(op, args[0]!, args[1]!)
+                : go`(${args[0]} ${op} ${args[1]})`;
         if (op === 'charList') return go`${charList(result)}(${args[0]})`;
-        if (op === 'heapsize') return '0.0';
+        if (op === 'heapsize') return activeLocals ? activeLocals.scalar('0.0', 0) : '0.0';
         const helper = (name: string, fn: GoFunction, declaration?: string) => {
             if (!hostHelpers.has(name)) {
                 hostHelpers.add(name);
@@ -442,6 +444,7 @@ export function lowerGo(program: ConcreteProgram): GoFile {
                 .filter((n): n is string => !!n);
             return localNames.source(parts.length ? joinCode(parts, '_') : go`argument${n}`);
         });
+        parameterNames.forEach((name) => locals.reference(name));
         const sourceSlots = c.parameters.flatMap((p) => patternSlots(p.pattern));
         sourceSlots.push(...c.captures.map((p) => ({ place: p.place, path: [] })));
         const producers = new Map<string, ConcreteBlock['instructions'][number]>();
@@ -514,6 +517,8 @@ export function lowerGo(program: ConcreteProgram): GoFile {
             compute: (into: Statement[]) => string,
             body: Statement[],
             name = fresh(),
+            pure = false,
+            inline = false,
         ): Exclude<Data, Data[]> => {
             locals.reference(name);
             const at: Statement[] = [];
@@ -526,7 +531,7 @@ export function lowerGo(program: ConcreteProgram): GoFile {
                     if (!materialized) {
                         materialized = true;
                         const expr = compute(at);
-                        declare(id, expr, at, name);
+                        at.push(locals.declaration(name, type(id), expr, { pure, inline }));
                     }
                     return name;
                 },
@@ -632,6 +637,7 @@ export function lowerGo(program: ConcreteProgram): GoFile {
         ): { expression: string; finish: (body: Statement[]) => void } => {
             const index = helperCounter++;
             const name = locals.reference(go`back${index}`);
+            locals.mutable(name);
             const fields: string[] = [];
             const init: Statement[] = [];
 
@@ -853,6 +859,11 @@ export function lowerGo(program: ConcreteProgram): GoFile {
                     case 'constant':
                         expr = literal(i.value, id);
                         constants.add(expr);
+                        if (i.value !== null)
+                            locals.scalar(
+                                expr,
+                                typeof i.value === 'boolean' ? i.value : decodeNumber(i.value),
+                            );
                         break;
                     case 'string':
                         // Parts were evaluated in source order; concatenation consumes them.
@@ -1050,6 +1061,8 @@ export function lowerGo(program: ConcreteProgram): GoFile {
                                     },
                                     body,
                                     name,
+                                    true,
+                                    !hinted,
                                 ).expression,
                             );
                             continue;
@@ -1451,7 +1464,14 @@ export function lowerGo(program: ConcreteProgram): GoFile {
                         ? zero(id)
                         : i.op === 'constant' || (i.op === 'make-callable' && !i.captures.length)
                           ? expr
-                          : defer(id, () => code(expr), body, name).expression,
+                          : defer(
+                                id,
+                                () => code(expr),
+                                body,
+                                name,
+                                i.op === 'string' || i.op === 'tuple',
+                                !hinted,
+                            ).expression,
                 );
             }
 
@@ -1518,7 +1538,7 @@ export function lowerGo(program: ConcreteProgram): GoFile {
                         output?.kind === 'pointer' && output.layout
                             ? declare(output.layout, zero(output.layout), body)
                             : undefined;
-                    return go`${type(id)}{read: &${name}${write ? go`, replacement: &${write}` : ''}}`;
+                    return go`${type(id)}{read: ${locals.address(name)}${write ? go`, replacement: ${locals.address(write)}` : ''}}`;
                 }
                 return go`${type(id)}{${joinCode(
                     l.fields
@@ -1531,6 +1551,7 @@ export function lowerGo(program: ConcreteProgram): GoFile {
                 )}}`;
             };
             const out = declare(c.body.layout, build(lens.view, c.body.layout), body);
+            locals.mutable(out);
             const replacement = endpoint(c.body.layout, 'replacement');
             storage.put(lens.view, { expression: 'replacement', layout: replacement });
             const cleanup: Statement[] = [];
@@ -1541,11 +1562,11 @@ export function lowerGo(program: ConcreteProgram): GoFile {
                     head: go`${out}.restore = func(_ any, replacement ${type(replacement)}) ${type(unit.id)}`,
                     body: [...cleanup, go`return ${zero(unit.id)}`],
                 },
-                go`return ${out}`,
+                locals.returnValue(out),
             );
         } else {
             flushParameters(body);
-            body.push(go`return ${code(result)}`);
+            body.push(locals.returnValue(code(result)));
         }
 
         const sig = go`func ${codes.get(c.id)}(environment any${joinCode(

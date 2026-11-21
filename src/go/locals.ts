@@ -7,6 +7,48 @@ class LiteralCode {
     }
 }
 
+type Recipe =
+    | { kind: 'text'; text: string }
+    | { kind: 'ref'; name: string }
+    | { kind: 'scalar'; value: number | boolean }
+    | { kind: 'binary'; op: string; left: Recipe; right: Recipe }
+    | { kind: 'compose'; parts: Recipe[]; emit: (parts: string[]) => string; returns?: boolean }
+    | { kind: 'opaque'; text: string; refs: Set<string> };
+const scalarText = (v: number | boolean): string =>
+    typeof v === 'boolean'
+        ? String(v)
+        : Number.isNaN(v)
+          ? 'math.NaN()'
+          : v === Infinity
+            ? 'math.Inf(1)'
+            : v === -Infinity
+              ? 'math.Inf(-1)'
+              : Object.is(v, -0)
+                ? 'math.Copysign(0, -1)'
+                : /[.e]/i.test(String(v))
+                  ? String(v)
+                  : `${v}.0`;
+const numeric = (op: string, a: number, b: number): number | boolean => {
+    switch (op) {
+        case '+':
+            return a + b;
+        case '-':
+            return a - b;
+        case '*':
+            return a * b;
+        case '/':
+            return a / b;
+        case '==':
+            return a === b;
+        case '>=':
+            return a >= b;
+        case '<=':
+            return a <= b;
+        default:
+            throw Error(`Unknown numeric Go operation ${op}`);
+    }
+};
+
 type Scope = { parent?: Scope; boundary?: Point };
 type Point = { array: Statement[]; index: number; scope: Scope; order: number };
 
@@ -15,12 +57,15 @@ type Point = { array: Statement[]; index: number; scope: Scope; order: number };
 export class GoLocals {
     private reads = new Map<string, Set<string>>();
     private references = new Set<string>();
+    private recipes = new Map<string, Recipe>();
+    private blocked = new Set<string>();
     private declarations = new Map<string, LocalDeclaration>();
 
     literal(text: string) {
         return new LiteralCode(text);
     }
     reference(name: string): string {
+        this.recipes.set(name, { kind: 'ref', name });
         this.references.add(name);
         this.reads.set(name, new Set([name]));
         return name;
@@ -36,22 +81,82 @@ export class GoLocals {
         if (!this.references.has(text)) this.reads.set(text, refs);
         return text;
     }
+    private recipe(value: unknown): Recipe {
+        if (value instanceof LiteralCode) return { kind: 'text', text: value.text };
+        const text = String(value);
+        return (
+            this.recipes.get(text) ?? {
+                kind: 'opaque',
+                text,
+                refs: this.reads.get(text) ?? new Set(),
+            }
+        );
+    }
+    private composed(emit: (parts: string[]) => string, parts: unknown[]): string {
+        const text = emit(parts.map(String));
+        const children = parts.map((p) => this.recipe(p));
+        this.combine(text, parts);
+        if (!this.references.has(text))
+            this.recipes.set(text, { kind: 'compose', parts: children, emit });
+        return text;
+    }
     derive(text: string, ...parts: unknown[]): string {
-        return this.combine(text, parts);
+        const result = this.combine(text, parts);
+        if (!this.references.has(text))
+            this.recipes.set(text, { kind: 'opaque', text, refs: this.reads.get(text)! });
+        return result;
+    }
+    format(emit: (...parts: string[]) => string, ...parts: unknown[]): string {
+        return this.composed((values) => emit(...values), parts);
     }
     template(strings: TemplateStringsArray, ...parts: unknown[]): string {
-        return this.combine(
-            strings.reduce((s, piece, i) => s + (i ? String(parts[i - 1]) : '') + piece, ''),
+        return this.composed(
+            (values) => strings.reduce((s, piece, i) => s + (i ? values[i - 1] : '') + piece, ''),
             parts,
         );
     }
     join(parts: readonly unknown[], separator = ','): string {
-        return this.combine(parts.join(separator), parts);
+        return this.composed((values) => values.join(separator), [...parts]);
     }
-    declaration(name: string, type: string, value?: string): LocalDeclaration {
+    scalar(text: string, value: number | boolean): string {
+        this.recipes.set(text, { kind: 'scalar', value });
+        this.reads.set(text, new Set());
+        return text;
+    }
+    binary(op: string, left: string, right: string): string {
+        const text = this.template`(${left} ${this.literal(op)} ${right})`;
+        this.recipes.set(text, {
+            kind: 'binary',
+            op,
+            left: this.recipe(left),
+            right: this.recipe(right),
+        });
+        return text;
+    }
+    returnValue(value: string): string {
+        const text = this.template`return ${value}`;
+        const r = this.recipes.get(text)!;
+        if (r.kind === 'compose') r.returns = true;
+        return text;
+    }
+    /** Field/pointee mutations not represented by a bare assignment node. */
+    mutable(name: string): void {
+        this.blocked.add(name);
+    }
+    /** Preserve the identity of a local cell whose address escapes an expression. */
+    address(name: string): string {
+        this.blocked.add(name);
+        return this.template`&${this.reference(name)}`;
+    }
+    declaration(
+        name: string,
+        type: string,
+        value?: string,
+        options: { pure?: boolean; inline?: boolean } = {},
+    ): LocalDeclaration {
         this.reference(name);
         if (this.declarations.has(name)) throw Error(`Duplicate Go local ${name}`);
-        const declaration: LocalDeclaration = { kind: 'local', name, type, value };
+        const declaration: LocalDeclaration = { kind: 'local', name, type, value, ...options };
         this.declarations.set(name, declaration);
         return declaration;
     }
@@ -59,10 +164,256 @@ export class GoLocals {
         return { kind: 'set', name, value };
     }
 
+    /** Substitute immutable copies and single-use pure compiler expressions.
+     * Loads/calls keep their sequencing points; mutable and addressed cells keep identity. */
+    private simplify(body: Statement[]): Statement[] {
+        const blocked = new Set(this.blocked);
+        const defs = new Map<string, LocalDeclaration>();
+        const roots: Recipe[] = [];
+        const visit = (array: Statement[], fn: (s: Exclude<Statement, Statement[]>) => void) => {
+            for (const s of array) {
+                if (Array.isArray(s)) visit(s, fn);
+                else {
+                    fn(s);
+                    if (typeof s !== 'string' && !('kind' in s)) visit(s.body, fn);
+                }
+            }
+        };
+        visit(body, (s) => {
+            if (typeof s !== 'string' && 'kind' in s) {
+                if (s.kind === 'local') defs.set(s.name, s);
+                else blocked.add(s.name);
+            }
+        });
+        const children = (r: Recipe): Recipe[] =>
+            r.kind === 'compose' ? r.parts : r.kind === 'binary' ? [r.left, r.right] : [];
+        const refs = (r: Recipe): string[] =>
+            r.kind === 'ref'
+                ? [r.name]
+                : r.kind === 'opaque'
+                  ? [...r.refs]
+                  : children(r).flatMap(refs);
+        // Legacy opaque formatter fragments cannot be rewritten. Their referenced
+        // variables remain materialized, rather than guessing at printed text.
+        const protect = (r: Recipe) => {
+            if (r.kind === 'opaque') r.refs.forEach((n) => blocked.add(n));
+            children(r).forEach(protect);
+        };
+        visit(body, (s) => {
+            const r = this.recipe(
+                typeof s === 'string' ? s : 'kind' in s ? (s.value ?? '') : s.head,
+            );
+            protect(r);
+        });
+        const substitutions = new Map<string, Recipe>();
+        for (const d of defs.values()) {
+            const r = this.recipe(d.value ?? '');
+            if (
+                !blocked.has(d.name) &&
+                r.kind === 'ref' &&
+                r.name !== d.name &&
+                !blocked.has(r.name)
+            )
+                substitutions.set(d.name, r);
+        }
+        const expandAliases = (r: Recipe): Recipe =>
+            r.kind === 'ref' && substitutions.has(r.name)
+                ? expandAliases(substitutions.get(r.name)!)
+                : r;
+        const counts = new Map<string, number>();
+        const count = (r: Recipe) => {
+            r = expandAliases(r);
+            if (r.kind === 'ref') counts.set(r.name, (counts.get(r.name) ?? 0) + 1);
+            else children(r).forEach(count);
+        };
+        visit(body, (s) => {
+            if (
+                typeof s !== 'string' &&
+                'kind' in s &&
+                s.kind === 'local' &&
+                substitutions.has(s.name)
+            )
+                return;
+            count(this.recipe(typeof s === 'string' ? s : 'kind' in s ? (s.value ?? '') : s.head));
+        });
+        const removable = (d: LocalDeclaration): boolean =>
+            !!d.pure || this.recipe(d.value ?? '').kind === 'scalar';
+        for (const d of defs.values()) {
+            const r = this.recipe(d.value ?? '');
+            if (
+                !blocked.has(d.name) &&
+                counts.get(d.name) === 1 &&
+                ((d.inline && d.pure) || r.kind === 'scalar') &&
+                refs(r).every((n) => !blocked.has(n))
+            )
+                substitutions.set(d.name, r);
+        }
+        const fact = (
+            r: Recipe,
+            seen = new Set<string>(),
+        ): { value: number | boolean } | undefined => {
+            if (r.kind === 'scalar') return r;
+            if (r.kind === 'ref' && !blocked.has(r.name) && !seen.has(r.name)) {
+                const d = defs.get(r.name);
+                if (d?.value !== undefined)
+                    return fact(this.recipe(d.value), new Set([...seen, r.name]));
+            }
+            if (r.kind === 'binary') {
+                const a = fact(r.left, seen),
+                    b = fact(r.right, seen);
+                if (typeof a?.value === 'number' && typeof b?.value === 'number')
+                    return { value: numeric(r.op, a.value, b.value) };
+            }
+            return undefined;
+        };
+        const normalize = (r: Recipe, seen = new Set<string>()): Recipe => {
+            if (r.kind === 'ref' && substitutions.has(r.name) && !seen.has(r.name))
+                return normalize(substitutions.get(r.name)!, new Set([...seen, r.name]));
+            if (r.kind === 'binary') {
+                const value = fact(r);
+                if (value) return { kind: 'scalar', value: value.value };
+                return { ...r, left: normalize(r.left, seen), right: normalize(r.right, seen) };
+            }
+            if (r.kind === 'compose')
+                return { ...r, parts: r.parts.map((p) => normalize(p, seen)) };
+            return r;
+        };
+        const text = (r: Recipe): string =>
+            r.kind === 'text' || r.kind === 'opaque'
+                ? r.text
+                : r.kind === 'ref'
+                  ? r.name
+                  : r.kind === 'scalar'
+                    ? scalarText(r.value)
+                    : r.kind === 'binary'
+                      ? `(${text(r.left)} ${r.op} ${text(r.right)})`
+                      : r.emit(r.parts.map(text));
+        const render = (s: string): string => {
+            const r = normalize(this.recipe(s));
+            const result = text(r);
+            if (!this.references.has(result)) {
+                this.recipes.set(result, r);
+                this.reads.set(result, new Set(refs(r)));
+            }
+            return result;
+        };
+        const rewritten = (array: Statement[]): Statement[] =>
+            array.flatMap((s): Statement[] => {
+                if (Array.isArray(s)) return [rewritten(s)];
+                if (typeof s === 'string') return [render(s)];
+                if ('kind' in s) {
+                    if (s.kind === 'local' && substitutions.has(s.name)) return [];
+                    return [
+                        { ...s, value: s.value === undefined ? undefined : render(s.value) } as
+                            | LocalDeclaration
+                            | LocalAssignment,
+                    ];
+                }
+                return [{ ...s, head: render(s.head), body: rewritten(s.body) }];
+            });
+        // Fuse a definition into an immediately following bare assignment or
+        // return. There is no intervening statement or lvalue evaluation to cross,
+        // so even a call/load retains its order. Never do this for addressed cells.
+        const firstPass = rewritten(body);
+        const occurrences = new Map<string, number>();
+        visit(firstPass, (s) => {
+            const r = this.recipe(
+                typeof s === 'string' ? s : 'kind' in s ? (s.value ?? '') : s.head,
+            );
+            refs(r).forEach((name) => occurrences.set(name, (occurrences.get(name) ?? 0) + 1));
+        });
+        const adjacent = (array: Statement[]): Statement[] => {
+            const flat: Statement[] = [];
+            const flatten = (items: Statement[]) =>
+                items.forEach((s) => {
+                    if (Array.isArray(s)) flatten(s);
+                    else
+                        flat.push(
+                            typeof s !== 'string' && !('kind' in s)
+                                ? { ...s, body: adjacent(s.body) }
+                                : s,
+                        );
+                });
+            flatten(array);
+            for (let n = 0; n + 1 < flat.length; n++) {
+                const d = flat[n]!,
+                    next = flat[n + 1]!;
+                if (
+                    typeof d === 'string' ||
+                    Array.isArray(d) ||
+                    !('kind' in d) ||
+                    d.kind !== 'local' ||
+                    d.value === undefined ||
+                    blocked.has(d.name) ||
+                    occurrences.get(d.name) !== 1
+                )
+                    continue;
+                if (
+                    typeof next !== 'string' &&
+                    !Array.isArray(next) &&
+                    'kind' in next &&
+                    next.kind === 'set'
+                ) {
+                    const r = this.recipe(next.value);
+                    if (r.kind === 'ref' && r.name === d.name) {
+                        flat[n + 1] = { ...next, value: d.value };
+                        flat.splice(n--, 1);
+                    }
+                } else if (typeof next === 'string') {
+                    const r = this.recipe(next);
+                    if (
+                        r.kind === 'compose' &&
+                        r.returns &&
+                        r.parts.length === 1 &&
+                        r.parts[0]!.kind === 'ref' &&
+                        r.parts[0]!.name === d.name
+                    ) {
+                        flat[n + 1] = this.returnValue(d.value);
+                        flat.splice(n--, 1);
+                    }
+                }
+            }
+            return flat;
+        };
+        const result = adjacent(firstPass);
+        const remaining = new Map<string, LocalDeclaration>();
+        const live = new Set<string>();
+        visit(result, (s) => {
+            if (typeof s !== 'string' && 'kind' in s && s.kind === 'local')
+                remaining.set(s.name, s);
+            else {
+                roots.push(this.recipe(typeof s === 'string' ? s : 'kind' in s ? s.value : s.head));
+                if (typeof s !== 'string' && 'kind' in s) live.add(s.name);
+            }
+        });
+        const retain = (name: string) => {
+            if (live.has(name)) return;
+            live.add(name);
+            const d = remaining.get(name);
+            if (d?.value !== undefined) refs(this.recipe(d.value)).forEach(retain);
+        };
+        // Traverse effects and retained cells as roots, then their initializers.
+        const written = [...live];
+        live.clear();
+        written.forEach(retain);
+        roots.flatMap(refs).forEach(retain);
+        for (const d of remaining.values())
+            if (!removable(d) || blocked.has(d.name)) retain(d.name);
+        const prune = (array: Statement[]): Statement[] =>
+            array.flatMap((s): Statement[] => {
+                if (Array.isArray(s)) return [prune(s)];
+                if (typeof s === 'string') return [s];
+                if ('kind' in s) return s.kind === 'local' && !live.has(s.name) ? [] : [s];
+                return [{ ...s, body: prune(s.body) }];
+            });
+        return prune(result);
+    }
+
     /** Place each declaration in the common lexical scope of its definition and
      * uses. An initializer stays at its original sequencing point even when its
      * declaration must move outward for restoration or a branch join. */
     place(body: Statement[]): Statement[] {
+        body = this.simplify(body);
         const definitions = new Map<string, Point>();
         const uses = new Map<string, Point[]>();
         let order = 0;

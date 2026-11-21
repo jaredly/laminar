@@ -7,11 +7,12 @@ import { GoNames } from '../../src/go/names.ts';
 
 const compile = (source: string) => compileSource(source, { target: goTarget('test') });
 const execute = process.env.LAMINAR_EXEC ? it : it.skip;
-const scalar = 'fn nextGuess(lastGuess) {let next = lastGuess + 1\n next}\nnextGuess(3)';
+const scalar =
+    'fn nextGuess(lastGuess) {let next = lastGuess + 1\n (dup(~next), next)}\nnextGuess(3)';
 const generic = 'fn id(value) value\n(id(3), id(true))';
 const forwarding =
     'fn bump(~x) {x := dup(~x) + 1}\nfn run(~(a, b)) {bump(~a)}\n{let x = 1\n let y = 2\n run(~(x, y))\n let pair = (3, 4)\n run(~pair)\n (x, y, pair)}';
-const shadow = 'fn pair(x) {(x, {let x = 2\n x})}\npair(1)';
+const shadow = 'fn tick(n) {n + 1}\nfn pair(x) {(x, {let x = tick(1)\n x})}\npair(1)';
 const closure = 'fn maker(n) {let add = fn (x) {n + x}\n add}\nmaker(1)(2)';
 const keyword = 'fn func(range) {let var = range + 1\n var}\nfunc(2)';
 const collision = 'fn main(fmt, environment) {let back0 = fmt + environment\n back0}\nmain(2, 3)';
@@ -47,7 +48,7 @@ it('uses distinct names for shadowed bindings and storage versions', () => {
     const { code } = compile(shadow);
     expect(code).toMatch(/func pair\(environment any, x L\d+\)/);
     expect(code).toContain('x_2 :=');
-    expect(code).toContain('x_3 :=');
+    expect(code).not.toMatch(/^\s*x :=/m);
 });
 
 it('escapes Go keywords, generated symbols and runtime names', () => {
@@ -72,7 +73,7 @@ it('does not mutate IR and emits the same names on repeated lowering', () => {
 });
 
 for (const [name, source, expected] of [
-    ['source names', scalar, 4],
+    ['source names', scalar, [4, 4]],
     ['generic variants', generic, [3, true]],
     ['lens variants', forwarding, [2, 2, [4, 4]]],
     ['shadowing', shadow, [1, 2]],
