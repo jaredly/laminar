@@ -32,6 +32,7 @@ const probes: Record<string, string> = {
     heapsize: 'heapsize()',
     fst: '{let x = (1, 2)\n fst(~x) := true\n x}',
     dup: '{let x = 1\n dup(~x)}',
+    array: 'array(2, 0)',
     charList: 'charList("ab")',
     getInput: 'getInput("> ")',
     print: 'print("x")',

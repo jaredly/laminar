@@ -46,6 +46,8 @@ export type Lens =
       }
     | { type: 'let'; pat: Pat; value: Term; body: Lens; loc: Loc }
     | { type: 'apply'; fn: Linear; args: Term[]; loc: Loc }
+    /** Element `index` of the vector focused by `target`. */
+    | { type: 'index'; target: Lens; index: Term; loc: Loc }
     | { type: 'tuple'; items: Lens[]; loc: Loc }
     | { type: 'case'; value: Term; cases: { pat: Pat; body: Lens }[]; loc: Loc };
 // Note: constructor cannot be a sound lens.
@@ -167,6 +169,8 @@ export const free = (expr: Term | Lens): string[] => {
         case 'apply': {
             return free(expr.fn).concat(expr.args.flatMap(free));
         }
+        case 'index':
+            return free(expr.target).concat(free(expr.index));
         case 'lens':
             return free(expr.lens);
         case 'constructor': {
@@ -220,8 +224,13 @@ export const getFree = (
         }
         // case "additive_product":
         //     throw new Error("not uet");
+        case 'vector':
         case 'tuple':
             expr.items.forEach((item) => getFree(bound, item, ref, deref));
+            return;
+        case 'index':
+            getFree(bound, expr.target, ref, deref);
+            getFree(bound, expr.index, ref, deref);
             return;
         // case "ifs":
         //     throw new Error("nop");

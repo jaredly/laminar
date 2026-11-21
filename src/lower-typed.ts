@@ -306,6 +306,9 @@ export function lowerTypedUnit(e: Elaboration): IRUnit {
                     captures: captures.map(({ place, value }) => ({ place, value })),
                 });
             }
+            case 'vector':
+            case 'index':
+                return fail('Vectors are not yet supported by typed lowering', n);
             case 'case': {
                 if (n.value.type === 'lens')
                     return fail('Lens cases have not been semantically checked', n);
@@ -437,6 +440,8 @@ export function lowerTypedUnit(e: Elaboration): IRUnit {
                         : {}),
                 });
             }
+            case 'index':
+                return fail('Vectors are not yet supported by typed lowering', n);
             case 'case': {
                 if (n.value.type === 'lens') return fail('Borrowed matching is not checked', n);
                 const value = linear(n.value, b);

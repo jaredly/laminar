@@ -168,14 +168,19 @@ grammar.add('RawOption', [
 
 function parseList(kind: Id, items: Pat[]): Pat {
     if ('{[('.includes(kind.text[0])) {
+        const size = kind.text[1] === ':' ? 2 : 1;
+        const listKind = kind.text.slice(size);
         return {
             type: 'wrapper',
-            kind: { ...kind, text: kind.text[0] },
-            child: {
-                type: 'list',
-                kind: { ...kind, text: kind.text[1] },
-                items,
-            },
+            kind: { ...kind, text: kind.text.slice(0, size) },
+            child:
+                listKind || items.length !== 1
+                    ? {
+                          type: 'list',
+                          kind: { ...kind, text: listKind },
+                          items,
+                      }
+                    : items[0],
         };
     }
     return { type: 'list', kind, items };

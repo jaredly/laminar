@@ -46,6 +46,19 @@ Assignment returns the value currently in its target when the swap happens. If t
 
 Run `bun test test/infer.test.ts` for inference/checked integration tests, `bun test` for the full suite, and `bunx tsc --noEmit` for TypeScript checking. The design background and remaining restoration work are described in [the research note](type-inference-research.md).
 
+## Vectors
+
+`[:a, b, c:]` builds a homogeneous `Vector<a>` (`[::]` is `Vector<a>`), and
+`array(n, init)` makes one of length `n`. Elements are only reached through an
+index lens: `dup(~v[i])`, `v[i] := x`, `f(~v[i])`, `let x = ~v[i]`, and chains such
+as `v[i][j]`. The vector is set up as a lens first, then the index is evaluated as a
+`Number` value; an index that changes the vector is rejected (`alias-conflict`).
+Elements cannot change type or be left empty, so the vector stays whole: the
+index lens's replacement must be an element, and the owner is rewritten as
+`Vector<a>`. A bare `v[i]` in value position is rejected (`index-value`). Typed
+lowering and the backends do not support vectors yet, and `array` has no backend
+implementation.
+
 ## Backend elaboration
 
 Every successful check now includes `checked.elaboration`, the revision-1 serializable backend DTO defined in `src/elaborated.ts`. `Checker.check` structurally verifies it before issuing a lowering handle. It retains namespaced node/binding/place identities, definition-use edges, explicit type instantiations, annotated-contract/body correspondence, captures, borrow scopes, storage transitions, function regions, and branch availability snapshots. Empty storage is distinct from an initialized unit value. Generic source typing is still independent of target layout.

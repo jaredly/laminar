@@ -86,6 +86,17 @@ export const runtimeImports: readonly RuntimeImport[] = [
         semantics: 'Deep copy of the focused data, which is restored unchanged',
     },
     {
+        name: 'array',
+        signature: (s) => {
+            const a = s.fresh();
+            return fn([plain(number), plain(a)], plain(con('Vector', a)));
+        },
+        arguments: ['owned', 'owned'],
+        result: 'owned',
+        backends: [],
+        semantics: 'A vector of the given length, each element a deep copy of the consumed value',
+    },
+    {
         name: 'charList',
         signature: () => fn([plain(string)], plain(con('List', string))),
         arguments: ['owned'],

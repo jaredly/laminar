@@ -606,7 +606,71 @@ fn inc(~x) {x := x + 1}`,
         rejectsFile('type t(a, a) = a', 'duplicate-type-parameter');
         rejectsFile('type Number = Bool', 'duplicate-type');
         rejectsFile(`${direction}\ntype other {\n    Higher\n}`, 'duplicate-constructor');
-        rejectsFile('type pair(a, b) = (a, b)\nf :: (pair(Number)) => Number\nfn f(x) 1', 'type-arity');
+        rejectsFile(
+            'type pair(a, b) = (a, b)\nf :: (pair(Number)) => Number\nfn f(x) 1',
+            'type-arity',
+        );
         rejectsFile('f :: (Missing) => Number\nfn f(x) 1', 'unknown-type');
+    });
+});
+
+describe('vectors', () => {
+    it('infers homogeneous vector literals', () => {
+        expect(type('[:1, 2 + 3:]')).toBe('Vector<Number>');
+        expect(type('[::]')).toBe('Vector<a>');
+        expect(type('[:[:true:]:]')).toBe('Vector<Vector<Bool>>');
+        rejects('[:1, true:]', 'type-mismatch');
+    });
+    it('focuses elements through index lenses', () => {
+        expect(type('fn (~v) dup(~v[0])')).toBe('(Vector<a>/Vector<a>) => a');
+        expect(type('fn (i, ~v) {v[i] := true}')).toBe(
+            '(Number, Vector<Bool>/Vector<Bool>) => Bool',
+        );
+        expect(type('fn (~v) dup(~v[0][1])')).toBe('(Vector<Vector<a>>/Vector<Vector<a>>) => a');
+        expect(
+            type(`fn (~v) {
+            let x = ~v[1]
+            x := 3
+        }`),
+        ).toBe('(Vector<Number>/Vector<Number>) => Number');
+        rejects('{let v = [:1:]\nlet x = ~v[0]\nv}', 'use-while-borrowed');
+        expect(type('array(3, "x")')).toBe('Vector<String>');
+    });
+    it('keeps elements full and of the element type', () => {
+        rejects('fn (v) v[0]', 'index-value');
+        rejects('fn (~v) {v[0] := 1\nv[1] := true}', 'type-mismatch');
+        rejects('fn (~v) {let x = ~v[0]\nlet y = x\n()}', 'unrestored-lens');
+        rejects('fn (~v) {v[~v] := 1}', 'index-lens');
+        rejects('fn (~v) {v[true] := 1}', 'type-mismatch');
+        rejects('fn (~v) {v[dup(~v[0])] := 1}', 'alias-conflict');
+        rejects('{let v = [:1:]\nlet w = v\nv[0] := 2}', 'use-after-move');
+    });
+    it('checks the snake range example', () => {
+        const checker = new Checker();
+        const [fill, range, call] = parse(`fn fillRange(n, end, ~arr) {
+    match (dup(~n) >= dup(~end)) {
+        true -> ()
+        false -> {
+            arr[dup(~n)] := dup(~n)
+            fillRange(n + 1, end, ~arr)
+        }
+    }
+}
+fn range(n) {
+    let arr = array(dup(~n), 0)
+    fillRange(0, n, ~arr)
+    arr
+}
+range(10)`) as Linear[];
+        const types = [fill, range].map((f) => {
+            const checked = checker.check(f);
+            checker.publish(checked);
+            return printType(checked.type);
+        });
+        expect(types).toEqual([
+            '(Number, Number, Vector<Number>/Vector<Number>) => ()',
+            '(Number) => Vector<Number>',
+        ]);
+        expect(printType(checker.check(call).type)).toBe('Vector<Number>');
     });
 });

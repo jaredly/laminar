@@ -31,7 +31,12 @@ export function captureUses(body: Term, bound: Set<string>) {
                 n.interp.forEach((v) => linear(v.value, scope));
                 return;
             case 'tuple':
+            case 'vector':
                 n.items.forEach((v) => linear(v, scope));
+                return;
+            case 'index':
+                linear(n.target, scope);
+                term(n.index, scope);
                 return;
             case 'constructor':
                 n.args.forEach((v) => linear(v, scope));
@@ -63,6 +68,10 @@ export function captureUses(body: Term, bound: Set<string>) {
                 return;
             case 'tuple':
                 n.items.forEach((v) => lens(v, scope));
+                return;
+            case 'index':
+                lens(n.target, scope);
+                term(n.index, scope);
                 return;
             case 'apply':
                 linear(n.fn, scope);

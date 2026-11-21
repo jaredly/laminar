@@ -3,14 +3,14 @@ fn fillRange(n, end, ~arr) {
     match (dup(~n) >= dup(~end)) {
         true -> ()
         false -> {
-            arr[dup(~n)] = dup(~n)
+            arr[dup(~n)] := dup(~n)
             fillRange(n + 1, end, ~arr)
         }
     }
 }
 
 fn range(n) {
-    let arr = array(n, 0)
+    let arr = array(dup(~n), 0)
     fillRange(0, n, ~arr)
     arr
 }

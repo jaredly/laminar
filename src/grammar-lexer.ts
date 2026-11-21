@@ -572,11 +572,11 @@ export const parsePat = (
                                             loc: node.loc,
                                             path,
                                             reason: `No option consumed children in **${item.rule.text}`,
-                                            children: failures.map((f, i) => ({
+                                            children: failures.map((f, option) => ({
                                                 ...f,
                                                 rule: {
                                                     name: item.rule.text,
-                                                    option: i,
+                                                    option,
                                                     node: {
                                                         ...node,
                                                         children: node.children.slice(i),

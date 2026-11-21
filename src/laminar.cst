@@ -85,6 +85,7 @@ Lens {
     ["" one:Lens] -> one
     [" " one:Lens] -> one
     ["" fn:Linear ["(," ...args:Term]] -> ({type: "apply", fn, args, loc: node.loc})
+    ["" target:Lens ...indices:**LensIndex] -> indices.reduce((target: Lens, index: Term): Lens => ({type: "index", target, index, loc: node.loc}), target)
     ["(," ...items:Lens] -> items.length === 1 ? items[0] : ({type: "tuple", items, loc: node.loc})
     ["("] -> ({type: "tuple", items: [], loc: node.loc})
     ["{" one:Lens] -> one
@@ -96,6 +97,10 @@ Lens {
     ["{\n" value:Term ...body:*Lens] -> ({type: "let", pat: {type: "drop", loc:node.loc}, value, body, loc: node.loc})
     [" " "match" value:Term ["{\n" ...cases:LensCase]] -> ({type: "case", value, cases,loc:node.loc})
     [" " "match" value:Term ["{;" ...cases:LensCase]] -> ({type: "case", value, cases,loc:node.loc})
+}
+
+LensIndex:Term {
+    ["" ["[" index:Term]] -> index
 }
 
 import {partition} from "./laminar-helpers.ts"

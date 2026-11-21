@@ -70,6 +70,7 @@ const builtinTypeArity: Record<string, number> = {
     World: 0,
     Handle: 0,
     List: 1,
+    Vector: 1,
 };
 export const isBuiltinTypeName = (name: string) => Object.hasOwn(builtinTypeArity, name);
 export type Inference = {
@@ -645,6 +646,17 @@ export class Inferencer {
                 this.constructorType(n.name, args, result, n.loc, n);
                 return result;
             }
+            case 'vector': {
+                const element = this.solver.fresh();
+                n.items.forEach((v) => this.solver.unify(element, this.linear(v, env), v.loc));
+                return con('Vector', element);
+            }
+            case 'index':
+                return this.error(
+                    'index-value',
+                    n.loc,
+                    'Vector elements are accessed through a lens, e.g. dup(~v[i]) or v[i] := x',
+                );
             case 'apply':
                 return this.call(n, env, false).read;
             case 'assign': {
@@ -984,6 +996,8 @@ export class Inferencer {
             }
             case 'apply':
                 return this.call(n, env, true);
+            case 'index':
+                return this.index(n, env);
             case 'let':
                 return this.letBody(n, env, true) as View;
             case 'case':
@@ -1043,6 +1057,35 @@ export class Inferencer {
             put: (t) => {
                 this.solver.unify(write, t, n.loc);
                 view?.put(replacement);
+            },
+        };
+    }
+    /**
+     * Element `index` of a vector focus. The index is evaluated after the vector
+     * lens is set up and must not change it. Elements cannot be left empty or
+     * change type: the vector stays whole, so the replacement must be an element.
+     */
+    private index(n: Lens & { type: 'index' }, env: Env): View {
+        const base = this.lens(n.target, env);
+        if (base.empty?.length)
+            this.error('use-after-move', n.loc, 'Indexed vector has already been consumed');
+        const states = base.targets.map((b) => this.revision(b));
+        if (n.index.type === 'lens')
+            this.error('index-lens', n.index.lens.loc, 'A vector index must be a value');
+        this.solver.unify(con('Number'), this.linear(n.index as Linear, env), n.index.loc);
+        if (base.targets.some((b, i) => this.revision(b) !== states[i]))
+            this.error('alias-conflict', n.loc, 'Vector index changes the indexed vector');
+        const element = this.solver.fresh(),
+            vector = con('Vector', element);
+        this.solver.unify(vector, base.read, n.loc);
+        return {
+            read: element,
+            empty: [],
+            targets: base.targets,
+            provenance: base.provenance,
+            put: (t) => {
+                this.solver.unify(element, t, n.loc);
+                base.put(vector);
             },
         };
     }
