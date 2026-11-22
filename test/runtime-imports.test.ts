@@ -82,8 +82,8 @@ it('diagnoses unknown imports and missing capabilities', () => {
 });
 
 it('marks result lines only for programs that use host I/O', () => {
-    expect(emitC(compile('print("x")'))).toContain('putchar(30);');
-    expect(emitC(compile('"x"'))).not.toContain('putchar(30);');
+    expect(emitC(compile('print("x")'))).toContain("putchar('\\x1e');");
+    expect(emitC(compile('"x"'))).not.toContain("putchar('\\x1e');");
     expect(emitGo(compile('print("x")', goTarget('test')))).toContain('fmt.Print("\\x1e")');
     const go = emitGo(compile('getInput("> ")', goTarget('test')));
     expect(go).toContain('"bufio"');

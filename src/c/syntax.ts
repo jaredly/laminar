@@ -60,7 +60,7 @@ export const printStatements = (body: Statement[], depth = 0): string[] => {
                 indent(depth) +
                     (s.kind === 'set'
                         ? `${s.name} = ${s.value};`
-                        : `${s.type} ${s.name} = ${s.value ?? zeroOf(s.type)};`),
+                        : `${s.type}${s.type.endsWith('*') ? '' : ' '}${s.name} = ${s.value ?? zeroOf(s.type)};`),
             );
         else if ('kind' in s && s.kind === 'if')
             s.arms.forEach((arm, n) => {

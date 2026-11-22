@@ -57,7 +57,39 @@ it('keeps a restoration context beside the other types', () => {
     expect(context).toBeLessThan(code.indexOf('static size_t live_contexts'));
 });
 
+const vector = '[:1, 2:]';
+const fill =
+    'fn fillRange(n, end, ~arr) {match (dup(~n) >= dup(~end)) {true -> (); false -> {arr[dup(~n)] := dup(~n)\n fillRange(n + 1, end, ~arr)}}}\n{let arr = array(3, 0)\n fillRange(0, 3, ~arr)\n arr}';
+
+it('attaches the * of a pointer declarator to its name', () => {
+    const code = compile(fill);
+    expect(code).toMatch(/^\s+double \*v\d+ = vector_at_/m);
+    expect(code).toMatch(/^double \*vector_at_\w+\(/m);
+    expect(code).not.toMatch(/\* v\d+ =|\*\s+vector_at/);
+});
+
+it('prints results with character literals and without needless parentheses', () => {
+    const main = compile(vector);
+    for (const call of ["putchar('[');", "putchar(',');", "putchar(']');", "putchar('\\n');"])
+        expect(main).toContain(call);
+    expect(main).not.toMatch(/putchar\(\d+\)/);
+    // Member access on a member access needs no parentheses.
+    expect(main).toMatch(/i\d+ < result0\.length;/);
+    const tuple = compile('([:1:], [:2:])');
+    expect(tuple).toMatch(/i\d+ < result0\.item0\.length;/);
+    expect(tuple).toMatch(/print_number\(result0\.item1\.elements\[i\d+\]\);/);
+    expect(tuple).not.toMatch(/\(result0\.item\d\)[.[]/);
+});
+
+it('escapes the characters a JSON string needs by character literal', () => {
+    const code = compile('"a"');
+    expect(code).toContain("c == '\"' || c == '\\\\'");
+    expect(code).toContain("putchar('\"');");
+});
+
 for (const [name, source, expected] of [
+    ['vector results', vector, [1, 2]],
+    ['a vector element updated through a lens', fill, [0, 1, 2]],
     ['two backings of one shape', twoCells, [1, 6]],
     ['scalar zero initializers', branches, 1],
     ['Bool constants', bools, true],

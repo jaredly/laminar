@@ -93,7 +93,7 @@ it('prints the complete captured callable environment lifecycle', () => {
       }
       double entry(void *environment) {
           (void)environment;
-          Environment_double_8f01c970ea * v2 = allocate_context(sizeof *v2);
+          Environment_double_8f01c970ea *v2 = allocate_context(sizeof *v2);
           v2->capture0 = 2;
           Callable_Value_d6f73c1cde cleanup_2 = (Callable_Value_d6f73c1cde){.environment=v2, .dispose=dispose0};
           return cleanup(cleanup_2.environment);
@@ -136,7 +136,7 @@ it('prints the complete captured callable environment lifecycle', () => {
           double result0 = entry(NULL);
           (void)result0;
           print_number(result0);
-          putchar(10);
+          putchar('\\n');
           if (live_contexts != 0) {
               abort();
           }

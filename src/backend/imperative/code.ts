@@ -77,9 +77,15 @@ export const precedence = (n: Node): number =>
 export const precedenceOf = (e: Expr): number =>
     typeof e === 'string' ? (/^[A-Za-z_]\w*$/.test(e) ? 0 : LOOSEST) : precedence(e.node);
 
-/** `base.member` for code with no function body to track it in. */
-export const memberText = (base: Expr, op: '.' | '->', member: string): string =>
-    `${precedenceOf(base) > 0 ? `(${base})` : base}${op}${member}`;
+/** An expression with a known binding, for code with no function body to track it in. */
+const spelled = (text: string, prec: number): Code =>
+    new Code({ kind: 'compose', parts: [], emit: () => text, prec }, text);
+/** `base.member`: a primary expression, so a base is parenthesized only if it binds looser. */
+export const memberText = (base: Expr, op: '.' | '->', member: string): Code =>
+    spelled(`${precedenceOf(base) > 0 ? `(${base})` : base}${op}${member}`, 0);
+/** `*operand`: a unary expression. */
+export const derefText = (operand: Expr): Code =>
+    spelled(`*${precedenceOf(operand) > 1 ? `(${operand})` : operand}`, 1);
 
 export const children = (n: Node): Node[] =>
     n.kind === 'compose' ? n.parts : n.kind === 'binary' ? [n.left, n.right] : [];

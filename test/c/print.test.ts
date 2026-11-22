@@ -50,14 +50,14 @@ void print_number(double x) {
 int main(void) {
     Tuple_Number_Bool_Unit result0 = entry(NULL);
     (void)result0;
-    putchar(91);
+    putchar('[');
     print_number(result0.item0);
-    putchar(44);
+    putchar(',');
     fputs(result0.item1 ? "true" : "false", stdout);
-    putchar(44);
+    putchar(',');
     fputs("null", stdout);
-    putchar(93);
-    putchar(10);
+    putchar(']');
+    putchar('\\n');
     if (live_contexts != 0) {
         abort();
     }
@@ -118,7 +118,7 @@ int main(void) {
     double result0 = entry(NULL);
     (void)result0;
     print_number(result0);
-    putchar(10);
+    putchar('\\n');
     if (live_contexts != 0) {
         abort();
     }
@@ -187,12 +187,12 @@ void print_number(double x) {
 int main(void) {
     Tuple_Number_Number result0 = entry(NULL);
     (void)result0;
-    putchar(91);
+    putchar('[');
     print_number(result0.item0);
-    putchar(44);
+    putchar(',');
     print_number(result0.item1);
-    putchar(93);
-    putchar(10);
+    putchar(']');
+    putchar('\\n');
     if (live_contexts != 0) {
         abort();
     }
@@ -254,7 +254,7 @@ Scattered_Lens_double_to_bool_Lens_double_to_Tuple_Number_Number both(void *envi
 }
 Tuple_Bool_Tuple_Number_Number entry(void *environment) {
     (void)environment;
-    Backing_double_bool_double_Tuple_Number_Number * back1 = allocate_context(sizeof *back1);
+    Backing_double_bool_double_Tuple_Number_Number *back1 = allocate_context(sizeof *back1);
     if (!back1) {
         abort();
     }
@@ -320,16 +320,16 @@ void print_number(double x) {
 int main(void) {
     Tuple_Bool_Tuple_Number_Number result0 = entry(NULL);
     (void)result0;
-    putchar(91);
+    putchar('[');
     fputs(result0.item0 ? "true" : "false", stdout);
-    putchar(44);
-    putchar(91);
-    print_number((result0.item1).item0);
-    putchar(44);
-    print_number((result0.item1).item1);
-    putchar(93);
-    putchar(93);
-    putchar(10);
+    putchar(',');
+    putchar('[');
+    print_number(result0.item1.item0);
+    putchar(',');
+    print_number(result0.item1.item1);
+    putchar(']');
+    putchar(']');
+    putchar('\\n');
     if (live_contexts != 0) {
         abort();
     }
@@ -385,7 +385,7 @@ Lens_double_to_bool first(void *environment, Lens_Tuple_Number_Number_to_Tuple_B
 Tuple_Bool_Number entry(void *environment) {
     (void)environment;
     Tuple_Number_Number x = (Tuple_Number_Number){1, 2};
-    Backing_Tuple_Number_Number_Tuple_Bool_Number * back1 = allocate_context(sizeof *back1);
+    Backing_Tuple_Number_Number_Tuple_Bool_Number *back1 = allocate_context(sizeof *back1);
     if (!back1) {
         abort();
     }
@@ -443,12 +443,12 @@ void print_number(double x) {
 int main(void) {
     Tuple_Bool_Number result0 = entry(NULL);
     (void)result0;
-    putchar(91);
+    putchar('[');
     fputs(result0.item0 ? "true" : "false", stdout);
-    putchar(44);
+    putchar(',');
     print_number(result0.item1);
-    putchar(93);
-    putchar(10);
+    putchar(']');
+    putchar('\\n');
     if (live_contexts != 0) {
         abort();
     }
@@ -488,7 +488,7 @@ int main(void) {
     bool result0 = entry(NULL);
     (void)result0;
     fputs(result0 ? "true" : "false", stdout);
-    putchar(10);
+    putchar('\\n');
     if (live_contexts != 0) {
         abort();
     }

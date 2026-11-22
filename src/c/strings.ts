@@ -214,18 +214,21 @@ export function stringRuntime(): {
             uses: [],
             signature: `void print_string(${stringType} *s)`,
             body: [
-                'putchar(34);',
+                "putchar('\"');",
                 'size_t n = s ? s->length : 0;',
                 {
                     head: 'for (size_t i = 0; i < n; i++)',
                     body: [
                         'unsigned char c = s->bytes[i];',
-                        { head: 'if (c == 34 || c == 92)', body: ['putchar(92);', 'putchar(c);'] },
+                        {
+                            head: "if (c == '\"' || c == '\\\\')",
+                            body: ["putchar('\\\\');", 'putchar(c);'],
+                        },
                         { head: 'else if (c < 32)', body: ['printf("\\\\u%04x", c);'] },
                         { head: 'else', body: ['putchar(c);'] },
                     ],
                 },
-                'putchar(34);',
+                "putchar('\"');",
             ],
         },
     ];

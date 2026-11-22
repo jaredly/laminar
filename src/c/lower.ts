@@ -6,7 +6,7 @@ import { verifyConcreteProgram } from '../verify-concrete.ts';
 import { BackendDiagnostic } from '../backend/target.ts';
 import { cSyntax, identifier, type Statement, type TranslationUnit } from './syntax.ts';
 import { Locals } from '../backend/imperative/locals.ts';
-import { isExpr, memberText, precedenceOf, same, type Expr } from '../backend/imperative/code.ts';
+import { derefText, isExpr, memberText, same, type Expr } from '../backend/imperative/code.ts';
 import { isLocal, isScope, mapScope, visit } from '../backend/imperative/statements.ts';
 import { appendFunction, appendPart, cBytes, stringRuntime, stringType } from './strings.ts';
 import { requireImport, usesHost } from '../runtime-imports.ts';
@@ -106,9 +106,7 @@ export function lowerC(
             ? activeLocals.access(base, '.', member(name))
             : memberText(base, '.', identifier(name));
     const star = (operand: Expr): Expr =>
-        activeLocals
-            ? activeLocals.deref(operand)
-            : `*${precedenceOf(operand) > 1 ? `(${operand})` : operand}`;
+        activeLocals ? activeLocals.deref(operand) : derefText(operand);
     const zero = (id: string): Expr => cc`(${type(id)}){0}`;
     const field = (expr: Expr, n: number): Expr => dot(expr, `item${n}`);
     /** Element layout of a vector layout. */
@@ -320,7 +318,7 @@ export function lowerC(
         unionHelpers.set(key, name);
         use(name);
         refs.within(name, () => {
-            const signature = cText`${result} ${name}(${parameter} value)`;
+            const signature = cText`${result}${result.endsWith('*') ? '' : ' '}${name}(${parameter} value)`;
             declarations.push(new Declaration(name, signature + ';'));
             const body: Statement[] = ['(void)value;'];
             generate(body);
@@ -344,7 +342,7 @@ export function lowerC(
         vectorHelpers.set(key, name);
         use(name);
         refs.within(name, () => {
-            const signature = cText`${result} ${name}(${parameters})`;
+            const signature = cText`${result}${result.endsWith('*') ? '' : ' '}${name}(${parameters})`;
             declarations.push(new Declaration(name, signature + ';'));
             const body: Statement[] = [];
             generate(body);
@@ -609,7 +607,7 @@ export function lowerC(
                             head: 'if (value)',
                             body: ['fwrite(value->bytes, 1, value->length, stdout);'],
                         },
-                        'putchar(10);',
+                        "putchar('\\n');",
                         cc`${use('string_drop')}(value);`,
                         cc`return ${zero(result)};`,
                     ),
@@ -2231,20 +2229,23 @@ export function lowerC(
         else if (l.kind === 'vector') {
             // Nested vectors nest loops; each needs its own index.
             const i = `i${printLoops++}`;
-            const each: Statement[] = [{ head: `if (${i})`, body: ['putchar(44);'] }];
-            print(`(${expr}).elements[${i}]`, element(id), each);
+            const each: Statement[] = [{ head: `if (${i})`, body: ["putchar(',');"] }];
+            print(`${dot(expr, 'elements')}[${i}]`, element(id), each);
             body.push(
-                'putchar(91);',
-                { head: `for (size_t ${i} = 0; ${i} < (${expr}).length; ${i}++)`, body: each },
-                'putchar(93);',
+                "putchar('[');",
+                {
+                    head: `for (size_t ${i} = 0; ${i} < ${dot(expr, 'length')}; ${i}++)`,
+                    body: each,
+                },
+                "putchar(']');",
             );
         } else if (l.fields.every((f) => f.kind === 'value' && f.name.startsWith('item'))) {
-            body.push('putchar(91);');
+            body.push("putchar('[');");
             l.fields.forEach((f, i) => {
-                if (i) body.push('putchar(44);');
+                if (i) body.push("putchar(',');");
                 print(field(expr, i), (f as { layout: string }).layout, body);
             });
-            body.push('putchar(93);');
+            body.push("putchar(']');");
         } else if (l.kind === 'union') {
             const names = l.fields.map((f) => f.name);
             const list = names.length === 2 && names[0] === 'nil' && names[1] === 'cons';
@@ -2254,9 +2255,9 @@ export function lowerC(
                     const cell = variant(id, 1);
                     const tail = layout(cell.layout).fields[1] as { layout: string };
                     if (tail.layout !== id) return unsupported('List tail changed its layout');
-                    body.push('int first = 1;', 'putchar(91);');
+                    body.push('int first = 1;', "putchar('[');");
                     const loop: Statement[] = [
-                        { head: 'if (!first)', body: ['putchar(44);'] },
+                        { head: 'if (!first)', body: ["putchar(',');"] },
                         'first = 0;',
                     ];
                     print(
@@ -2267,7 +2268,7 @@ export function lowerC(
                     loop.push(`value = ${field(payload('value', id, 1), 1)};`);
                     body.push(
                         { head: cText`while (value.tag == ${tagValue(id, 1)})`, body: loop },
-                        'putchar(93);',
+                        "putchar(']');",
                     );
                     return;
                 }
@@ -2286,7 +2287,7 @@ export function lowerC(
                     if (arity === 1) print(contents, v.layout, arm);
                     else
                         for (let k = 0; k < arity; k++) {
-                            if (k) arm.push('putchar(44);');
+                            if (k) arm.push("putchar(',');");
                             print(
                                 field(contents, k),
                                 (layout(v.layout).fields[k] as { layout: string }).layout,
@@ -2489,9 +2490,9 @@ export function lowerC(
         const v = `result${main.length}`;
         main.push(`${type(c.body.layout)} ${v} = ${use(codes.get(entry)!)}(NULL);`, `(void)${v};`);
         // With host output on stdout, a record separator (U+001E) introduces each result.
-        if (host) main.push('putchar(30);');
+        if (host) main.push("putchar('\\x1e');");
         print(v, c.body.layout, main);
-        main.push('putchar(10);');
+        main.push("putchar('\\n');");
         drop({ expression: v, layout: c.body.layout }, main);
     }
     main.push({ head: cText`if (${use('live_contexts')} != 0)`, body: ['abort();'] }, 'return 0;');

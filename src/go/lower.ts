@@ -17,7 +17,7 @@ import { requireImport, usesHost } from '../runtime-imports.ts';
 import { GoNames, functionNames } from './names.ts';
 import { localNames, takesName } from '../backend/local-names.ts';
 import { GoLocals } from './locals.ts';
-import { memberText, precedenceOf, same, type Expr } from '../backend/imperative/code.ts';
+import { derefText, memberText, same, type Expr } from '../backend/imperative/code.ts';
 import { goTypes, fingerprint } from './types.ts';
 import { reachableGo } from './reachable.ts';
 import {
@@ -62,9 +62,7 @@ export function lowerGo(program: ConcreteProgram): GoFile {
             ? activeLocals.access(base, '.', field(name))
             : memberText(base, '.', identifier(name));
     const star = (operand: Expr): Expr =>
-        activeLocals
-            ? activeLocals.deref(operand)
-            : `*${precedenceOf(operand) > 1 ? `(${operand})` : operand}`;
+        activeLocals ? activeLocals.deref(operand) : derefText(operand);
     verifyConcreteProgram(program);
     // Every import reaching Go must be registered, implemented and available on the target.
     const imports = program.semantic.program.imports

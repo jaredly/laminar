@@ -611,6 +611,24 @@ Three small things that were visible in every program.
   as Go already did. Source names matching `Backing_*` are escaped. Each function that
   uses a backing mentions it, so an unused definition is dropped with its function.
 
+A second pass over the same output fixed what reading `snake.lm`'s C turned up:
+
+- **Pointer declarators.** `double * v13 = …` and `double * vector_at_…(…)` are now
+  `double *v13` and `double *vector_at_…`; the `*` attaches to the name, in local
+  declarations and in helper signatures.
+- **Character literals.** The test-protocol printing wrote `putchar(91)`, `putchar(44)`
+  and `putchar(10)`; it now writes `putchar('[')`, `putchar(',')` and `putchar('\n')`,
+  the record separator is `'\x1e'`, and the JSON string escaper compares against
+  `'"'` and `'\\'`.
+- **Print helpers.** The vector and tuple printers built `(x.item0).length` by text.
+  They use the same member-access builder as function bodies. The fallback builders
+  for code outside a function body (`memberText`, `derefText`) now return an
+  expression that records its binding, so `result0.item0.length` is not re-parenthesized
+  when it is the base of another access. Go's package-level code benefits the same way
+  (`(result0.item0).item0` is `result0.item0.item0`, `*(arg0.read)` is `*arg0.read`), so
+  102 of the 773 Go programs differ from the previous commit, only by those
+  parentheses.
+
 Known and left alone: the capture-free callable type `Callable_Value_…` and its dispose
 ABI typedef are still emitted although direct calls now pass `NULL` and nothing mentions
 them. Type roots are still every `type()` mention, including those in expressions the
