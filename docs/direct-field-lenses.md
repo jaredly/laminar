@@ -261,6 +261,8 @@ So there are three ways to get the readable output:
    semantic form and the physical decision lives where the representation decisions
    already live.
 
+The typed-IR `case-focus` is specified in [focus-spec.md](focus-spec.md).
+
 Option 3 as implemented: `markBoxReuse` in `lower-concrete.ts` sets `inPlace` on an
 `aslens` that has a retained box, a same-layout lens (no `replacement` field) and a
 root constructor pattern whose items are all plain binds. `verify-concrete.ts` checks
