@@ -214,9 +214,17 @@ export function lowerC(
         types: reachableNames(declarationTypes, typeRoots),
         functions: reachableNames(refs.graph(), refs.roots),
     });
+    /** Struct types generated while lowering bodies (lens backing, restoration contexts). They
+     * are printed with the other types, not among the prototypes. */
+    const auxTypes: Declaration[] = [];
+    let executableStart = 0;
     const retainedDeclarations = (): string[] => {
         const live = retained();
-        return declarations
+        return [
+            ...declarations.slice(0, executableStart),
+            ...auxTypes,
+            ...declarations.slice(executableStart),
+        ]
             .filter(
                 (d) =>
                     !(d instanceof Declaration) ||
@@ -277,6 +285,7 @@ export function lowerC(
     // Everything below is retained executable code or its auxiliary declarations.
     // Type uses are conservative roots, including declarations later simplified away.
     trackTypeUses = true;
+    executableStart = declarations.length;
     const signature = (c: ConcreteProgram['code'][number]) =>
         cText`${type(c.body.layout)} ${codes.get(c.id)}(void *environment${c.parameters.map((p, i) => `, ${type(p.layout)} ${naming.get(c.id)!.parameterNames[i]}`).join('')})`;
     // The allocation counter is a package symbol: only code that mentions it keeps it.
@@ -291,6 +300,7 @@ export function lowerC(
     );
     const helpers: TranslationUnit['functions'] = [];
     let helperCounter = 0;
+    const backingTypes = new Map<string, string>();
     const disposers = new Map(
         program.wrappers.filter((w) => w.kind === 'dispose').map((w, i) => [w.id, `dispose${i}`]),
     );
@@ -742,7 +752,7 @@ export function lowerC(
             const input = endpoint(abi.result, 'read'),
                 replacement = endpoint(abi.result, 'replacement');
             const separate = layout(abi.result).fields.some((f) => f.name === 'replacement');
-            declarations.push(
+            auxTypes.push(
                 new Declaration(
                     context,
                     cText`typedef struct { ${type(raw.result)} source; ${type(input)} read; ${separate ? cc`${type(replacement)} write;` : ''} } ${context};`,
@@ -1055,6 +1065,7 @@ export function lowerC(
                 const index = helperCounter++,
                     name = locals.reference(`back${index}`),
                     fields: string[] = [],
+                    fieldTypes: string[] = [],
                     init: Statement[] = [];
                 /** What each endpoint denotes after the call: its own live storage or the backing. */
                 const live = new Map<string, Data>();
@@ -1091,6 +1102,7 @@ export function lowerC(
                                     : input.layout,
                         });
                         fields.push(cText`${type(input.layout)} ${r};`);
+                        fieldTypes.push(type(input.layout));
                         // Heap backing is not zeroed; stack backing is, so only a nonzero
                         // value needs writing there.
                         const initial = read(d, input.layout);
@@ -1098,6 +1110,7 @@ export function lowerC(
                             init.push(cc`${access} = ${initial};`);
                         if (output?.kind === 'pointer' && output.layout) {
                             fields.push(cText`${type(output.layout)} ${w};`);
+                            fieldTypes.push(type(output.layout));
                             if (escapes) init.push(cc`${name}->${w} = ${zero(output.layout)};`);
                         }
                         return cc`(${type(id)}){.read=&${name}${escapes ? '->' : '.'}${r}${output ? cc`, .replacement=&${name}${escapes ? '->' : '.'}${w}` : ''}}`;
@@ -1124,10 +1137,25 @@ export function lowerC(
                         }),
                         finish: lens.finish,
                     };
-                const backingType = `Backing${index}`;
-                declarations.push(
-                    cText`typedef struct { ${fields.join(' ') || 'unsigned char inhabitant;'} } ${backingType};`,
-                );
+                // Identical backings (same field types) share one definition.
+                const backingKey = fields.join(' ');
+                let backingType = backingTypes.get(backingKey);
+                if (!backingType) {
+                    backingType = packageNames.unique(
+                        `Backing_${fieldTypes
+                            .join('_')
+                            .replace(/[^A-Za-z_0-9]/g, '_')
+                            .slice(0, 60)}`,
+                    );
+                    backingTypes.set(backingKey, backingType);
+                    auxTypes.push(
+                        new Declaration(
+                            backingType,
+                            cText`typedef struct { ${backingKey || 'unsigned char inhabitant;'} } ${backingType};`,
+                        ),
+                    );
+                }
+                use(backingType);
                 cell(
                     name,
                     backingType + (escapes ? ' *' : ''),
@@ -2109,11 +2137,13 @@ export function lowerC(
                         }
                         return mapScope(s, rewrite, rewriteBody);
                     });
-                declarations.push(
+                auxTypes.push(
                     new Declaration(
                         context,
                         cText`typedef struct { ${contextFields.join(' ') || 'unsigned char inhabitant;'} } ${context};`,
                     ),
+                );
+                declarations.push(
                     new Declaration(
                         restore,
                         cText`${type(unit.id)} ${restore}(void *opaque, ${type(replacement)} replacement);`,

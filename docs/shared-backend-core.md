@@ -591,6 +591,38 @@ text assertions that spelled the old parentheses were updated one by one. Native
 and Go corpora pass (execution is the check that no parenthesis was dropped wrongly).
 Go output is no longer byte-identical to earlier slices, by design.
 
+### Follow-up: the shape of the generated C
+
+Three small things that were visible in every program.
+
+- **Zero initializers.** A declaration with no initializer printed `{0}` whatever its
+  type, so a scalar read `double v33 = {0};` and a Bool `bool v0 = {0};`. The C printer
+  now spells the zero for the declared type: `0` for `double`, `int` and `size_t`,
+  `false` for `bool`, `NULL` for a pointer or `String`, and `{0}` for aggregates.
+- **Bool constants.** They were `0` and `1`; with `<stdbool.h>` included and the type
+  `bool`, they are `true` and `false`, in both the constant spelling used by folding
+  and the one used by lowering. Conditions that mean "always true" in generated tests
+  still use the text `1`, which is not a Bool constant.
+- **Types printed with the types.** Struct types generated while lowering bodies, the
+  lens backing and the `LensResult`/`Restore` contexts, were pushed among the
+  prototypes. They are collected separately and printed after the program's own types
+  and before any prototype. A backing now has one definition per field layout, named
+  for its field types (`Backing_double_double_double`) rather than once per call site,
+  as Go already did. Source names matching `Backing_*` are escaped. Each function that
+  uses a backing mentions it, so an unused definition is dropped with its function.
+
+Known and left alone: the capture-free callable type `Callable_Value_…` and its dispose
+ABI typedef are still emitted although direct calls now pass `NULL` and nothing mentions
+them. Type roots are still every `type()` mention, including those in expressions the
+passes later delete; making them follow the kept code is the refinement noted under
+function pruning.
+
+Validation: `test/c/output-shape.test.ts` covers each point and runs four programs
+natively (two backings of one shape, scalar zero initializers, Bool constants, and a
+restoration context). Exact-text C expectations were regenerated, and the staging
+assertions now match `Backing_…` names. Native and Go corpora pass under
+ASan/UBSan.
+
 ### Step 5: unify the per-instruction lowering
 
 Merge the two per-op lowerers behind the capability interface. Decide after

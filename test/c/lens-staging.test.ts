@@ -31,7 +31,7 @@ it('forwards an unchanged aggregate lens rather than rebuilding it', () => {
 it('reuses one backing across sequential homogeneous calls', () => {
     const code = compile(bump + '{let x = 0\n bump(~x)\n bump(~x)\n x}');
     const entry = body(code, 'entry');
-    expect(entry.match(/Backing\d+ back\d+/g)).toHaveLength(1);
+    expect(entry.match(/Backing_\w+ back\d+/g)).toHaveLength(1);
     expect(entry.match(/bump\(NULL, \w+\)/g)).toHaveLength(2);
     expect(entry.match(/\.read=&back0\.read0/g)).toHaveLength(2);
     // Results are read where the calls left them, not copied out and rebuilt.
@@ -43,7 +43,7 @@ it('keeps a whole tuple in its existing backing after a call', () => {
     const code = compile(bumpPair + '{let p = (1, 2)\n bumpPair(~p)\n bumpPair(~p)\n p}', [
         'bumpPair',
     ]);
-    expect(body(code, 'entry').match(/Backing\d+ back\d+/g)).toHaveLength(1);
+    expect(body(code, 'entry').match(/Backing_\w+ back\d+/g)).toHaveLength(1);
 });
 
 it('keeps separate typed backing for a type-changing call', () => {
@@ -54,7 +54,7 @@ it('keeps separate typed backing for a type-changing call', () => {
 
 it('keeps heap staging for a lens that escapes', () => {
     const entry = body(compile('fn pass(~x) ~x\n{let x = 1\n pass(~x) := 9\n x}'), 'entry');
-    expect(entry).toMatch(/Backing\d+ \* ?back\d+ = allocate_context\(sizeof \*back\d+\);/);
+    expect(entry).toMatch(/Backing_\w+ \* ?back\d+ = allocate_context\(sizeof \*back\d+\);/);
     expect(entry).toMatch(/release_context\(back\d+\);/);
     // Heap memory is not zeroed, so every field is written.
     expect(entry).toMatch(/back\d+->read0 = 1;/);

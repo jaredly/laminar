@@ -31,7 +31,7 @@ void print_number(double x);
 Tuple_Number_Bool_Unit entry(void *environment) {
     (void)environment;
     Unit v2 = {0};
-    return (Tuple_Number_Bool_Unit){1, 1, v2};
+    return (Tuple_Number_Bool_Unit){1, true, v2};
 }
 void print_number(double x) {
     if (isnan(x)) {
@@ -80,10 +80,10 @@ typedef Unit (*Func_to_Unit_b3b0e12625)(void *);
 struct Unit { unsigned char inhabitant; };
 struct Lens_double { double *read; Func_double_to_Unit_47414720dc restore; void *context; };
 struct Callable_Value_d6f73c1cde { void *environment; Func_to_Unit_b3b0e12625 dispose; };
+typedef struct { double read0; } Backing_double;
 static size_t live_contexts = 0;
 Unit inc(void *environment, Lens_double x);
 double entry(void *environment);
-typedef struct { double read0; } Backing0;
 void print_number(double x);
 Unit inc(void *environment, Lens_double x) {
     (void)environment;
@@ -94,7 +94,7 @@ Unit inc(void *environment, Lens_double x) {
 }
 double entry(void *environment) {
     (void)environment;
-    Backing0 back0 = {0};
+    Backing_double back0 = {0};
     back0.read0 = 1;
     Lens_double v5 = (Lens_double){.read=&back0.read0};
     inc(NULL, v5);
@@ -147,10 +147,10 @@ struct Scattered_Lens_double_Lens_double { Lens_double item0; Lens_double item1;
 struct Unit { unsigned char inhabitant; };
 struct Tuple_Number_Number { double item0; double item1; };
 struct Callable_Value_d6f73c1cde { void *environment; Func_to_Unit_b3b0e12625 dispose; };
+typedef struct { double read0; double read1; } Backing_double_double;
 static size_t live_contexts = 0;
 Unit inc(void *environment, Scattered_Lens_double_Lens_double x_y);
 Tuple_Number_Number entry(void *environment);
-typedef struct { double read0; double read1; } Backing0;
 void print_number(double x);
 Unit inc(void *environment, Scattered_Lens_double_Lens_double x_y) {
     (void)environment;
@@ -161,7 +161,7 @@ Unit inc(void *environment, Scattered_Lens_double_Lens_double x_y) {
 }
 Tuple_Number_Number entry(void *environment) {
     (void)environment;
-    Backing0 back0 = {0};
+    Backing_double_double back0 = {0};
     back0.read0 = 1;
     back0.read1 = 2;
     Scattered_Lens_double_Lens_double v9 = (Scattered_Lens_double_Lens_double){.item0=(Lens_double){.read=&back0.read0}, .item1=(Lens_double){.read=&back0.read1}};
@@ -229,14 +229,14 @@ struct Unit { unsigned char inhabitant; };
 struct Tuple_Number_Number { double item0; double item1; };
 struct Tuple_Bool_Tuple_Number_Number { bool item0; Tuple_Number_Number item1; };
 struct Callable_Value_d6f73c1cde { void *environment; Func_to_Unit_b3b0e12625 dispose; };
+typedef struct { Scattered_Lens_double_to_bool_Lens_double_to_Tuple_Number_Number x_y; double focus_0; bool focus_0out; double focus_1; Tuple_Number_Number focus_1out; } Restore0;
+typedef struct { double read0; bool write0; double read2; Tuple_Number_Number write2; } Backing_double_bool_double_Tuple_Number_Number;
 static size_t live_contexts = 0;
 void *allocate_context(size_t size);
 void release_context(void *context);
 Scattered_Lens_double_to_bool_Lens_double_to_Tuple_Number_Number both(void *environment, Scattered_Lens_double_to_bool_Lens_double_to_Tuple_Number_Number x_y);
 Tuple_Bool_Tuple_Number_Number entry(void *environment);
-typedef struct { Scattered_Lens_double_to_bool_Lens_double_to_Tuple_Number_Number x_y; double focus_0; bool focus_0out; double focus_1; Tuple_Number_Number focus_1out; } Restore0;
 Unit restore0(void *opaque, Tuple_Bool_Tuple_Number_Number replacement);
-typedef struct { double read0; bool write0; double read2; Tuple_Number_Number write2; } Backing1;
 void print_number(double x);
 Scattered_Lens_double_to_bool_Lens_double_to_Tuple_Number_Number both(void *environment, Scattered_Lens_double_to_bool_Lens_double_to_Tuple_Number_Number x_y) {
     (void)environment;
@@ -254,7 +254,7 @@ Scattered_Lens_double_to_bool_Lens_double_to_Tuple_Number_Number both(void *envi
 }
 Tuple_Bool_Tuple_Number_Number entry(void *environment) {
     (void)environment;
-    Backing1 * back1 = allocate_context(sizeof *back1);
+    Backing_double_bool_double_Tuple_Number_Number * back1 = allocate_context(sizeof *back1);
     if (!back1) {
         abort();
     }
@@ -265,7 +265,7 @@ Tuple_Bool_Tuple_Number_Number entry(void *environment) {
     Scattered_Lens_double_to_bool_Lens_double_to_Tuple_Number_Number v9 = (Scattered_Lens_double_to_bool_Lens_double_to_Tuple_Number_Number){.item0=(Lens_double_to_bool){.read=&back1->read0, .replacement=&back1->write0}, .item1=(Lens_double_to_Tuple_Number_Number){.read=&back1->read2, .replacement=&back1->write2}};
     Scattered_Lens_double_to_bool_Lens_double_to_Tuple_Number_Number v8 = both(NULL, v9);
     Tuple_Number_Number v13 = (Tuple_Number_Number){3, 4};
-    Tuple_Bool_Tuple_Number_Number v14 = (Tuple_Bool_Tuple_Number_Number){1, v13};
+    Tuple_Bool_Tuple_Number_Number v14 = (Tuple_Bool_Tuple_Number_Number){true, v13};
     Tuple_Bool_Tuple_Number_Number v16 = (Tuple_Bool_Tuple_Number_Number){v14.item0, v14.item1};
     if (v8.restore) {
         v8.restore(v8.context, v16);
@@ -360,14 +360,14 @@ struct Tuple_Number_Number { double item0; double item1; };
 struct Lens_double_to_bool { double *read; bool *replacement; Func_bool_to_Unit_fe0e204ab7 restore; void *context; };
 struct Lens_Tuple_Number_Number_to_Tuple_Bool_Number { Tuple_Number_Number *read; Tuple_Bool_Number *replacement; Func_Tuple_Bool_Number_to_Unit_6f13bfd866 restore; void *context; };
 struct Callable_Value_d6f73c1cde { void *environment; Func_to_Unit_b3b0e12625 dispose; };
+typedef struct { Lens_Tuple_Number_Number_to_Tuple_Bool_Number x_y; double focus; bool focusout; } Restore0;
+typedef struct { Tuple_Number_Number read0; Tuple_Bool_Number write0; } Backing_Tuple_Number_Number_Tuple_Bool_Number;
 static size_t live_contexts = 0;
 void *allocate_context(size_t size);
 void release_context(void *context);
 Lens_double_to_bool first(void *environment, Lens_Tuple_Number_Number_to_Tuple_Bool_Number x_y);
 Tuple_Bool_Number entry(void *environment);
-typedef struct { Lens_Tuple_Number_Number_to_Tuple_Bool_Number x_y; double focus; bool focusout; } Restore0;
 Unit restore0(void *opaque, bool replacement);
-typedef struct { Tuple_Number_Number read0; Tuple_Bool_Number write0; } Backing1;
 void print_number(double x);
 Lens_double_to_bool first(void *environment, Lens_Tuple_Number_Number_to_Tuple_Bool_Number x_y) {
     (void)environment;
@@ -385,7 +385,7 @@ Lens_double_to_bool first(void *environment, Lens_Tuple_Number_Number_to_Tuple_B
 Tuple_Bool_Number entry(void *environment) {
     (void)environment;
     Tuple_Number_Number x = (Tuple_Number_Number){1, 2};
-    Backing1 * back1 = allocate_context(sizeof *back1);
+    Backing_Tuple_Number_Number_Tuple_Bool_Number * back1 = allocate_context(sizeof *back1);
     if (!back1) {
         abort();
     }
@@ -393,7 +393,7 @@ Tuple_Bool_Number entry(void *environment) {
     back1->write0 = (Tuple_Bool_Number){0};
     Lens_Tuple_Number_Number_to_Tuple_Bool_Number v6 = (Lens_Tuple_Number_Number_to_Tuple_Bool_Number){.read=&back1->read0, .replacement=&back1->write0};
     Lens_double_to_bool v5 = first(NULL, v6);
-    bool v7 = 1;
+    bool v7 = true;
     if (v5.restore) {
         v5.restore(v5.context, v7);
     }
@@ -471,16 +471,16 @@ bool entry(void *environment);
 bool entry(void *environment) {
     (void)environment;
     double v0 = 1;
-    double v3 = {0};
+    double v3 = 0;
     (void)v3;
-    bool v10 = {0};
-    if (1) {
+    bool v10 = false;
+    if (true) {
         v3 = v0;
-        v10 = 1;
+        v10 = true;
     }
     else {
         v3 = v0;
-        v10 = 0;
+        v10 = false;
     }
     return v10;
 }

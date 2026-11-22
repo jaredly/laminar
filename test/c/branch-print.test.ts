@@ -30,9 +30,9 @@ Tuple_Bool_Number entry(void *environment) {
     (void)environment;
     double v0 = 1;
     int v6 = 0;
-    double v7 = {0};
+    double v7 = 0;
     (void)v7;
-    if (0) {
+    if (false) {
         v6 = 0;
         v7 = v0;
     }
@@ -47,7 +47,7 @@ Tuple_Bool_Number entry(void *environment) {
     else {
         abort();
     }
-    return (Tuple_Bool_Number){1, 3};
+    return (Tuple_Bool_Number){true, 3};
 }
 void print_number(double x) {
     if (isnan(x)) {
