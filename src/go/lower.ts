@@ -779,7 +779,9 @@ export function lowerGo(program: ConcreteProgram): GoFile {
         const parameters: { expression: Expr; layout: string; view: View }[] = [];
         const physicalLenses: { expression: Expr; layout: string; data: Data }[] = [];
         const setup: Statement[] = [];
-        const bind = (p: IRPattern, data: Data, body: Statement[] = setup) => {
+        /** Boxes kept by borrowed matches, by reconstruction id, until a construct reuses them. */
+        const retainedBoxes = new Map<string, string>();
+        const bind = (p: IRPattern, data: Data, body: Statement[] = setup, retains?: string) => {
             if (p.kind === 'bind') {
                 places.set(p.slot.place, storage.own(data));
             } else if (p.kind === 'tuple') {
@@ -789,6 +791,20 @@ export function lowerGo(program: ConcreteProgram): GoFile {
                 if (Array.isArray(data)) return unsupported('Constructor pattern over a tuple');
                 const n = tagOf(data.layout, p.name),
                     v = variant(data.layout, n);
+                // Keep the owner's box so the reconstruction can write into it. A value
+                // constructed in place has no box, so its reconstruction allocates.
+                if (retains !== undefined && v.boxed && !data.constructed) {
+                    const box = fresh();
+                    body.push(
+                        locals.declaration(
+                            box,
+                            goText`*${type(v.layout)}`,
+                            go`(${code(data.expression)}).v${n}`,
+                            { pure: true },
+                        ),
+                    );
+                    retainedBoxes.set(retains, box);
+                }
                 const contents: Data = data.constructed
                     ? data.constructed.name === p.name
                         ? data.constructed.payload
@@ -1373,14 +1389,16 @@ export function lowerGo(program: ConcreteProgram): GoFile {
                                             ', ',
                                         )}}`;
                             if (v.boxed) {
-                                const box = fresh();
-                                construction.push(
-                                    locals.declaration(
-                                        box,
-                                        goText`*${type(v.layout)}`,
-                                        go`new(${type(v.layout)})`,
-                                    ),
-                                );
+                                const kept = i.reuses ? retainedBoxes.get(i.reuses) : undefined;
+                                const box = kept ?? fresh();
+                                if (!kept)
+                                    construction.push(
+                                        locals.declaration(
+                                            box,
+                                            goText`*${type(v.layout)}`,
+                                            go`new(${type(v.layout)})`,
+                                        ),
+                                    );
                                 construction.push(go`*${box} = ${contents}`);
                                 contents = box;
                             }
@@ -1861,7 +1879,7 @@ export function lowerGo(program: ConcreteProgram): GoFile {
                         const arms = i.cases.map((arm, armIndex) => {
                             storage.reset(before);
                             const nested: Statement[] = [];
-                            bind(arm.pattern, datum(i.value), nested);
+                            bind(arm.pattern, datum(i.value), nested, arm.retains);
                             const result = block(arm.body, nested);
                             resultInputs.push({
                                 data: dataValues.get(arm.body.result) ?? {

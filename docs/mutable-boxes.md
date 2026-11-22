@@ -1,8 +1,8 @@
 # Mutable heap data: `dup` pays for copies
 
 Status: partly implemented (2026-11-21). Vectors, Go `dup` copying boxes (step 1), the
-concrete IR reuse contract and verifier (step 2), and C reuse (step 3) are done. Go
-reuse, direct field lenses and owned reuse are not, and no benchmark has been run.
+concrete IR reuse contract and verifier (step 2), and C and Go reuse (step 3) are done.
+Direct field lenses and owned reuse are not, and no benchmark has been run.
 
 Implemented as follows:
 
@@ -17,7 +17,9 @@ Implemented as follows:
 - `src/c/lower.ts` keeps the box in a local and writes `*box = payload`. The
   same-layout `bump` above has no `allocate_context` or `release_context`.
 - Lens-valued cases (`lensJoin`) fall back to free and allocate.
-- Go does not reuse boxes yet (see the open questions).
+- `src/go/lower.ts` does the same: the bind keeps the owner's box in a local and the
+  construct writes `*box = payload`. A value constructed in place has no box, so its
+  reconstruction allocates.
 
 ## Summary
 

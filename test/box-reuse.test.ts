@@ -4,6 +4,7 @@ import { compileConcreteProgram } from '../src/lower-concrete.ts';
 import { wasm32Emscripten } from '../src/backend/target.ts';
 import { verifyConcreteProgram } from '../src/verify-concrete.ts';
 import { emitC } from '../src/c/emit.ts';
+import { emitGo } from '../src/go/emit.ts';
 import { printConcreteProgram } from '../src/print-concrete.ts';
 
 const target = wasm32Emscripten('test');
@@ -27,6 +28,15 @@ it('a same-layout borrowed update reuses the box without allocating or freeing',
     expect(body).not.toBe('');
     expect(body).not.toContain('allocate_context');
     expect(body).not.toContain('release_context');
+});
+
+it('Go writes the retained box in place instead of allocating a new one', () => {
+    const go = emitGo(compile(`${bump}{let x = [1, 2]\n bump(~x)\n x}`));
+    const start = go.indexOf('func bump(');
+    const body = go.slice(start, go.indexOf('\n}\n', start));
+    expect(body).not.toBe('');
+    expect(body).not.toContain('new(');
+    expect(body).toMatch(/\*v\d+ = Tuple_Number_List_Number/);
 });
 
 it('a lens-valued match keeps allocating its box', () => {
