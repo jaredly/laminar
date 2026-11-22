@@ -1,6 +1,7 @@
 import { expect, it } from 'bun:test';
 import { compileSource } from '../../src/compiler.ts';
 import { wasm32Emscripten } from '../../src/backend/target.ts';
+import { unionTagNames } from '../../src/backend/type-names.ts';
 import { CNames } from '../../src/c/names.ts';
 import { expectRun } from '../backend/backends.ts';
 
@@ -69,3 +70,36 @@ for (const [name, source, expected] of [
         () => expectRun('native', source, { expected: structuredClone(expected) as unknown }),
         60000,
     );
+
+it('names union tags in constructors, matches and runtime helpers', () => {
+    const { code } = compile(
+        'fn len(l) {match l {[] -> 0; [x, ...rest] -> 1 + len(rest)}}\nlen([1, 2])',
+    );
+    expect(code).toContain('enum { List_Number_nil = 0, List_Number_cons = 1 };');
+    expect(code).toContain('.tag=List_Number_cons');
+    expect(code).toContain('.tag == List_Number_cons');
+    expect(code).not.toMatch(/\.tag\s*(?:=|==)\s*\d/);
+});
+
+it('keeps constructor constants distinct across specializations', () => {
+    const { code } = compile('([1], [true])');
+    expect(code).toContain('List_Number_cons = 1');
+    expect(code).toContain('List_Bool_cons = 1');
+    expect(code).toContain('value.tag == List_Number_cons');
+    expect(code).toContain('value.tag == List_Bool_cons');
+});
+
+execute(
+    'named C: union tags',
+    () => expectRun('native', '([1], [true])', { expected: [[1], [true]] }),
+    60000,
+);
+
+it('allocates constructor constants in the reserved package namespace', () => {
+    const { concrete } = compile('[1]');
+    const union = concrete.layouts.find((l) => l.kind === 'union')!;
+    const allocator = new CNames(['List_Number_cons']);
+    const tags = unionTagNames(concrete, new Map([[union.id, 'List_Number']]), allocator);
+    expect(tags.get(union.id)).toEqual(['List_Number_nil', 'List_Number_cons_2']);
+    expect(allocator.source('List_Number_cons_2')).toBe('List_Number_cons_2_2');
+});

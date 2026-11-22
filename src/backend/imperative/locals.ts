@@ -70,6 +70,17 @@ export class Locals {
         this.references.add(name);
         return name;
     }
+    private spelling(node: Node): string {
+        return node.kind === 'text' || node.kind === 'opaque'
+            ? node.text
+            : node.kind === 'ref'
+              ? node.name
+              : node.kind === 'scalar'
+                ? this.syntax.scalar(node.value)
+                : node.kind === 'binary'
+                  ? this.syntax.binary(node.op, this.spelling(node.left), this.spelling(node.right))
+                  : node.emit(node.parts.map((part) => this.spelling(part)));
+    }
     private recipe(value: unknown): Recipe {
         if (value instanceof Code) return value.node;
         const text = String(value);
@@ -132,6 +143,32 @@ export class Locals {
             expressions(s).forEach((e) => refs(this.recipe(e)).forEach((n) => result.add(n))),
         );
         return result;
+    }
+    /** Rewrite local reads without interpreting literal text, members or type names.
+     * Opaque fragments must be converted to structured formatters before rewriting. */
+    rewriteReferences(value: Expr, replacements: ReadonlyMap<string, Expr>): Expr {
+        const rewrite = (node: Node): Node => {
+            if (node.kind === 'ref') {
+                const value = replacements.get(node.name);
+                return value === undefined ? node : this.recipe(value);
+            }
+            if (node.kind === 'opaque') {
+                if ([...node.refs].some((name) => replacements.has(name)))
+                    throw Error('Cannot rewrite references in opaque code');
+                return node;
+            }
+            if (node.kind === 'binary')
+                return { ...node, left: rewrite(node.left), right: rewrite(node.right) };
+            if (node.kind === 'compose')
+                return {
+                    ...node,
+                    parts: node.parts.map(rewrite),
+                    ...(node.aggregate ? { aggregate: node.aggregate.map(rewrite) } : {}),
+                };
+            return node;
+        };
+        const node = rewrite(this.recipe(value));
+        return this.code(node, this.spelling(node));
     }
     /** Field/pointee mutations not represented by a bare assignment node. */
     mutable(name: string): void {
@@ -249,19 +286,9 @@ export class Locals {
                 };
             return r;
         };
-        const text = (r: Recipe): string =>
-            r.kind === 'text' || r.kind === 'opaque'
-                ? r.text
-                : r.kind === 'ref'
-                  ? r.name
-                  : r.kind === 'scalar'
-                    ? this.syntax.scalar(r.value)
-                    : r.kind === 'binary'
-                      ? this.syntax.binary(r.op, text(r.left), text(r.right))
-                      : r.emit(r.parts.map(text));
         const render = (s: unknown): Expr => {
             const r = normalize(this.recipe(s));
-            return this.code(r, text(r));
+            return this.code(r, this.spelling(r));
         };
         const rewritten = (array: Statement[]): Statement[] =>
             array.flatMap((s): Statement[] => {
@@ -371,7 +398,7 @@ export class Locals {
                                     ? { ...r, left: replace(r.left), right: replace(r.right) }
                                     : r;
                         const r = replace(original);
-                        flat.splice(start, loads.length + 1, this.code(r, text(r)));
+                        flat.splice(start, loads.length + 1, this.code(r, this.spelling(r)));
                     }
                 }
             }

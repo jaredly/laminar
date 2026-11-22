@@ -1,3 +1,4 @@
+import { unionTagNames } from '../backend/type-names.ts';
 import type { ConcreteProgram, ConcreteBlock } from '../concrete-ir.ts';
 import { Storage, expression as code, type Expression, type Data, type View } from './storage.ts';
 import { decodeNumber, type IRPattern, type SlotRef } from '../typed-ir.ts';
@@ -65,14 +66,7 @@ export function lowerGo(program: ConcreteProgram): GoFile {
     const layouts = new Map(program.layouts.map((l) => [l.id, l]));
     const codes = functionNames(program);
     const { names, abis: abiNames, allocator: packageNames } = goTypes(program, codes.values());
-    const tags = new Map(
-        program.layouts
-            .filter((l) => l.kind === 'union')
-            .map((l) => [
-                l.id,
-                l.fields.map((f) => packageNames.source(`${names.get(l.id)}_${f.name}`)),
-            ]),
-    );
+    const tags = unionTagNames(program, names, packageNames);
     const tagValue = (id: string, n: number) => tags.get(id)![n]!;
 
     const type = (id: string) => names.get(id)!;

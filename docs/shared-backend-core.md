@@ -1,6 +1,6 @@
 # Shared imperative backend core for Go and C
 
-Status: proposal, with step 1 in progress. Related:
+Status: steps 1–4 implemented, with follow-up slices in progress before step 5. Related:
 [readable compiler output](compiler-output-readability.md),
 [C backend](c-backend.md), [Go plan](go-codegen-plan.md),
 [Zig plan](zig-codegen-plan.md).
@@ -113,9 +113,9 @@ generated helpers. Its execution cases run natively. The exact-text C
 expectations in `test/c/print.test.ts`, `test/c/branch-print.test.ts` and
 `test/captured-cleanup.test.ts` were regenerated for the new names.
 
-Still to do for C: parameter and local names (`arg0` and `v12` remain), and
-named union-tag constants. The Go versions of both live in `go/lower.ts`, so
-they belong with step 4 rather than this extraction.
+At this stage, C still had numbered parameters and locals and numeric union
+tags. The follow-up slices below now provide source names and named tag
+constants.
 
 ### Step 2: give `GoLocals` a real expression tree
 
@@ -245,11 +245,12 @@ demand-driven materialization, which can defer a load past a release.
 
 Still C-specific or text-based:
 
-- The returned-lens restoration helper is printed, then has its captured frame
-  locals rewritten to `ctx->name` by regex. Its body is not simplified.
+- At this stage, the returned-lens restoration helper was printed, then had its
+  captured frame locals rewritten to `ctx->name` by regex. The structured
+  restoration follow-up below replaces this. Its body is still not simplified.
 - C still materializes every instruction eagerly. Go's demand-driven
   materialization and partial aggregates (items 1, 6, 9) live in `go/lower.ts`.
-- Union tags are still numeric.
+- Union tags were still numeric at this stage; the follow-up below names them.
 
 ### Follow-up: source names and redundant writes in C
 
@@ -268,8 +269,8 @@ bindings, native lens reads and captures use these names; compiler temporaries
 remain `vN`.
 
 Source names can coincide with C field names (`read`, `tag`) or words in string
-literals. The restoration helper's capture rewriting therefore skips members after
-`.` or `->` and whole string literals. Before this, every frame local was `vN` or
+literals. At this stage, the restoration helper's capture rewriting therefore skipped members
+after `.` or `->` and whole string literals. Before this, every frame local was `vN` or
 `argN`, so plain identifier matching was enough.
 
 Redundant restoration (item 8): C storage leaves carry Go's live-address fact.
@@ -291,6 +292,64 @@ Validation: Go output is byte-identical to step 3. The native corpus passes all
 1549 cases under ASan/UBSan at `-O0` and at `-O2`. Exact-text C expectations were
 regenerated. One regex was relaxed, because copy substitution now calls an
 indirect callee through its parameter directly (`(arg0).invoke0(...)`).
+
+### Follow-up: shared constructor tag names
+
+`src/backend/type-names.ts` now provides `unionTagNames`, extracted from Go's
+lowerer. Both targets allocate `<Layout>_<constructor>` constants in their
+package namespace. C allocates them before local names, so parameters and locals
+also avoid the constants. Reserved host exports, functions, layouts and ABI names
+keep priority; colliding constants receive the allocator's usual suffix.
+
+C emits an anonymous enum per union, for example
+`enum { List_Number_nil = 0, List_Number_cons = 1 };`. The stored tag remains
+`uint32_t`, and variant indices and payload fields keep their existing ABI.
+Construction, pattern tests, deep copy, cleanup, list printing, nominal printing
+and `charList` construction now refer to these constants.
+
+Validation: all 768 accepted corpus and sample programs plus `ok.lm` emit
+byte-identical Go against the committed compiler. The C and Go suites pass
+2,052 tests (135 execution cases skipped by default). The naming cases cover
+constant declarations and uses, specializations, and reserved-package collisions;
+the native naming execution cases pass. The 64 native nominal and string corpus
+cases pass at sanitized `-O0` and optimized `-O2`. TypeScript checking passes.
+The full native corpus also passes with the structured restoration slice below.
+
+### Follow-up: structured C restoration captures
+
+Returned-lens cleanup stays in the shared statement and expression trees until
+printing. C finds the frame locals it needs through `Locals.reads` plus explicit
+assignment targets, intersected with the locals that existed before cleanup was
+built. Cleanup-local declarations stay local to the restoration helper.
+
+`Locals.rewriteReferences` replaces expression reference nodes with context-member
+expressions; C walks nested statements and rewrites captured assignment targets
+as stores to those members. The regex scan and printed-text replacement are gone.
+Member names are literal nodes, so a captured local named `read` never changes
+another value's `.read` field. String literals, type names and package symbols
+also retain their spelling. Unused-local suppressions carry tracked references.
+
+String interpolation now uses a structured formatter with both the builder and
+appended value as operands. In ordinary function bodies this also lets the existing
+passes substitute aliases and inline pure constants that the opaque formatter
+previously kept materialized. Rewriting a referenced opaque fragment fails explicitly
+rather than silently leaving a frame reference in a lifted helper. Cleanup still
+keeps its existing declaration placement and evaluation order; this slice does
+not add simplification inside restoration helpers.
+
+Validation: the C/Go and captured-cleanup suites pass 2,055 tests (136 execution
+cases skipped by default). Focused native locals and captured-cleanup execution
+cases pass under ASan/UBSan at `-O0` and at `-O2`, including the new captured
+string interpolation case. Shared expression tests cover nested rewriting,
+literal syntax preservation and rejection of opaque captured references. All 768
+accepted corpus and sample programs, plus `ok.lm`, retain byte-identical Go output.
+The full native corpus passes all 1,549 tests, including execution at sanitized
+`-O0` and optimized `-O2`. This also completes the full native validation of the
+preceding constructor-tag slice. TypeScript checking passes.
+
+Remaining before broader unification: structural package reachability and explicit
+ownership effects before adopting Go's demand-driven materialization and partial
+aggregates in C.
 
 ### Step 5: unify the per-instruction lowering
 

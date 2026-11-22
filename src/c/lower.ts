@@ -3,21 +3,15 @@ import { Storage, type Data, type View } from './storage.ts';
 import { decodeNumber, type IRPattern, type SlotRef } from '../typed-ir.ts';
 import { verifyConcreteProgram } from '../verify-concrete.ts';
 import { BackendDiagnostic } from '../backend/target.ts';
-import {
-    cSyntax,
-    identifier,
-    printStatements,
-    type Statement,
-    type TranslationUnit,
-} from './syntax.ts';
+import { cSyntax, identifier, type Statement, type TranslationUnit } from './syntax.ts';
 import { Locals } from '../backend/imperative/locals.ts';
-import { same, type Expr } from '../backend/imperative/code.ts';
-import { isLocal, isScope, mapScope } from '../backend/imperative/statements.ts';
+import { isExpr, same, type Expr } from '../backend/imperative/code.ts';
+import { isLocal, isScope, mapScope, visit } from '../backend/imperative/statements.ts';
 import { appendPart, cBytes, stringRuntime, stringType } from './strings.ts';
 import { requireImport, usesHost } from '../runtime-imports.ts';
 import { functionNames } from '../backend/names.ts';
 import { localNames, takesName } from '../backend/local-names.ts';
-import { layoutNames } from '../backend/type-names.ts';
+import { layoutNames, unionTagNames } from '../backend/type-names.ts';
 import { CNames, cScalars } from './names.ts';
 
 type Completion = (body: Statement[]) => void;
@@ -26,11 +20,6 @@ type Variable = { name: string; type: string };
 const unsupported = (message: string): never => {
     throw new BackendDiagnostic('unsupported-c', message);
 };
-/** Resolve logical places and homogeneous restoration before printing any C. */
-/** A string literal, or an identifier that can name a frame local: not a member
- * after `.` or `->`. Source names may coincide with field names such as `read`,
- * and with words inside literals; callers leave literal matches unchanged. */
-const frameIdentifier = /"(?:[^"\\]|\\.)*"|(?<![.>A-Za-z_0-9])[A-Za-z_][A-Za-z_0-9]*\b/g;
 /** -Wall -Werror rejects unread locals and parameters; mark exactly those as used. */
 function suppressUnused(
     locals: Locals,
@@ -42,11 +31,14 @@ function suppressUnused(
         array.flatMap((s): Statement[] => {
             if (Array.isArray(s)) return [walk(s)];
             if (isLocal(s) && s.kind === 'local' && !used.has(s.name))
-                return [s, `(void)${s.name};`];
+                return [s, locals.template`(void)${s.name};`];
             if (isScope(s)) return [mapScope(s, (e) => e, walk)];
             return [s];
         });
-    return [...parameters.filter((n) => !used.has(n)).map((n) => `(void)${n};`), ...walk(body)];
+    return [
+        ...parameters.filter((n) => !used.has(n)).map((n) => locals.template`(void)${n};`),
+        ...walk(body),
+    ];
 }
 /** A host export: the program entry at `entry` becomes the public C function `symbol`. */
 export type CExport = { symbol: string; entry: number };
@@ -71,6 +63,8 @@ export function lowerC(
     const packageNames = new CNames((options.exports ?? []).map((e) => e.symbol));
     const codes = functionNames(program, packageNames);
     const { names, abis: abiNames } = layoutNames(program, packageNames, cScalars);
+    const tags = unionTagNames(program, names, packageNames);
+    const tagValue = (id: string, n: number) => tags.get(id)![n]!;
     // Each body's parameter and local names avoid every package name it can call.
     const naming = new Map(
         program.code.map((c) => [c.id, localNames(program, c, new CNames(packageNames.taken))]),
@@ -91,6 +85,9 @@ export function lowerC(
         activeLocals ? activeLocals.template(strings, ...parts) : cText(strings, ...parts);
     const joinCode = (parts: readonly unknown[], separator: string): Expr =>
         activeLocals ? activeLocals.join(parts, separator) : parts.join(separator);
+    // Member names are syntax, even when a source local has the same spelling.
+    const member = (name: string): Expr =>
+        activeLocals ? activeLocals.literal(identifier(name)) : identifier(name);
     const zero = (id: string): Expr => cc`(${type(id)}){0}`;
     const field = (expr: Expr, n: number): Expr => cc`(${expr}).item${n}`;
     /** Element layout of a vector layout. */
@@ -158,10 +155,7 @@ export function lowerC(
         return l.fields
             .filter((f) => f.name.startsWith('item'))
             .map((f) =>
-                incoming(
-                    cc`(${expression}).${identifier(f.name)}`,
-                    (f as { layout: string }).layout,
-                ),
+                incoming(cc`(${expression}).${member(f.name)}`, (f as { layout: string }).layout),
             );
     };
     const flush = (expression: Expr, id: string, data: Data, body: Statement[]) => {
@@ -175,10 +169,10 @@ export function lowerC(
             if (
                 !Array.isArray(data) &&
                 data.layout === f.layout &&
-                same(data.address, cc`(${expression}).${f.name}`)
+                same(data.address, cc`(${expression}).${member(f.name)}`)
             )
                 return;
-            body.push(cc`*(${expression}).${f.name} = ${read(data, f.layout)};`);
+            body.push(cc`*(${expression}).${member(f.name)} = ${read(data, f.layout)};`);
             return;
         }
         const parts = storage.parts(data);
@@ -186,7 +180,7 @@ export function lowerC(
             .filter((f) => f.name.startsWith('item'))
             .forEach((f, i) =>
                 flush(
-                    cc`(${expression}).${identifier(f.name)}`,
+                    cc`(${expression}).${member(f.name)}`,
                     (f as { layout: string }).layout,
                     parts[i]!,
                     body,
@@ -218,6 +212,9 @@ export function lowerC(
         );
     for (const l of program.layouts)
         if (l.kind === 'union') {
+            declarations.push(
+                cText`enum { ${l.fields.map((_, n) => `${tagValue(l.id, n)} = ${n}`).join(', ')} };`,
+            );
             // Tagged union; boxed variants hold an owned heap payload.
             const variants = l.fields.map((f, n) =>
                 f.kind === 'value'
@@ -236,7 +233,7 @@ export function lowerC(
             );
         } else if (!['f64', 'bool', 'string'].includes(l.kind)) {
             declarations.push(
-                cText`struct ${type(l.id)} { ${l.fields.map((f) => (f.kind === 'value' ? cc`${type(f.layout)} ${identifier(f.name)};` : f.kind === 'pointer' ? cc`${f.layout ? type(f.layout) : 'void'} *${identifier(f.name)};` : cc`${abiNames.get(f.abi)} ${identifier(f.name)};`)).join(' ') || 'unsigned char inhabitant;'} };`,
+                cText`struct ${type(l.id)} { ${l.fields.map((f) => (f.kind === 'value' ? cc`${type(f.layout)} ${member(f.name)};` : f.kind === 'pointer' ? cc`${f.layout ? type(f.layout) : 'void'} *${member(f.name)};` : cc`${abiNames.get(f.abi)} ${member(f.name)};`)).join(' ') || 'unsigned char inhabitant;'} };`,
             );
         }
     const signature = (c: ConcreteProgram['code'][number]) =>
@@ -392,7 +389,7 @@ export function lowerC(
                     const v = variant(id, n);
                     const copied = duplicate(payload('value', id, n), v.layout);
                     body.push({
-                        head: cc`${n ? 'else if' : 'if'} (value.tag == ${n})`,
+                        head: cc`${n ? 'else if' : 'if'} (value.tag == ${tagValue(id, n)})`,
                         body: v.boxed
                             ? [
                                   cc`copy.as.v${n} = allocate_context(sizeof *copy.as.v${n});`,
@@ -440,7 +437,7 @@ export function lowerC(
                     if (v.boxed) arm.push(cc`release_context(value.as.v${n});`);
                     if (arm.length)
                         body.push({
-                            head: cc`${body.length > 1 ? 'else if' : 'if'} (value.tag == ${n})`,
+                            head: cc`${body.length > 1 ? 'else if' : 'if'} (value.tag == ${tagValue(id, n)})`,
                             body: arm,
                         });
                 });
@@ -488,7 +485,7 @@ export function lowerC(
             (body) => {
                 body.pop();
                 body.push(
-                    cc`${type(result)} out = (${type(result)}){.tag=${nil}, .as.v${nil}=${zero(variant(result, nil).layout)}};`,
+                    cc`${type(result)} out = (${type(result)}){.tag=${tagValue(result, nil)}, .as.v${nil}=${zero(variant(result, nil).layout)}};`,
                     'size_t end = value ? value->length : 0;',
                     {
                         head: 'while (end > 0)',
@@ -501,7 +498,7 @@ export function lowerC(
                             },
                             cc`${type(cell.layout)} *cell = allocate_context(sizeof *cell);`,
                             cc`*cell = (${type(cell.layout)}){(${type(text)})string_new((const char *)value->bytes + start, end - start), out};`,
-                            cc`out = (${type(result)}){.tag=${cons}, .as.v${cons}=cell};`,
+                            cc`out = (${type(result)}){.tag=${tagValue(result, cons)}, .as.v${cons}=cell};`,
                             'end = start;',
                         ],
                     },
@@ -653,7 +650,7 @@ export function lowerC(
                         )
                             return unsupported('Native fst changed an untouched field');
                         body.push(
-                            cc`arg0.replacement->${identifier(to.name)} = arg0.read->${identifier(from.name)};`,
+                            cc`arg0.replacement->${member(to.name)} = arg0.read->${member(from.name)};`,
                         );
                     }
                 }
@@ -848,7 +845,7 @@ export function lowerC(
                             .filter((f) => f.name.startsWith('item'))
                             .map(
                                 (f, i) =>
-                                    cc`.${f.name}=${build((f as { layout: string }).layout, path ? path + '.' + i : String(i))}`,
+                                    cc`.${member(f.name)}=${build((f as { layout: string }).layout, path ? path + '.' + i : String(i))}`,
                             ),
                         ', ',
                     ) || '0'
@@ -875,10 +872,12 @@ export function lowerC(
                         l.fields.find((f) => f.name === 'replacement') ??
                         l.fields.find((f) => f.name === 'read');
                 if (f?.kind === 'pointer' && f.layout)
-                    return { expression: cc`*(${expr}).${f.name}`, layout: f.layout };
+                    return { expression: cc`*(${expr}).${member(f.name)}`, layout: f.layout };
                 return l.fields
                     .filter((f) => f.name.startsWith('item'))
-                    .map((f) => outputs(cc`(${expr}).${f.name}`, (f as { layout: string }).layout));
+                    .map((f) =>
+                        outputs(cc`(${expr}).${member(f.name)}`, (f as { layout: string }).layout),
+                    );
             };
             return {
                 expression: arg,
@@ -980,7 +979,7 @@ export function lowerC(
                           ),
                       );
             return joinCode(
-                [cc`(${expr}).tag == ${n}`, ...items.filter((m) => !same(m, '1'))],
+                [cc`(${expr}).tag == ${tagValue(id, n)}`, ...items.filter((m) => !same(m, '1'))],
                 ' && ',
             );
         };
@@ -1038,11 +1037,11 @@ export function lowerC(
                                 const w = program.wrappers.find((w) => w.id === e.wrapper)!;
                                 // Runtime joins reify native entries; ordinary intrinsics keep their storage lowering.
                                 return w.kind === 'invoke'
-                                    ? cc`, .${e.field}=${codes.get(w.code)}`
+                                    ? cc`, .${member(e.field)}=${codes.get(w.code)}`
                                     : w.kind === 'adapt-lens-result'
-                                      ? cc`, .${e.field}=${resultAdapters.get(w.id)}`
+                                      ? cc`, .${member(e.field)}=${resultAdapters.get(w.id)}`
                                       : w.kind === 'native' && nativeCodes.has(w.id)
-                                        ? cc`, .${e.field}=${nativeCodes.get(w.id)}`
+                                        ? cc`, .${member(e.field)}=${nativeCodes.get(w.id)}`
                                         : '';
                             })
                             .join('');
@@ -1096,12 +1095,14 @@ export function lowerC(
                             const tail = cBytes(part.tail);
                             const appended = value(part.value);
                             body.push(
-                                locals.derive(
-                                    appendPart(
-                                        builder,
-                                        layout(outputLayouts.get(part.value)!).kind,
-                                        String(appended),
-                                    ),
+                                locals.format(
+                                    (builder, appended) =>
+                                        appendPart(
+                                            builder,
+                                            layout(outputLayouts.get(part.value)!).kind,
+                                            appended,
+                                        ),
+                                    builder,
                                     appended,
                                 ),
                                 cc`builder_bytes(&${builder}, ${tail.literal}, ${tail.length});`,
@@ -1130,7 +1131,7 @@ export function lowerC(
                             body.push(cc`*${box} = ${contents};`);
                             contents = box;
                         }
-                        expr = cc`(${type(id)}){.tag=${n}, .as.v${n}=${contents}}`;
+                        expr = cc`(${type(id)}){.tag=${tagValue(id, n)}, .as.v${n}=${contents}}`;
                         break;
                     }
                     case 'tuple':
@@ -1485,7 +1486,7 @@ export function lowerC(
                                               args.map((a) => cc`, ${a}`),
                                               '',
                                           )})`
-                                        : cc`(${value(i.callee)}).${identifier(i.field)}((${value(i.callee)}).environment${joinCode(
+                                        : cc`(${value(i.callee)}).${member(i.field)}((${value(i.callee)}).environment${joinCode(
                                               args.map((a) => cc`, ${a}`),
                                               '',
                                           )})`;
@@ -1590,7 +1591,7 @@ export function lowerC(
                             .filter((f) => f.name.startsWith('item'))
                             .map(
                                 (f, i) =>
-                                    cc`.${f.name}=${build(storage.project(view, [i]), (f as { layout: string }).layout, path + '_' + i)}`,
+                                    cc`.${member(f.name)}=${build(storage.project(view, [i]), (f as { layout: string }).layout, path + '_' + i)}`,
                             ),
                         ', ',
                     ) || '0'
@@ -1604,18 +1605,32 @@ export function lowerC(
             lens.finish(cleanup);
             flushParameters(cleanup);
             storage.reset(saved);
-            const references = new Set<string>();
-            // The restoration helper runs after this frame returns. It is printed
-            // here; the frame's locals it mentions are copied into its context.
-            const lines = printStatements(suppressUnused(locals, cleanup, []));
-            for (const line of lines)
-                for (const [name] of line.matchAll(frameIdentifier))
-                    if (!name.startsWith('"')) references.add(name);
+            // Only frame locals referenced by cleanup survive in the heap context.
+            // Cleanup's own declarations were created after the candidate snapshot.
+            const references = locals.reads(cleanup);
+            visit(cleanup, (s) => {
+                if (isLocal(s) && s.kind === 'set') references.add(s.name);
+            });
             const captured = candidates.filter((v) => references.has(v.name));
             contextFields.unshift(...captured.map((v) => `${v.type} ${v.name};`));
-            const names = new Set(captured.map((v) => v.name));
-            const rewrite = (s: string) =>
-                s.replace(frameIdentifier, (n) => (names.has(n) ? `ctx->${n}` : n));
+            const replacements = new Map(
+                captured.map((v) => [v.name, locals.literal(`ctx->${v.name}`)]),
+            );
+            const rewrite = (value: Expr) => locals.rewriteReferences(value, replacements);
+            const rewriteBody = (body: Statement[]): Statement[] =>
+                body.map((s): Statement => {
+                    if (Array.isArray(s)) return rewriteBody(s);
+                    if (isExpr(s)) return rewrite(s);
+                    if (isLocal(s)) {
+                        if (s.kind === 'set' && replacements.has(s.name))
+                            return cc`${replacements.get(s.name)} = ${rewrite(s.value)};`;
+                        return {
+                            ...s,
+                            ...(s.value === undefined ? {} : { value: rewrite(s.value) }),
+                        };
+                    }
+                    return mapScope(s, rewrite, rewriteBody);
+                });
             declarations.push(
                 cText`typedef struct { ${contextFields.join(' ') || 'unsigned char inhabitant;'} } ${context};`,
             );
@@ -1627,7 +1642,7 @@ export function lowerC(
                 body: [
                     cc`${context} *ctx = opaque;`,
                     '(void)replacement;',
-                    ...lines.map(rewrite),
+                    ...rewriteBody(suppressUnused(locals, cleanup, [])),
                     'release_context(ctx);',
                     cc`return ${zero(unit.id)};`,
                 ],
@@ -1721,13 +1736,16 @@ export function lowerC(
                         loop,
                     );
                     loop.push(`value = ${field(payload('value', id, 1), 1)};`);
-                    body.push({ head: 'while (value.tag == 1)', body: loop }, 'putchar(93);');
+                    body.push(
+                        { head: cText`while (value.tag == ${tagValue(id, 1)})`, body: loop },
+                        'putchar(93);',
+                    );
                     return;
                 }
                 l.fields.forEach((f, n) => {
                     const v = variant(id, n);
                     const arm: Statement[] = [
-                        `fputs("{\\"kind\\":\\"variant\\",\\"name\\":\\"${identifier(f.name)}\\",\\"items\\":[", stdout);`,
+                        `fputs("{\\"kind\\":\\"variant\\",\\"name\\":\\"${member(f.name)}\\",\\"items\\":[", stdout);`,
                     ];
                     const contents = payload('value', id, n);
                     const arity = (
@@ -1747,7 +1765,10 @@ export function lowerC(
                             );
                         }
                     arm.push('fputs("]}", stdout);');
-                    body.push({ head: `${n ? 'else if' : 'if'} (value.tag == ${n})`, body: arm });
+                    body.push({
+                        head: `${n ? 'else if' : 'if'} (value.tag == ${tagValue(id, n)})`,
+                        body: arm,
+                    });
                 });
             });
             body.push(`${name}(${expr});`);

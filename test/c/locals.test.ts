@@ -26,6 +26,10 @@ const bumped =
 // restoration helper, which spells those fields too.
 const fields =
     'fn both(~(read, tag)) ~(read, tag)\n{let read = 1\n let tag = 2\n both(~(read, tag)) := (true, (3, 4))\n (read, tag)}';
+// Cleanup both reads a captured string named `read` and prints that word in a
+// literal. Its lens parameter also has a member named `read`.
+const interpolation =
+    'fn restore(read, ~x) ~{{lens finalFocus <- dup(~x)\nx := finalFocus\n"read ${read}"}}\n{let x = 1\n restore("data", ~x) := true\n x}';
 // A local declared after a call to the function it is named after.
 const shadow =
     'fn inc(n) {n + 1}\nfn twice(n) {let m = inc(n)\n let inc = m + 1\n dup(~inc) + inc}\ntwice(1)';
@@ -54,6 +58,15 @@ it('never rewrites members that share a captured name', () => {
     expect(compile(fields).code).not.toMatch(/\.ctx->|->ctx->/);
 });
 
+it('rewrites captured interpolation reads while preserving members and literals', () => {
+    const { code } = compile(interpolation);
+    expect(code).toContain('builder_string(&');
+    expect(code).toContain('String read_2 = ctx->read;');
+    expect(code).toMatch(/builder_string\(&v\d+, read_2\);/);
+    expect(code).toContain('"read "');
+    expect(code).not.toMatch(/\.ctx->|->ctx->/);
+});
+
 it('keeps locals from shadowing the functions a body calls', () => {
     const code = body(compile(shadow).code, 'twice');
     expect(code).toMatch(/\binc\([^;]*, n\)/);
@@ -66,6 +79,7 @@ for (const [name, source] of [
     ['unchanged scattered lens', unchanged],
     ['partially updated scattered lens', bumped],
     ['captured names that match C fields', fields],
+    ['captured string interpolation', interpolation],
     ['locals named after called functions', shadow],
 ] as const)
     execute(

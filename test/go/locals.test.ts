@@ -176,3 +176,20 @@ for (const [name, source, expected] of cases)
         },
         60000,
     );
+
+it('rewrites references inside compound expressions without rewriting literal syntax', () => {
+    const l = new GoLocals();
+    const read = l.reference('read');
+    const value = l.template`use(${l.binary('+', read, l.scalar('1.0', 1))}, ${l.literal('value.read')}, "read")`;
+    const rewritten = l.rewriteReferences(value, new Map([[read, l.literal('ctx.read')]]));
+    expect(String(rewritten)).toBe('use((ctx.read + 1.0), value.read, "read")');
+});
+
+it('rejects rewriting a captured reference hidden in opaque code', () => {
+    const l = new GoLocals();
+    const x = l.reference('x');
+    const opaque = l.derive(`consume(${x})`, x);
+    expect(() => l.rewriteReferences(opaque, new Map([[x, l.literal('ctx.x')]]))).toThrow(
+        'Cannot rewrite references in opaque code',
+    );
+});

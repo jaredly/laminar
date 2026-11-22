@@ -69,3 +69,19 @@ export function layoutNames(
     );
     return { names, abis };
 }
+
+/** Constructor constants share the package namespace with types and functions. */
+export function unionTagNames(
+    program: ConcreteProgram,
+    names: ReadonlyMap<string, string>,
+    allocator: NameAllocator,
+) {
+    return new Map(
+        program.layouts
+            .filter((l) => l.kind === 'union')
+            .map((l) => [
+                l.id,
+                l.fields.map((f) => allocator.source(`${names.get(l.id)}_${f.name}`)),
+            ]),
+    );
+}
