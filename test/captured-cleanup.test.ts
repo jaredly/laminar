@@ -96,7 +96,7 @@ it('prints the complete captured callable environment lifecycle', () => {
           Environment_double_8f01c970ea * v2 = allocate_context(sizeof *v2);
           v2->capture0 = 2;
           Callable_Value_d6f73c1cde cleanup_2 = (Callable_Value_d6f73c1cde){.environment=v2, .dispose=dispose0};
-          return cleanup((cleanup_2).environment);
+          return cleanup(cleanup_2.environment);
       }
       Unit dispose0(void *environment) {
           Environment_double_8f01c970ea *captured = environment;
@@ -157,5 +157,5 @@ for (const sample of indirectCallSamples)
         const source = emitC(c);
         // Calls through first-class values use their type record's typed entry;
         // direct calls of known code may name the code symbol.
-        expect(source).toMatch(/\.invoke\d+\(\([A-Za-z_]\w*\)\.environment/);
+        expect(source).toMatch(/\.invoke\d+\([A-Za-z_]\w*\.environment/);
     });

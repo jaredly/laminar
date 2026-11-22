@@ -54,7 +54,7 @@ it('tests a Bool once', () => {
 
 it('switches over a complete set of constructors, and only then drops the trap', () => {
     const done = body(compile(complete), 't');
-    expect(done).toMatch(/switch \(\(o\)\.tag\)/);
+    expect(done).toMatch(/switch \(o\.tag\)/);
     expect(done).toMatch(/case \w+_Some:/);
     expect(done).toMatch(/case \w+_None:/);
     expect(done).not.toMatch(/abort|default:/);
@@ -81,7 +81,7 @@ it('passes NULL when the callee has no captures, and its environment when it doe
     expect(compile(direct)).toMatch(/\binc\(NULL, 1\)/);
     expect(compile(direct)).not.toMatch(/Callable_\w+\)\{0\}\)\.environment/);
     // A captured closure is called through its record's own environment.
-    expect(compile(captured)).toMatch(/\.invoke\d+\(\([^)]*\)\.environment, 2\)/);
+    expect(compile(captured)).toMatch(/\w+\.invoke\d+\(\w+\.environment, 2\)/);
 });
 
 for (const [name, source] of [

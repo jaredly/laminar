@@ -77,7 +77,7 @@ it('lowers boxed recursive variants to tagged C with owned drops and deep copies
         /struct List_Number \{ uint32_t tag; union \{ Unit v0; Tuple_Number_List_Number \*v1; \} as; \};/,
     );
     expect(c).toMatch(/List_Number dup_List_Number\(List_Number value\);/);
-    expect(c).toMatch(/drop_List_Number\(\(result0\)\.item1\);/);
+    expect(c).toMatch(/drop_List_Number\(result0\.item1\);/);
     expect(c).toContain('release_context(value.as.v1);');
     const go = emitGo(concrete);
     expect(go).toMatch(/tag uint32\n\tv0 Unit\n\tv1 \*Tuple_Number_List_Number/);

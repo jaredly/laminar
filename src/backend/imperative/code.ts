@@ -13,6 +13,12 @@ export type Node =
           kind: 'compose';
           parts: Node[];
           emit: (parts: string[]) => string;
+          /** How tightly the composed spelling binds; see `precedence`. Absent: unknown. */
+          prec?: number;
+          /** Per part, the loosest binding it may have unparenthesized. A looser part is
+           * wrapped in parentheses when spelled, including after a pass has put a different
+           * expression in its place. Absent: the template spells its own parentheses. */
+          operands?: number[];
           /** A `return` of its single part. */
           returns?: boolean;
           /** Its parts build an aggregate from these values. */
@@ -43,6 +49,37 @@ export type Expr = string | Code;
 
 export const isExpr = (value: unknown): value is Expr =>
     typeof value === 'string' || value instanceof Code;
+
+/**
+ * How tightly an expression's spelling binds. 0 is a primary expression (a name, a
+ * member access, a call, a binary spelled with its own parentheses); 1 is unary; larger
+ * values bind more loosely. A spelling nothing declared is the loosest, so it is
+ * parenthesized wherever binding matters.
+ */
+export const LOOSEST = 99;
+/** The operators lowering builds: multiplicative, additive, then every comparison as one class. */
+export const binaryRank = (op: string): number =>
+    op === '*' || op === '/' ? 2 : op === '+' || op === '-' ? 3 : 4;
+export const precedence = (n: Node): number =>
+    n.kind === 'ref'
+        ? 0
+        : n.kind === 'binary'
+          ? binaryRank(n.op)
+          : n.kind === 'scalar'
+            ? typeof n.value === 'number' && n.value < 0
+                ? 1
+                : 0
+            : n.kind === 'compose'
+              ? (n.prec ?? LOOSEST)
+              : n.kind === 'opaque' && /^[A-Za-z_]\w*$/.test(n.text)
+                ? 0
+                : LOOSEST;
+export const precedenceOf = (e: Expr): number =>
+    typeof e === 'string' ? (/^[A-Za-z_]\w*$/.test(e) ? 0 : LOOSEST) : precedence(e.node);
+
+/** `base.member` for code with no function body to track it in. */
+export const memberText = (base: Expr, op: '.' | '->', member: string): string =>
+    `${precedenceOf(base) > 0 ? `(${base})` : base}${op}${member}`;
 
 export const children = (n: Node): Node[] =>
     n.kind === 'compose' ? n.parts : n.kind === 'binary' ? [n.left, n.right] : [];

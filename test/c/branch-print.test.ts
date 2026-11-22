@@ -67,9 +67,9 @@ int main(void) {
     Tuple_Bool_Number result0 = entry(NULL);
     (void)result0;
     putchar(91);
-    fputs((result0).item0 ? "true" : "false", stdout);
+    fputs(result0.item0 ? "true" : "false", stdout);
     putchar(44);
-    print_number((result0).item1);
+    print_number(result0.item1);
     putchar(93);
     putchar(10);
     if (live_contexts != 0) {

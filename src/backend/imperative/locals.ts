@@ -1,4 +1,13 @@
-import { Code, children, isExpr, refs, type Expr, type Node } from './code.ts';
+import {
+    Code,
+    binaryRank,
+    children,
+    isExpr,
+    precedence,
+    refs,
+    type Expr,
+    type Node,
+} from './code.ts';
 import {
     bodies,
     expressions,
@@ -17,6 +26,7 @@ type Recipe = Node;
 /** A target's spelling of the expressions this pass synthesizes. */
 export type Syntax = {
     scalar: (value: number | boolean) => string;
+    /** `left op right`, unparenthesized: `Locals` parenthesizes operands where binding needs it. */
     binary: (op: string, left: string, right: string) => string;
     /** A return statement; `return value` when absent. */
     returns?: (value: string) => string;
@@ -80,8 +90,30 @@ export class Locals {
               : node.kind === 'scalar'
                 ? this.syntax.scalar(node.value)
                 : node.kind === 'binary'
-                  ? this.syntax.binary(node.op, this.spelling(node.left), this.spelling(node.right))
-                  : node.emit(node.parts.map((part) => this.spelling(part)));
+                  ? this.syntax.binary(
+                        node.op,
+                        this.operand(node.left, node.op, 'left'),
+                        this.operand(node.right, node.op, 'right'),
+                    )
+                  : node.emit(
+                        node.parts.map((part, n) => {
+                            const text = this.spelling(part);
+                            const max = node.operands?.[n];
+                            return max !== undefined && precedence(part) > max ? `(${text})` : text;
+                        }),
+                    );
+    }
+    /**
+     * An operand of a binary, parenthesized only when it binds more loosely. A right
+     * operand of the same rank keeps its parentheses, so evaluation order (and floating
+     * point rounding) is never regrouped. Comparisons never nest unparenthesized.
+     */
+    private operand(node: Node, op: string, side: 'left' | 'right'): string {
+        const rank = binaryRank(op);
+        const own = precedence(node);
+        const wrap = rank === 4 ? own >= rank : side === 'left' ? own > rank : own >= rank;
+        const text = this.spelling(node);
+        return wrap ? `(${text})` : text;
     }
     private recipe(value: unknown): Recipe {
         if (value instanceof Code) return value.node;
@@ -114,12 +146,37 @@ export class Locals {
     scalar(text: string, value: number | boolean): Expr {
         return this.code({ kind: 'scalar', value }, text);
     }
+    /** `base.member` or `base->member`: a primary expression. The base is parenthesized
+     * only when it binds more loosely than a member access. */
+    access(base: Expr, op: '.' | '->', member: Expr): Expr {
+        const node: Node = {
+            kind: 'compose',
+            parts: [this.recipe(base), this.recipe(member)],
+            emit: ([b, m]) => `${b}${op}${m}`,
+            operands: [0],
+            prec: 0,
+        };
+        return this.code(node, this.spelling(node));
+    }
+    /** `*operand`: a unary expression. */
+    deref(operand: Expr): Expr {
+        const node: Node = {
+            kind: 'compose',
+            parts: [this.recipe(operand)],
+            emit: ([o]) => `*${o}`,
+            operands: [1],
+            prec: 1,
+        };
+        return this.code(node, this.spelling(node));
+    }
     binary(op: string, left: Expr, right: Expr): Expr {
-        const text = this.syntax.binary(op, String(left), String(right));
-        return this.code(
-            { kind: 'binary', op, left: this.recipe(left), right: this.recipe(right) },
-            text,
-        );
+        const node: Node = {
+            kind: 'binary',
+            op,
+            left: this.recipe(left),
+            right: this.recipe(right),
+        };
+        return this.code(node, this.spelling(node));
     }
     aggregate(value: Expr, items: Expr[]): Expr {
         const r = this.recipe(value);

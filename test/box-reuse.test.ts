@@ -67,15 +67,15 @@ it('a same-layout borrowed update projects its fields into the box', () => {
     // No payload copy and no backing for the tail: it is lent by address.
     expect(c).not.toContain('Backing');
     expect(c).toMatch(/\.read=&\(\*v\d+\)\.item1/);
-    expect(c).toMatch(/\(\*v\d+\)\.item0 = \(h \+ 1\)/);
+    expect(c).toMatch(/\(\*v\d+\)\.item0 = h \+ 1;/);
     // The write happens where the source writes it: before the recursive call.
-    expect(c.indexOf('.item0 = (h + 1)')).toBeLessThan(c.indexOf('= bump('));
+    expect(c.indexOf('.item0 = h + 1')).toBeLessThan(c.indexOf('= bump('));
     const go = emitGo(concrete);
     const body = go.slice(go.indexOf('func bump('), go.indexOf('\n}\n', go.indexOf('func bump(')));
     expect(body).not.toContain('Backing');
     expect(body).toMatch(/read: &\(\*v\d+\)\.item1/);
-    expect(body).toMatch(/\(\*v\d+\)\.item0 = \(h \+ 1\.0\)/);
-    expect(body.indexOf('.item0 = (h + 1.0)')).toBeLessThan(body.indexOf('\tbump('));
+    expect(body).toMatch(/\(\*v\d+\)\.item0 = h \+ 1\.0/);
+    expect(body.indexOf('.item0 = h + 1.0')).toBeLessThan(body.indexOf('\tbump('));
 });
 
 it('the verifier rejects an in-place mark without box reuse', () => {

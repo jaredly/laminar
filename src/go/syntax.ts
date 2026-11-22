@@ -26,7 +26,7 @@ const scalar = (v: number | boolean): string =>
                   : `${v}.0`;
 export const goSyntax: Syntax = {
     scalar,
-    binary: (op, left, right) => `(${left} ${op} ${right})`,
+    binary: (op, left, right) => `${left} ${op} ${right}`,
 };
 
 export type GoFunction = {

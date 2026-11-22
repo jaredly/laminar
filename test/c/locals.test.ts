@@ -43,15 +43,15 @@ it('names locals after their source bindings and suppresses only unread ones', (
 
 it('omits writes that restore a lens to its own live contents', () => {
     const peek = body(compile(unchanged).code, 'peek');
-    expect(peek).not.toMatch(/^\s*\*\(\(x_y\)\.item0\)\.read = /m);
-    expect(peek).not.toMatch(/^\s*\*\(\(x_y\)\.item1\)\.read = /m);
+    expect(peek).not.toMatch(/^\s*\*x_y\.item0\.read = /m);
+    expect(peek).not.toMatch(/^\s*\*x_y\.item1\.read = /m);
     const bump = body(compile(bumped).code, 'bump');
     // The updated endpoint is written; its unchanged sibling is not.
-    expect(bump).toMatch(/^\s*\*\(\(x_y\)\.item0\)\.read = /m);
-    expect(bump).not.toMatch(/^\s*\*\(\(x_y\)\.item1\)\.read = /m);
+    expect(bump).toMatch(/^\s*\*x_y\.item0\.read = /m);
+    expect(bump).not.toMatch(/^\s*\*x_y\.item1\.read = /m);
     // A swap writes both endpoints from snapshots.
     const swap = body(compile(swapped).code, 'swap');
-    expect(swap.match(/^\s*\*\(\(x_y\)\.item\d\)\.read = /gm)?.length).toBe(2);
+    expect(swap.match(/^\s*\*x_y\.item\d\.read = /gm)?.length).toBe(2);
 });
 
 it('never rewrites members that share a captured name', () => {

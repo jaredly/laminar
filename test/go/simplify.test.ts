@@ -57,7 +57,7 @@ it('inlines pure expressions over stable values without moving their loads', () 
         'effect()',
         l.template`use(${sum})`,
     ];
-    expect(print(l, body)).toBe('snapshot := read()\neffect()\nuse((snapshot + 1.0))');
+    expect(print(l, body)).toBe('snapshot := read()\neffect()\nuse(snapshot + 1.0)');
 });
 it('does not move pure computations across changes to their inputs', () => {
     const l = new GoLocals();
@@ -70,7 +70,7 @@ it('does not move pure computations across changes to their inputs', () => {
         l.assign(x, 'next()'),
         l.template`use(${sum})`,
     ];
-    expect(print(l, body)).toContain('sum := (x + 1.0)\nx = next()\nuse(sum)');
+    expect(print(l, body)).toContain('sum := x + 1.0\nx = next()\nuse(sum)');
 });
 it('forwards an immediately consumed call result without crossing effects', () => {
     const l = new GoLocals();
@@ -96,7 +96,7 @@ it('keeps calls before intervening cleanup rather than moving them into return',
 });
 it('emits direct parameter references and mixed runtime arithmetic', () => {
     const code = emit('fn inc(x) {let y = x + 1\n y}\ninc(3)');
-    expect(code).toContain('return (x + 1.0)');
+    expect(code).toContain('return x + 1.0');
     expect(code).not.toContain('y :=');
     expect(code).not.toContain('x_2 :=');
     expect(code).not.toMatch(/v\d+ := 1\.0/);

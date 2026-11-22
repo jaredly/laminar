@@ -6,7 +6,7 @@ import { verifyConcreteProgram } from '../verify-concrete.ts';
 import { BackendDiagnostic } from '../backend/target.ts';
 import { cSyntax, identifier, type Statement, type TranslationUnit } from './syntax.ts';
 import { Locals } from '../backend/imperative/locals.ts';
-import { isExpr, same, type Expr } from '../backend/imperative/code.ts';
+import { isExpr, memberText, precedenceOf, same, type Expr } from '../backend/imperative/code.ts';
 import { isLocal, isScope, mapScope, visit } from '../backend/imperative/statements.ts';
 import { appendFunction, appendPart, cBytes, stringRuntime, stringType } from './strings.ts';
 import { requireImport, usesHost } from '../runtime-imports.ts';
@@ -100,8 +100,17 @@ export function lowerC(
     // Member names are syntax, even when a source local has the same spelling.
     const member = (name: string): Expr =>
         activeLocals ? activeLocals.literal(identifier(name)) : identifier(name);
+    /** `base.name` and `*operand`, parenthesizing only where binding requires it. */
+    const dot = (base: Expr, name: string): Expr =>
+        activeLocals
+            ? activeLocals.access(base, '.', member(name))
+            : memberText(base, '.', identifier(name));
+    const star = (operand: Expr): Expr =>
+        activeLocals
+            ? activeLocals.deref(operand)
+            : `*${precedenceOf(operand) > 1 ? `(${operand})` : operand}`;
     const zero = (id: string): Expr => cc`(${type(id)}){0}`;
-    const field = (expr: Expr, n: number): Expr => cc`(${expr}).item${n}`;
+    const field = (expr: Expr, n: number): Expr => dot(expr, `item${n}`);
     /** Element layout of a vector layout. */
     const element = (id: string): string => {
         const f = layout(id).fields[0];
@@ -160,15 +169,13 @@ export function lowerC(
             f = l.fields.find((f) => f.name === 'read');
         if (f?.kind === 'pointer' && f.layout)
             return storage.own({
-                expression: cc`*(${expression}).read`,
+                expression: star(dot(expression, 'read')),
                 layout: f.layout,
-                address: cc`(${expression}).read`,
+                address: dot(expression, 'read'),
             });
         return l.fields
             .filter((f) => f.name.startsWith('item'))
-            .map((f) =>
-                incoming(cc`(${expression}).${member(f.name)}`, (f as { layout: string }).layout),
-            );
+            .map((f) => incoming(dot(expression, f.name), (f as { layout: string }).layout));
     };
     const flush = (expression: Expr, id: string, data: Data, body: Statement[]) => {
         const l = layout(id),
@@ -181,22 +188,17 @@ export function lowerC(
             if (
                 !Array.isArray(data) &&
                 data.layout === f.layout &&
-                same(data.address, cc`(${expression}).${member(f.name)}`)
+                same(data.address, dot(expression, f.name))
             )
                 return;
-            body.push(cc`*(${expression}).${member(f.name)} = ${read(data, f.layout)};`);
+            body.push(cc`${star(dot(expression, f.name))} = ${read(data, f.layout)};`);
             return;
         }
         const parts = storage.parts(data);
         l.fields
             .filter((f) => f.name.startsWith('item'))
             .forEach((f, i) =>
-                flush(
-                    cc`(${expression}).${member(f.name)}`,
-                    (f as { layout: string }).layout,
-                    parts[i]!,
-                    body,
-                ),
+                flush(dot(expression, f.name), (f as { layout: string }).layout, parts[i]!, body),
             );
     };
     const declarations: (string | Declaration)[] = [
@@ -425,8 +427,9 @@ export function lowerC(
         return n < 0 ? unsupported(cText`Constructor ${name} is absent from its union layout`) : n;
     };
     /** Payload of variant `n`, read through its box when the variant is boxed. */
+    const variantField = (expr: Expr, n: number): Expr => dot(dot(expr, 'as'), `v${n}`);
     const payload = (expr: Expr, id: string, n: number): Expr =>
-        variant(id, n).boxed ? cc`(*(${expr}).as.v${n})` : cc`(${expr}).as.v${n}`;
+        variant(id, n).boxed ? star(variantField(expr, n)) : variantField(expr, n);
     /** Deep copy for affine `dup`: each boxed payload gets its own allocation. */
     const duplicate = (expr: Expr, id: string): Expr => {
         const l = layout(id);
@@ -509,8 +512,10 @@ export function lowerC(
             body.push(cc`${name}(${data.expression});`);
         } else if (l.fields.some((f) => f.name === 'dispose')) {
             body.push({
-                head: cc`if ((${data.expression}).dispose)`,
-                body: [cc`(${data.expression}).dispose((${data.expression}).environment);`],
+                head: cc`if (${dot(data.expression, 'dispose')})`,
+                body: [
+                    cc`${dot(data.expression, 'dispose')}(${dot(data.expression, 'environment')});`,
+                ],
             });
         } else if (l.kind === 'record') {
             l.fields.forEach((f, i) => {
@@ -679,7 +684,7 @@ export function lowerC(
             if (simple !== undefined) result = simple;
             else if (op === 'size') {
                 const vector = endpoint(abi.arguments[0]!, 'read');
-                result = cc`(double)(${read(storage.get(incoming('arg0', abi.arguments[0]!)), vector)}).length`;
+                result = cc`(double)${dot(read(storage.get(incoming('arg0', abi.arguments[0]!)), vector), 'length')}`;
             } else if (op === 'dup')
                 result = duplicate(
                     read(storage.get(incoming('arg0', abi.arguments[0]!)), abi.result),
@@ -929,7 +934,7 @@ export function lowerC(
                         const box = cell(
                             fresh(),
                             `${type(v.layout)} *`,
-                            cc`(${data.expression}).as.v${n}`,
+                            variantField(data.expression, n),
                             body,
                         );
                         retainedBoxes.set(retains, box);
@@ -946,13 +951,13 @@ export function lowerC(
                                 cell(
                                     fresh(),
                                     `${type(v.layout)} *`,
-                                    cc`(${data.expression}).as.v${n}`,
+                                    variantField(data.expression, n),
                                     body,
                                 ),
                             );
                         } else
                             body.push(
-                                cc`${use('release_context')}((${data.expression}).as.v${n});`,
+                                cc`${use('release_context')}(${variantField(data.expression, n)});`,
                             );
                     }
                     if (p.items.length === 1) bind(p.items[0]!, contents, body);
@@ -1156,15 +1161,10 @@ export function lowerC(
                             l.fields.find((f) => f.name === 'replacement') ??
                             l.fields.find((f) => f.name === 'read');
                     if (f?.kind === 'pointer' && f.layout)
-                        return { expression: cc`*(${expr}).${member(f.name)}`, layout: f.layout };
+                        return { expression: star(dot(expr, f.name)), layout: f.layout };
                     return l.fields
                         .filter((f) => f.name.startsWith('item'))
-                        .map((f) =>
-                            outputs(
-                                cc`(${expr}).${member(f.name)}`,
-                                (f as { layout: string }).layout,
-                            ),
-                        );
+                        .map((f) => outputs(dot(expr, f.name), (f as { layout: string }).layout));
                 };
                 return {
                     expression: arg,
@@ -1200,8 +1200,10 @@ export function lowerC(
                         );
                         body.push(
                             {
-                                head: cc`if ((${name}).restore)`,
-                                body: [cc`(${name}).restore((${name}).context, ${replacement});`],
+                                head: cc`if (${dot(name, 'restore')})`,
+                                body: [
+                                    cc`${dot(name, 'restore')}(${dot(name, 'context')}, ${replacement});`,
+                                ],
                             },
                             {
                                 head: 'else',
@@ -1267,7 +1269,7 @@ export function lowerC(
                           );
                 return joinCode(
                     [
-                        cc`(${expr}).tag == ${tagValue(id, n)}`,
+                        cc`${dot(expr, 'tag')} == ${tagValue(id, n)}`,
                         ...items.filter((m) => !same(m, '1')),
                     ],
                     ' && ',
@@ -1335,7 +1337,7 @@ export function lowerC(
                     if (wildcard >= 0) cases.push({ body: arms[count - 1]! });
                     else if (labels.length !== layout(id).fields.length)
                         cases.push({ body: ['abort();'] });
-                    body.push({ kind: 'switch', subject: cc`(${subject}).tag`, cases });
+                    body.push({ kind: 'switch', subject: dot(subject, 'tag'), cases });
                     return;
                 }
                 body.push({
@@ -1875,7 +1877,7 @@ export function lowerC(
                             } else if (w?.kind === 'native' && w.definition === 'native/size') {
                                 const lens = lenses.get(i.args[0]!)!,
                                     vector = endpoint(outputLayouts.get(i.args[0]!)!, 'read');
-                                expr = cc`(double)(${read(storage.get(lens.view), vector)}).length`;
+                                expr = cc`(double)${dot(read(storage.get(lens.view), vector), 'length')}`;
                                 adapters.push({ finish: lens.finish });
                             } else if (w?.kind === 'native' && w.definition === 'native/[]') {
                                 // The element lives in the heap buffer, so writing through its
@@ -1934,13 +1936,13 @@ export function lowerC(
                                         i.field === undefined
                                             ? cc`${wrapperFunction(i.wrapper!)}(${
                                                   takesEnvironment(i.wrapper!)
-                                                      ? cc`(${value(i.callee)}).environment`
+                                                      ? dot(value(i.callee), 'environment')
                                                       : 'NULL'
                                               }${joinCode(
                                                   args.map((a) => cc`, ${a}`),
                                                   '',
                                               )})`
-                                            : cc`(${value(i.callee)}).${member(i.field)}((${value(i.callee)}).environment${joinCode(
+                                            : cc`${dot(value(i.callee), i.field)}(${dot(value(i.callee), 'environment')}${joinCode(
                                                   args.map((a) => cc`, ${a}`),
                                                   '',
                                               )})`;
@@ -2087,7 +2089,10 @@ export function lowerC(
                 const captured = candidates.filter((v) => references.has(v.name));
                 contextFields.unshift(...captured.map((v) => `${v.type} ${v.name};`));
                 const replacements = new Map(
-                    captured.map((v) => [v.name, locals.literal(`ctx->${v.name}`)]),
+                    captured.map((v) => [
+                        v.name,
+                        locals.access('ctx', '->', locals.literal(v.name)),
+                    ]),
                 );
                 const rewrite = (value: Expr) => locals.rewriteReferences(value, replacements);
                 const rewriteBody = (body: Statement[]): Statement[] =>

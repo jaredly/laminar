@@ -49,7 +49,7 @@ it('keeps a whole tuple in its existing backing after a call', () => {
 it('keeps separate typed backing for a type-changing call', () => {
     const entry = body(compile('fn change(~x) {x := true}\n{let x = 1\n change(~x)\n x}'), 'entry');
     expect(entry).toContain('.replacement=&back0.write0');
-    expect(entry).toContain('return *(v5).replacement;');
+    expect(entry).toContain('return *v5.replacement;');
 });
 
 it('keeps heap staging for a lens that escapes', () => {

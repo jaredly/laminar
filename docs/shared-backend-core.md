@@ -542,6 +542,55 @@ natively (reordered endpoints, snapshots before reuse, moved owners, branch join
 partial projections, type changes, returned-lens restoration, cleanup order, indirect
 calls).
 
+### Follow-up: precedence-aware expression spelling
+
+Readability item 12 asked for "precedence-aware printing" and was never done: both
+targets printed `((state).item0).read` and `((a + b) / 2)`. Expression trees make it
+cheap and, more importantly, safe, because the parentheses an expression needs depend
+on what a pass later puts inside it.
+
+- `src/backend/imperative/code.ts` defines `precedence`: 0 is a primary expression
+  (a name, a member access), 1 is unary, then multiplicative, additive and a single
+  comparison class, with anything undeclared the loosest. A `compose` node may declare
+  its own `prec` and, per part, the loosest binding that part may have unparenthesized
+  (`operands`).
+- `Locals.spelling`, the single place every expression is rendered, wraps an operand
+  in parentheses exactly when it binds more loosely than its slot allows. It runs
+  after copy substitution and constant folding, so an expression a pass inlines into
+  `t.f` becomes `(a + b).f` without the lowering having anticipated it.
+- `Locals.access(base, '.'|'->', member)` and `Locals.deref(operand)` build member
+  access and dereference nodes with those rules. Both lowerers route every
+  member/deref site through `dot` and `star` (25 sites each); code outside a function
+  body uses `memberText`.
+- `Syntax.binary` now returns `left op right` unparenthesized, and `Locals` decides.
+  A right operand of the same rank keeps its parentheses, so `a - (b - c)` is never
+  regrouped and floating point rounding is unchanged. A comparison never nests
+  unparenthesized in another comparison, because C and Go group them differently.
+- Text a pass or lowering built outside these constructors is the loosest, so it is
+  parenthesized around a member access rather than guessed at. The restoration helper
+  that rewrites frame locals to context members now builds `ctx->name` as a member
+  access instead of literal text, so it keeps its precedence.
+
+Result: C's `(direction).tag` is `direction.tag`, `*((state).item0).read` is
+`*state.item0.read`, `switch ((o).tag)` is `switch (o.tag)`, and
+`v1 = ((max + lastGuess) / 2);` is `v1 = (max + lastGuess) / 2;`. Go reads the
+same way. An unparenthesized dereference is never the base of a member access
+(`(*v1).item0`).
+
+Safety audit: the only templates that put an interpolated value beside an operator
+are comparisons against a literal or tag, address-of, and casts, and each either has
+explicit parentheses or takes a member access. Anything inlined into a template that
+spells no parentheses of its own would have to be an arithmetic result, and the
+templates that receive those (calls, assignments, returns, conditions) are all
+contexts that accept a loose expression.
+
+Validation: `test/backend-precedence.test.ts` covers access, dereference, rank,
+same-rank regrouping, nested comparisons, unknown text, both syntaxes, and the case
+that matters: an expression inlined into a member access or an operand. Existing
+text assertions that spelled the old parentheses were updated one by one. Native C
+and Go corpora pass (execution is the check that no parenthesis was dropped wrongly).
+Go output is no longer byte-identical to earlier slices, by design.
+
 ### Step 5: unify the per-instruction lowering
 
 Merge the two per-op lowerers behind the capability interface. Decide after

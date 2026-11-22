@@ -33,7 +33,7 @@ export const cScalar = (v: number | boolean): string =>
                   : `${v}.0`;
 export const cSyntax: Syntax = {
     scalar: cScalar,
-    binary: (op, left, right) => `(${left} ${op} ${right})`,
+    binary: (op, left, right) => `${left} ${op} ${right}`,
     returns: (value) => `return ${value};`,
     statement: (value) => `${value};`,
 };
