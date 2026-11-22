@@ -23,6 +23,27 @@ user-visible `lens x <- ...` temporaries, where restoration really is arbitrary.
 
 The source language and the checker do not change.
 
+## Scope: every borrowed pattern
+
+`aslens` has two producers. User-written `lens pat <- value; body`
+(`src/laminar.cst`) is the real feature: an arbitrary put-back body, which `aslens`
+fits. The other is `src/normalize-borrowed.ts`, which expands every borrowed pattern
+the same way, through three entry points:
+
+- `match ~x { ... }` (a `case` over a lens value). It wraps every arm's pattern,
+  constructor or not, so borrowed tuple matches such as `match ~pair {(h, rest) -> ...}`
+  go through it too.
+- `let <pattern> = ~x` when the pattern contains a constructor.
+- a lens-typed function parameter whose pattern contains a constructor.
+
+All three are projections and all three move to `focus`, for tuple patterns as well
+as constructor patterns (`fst` is already a native projection). The rest of the
+typed IR only consumes `aslens` (traversals in `captures.ts`, `decompose.ts`,
+`lens-specialization.ts`, the verifiers and the evaluator). I did not audit the legacy
+flow front end (`flowparse.ts`, `flowtots.ts`).
+
+After the migration `aslens` is produced only by user `lens` temporaries.
+
 ## Mental model
 
 The owner is *inaccessible* while a borrow is live. The checker already enforces
@@ -103,7 +124,7 @@ constructor from the shape of the pattern alone. Then:
 
 ### Typed IR: `focus`
 
-A borrowed case focuses an owner lens on one constructor per arm:
+A borrowed case focuses an owner lens on one constructor (or tuple) per arm:
 
 ```
 case-focus %owner {
@@ -116,7 +137,8 @@ Name and syntax are tentative. The scrutinee is the owner's lens (an `acquire`),
 not a moved-out value.
 
 **Typing.**
-- The owner lens has read type `R` and write type `W`.
+- The owner lens has read type `R` and write type `W`. A tuple pattern is the same
+  rule with a single implicit constructor.
 - Arm `C(p1..pn)` requires `R` to have constructor `C` with argument types `A1..An`.
   Field `i` is bound as a lens with read type `Ai` and a write type `Bi` that the
   body fixes by assigning through the lens (`Bi = Ai` if never reassigned to another
@@ -134,9 +156,8 @@ field places contain. There is no reconstruction step to execute or verify.
 
 ### What is removed
 
-- The `match ~x` expansion in `normalize-borrowed.ts` for constructor patterns. It
-  shrinks to producing the focus form (the existing `let` and function-parameter
-  cases still need handling).
+- The expansion in `normalize-borrowed.ts` for all three entry points (`match`,
+  `let`, lens-typed parameter). The normalizer shrinks to producing the focus form.
 - `reconstructionOwner`, `reconstructionId` and `reconstructionPattern` across
   `ast.ts`, `infer.ts`, `lower-typed.ts`, `elaborated.ts`, `verify-elaboration.ts`
   and `verify-ir.ts`, and the large reconstruction check in `verify-ir.ts`.
@@ -183,13 +204,14 @@ lens-valued focus must always use `rebuild`, is unresolved. The first version us
 ## Migration
 
 1. Add `focus` to the typed IR, with reference semantics and verification, and use it
-   only for single-level constructor patterns in plain-valued cases. Everything else
-   keeps the `aslens` expansion. Both forms must pass the same corpus.
+   only for single-level constructor patterns in plain-valued `match` cases.
+   Everything else keeps the `aslens` expansion. Both forms must pass the same corpus.
 2. Add the inference shape and the concrete `focus` with `rebuild` lowering only.
    This should reproduce today's behavior and gives a baseline.
 3. Add `in-place` lowering in C, then Go. This is where `bump` loses its copy.
-4. Extend to nested patterns, `let` and parameter patterns, then lens-valued cases.
-5. When nothing emits the old expansion for constructor patterns, delete the
+4. Extend to tuple patterns, nested patterns, the `let` and lens-typed parameter
+   entry points, then lens-valued cases.
+5. When nothing emits the old expansion for borrowed patterns, delete the
    reconstruction machinery listed above and the `retains`/`reuses` contract.
 
 Step 5 deletes box reuse as it exists today, so benchmark before and after (see
