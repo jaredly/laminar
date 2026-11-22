@@ -27,7 +27,7 @@ per-instruction cases and the same `Storage`, `read`, `endpoint`, `incoming` and
 | Semantic type labels (`Tuple_Number_Number`, `Lens_…`, tags) | `go/types.ts` | Neutral except scalar spellings |
 | Terminal join write-back | `go/writeback.ts` | Neutral; the parallel-assignment hook is target-specific |
 | Copy propagation, folding, declaration placement | `go/locals.ts` (`GoLocals`) | Algorithm neutral, but it tracks recipes by *printed Go text* and prints Go literals itself |
-| Package reachability | `go/reachable.ts` | Lexes printed Go source |
+| Package reachability | `backend/reachable.ts`, `go/reachable.ts` | Shared layout/ABI graph; Go still lexes functions and imports |
 | Demand-driven materialization, partial aggregates, backing reuse, match simplification, direct-call signatures | interleaved in `go/lower.ts` | Mostly neutral decisions, mixed into Go string building |
 
 Separately, `src/zig/ast.ts` already uses the intended architecture: a small
@@ -191,10 +191,10 @@ Implementation:
 
 Go output is byte-identical to step 2 across all 769 corpus and sample programs.
 
-Not done: structural reachability. `go/reachable.ts` still lexes package-level
-text. Making it structural requires each package declaration to record what it
-references. That is its own slice, and C (which has no pruning yet) should
-adopt it at the same time.
+At this stage, `go/reachable.ts` still lexed all package-level text. The
+structural-declaration follow-up below now shares layout/ABI edges with C.
+Function bodies and imports still need explicit dependencies before reachability
+is fully structural.
 
 ### Step 4: port C onto the tree
 
@@ -347,9 +347,45 @@ The full native corpus passes all 1,549 tests, including execution at sanitized
 `-O0` and optimized `-O2`. This also completes the full native validation of the
 preceding constructor-tag slice. TypeScript checking passes.
 
-Remaining before broader unification: structural package reachability and explicit
-ownership effects before adopting Go's demand-driven materialization and partial
-aggregates in C.
+### Follow-up: structural declaration reachability
+
+`src/backend/reachable.ts` provides `Declaration` (name, printed text, dependency
+names and an optional initializer-effect root), `reachableNames` (an iterative
+walk that handles recursive cycles), and `typeDependencies`. The latter builds
+layout edges from value/pointer fields and callable ABI slots, and ABI edges from
+parameter/result layouts. It never inspects generated text.
+
+Go now attaches explicit metadata to every generated package declaration: layouts,
+ABI types, union constants, backing records and the input-reader variable. Backing
+record dependencies are recorded as their fields are built. The shared graph walk
+replaces Go's private reachability traversal. The Go adapter still lexes function
+signatures/bodies and import uses; raw-string declarations supplied directly to
+`reachableGo` retain their compatibility fallback.
+
+C uses the same layout/ABI graph to omit unreachable typedefs, struct forwards,
+struct definitions and union constants together. Executable lowering records each
+`type(id)` use as a root after the initial declaration-building phase. Every C
+function, runtime helper and auxiliary backing/context declaration is still kept,
+so all of their type uses are roots, including host-export adapters. Roots are
+conservative: constructing an expression or local later removed by simplification
+can still retain its type. Naming still reserves the full program namespace before
+pruning, preserving collision behavior.
+
+For a scalar entry such as `true`, C now emits no layout or ABI declarations.
+Recursive payloads, callable field signatures and exported opaque handles retain
+their transitive declarations. Exact-text C expectations were regenerated.
+Focused tests cover unreachable recursive cycles, opaque pointers, ABI-only
+references, field names that must not create graph edges, and effectful initializer
+roots. Go output is byte-identical across all 768 accepted corpus/sample programs.
+Validation: 156 focused tests pass (136 execution cases skipped by default),
+and the full native corpus passes all 1,549 tests at sanitized `-O0` and optimized
+`-O2`. The additional type-presentation execution cases pass on Go and native C.
+Native and Wasm host-export checks pass; the Wasm check used a writable temporary
+Emscripten cache and omitted the shell's macOS `CPATH`. TypeScript checking passes.
+
+Remaining before broader unification: structural function/runtime/import
+references (and C function/helper pruning), plus explicit ownership effects before
+adopting Go's demand-driven materialization and partial aggregates in C.
 
 ### Step 5: unify the per-instruction lowering
 

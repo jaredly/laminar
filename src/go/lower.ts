@@ -1,3 +1,4 @@
+import { Declaration, typeDependencies } from '../backend/reachable.ts';
 import { unionTagNames } from '../backend/type-names.ts';
 import type { ConcreteProgram, ConcreteBlock } from '../concrete-ir.ts';
 import { Storage, expression as code, type Expression, type Data, type View } from './storage.ts';
@@ -197,14 +198,20 @@ export function lowerGo(program: ConcreteProgram): GoFile {
             );
     };
 
-    const declarations: string[] = [];
+    const declarationTypes = typeDependencies(program, names, abiNames);
+    const declarations: Declaration[] = [];
+    const declarePackage = (
+        name: string,
+        text: string,
+        dependencies = declarationTypes.get(name) ?? [],
+    ) => declarations.push(new Declaration(name, text, dependencies));
     const backingTypes = new Map<string, string>();
     let helperCounter = 0;
 
     // Layout type definitions
     for (const l of program.layouts) {
         if (l.kind === 'unit') {
-            declarations.push(goText`type ${type(l.id)} struct{}`);
+            declarePackage(type(l.id), goText`type ${type(l.id)} struct{}`);
         } else if (l.kind === 'record') {
             const fields = l.fields.map((f) => {
                 if (f.kind === 'value') return go`\t${field(f.name)} ${type(f.layout)}`;
@@ -212,12 +219,19 @@ export function lowerGo(program: ConcreteProgram): GoFile {
                     return go`\t${field(f.name)} ${f.layout ? '*' + type(f.layout) : 'any'}`;
                 return go`\t${field(f.name)} ${abiNames.get(f.abi)}`;
             });
-            declarations.push(goText`type ${type(l.id)} struct {\n${joinCode(fields, '\n')}\n}`);
+            declarePackage(
+                type(l.id),
+                goText`type ${type(l.id)} struct {\n${joinCode(fields, '\n')}\n}`,
+            );
         } else if (l.kind === 'vector') {
-            declarations.push(goText`type ${type(l.id)} []${type(element(l.id))}`);
+            declarePackage(type(l.id), goText`type ${type(l.id)} []${type(element(l.id))}`);
         } else if (l.kind === 'union') {
             l.fields.forEach((_, n) =>
-                declarations.push(goText`const ${tagValue(l.id, n)} uint32 = ${n}`),
+                declarePackage(
+                    tagValue(l.id, n),
+                    goText`const ${tagValue(l.id, n)} uint32 = ${n}`,
+                    [],
+                ),
             );
             // Tagged union; boxed variants share immutable payloads under Go's GC.
             const variants = l.fields.map((f, n) =>
@@ -227,7 +241,8 @@ export function lowerGo(program: ConcreteProgram): GoFile {
                       ? go`\tv${n} *${type(f.layout)}`
                       : unsupported('Union variant requires data storage'),
             );
-            declarations.push(
+            declarePackage(
+                type(l.id),
                 goText`type ${type(l.id)} struct {\n\ttag uint32\n${joinCode(variants, '\n')}\n}`,
             );
         }
@@ -239,7 +254,8 @@ export function lowerGo(program: ConcreteProgram): GoFile {
             a.arguments.map((id, i) => go`arg${i} ${type(id)}`),
             ', ',
         );
-        declarations.push(
+        declarePackage(
+            abiNames.get(a.id)!,
             goText`type ${abiNames.get(a.id)} func(environment any${String(args) ? goText`, ${args}` : ''}) ${type(a.result)}`,
         );
     }
@@ -451,7 +467,7 @@ export function lowerGo(program: ConcreteProgram): GoFile {
                     ...fn,
                     signature: fn.signature.replace(/^func [A-Za-z_]\w*/, `func ${actual}`),
                 });
-                if (declaration) declarations.push(declaration);
+                if (declaration) declarePackage('stdin', declaration, ['bufio']);
             }
             return go`${hostHelpers.get(name)!}(${args[0]})`;
         };
@@ -1039,6 +1055,7 @@ export function lowerGo(program: ConcreteProgram): GoFile {
             const name = locals.reference(goText`back${index}`);
             locals.mutable(name);
             const fields: string[] = [];
+            const fieldTypes: string[] = [];
             const init: Statement[] = [];
             const live = new Map<string, Data>();
 
@@ -1072,11 +1089,13 @@ export function lowerGo(program: ConcreteProgram): GoFile {
                                 ? output.layout
                                 : input.layout,
                     });
+                    fieldTypes.push(type(input.layout));
                     fields.push(goText`${field(r)} ${type(input.layout)}`);
                     const initial = read(d, input.layout);
                     if (!same(initial, zero(input.layout)))
                         init.push(go`${name}.${field(r)} = ${initial}`);
                     if (output?.kind === 'pointer' && output.layout) {
+                        fieldTypes.push(type(output.layout));
                         fields.push(goText`${field(w)} ${type(output.layout)}`);
                         // Every adapter creates (or resets) its backing before
                         // filling the read fields. Replacement fields start zero.
@@ -1106,11 +1125,13 @@ export function lowerGo(program: ConcreteProgram): GoFile {
                     .slice(0, 50);
                 backingType = packageNames.unique(`Backing_${label}_${fingerprint(backingKey)}`);
                 backingTypes.set(backingKey, backingType);
-                declarations.push(
+                declarePackage(
+                    backingType,
                     goText`type ${backingType} struct {\n${joinCode(
                         fields.map((f) => go`\t${f}`),
                         '\n',
                     )}\n}`,
+                    fieldTypes,
                 );
             }
             body.push(

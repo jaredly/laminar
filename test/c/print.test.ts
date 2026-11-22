@@ -23,7 +23,6 @@ it('prints complete tuple C', () => {
 #include <stdbool.h>
 typedef struct Unit Unit;
 typedef struct Tuple_Number_Bool_Unit Tuple_Number_Bool_Unit;
-typedef Tuple_Number_Bool_Unit (*Func_to_Tuple_Number_Bool_Unit_8fef721c6a)(void *);
 struct Unit { unsigned char inhabitant; };
 struct Tuple_Number_Bool_Unit { double item0; bool item1; Unit item2; };
 static size_t live_contexts = 0;
@@ -91,18 +90,11 @@ it('prints complete thin-update C', () => {
 #include <stdint.h>
 #include <stdbool.h>
 typedef struct Unit Unit;
-typedef struct Environment_Empty_6db1d02aec Environment_Empty_6db1d02aec;
-typedef struct Lens_Unit_to_double Lens_Unit_to_double;
 typedef struct Lens_double Lens_double;
 typedef struct Callable_Value_d6f73c1cde Callable_Value_d6f73c1cde;
 typedef Unit (*Func_double_to_Unit_47414720dc)(void *, double);
-typedef double (*Func_double_double_to_double_54ec76ea76)(void *, double, double);
 typedef Unit (*Func_to_Unit_b3b0e12625)(void *);
-typedef double (*Func_to_double_f62d6b85c2)(void *);
-typedef Unit (*Func_Lens_double_to_Unit_fe77974aa6)(void *, Lens_double);
 struct Unit { unsigned char inhabitant; };
-struct Environment_Empty_6db1d02aec { unsigned char inhabitant; };
-struct Lens_Unit_to_double { Unit *read; double *replacement; Func_double_to_Unit_47414720dc restore; void *context; };
 struct Lens_double { double *read; Func_double_to_Unit_47414720dc restore; void *context; };
 struct Callable_Value_d6f73c1cde { void *environment; Func_to_Unit_b3b0e12625 dispose; };
 static size_t live_contexts = 0;
@@ -181,21 +173,14 @@ typedef struct Lens_double Lens_double;
 typedef struct Scattered_Lens_double_Lens_double Scattered_Lens_double_Lens_double;
 typedef struct Unit Unit;
 typedef struct Tuple_Number_Number Tuple_Number_Number;
-typedef struct Environment_Empty_6db1d02aec Environment_Empty_6db1d02aec;
-typedef struct Lens_Unit_to_double Lens_Unit_to_double;
 typedef struct Callable_Value_d6f73c1cde Callable_Value_d6f73c1cde;
 typedef Unit (*Func_double_to_Unit_47414720dc)(void *, double);
-typedef double (*Func_double_double_to_double_54ec76ea76)(void *, double, double);
-typedef Tuple_Number_Number (*Func_to_Tuple_Number_Number_74ef73ee5c)(void *);
 typedef Unit (*Func_Tuple_Number_Number_to_Unit_83f1272d34)(void *, Tuple_Number_Number);
 typedef Unit (*Func_to_Unit_b3b0e12625)(void *);
-typedef Unit (*Func_Scattered_Lens_double_Lens_double_to_Unit_db8a09e788)(void *, Scattered_Lens_double_Lens_double);
 struct Lens_double { double *read; Func_double_to_Unit_47414720dc restore; void *context; };
 struct Scattered_Lens_double_Lens_double { Lens_double item0; Lens_double item1; Func_Tuple_Number_Number_to_Unit_83f1272d34 restore; void *context; };
 struct Unit { unsigned char inhabitant; };
 struct Tuple_Number_Number { double item0; double item1; };
-struct Environment_Empty_6db1d02aec { unsigned char inhabitant; };
-struct Lens_Unit_to_double { Unit *read; double *replacement; Func_double_to_Unit_47414720dc restore; void *context; };
 struct Callable_Value_d6f73c1cde { void *environment; Func_to_Unit_b3b0e12625 dispose; };
 static size_t live_contexts = 0;
 void *allocate_context(size_t size);
@@ -285,21 +270,17 @@ typedef struct Lens_double_to_Tuple_Number_Number Lens_double_to_Tuple_Number_Nu
 typedef struct Scattered_Lens_double_to_bool_Lens_double_to_Tuple_Number_Number Scattered_Lens_double_to_bool_Lens_double_to_Tuple_Number_Number;
 typedef struct Unit Unit;
 typedef struct Tuple_Number_Number Tuple_Number_Number;
-typedef struct Environment_Empty_6db1d02aec Environment_Empty_6db1d02aec;
 typedef struct Tuple_Bool_Tuple_Number_Number Tuple_Bool_Tuple_Number_Number;
 typedef struct Callable_Value_d6f73c1cde Callable_Value_d6f73c1cde;
 typedef Unit (*Func_Tuple_Bool_Tuple_Number_Number_to_Unit_6e1c83c44a)(void *, Tuple_Bool_Tuple_Number_Number);
 typedef Unit (*Func_Tuple_Number_Number_to_Unit_83f1272d34)(void *, Tuple_Number_Number);
-typedef Tuple_Bool_Tuple_Number_Number (*Func_to_Tuple_Bool_Tuple_Number_Number_a9e303ecad)(void *);
 typedef Unit (*Func_to_Unit_b3b0e12625)(void *);
-typedef Scattered_Lens_double_to_bool_Lens_double_to_Tuple_Number_Number (*Func_Scattered_Lens_double_to_bool_Lens_double_to_Tuple_Number_Number__c978043f0d)(void *, Scattered_Lens_double_to_bool_Lens_double_to_Tuple_Number_Number);
 typedef Unit (*Func_bool_to_Unit_fe0e204ab7)(void *, bool);
 struct Lens_double_to_bool { double *read; bool *replacement; Func_bool_to_Unit_fe0e204ab7 restore; void *context; };
 struct Lens_double_to_Tuple_Number_Number { double *read; Tuple_Number_Number *replacement; Func_Tuple_Number_Number_to_Unit_83f1272d34 restore; void *context; };
 struct Scattered_Lens_double_to_bool_Lens_double_to_Tuple_Number_Number { Lens_double_to_bool item0; Lens_double_to_Tuple_Number_Number item1; Func_Tuple_Bool_Tuple_Number_Number_to_Unit_6e1c83c44a restore; void *context; };
 struct Unit { unsigned char inhabitant; };
 struct Tuple_Number_Number { double item0; double item1; };
-struct Environment_Empty_6db1d02aec { unsigned char inhabitant; };
 struct Tuple_Bool_Tuple_Number_Number { bool item0; Tuple_Number_Number item1; };
 struct Callable_Value_d6f73c1cde { void *environment; Func_to_Unit_b3b0e12625 dispose; };
 static size_t live_contexts = 0;
@@ -423,19 +404,15 @@ it('prints complete user-focus-thin C', () => {
 typedef struct Tuple_Bool_Number Tuple_Bool_Number;
 typedef struct Unit Unit;
 typedef struct Tuple_Number_Number Tuple_Number_Number;
-typedef struct Environment_Empty_6db1d02aec Environment_Empty_6db1d02aec;
 typedef struct Lens_double_to_bool Lens_double_to_bool;
 typedef struct Lens_Tuple_Number_Number_to_Tuple_Bool_Number Lens_Tuple_Number_Number_to_Tuple_Bool_Number;
 typedef struct Callable_Value_d6f73c1cde Callable_Value_d6f73c1cde;
 typedef Unit (*Func_Tuple_Bool_Number_to_Unit_6f13bfd866)(void *, Tuple_Bool_Number);
-typedef Tuple_Bool_Number (*Func_to_Tuple_Bool_Number_a2de97117d)(void *);
 typedef Unit (*Func_to_Unit_b3b0e12625)(void *);
-typedef Lens_double_to_bool (*Func_Lens_Tuple_Number_Number_to_Tuple_Bool_Number_to_Lens_double_to_b_e7b006dbb1)(void *, Lens_Tuple_Number_Number_to_Tuple_Bool_Number);
 typedef Unit (*Func_bool_to_Unit_fe0e204ab7)(void *, bool);
 struct Tuple_Bool_Number { bool item0; double item1; };
 struct Unit { unsigned char inhabitant; };
 struct Tuple_Number_Number { double item0; double item1; };
-struct Environment_Empty_6db1d02aec { unsigned char inhabitant; };
 struct Lens_double_to_bool { double *read; bool *replacement; Func_bool_to_Unit_fe0e204ab7 restore; void *context; };
 struct Lens_Tuple_Number_Number_to_Tuple_Bool_Number { Tuple_Number_Number *read; Tuple_Bool_Number *replacement; Func_Tuple_Bool_Number_to_Unit_6f13bfd866 restore; void *context; };
 struct Callable_Value_d6f73c1cde { void *environment; Func_to_Unit_b3b0e12625 dispose; };
@@ -546,11 +523,7 @@ it('prints complete branch-change C', () => {
 #include <stdint.h>
 #include <stdbool.h>
 typedef struct Unit Unit;
-typedef struct Lens_double_to_bool Lens_double_to_bool;
-typedef bool (*Func_to_bool_c3f24419ed)(void *);
-typedef Unit (*Func_bool_to_Unit_fe0e204ab7)(void *, bool);
 struct Unit { unsigned char inhabitant; };
-struct Lens_double_to_bool { double *read; bool *replacement; Func_bool_to_Unit_fe0e204ab7 restore; void *context; };
 static size_t live_contexts = 0;
 void *allocate_context(size_t size);
 void release_context(void *context);

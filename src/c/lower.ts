@@ -1,3 +1,4 @@
+import { Declaration, reachableNames, typeDependencies } from '../backend/reachable.ts';
 import type { ConcreteProgram, ConcreteBlock } from '../concrete-ir.ts';
 import { Storage, type Data, type View } from './storage.ts';
 import { decodeNumber, type IRPattern, type SlotRef } from '../typed-ir.ts';
@@ -69,7 +70,14 @@ export function lowerC(
     const naming = new Map(
         program.code.map((c) => [c.id, localNames(program, c, new CNames(packageNames.taken))]),
     );
-    const type = (id: string) => names.get(id)!;
+    const declarationTypes = typeDependencies(program, names, abiNames);
+    const typeRoots = new Set<string>();
+    let trackTypeUses = false;
+    const type = (id: string) => {
+        const name = names.get(id)!;
+        if (trackTypeUses) typeRoots.add(name);
+        return name;
+    };
     const layout = (id: string) => layouts.get(id)!;
     // Unit captures carry no information or ownership. Keep the concrete ABI and
     // verifier contract intact; reconstruct these values at the C boundary.
@@ -187,13 +195,21 @@ export function lowerC(
                 ),
             );
     };
-    const declarations = [
+    const declarations: (string | Declaration)[] = [
         '#include <stdio.h>',
         '#include <stdlib.h>',
         '#include <math.h>',
         '#include <stdint.h>',
         '#include <stdbool.h>',
     ];
+    const declareType = (name: string, text: string) =>
+        declarations.push(new Declaration(name, text, declarationTypes.get(name)));
+    const retainedDeclarations = (): string[] => {
+        const live = reachableNames(declarationTypes, typeRoots);
+        return declarations
+            .filter((d) => !(d instanceof Declaration) || live.has(d.name))
+            .map(String);
+    };
     const strings = program.layouts.some((l) => l.kind === 'string');
     const runtime = strings ? stringRuntime() : undefined;
     if (runtime)
@@ -203,16 +219,19 @@ export function lowerC(
             runtime.declarations[1]!,
         );
     for (const l of program.layouts)
-        if (l.kind === 'string') declarations.push(cText`typedef ${stringType} *${type(l.id)};`);
+        if (l.kind === 'string')
+            declareType(type(l.id), cText`typedef ${stringType} *${type(l.id)};`);
         else if (l.kind !== 'f64' && l.kind !== 'bool')
-            declarations.push(cText`typedef struct ${type(l.id)} ${type(l.id)};`);
+            declareType(type(l.id), cText`typedef struct ${type(l.id)} ${type(l.id)};`);
     for (const a of program.abis)
-        declarations.push(
+        declareType(
+            abiNames.get(a.id)!,
             cText`typedef ${type(a.result)} (*${abiNames.get(a.id)})(void *${a.arguments.map((id) => `, ${type(id)}`).join('')});`,
         );
     for (const l of program.layouts)
         if (l.kind === 'union') {
-            declarations.push(
+            declareType(
+                type(l.id),
                 cText`enum { ${l.fields.map((_, n) => `${tagValue(l.id, n)} = ${n}`).join(', ')} };`,
             );
             // Tagged union; boxed variants hold an owned heap payload.
@@ -223,19 +242,25 @@ export function lowerC(
                       ? cc`${type(f.layout)} *v${n};`
                       : unsupported('Union variant requires data storage'),
             );
-            declarations.push(
+            declareType(
+                type(l.id),
                 cText`struct ${type(l.id)} { uint32_t tag; union { ${variants.join(' ')} } as; };`,
             );
         } else if (l.kind === 'vector') {
             // Owned element buffer; the struct itself moves by value.
-            declarations.push(
+            declareType(
+                type(l.id),
                 cText`struct ${type(l.id)} { ${type(element(l.id))} *elements; size_t length; size_t capacity; };`,
             );
         } else if (!['f64', 'bool', 'string'].includes(l.kind)) {
-            declarations.push(
+            declareType(
+                type(l.id),
                 cText`struct ${type(l.id)} { ${l.fields.map((f) => (f.kind === 'value' ? cc`${type(f.layout)} ${member(f.name)};` : f.kind === 'pointer' ? cc`${f.layout ? type(f.layout) : 'void'} *${member(f.name)};` : cc`${abiNames.get(f.abi)} ${member(f.name)};`)).join(' ') || 'unsigned char inhabitant;'} };`,
             );
         }
+    // Everything below is retained executable code or its auxiliary declarations.
+    // Type uses are conservative roots, including declarations later simplified away.
+    trackTypeUses = true;
     const signature = (c: ConcreteProgram['code'][number]) =>
         cText`${type(c.body.layout)} ${codes.get(c.id)}(void *environment${c.parameters.map((p, i) => `, ${type(p.layout)} ${naming.get(c.id)!.parameterNames[i]}`).join('')})`;
     declarations.push(
@@ -1944,7 +1969,7 @@ export function lowerC(
     if (options.exports) {
         const unit = libraryExports(options.exports);
         functions.push(...helpers.slice(emittedHelpers), ...unit.functions);
-        return { declarations, functions, header: unit.header };
+        return { declarations: retainedDeclarations(), functions, header: unit.header };
     }
     const main: Statement[] = [];
     const host = usesHost(imports);
@@ -1962,5 +1987,5 @@ export function lowerC(
     main.push({ head: 'if (live_contexts != 0)', body: ['abort();'] }, 'return 0;');
     functions.push({ signature: 'int main(void)', body: main });
     functions.push(...helpers.slice(emittedHelpers));
-    return { declarations, functions };
+    return { declarations: retainedDeclarations(), functions };
 }

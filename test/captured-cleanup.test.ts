@@ -73,13 +73,10 @@ it('prints the complete captured callable environment lifecycle', () => {
       #include <stdint.h>
       #include <stdbool.h>
       typedef struct Unit Unit;
-      typedef struct Environment_Empty_6db1d02aec Environment_Empty_6db1d02aec;
       typedef struct Environment_double_8f01c970ea Environment_double_8f01c970ea;
       typedef struct Callable_Value_d6f73c1cde Callable_Value_d6f73c1cde;
       typedef Unit (*Func_to_Unit_b3b0e12625)(void *);
-      typedef double (*Func_to_double_f62d6b85c2)(void *);
       struct Unit { unsigned char inhabitant; };
-      struct Environment_Empty_6db1d02aec { unsigned char inhabitant; };
       struct Environment_double_8f01c970ea { double capture0; };
       struct Callable_Value_d6f73c1cde { void *environment; Func_to_Unit_b3b0e12625 dispose; };
       static size_t live_contexts = 0;

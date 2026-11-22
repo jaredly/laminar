@@ -1,3 +1,4 @@
+import type { Declaration } from '../backend/reachable.ts';
 /** Go spelling of the shared statement tree. Storage decisions belong to lower.ts. */
 import { isExpr } from '../backend/imperative/code.ts';
 import type { Syntax } from '../backend/imperative/locals.ts';
@@ -36,7 +37,7 @@ export type GoFunction = {
 export type GoFile = {
     packageName?: string;
     imports?: string[];
-    declarations?: string[];
+    declarations?: (string | Declaration)[];
     functions?: GoFunction[];
 };
 
@@ -118,7 +119,7 @@ export function printGo(file: GoFile): string {
     }
 
     if (file.declarations && file.declarations.length > 0) {
-        sections.push(...file.declarations);
+        sections.push(...file.declarations.map(String));
     }
 
     if (file.functions && file.functions.length > 0) {

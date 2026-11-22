@@ -1,3 +1,4 @@
+import { Declaration, reachableNames } from '../backend/reachable.ts';
 import { printGoStatements, type GoFile } from './syntax.ts';
 
 /** Lexical references in generated Go. Literals and comments cannot retain a
@@ -15,12 +16,15 @@ const tokens = (code: string): string[] =>
 export function reachableGo(file: GoFile): GoFile {
     const declarations = file.declarations ?? [];
     const functions = file.functions ?? [];
-    const name = (s: string) => /^(?:type|const|var|func)\s+([A-Za-z_]\w*)/.exec(s)?.[1];
+    const name = (s: string | Declaration) =>
+        s instanceof Declaration
+            ? s.name
+            : /^(?:type|const|var|func)\s+([A-Za-z_]\w*)/.exec(s)?.[1];
     const graph = new Map<string, string[]>();
     for (const d of declarations) {
         const n = name(d);
         if (!n) throw Error('Unnamed generated Go declaration');
-        graph.set(n, tokens(d));
+        graph.set(n, d instanceof Declaration ? [...d.dependencies] : tokens(d));
     }
     for (const f of functions) {
         const n = name(f.signature)!;
@@ -29,16 +33,11 @@ export function reachableGo(file: GoFile): GoFile {
             ...tokens(f.signature + '\n' + printGoStatements(f.body).join('\n')),
         ]);
     }
-    const live = new Set<string>();
-    const visit = (n: string) => {
-        if (live.has(n) || !graph.has(n)) return;
-        live.add(n);
-        graph.get(n)!.forEach(visit);
-    };
-    visit('main');
-    visit('init');
-    // Future package initializers may perform effects before main.
-    declarations.filter((d) => /^var\b[\s\S]*=/.test(d)).forEach((d) => visit(name(d)!));
+    const roots = ['main', 'init'];
+    // Initializers are roots even when their result is unused.
+    for (const d of declarations)
+        if (d instanceof Declaration ? d.root : /^var\b[\s\S]*=/.test(d)) roots.push(name(d)!);
+    const live = reachableNames(graph, roots);
     const keptDeclarations = declarations.filter((d) => live.has(name(d)!));
     const keptFunctions = functions.filter((f) => live.has(name(f.signature)!));
     const used = tokens(

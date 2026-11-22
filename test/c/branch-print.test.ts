@@ -21,15 +21,8 @@ it('prints complete selected-branch C', () => {
 #include <stdbool.h>
 typedef struct Tuple_Bool_Number Tuple_Bool_Number;
 typedef struct Unit Unit;
-typedef struct Lens_Unit_to_double Lens_Unit_to_double;
-typedef struct Lens_double_to_bool Lens_double_to_bool;
-typedef Unit (*Func_double_to_Unit_47414720dc)(void *, double);
-typedef Tuple_Bool_Number (*Func_to_Tuple_Bool_Number_a2de97117d)(void *);
-typedef Unit (*Func_bool_to_Unit_fe0e204ab7)(void *, bool);
 struct Tuple_Bool_Number { bool item0; double item1; };
 struct Unit { unsigned char inhabitant; };
-struct Lens_Unit_to_double { Unit *read; double *replacement; Func_double_to_Unit_47414720dc restore; void *context; };
-struct Lens_double_to_bool { double *read; bool *replacement; Func_bool_to_Unit_fe0e204ab7 restore; void *context; };
 static size_t live_contexts = 0;
 void *allocate_context(size_t size);
 void release_context(void *context);

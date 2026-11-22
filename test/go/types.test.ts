@@ -1,3 +1,4 @@
+import { Declaration } from '../../src/backend/reachable.ts';
 import { expect, it } from 'bun:test';
 import { compileSource } from '../../src/compiler.ts';
 import { goTarget } from '../../src/backend/target.ts';
@@ -72,6 +73,32 @@ it('prunes unreachable declaration cycles while retaining reachable cycles', () 
     expect(result.declarations).toHaveLength(2);
     expect(result.declarations?.join('\n')).not.toContain('type Dead');
 });
+it('uses explicit declaration edges instead of field names in printed types', () => {
+    const result = reachableGo({
+        declarations: [
+            new Declaration('Node', 'type Node struct { Dead bool; run Callback }', ['Callback']),
+            new Declaration('Callback', 'type Callback func(Node) Node', ['Node']),
+            new Declaration('Dead', 'type Dead struct { next *Dead }', ['Dead']),
+        ],
+        functions: [{ signature: 'func main()', body: ['var n Node', '_ = n'] }],
+    });
+    expect(result.declarations?.map(String)).toEqual([
+        'type Node struct { Dead bool; run Callback }',
+        'type Callback func(Node) Node',
+    ]);
+});
+it('roots explicitly effectful declarations and follows their dependencies', () => {
+    const result = reachableGo({
+        declarations: [new Declaration('initial', 'var initial = effect()', ['effect'], true)],
+        functions: [
+            { signature: 'func effect() int', body: ['return 1'] },
+            { signature: 'func dead()', body: [] },
+            { signature: 'func main()', body: [] },
+        ],
+    });
+    expect(result.functions?.map((f) => f.signature)).toEqual(['func effect() int', 'func main()']);
+});
+
 it('roots package initializer effects and all init functions', () => {
     const result = reachableGo({
         declarations: ['var initial = effect()'],
