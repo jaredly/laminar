@@ -86,7 +86,10 @@ export function printZig(file: ZigFile): string {
     const visit = (name: string) => {
         if (kept.has(name) || !byName.has(name)) return;
         kept.add(name);
-        byName.get(name)!.text.match(/[A-Za-z_][A-Za-z_0-9]*/g)?.forEach(visit);
+        byName
+            .get(name)!
+            .text.match(/[A-Za-z_][A-Za-z_0-9]*/g)
+            ?.forEach(visit);
     };
     visit('main');
     const sections = [

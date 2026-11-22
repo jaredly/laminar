@@ -796,6 +796,32 @@ export function lowerC(
         const setup: Statement[] = [];
         /** Boxes kept by borrowed matches, by reconstruction id, until a construct reuses them. */
         const retainedBoxes = new Map<string, string>();
+        /** Reconstructions whose temporary lens is the retained box's payload. */
+        const inPlaceIds = new Set<string>();
+        /** What a retained arm's owner held before the match moved it out, by reconstruction id. */
+        const retainedOwners = new Map<string, Data>();
+        /** The storage each moved value came from. */
+        const movedFrom = new Map<string, Data>();
+        /** An lvalue for the storage behind an address. */
+        const through = (address: Expr): Expr => {
+            const text = String(address);
+            return text.startsWith('&') ? text.slice(1) : cc`*${address}`;
+        };
+        /** Store each payload field that no longer reads its own live storage. */
+        const writeBack = (before: Data, after: Data, id: string, body: Statement[]) => {
+            if (Array.isArray(before) || !before.address) return;
+            if (!Array.isArray(after) && same(after.address, before.address)) return;
+            const items = layout(id).fields.filter((f) => f.name.startsWith('item'));
+            if (layout(id).kind !== 'record' || !items.length) {
+                body.push(cc`${through(before.address)} = ${read(after, id)};`);
+                return;
+            }
+            const from = storage.parts(before),
+                to = storage.parts(after);
+            items.forEach((f, n) =>
+                writeBack(from[n]!, to[n]!, (f as { layout: string }).layout, body),
+            );
+        };
         const bind = (p: IRPattern, data: Data, body: Statement[] = setup, retains?: string) => {
             if (p.kind === 'bind') places.set(p.slot.place, storage.own(data));
             else if (p.kind === 'tuple')
@@ -810,7 +836,17 @@ export function lowerC(
                     expression: payload(data.expression, data.layout, n),
                     layout: v.layout,
                 };
-                if (v.boxed) {
+                if (v.boxed && retains !== undefined && inPlaceIds.has(retains)) {
+                    // The fields stay in the box and are read and written through it.
+                    const box = cell(
+                        fresh(),
+                        `${type(v.layout)} *`,
+                        cc`(${data.expression}).as.v${n}`,
+                        body,
+                    );
+                    retainedBoxes.set(retains, box);
+                    contents = { expression: cc`(*${box})`, layout: v.layout, address: box };
+                } else if (v.boxed) {
                     contents = {
                         expression: declare(v.layout, contents.expression, body),
                         layout: v.layout,
@@ -854,6 +890,28 @@ export function lowerC(
             escapes: boolean,
             body: Statement[],
         ): { expression: string; finish: (body: Statement[]) => void } => {
+            // A same-layout lens over live storage (a field of an in-place box, or an
+            // incoming lens) is passed by address: nothing is copied or restored.
+            const l = layout(id),
+                input = l.fields.find((f) => f.name === 'read');
+            if (
+                !escapes &&
+                input?.kind === 'pointer' &&
+                input.layout &&
+                !l.fields.some((f) => f.name === 'replacement')
+            ) {
+                const d = storage.get(lens.view);
+                if (!Array.isArray(d) && d.address && d.layout === input.layout) {
+                    const live = d;
+                    return {
+                        expression: declare(id, cc`(${type(id)}){.read=${live.address}}`, body),
+                        finish: (body) => {
+                            storage.put(lens.view, live);
+                            lens.finish(body);
+                        },
+                    };
+                }
+            }
             const index = helperCounter++,
                 name = locals.reference(`back${index}`),
                 fields: string[] = [],
@@ -1052,11 +1110,38 @@ export function lowerC(
                 let expr!: Expr;
                 // Only side-effect-free values that read no memory may be inlined or pruned.
                 let pure = false;
+                /** Unused results of these are dropped: they only read or aggregate. */
+                let removable = false;
                 switch (i.op) {
                     case 'aslens': {
+                        const payload = outputLayouts.get(i.initial)!;
+                        const box = i.inPlace ? retainedBoxes.get(i.inPlace) : undefined;
+                        if (i.inPlace) {
+                            const owner = retainedOwners.get(i.inPlace),
+                                slot = i.reconstruction?.reconstructionOwner;
+                            if (!box || !owner || !slot) return unsupported('Missing retained box');
+                            // The temporary is the box payload: fields are live reads through
+                            // it, written back only when changed. The owner's header is
+                            // unchanged, so restoring it needs no reconstruction.
+                            const view = storage.own({
+                                expression: cc`(*${box})`,
+                                layout: payload,
+                                address: box,
+                            });
+                            const live = storage.get(view);
+                            places.set(i.backing, view);
+                            lenses.set(i.out.id, {
+                                view,
+                                finish: (output) => {
+                                    writeBack(live, storage.get(view), payload, output);
+                                    storage.put(ref(slot), owner);
+                                },
+                            });
+                            continue;
+                        }
                         const view = storage.own({
                             expression: value(i.initial),
-                            layout: outputLayouts.get(i.initial)!,
+                            layout: payload,
                         });
                         places.set(i.backing, view);
                         lenses.set(i.out.id, {
@@ -1178,8 +1263,11 @@ export function lowerC(
                     }
                     case 'tuple':
                         expr = cc`(${type(id)}){${joinCode(i.items.map(value), ', ') || '0'}}`;
+                        removable = true;
                         break;
                     case 'move':
+                        removable = true;
+                        movedFrom.set(i.out.id, storage.get(ref(i.slot)));
                         expr = read(storage.get(ref(i.slot)), id);
                         storage.put(ref(i.slot), { expression: zero(unit.id), layout: unit.id });
                         break;
@@ -1384,6 +1472,8 @@ export function lowerC(
                                 nested,
                                 arm.retains,
                             );
+                            if (arm.retains && movedFrom.has(i.value))
+                                retainedOwners.set(arm.retains, movedFrom.get(i.value)!);
                             const result = block(arm.body, nested);
                             nested.push(locals.assign(name, result));
                             const state = storage.snapshot();
@@ -1541,7 +1631,7 @@ export function lowerC(
                                     unsupported(cText`Native import ${w.definition}`);
                             } else return unsupported('Disposer invocation');
                         }
-                        declare(id, expr, body, name, { pure, inline: pure });
+                        declare(id, expr, body, name, { pure: pure || removable, inline: pure });
                         values.set(i.out.id, name);
                         if (isLens)
                             lenses.set(
@@ -1556,7 +1646,7 @@ export function lowerC(
                     default:
                         return unsupported(cText`Unknown operation ${(i as { op: string }).op}`);
                 }
-                declare(id, expr, body, name, { pure });
+                declare(id, expr, body, name, { pure: pure || removable });
                 values.set(i.out.id, name);
             }
             const finish = (body: Statement[]) =>
@@ -1588,7 +1678,10 @@ export function lowerC(
             b.instructions.forEach((i) => {
                 if ('out' in i) outputLayouts.set(i.out.id, i.out.layout);
                 if (i.op === 'scope') index(i.body);
-                if (i.op === 'aslens') index(i.cleanup);
+                if (i.op === 'aslens') {
+                    if (i.inPlace) inPlaceIds.add(i.inPlace);
+                    index(i.cleanup);
+                }
                 if (i.op === 'case') i.cases.forEach((a) => index(a.body));
             });
         index(c.body);

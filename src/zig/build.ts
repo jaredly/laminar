@@ -67,7 +67,12 @@ export async function buildAndRunZig(
         args: string[],
         stage: 'zig-fmt' | 'zig-build' | 'zig-runtime',
     ) => {
-        const result = await runProcess(command, args, { ...process.env, ...options.env }, directory);
+        const result = await runProcess(
+            command,
+            args,
+            { ...process.env, ...options.env },
+            directory,
+        );
         if (result.error || result.status !== 0) {
             await writeFile(
                 join(directory, `${stage}.json`),
@@ -97,7 +102,10 @@ export async function buildAndRunZig(
             .filter((line) => line.length > 0)
             .map((line) => JSON.parse(line));
     } catch (e) {
-        throw new BackendDiagnostic('zig-result', `Invalid result: ${text}\nArtifacts: ${directory}\n${e}`);
+        throw new BackendDiagnostic(
+            'zig-result',
+            `Invalid result: ${text}\nArtifacts: ${directory}\n${e}`,
+        );
     }
     if (options.expected && JSON.stringify(results) !== JSON.stringify(options.expected))
         throw new BackendDiagnostic(

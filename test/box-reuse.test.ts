@@ -36,7 +36,6 @@ it('Go writes the retained box in place instead of allocating a new one', () => 
     const body = go.slice(start, go.indexOf('\n}\n', start));
     expect(body).not.toBe('');
     expect(body).not.toContain('new(');
-    expect(body).toMatch(/\*v\d+ = Tuple_Number_List_Number/);
 });
 
 it('a lens-valued match keeps allocating its box', () => {
@@ -58,4 +57,34 @@ it('the verifier rejects a retained box that nothing reuses', () => {
     };
     strip(concrete.code);
     expect(() => verifyConcreteProgram(concrete)).toThrow('Retained box is not reused');
+});
+
+it('a same-layout borrowed update projects its fields into the box', () => {
+    const concrete = compile(`${bump}{let x = [1, 2]\n bump(~x)\n x}`);
+    verifyConcreteProgram(JSON.parse(JSON.stringify(concrete)));
+    expect(printConcreteProgram(concrete)).toMatch(/aslens in-place/);
+    const c = fn(emitC(concrete), 'Unit bump(void *environment, Lens_List_Number xs)');
+    // No payload copy and no backing for the tail: it is lent by address.
+    expect(c).not.toContain('Backing');
+    expect(c).toMatch(/\.read=&\(\*v\d+\)\.item1/);
+    expect(c).toMatch(/\(\*v\d+\)\.item0 = \(h \+ 1\)/);
+    const go = emitGo(concrete);
+    const body = go.slice(go.indexOf('func bump('), go.indexOf('\n}\n', go.indexOf('func bump(')));
+    expect(body).not.toContain('Backing');
+    expect(body).toMatch(/read: &\(\*v\d+\)\.item1/);
+    expect(body).toMatch(/\(\*v\d+\)\.item0 = \(h \+ 1\.0\)/);
+});
+
+it('the verifier rejects an in-place mark without box reuse', () => {
+    const concrete = JSON.parse(JSON.stringify(compile(`${bump}{let x = [1]\n bump(~x)\n x}`)));
+    const strip = (v: unknown): void => {
+        if (Array.isArray(v)) v.forEach(strip);
+        else if (v && typeof v === 'object') {
+            delete (v as { reuses?: string; retains?: string }).reuses;
+            delete (v as { retains?: string }).retains;
+            Object.values(v).forEach(strip);
+        }
+    };
+    strip(concrete.code);
+    expect(() => verifyConcreteProgram(concrete)).toThrow('Invalid in-place temporary');
 });

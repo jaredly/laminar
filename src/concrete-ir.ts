@@ -90,7 +90,15 @@ export type ConcreteInstruction =
               reuses?: string;
           })
     | (Omit<Extract<Instruction, { op: 'aslens' }>, 'cleanup' | 'out'> &
-          ConcreteOutput & { cleanup: ConcreteBlock })
+          ConcreteOutput & {
+              cleanup: ConcreteBlock;
+              /**
+               * The temporary is the retained box's payload itself (reconstruction id,
+               * paired with `retains`/`reuses`): its field lenses point into the box,
+               * so nothing is copied out or rebuilt. Only when every field keeps its layout.
+               */
+              inPlace?: string;
+          })
     | ({
           op: 'scope';
           origin: string;

@@ -781,6 +781,32 @@ export function lowerGo(program: ConcreteProgram): GoFile {
         const setup: Statement[] = [];
         /** Boxes kept by borrowed matches, by reconstruction id, until a construct reuses them. */
         const retainedBoxes = new Map<string, string>();
+        /** Reconstructions whose temporary lens is the retained box's payload. */
+        const inPlaceIds = new Set<string>();
+        /** What a retained arm's owner held before the match moved it out, by reconstruction id. */
+        const retainedOwners = new Map<string, Data>();
+        /** The storage each moved value came from. */
+        const movedFrom = new Map<string, Data>();
+        /** An lvalue for the storage behind an address. */
+        const through = (address: Expr): Expr => {
+            const text = String(address);
+            return text.startsWith('&') ? text.slice(1) : go`*${address}`;
+        };
+        /** Store each payload field that no longer reads its own live storage. */
+        const writeBack = (before: Data, after: Data, id: string, body: Statement[]) => {
+            if (Array.isArray(before) || !before.address) return;
+            if (!Array.isArray(after) && same(after.address, before.address)) return;
+            const items = layout(id).fields.filter((f) => f.name.startsWith('item'));
+            if (layout(id).kind !== 'record' || !items.length) {
+                body.push(go`${through(before.address)} = ${read(after, id)}`);
+                return;
+            }
+            const from = storage.parts(before),
+                to = storage.parts(after);
+            items.forEach((f, n) =>
+                writeBack(from[n]!, to[n]!, (f as { layout: string }).layout, body),
+            );
+        };
         const bind = (p: IRPattern, data: Data, body: Statement[] = setup, retains?: string) => {
             if (p.kind === 'bind') {
                 places.set(p.slot.place, storage.own(data));
@@ -804,6 +830,18 @@ export function lowerGo(program: ConcreteProgram): GoFile {
                         ),
                     );
                     retainedBoxes.set(retains, box);
+                    // The fields stay in the box and are read and written through it.
+                    if (inPlaceIds.has(retains) && retainedOwners.has(retains)) {
+                        const live: Data = {
+                            expression: go`(*${box})`,
+                            layout: v.layout,
+                            address: box,
+                        };
+                        if (p.items.length === 1) bind(p.items[0]!, live, body);
+                        else
+                            p.items.forEach((item, k) => bind(item, storage.parts(live)[k]!, body));
+                        return;
+                    }
                 }
                 const contents: Data = data.constructed
                     ? data.constructed.name === p.name
@@ -1267,7 +1305,10 @@ export function lowerGo(program: ConcreteProgram): GoFile {
             b.instructions.forEach((i) => {
                 if ('out' in i) outputLayouts.set(i.out.id, i.out.layout);
                 if (i.op === 'scope') index(i.body);
-                if (i.op === 'aslens') index(i.cleanup);
+                if (i.op === 'aslens') {
+                    if (i.inPlace) inPlaceIds.add(i.inPlace);
+                    index(i.cleanup);
+                }
                 if (i.op === 'case') i.cases.forEach((a) => index(a.body));
             });
         index(c.body);
@@ -1427,6 +1468,7 @@ export function lowerGo(program: ConcreteProgram): GoFile {
                     }
                     case 'move': {
                         const contents = storage.get(ref(i.slot));
+                        movedFrom.set(i.out.id, contents);
                         const moved = snapshot(contents, id, body, name);
                         storage.put(ref(i.slot), { expression: zero(unit.id), layout: unit.id });
                         dataValues.set(i.out.id, moved);
@@ -1727,6 +1769,30 @@ export function lowerGo(program: ConcreteProgram): GoFile {
                         continue;
                     }
                     case 'aslens': {
+                        const box = i.inPlace ? retainedBoxes.get(i.inPlace) : undefined;
+                        const owner = i.inPlace ? retainedOwners.get(i.inPlace) : undefined;
+                        const slot = i.reconstruction?.reconstructionOwner;
+                        if (box && owner && slot && inPlaceIds.has(i.inPlace!)) {
+                            // The temporary is the box payload: fields are live reads through
+                            // it, written back only when changed. The owner's header is
+                            // unchanged, so restoring it needs no reconstruction.
+                            const payload = outputLayouts.get(i.initial)!;
+                            const view = storage.own({
+                                expression: go`(*${box})`,
+                                layout: payload,
+                                address: box,
+                            });
+                            const live = storage.get(view);
+                            places.set(i.backing, view);
+                            lenses.set(i.out.id, {
+                                view,
+                                finish: (output) => {
+                                    writeBack(live, storage.get(view), payload, output);
+                                    storage.put(ref(slot), owner);
+                                },
+                            });
+                            continue;
+                        }
                         const view = storage.own(datum(i.initial));
                         places.set(i.backing, view);
                         lenses.set(i.out.id, {
@@ -1879,6 +1945,8 @@ export function lowerGo(program: ConcreteProgram): GoFile {
                         const arms = i.cases.map((arm, armIndex) => {
                             storage.reset(before);
                             const nested: Statement[] = [];
+                            if (arm.retains && movedFrom.has(i.value))
+                                retainedOwners.set(arm.retains, movedFrom.get(i.value)!);
                             bind(arm.pattern, datum(i.value), nested, arm.retains);
                             const result = block(arm.body, nested);
                             resultInputs.push({

@@ -18,13 +18,7 @@ export type GoBuildOptions = {
 };
 
 // Keep subprocesses asynchronous so independent builds can overlap.
-function runProcess(
-    command: string,
-    args: string[],
-    env = process.env,
-    cwd?: string,
-    input = '',
-) {
+function runProcess(command: string, args: string[], env = process.env, cwd?: string, input = '') {
     return new Promise<{
         stdout: string;
         stderr: string;
@@ -61,7 +55,10 @@ export function getVersion(command: string): Promise<string> {
 }
 
 /** Compilation and execution of Go programs. Temporary failure directories are retained. */
-export async function buildAndRunGo(source: string, options: GoBuildOptions = {}): Promise<unknown[]> {
+export async function buildAndRunGo(
+    source: string,
+    options: GoBuildOptions = {},
+): Promise<unknown[]> {
     const compiler = options.compiler ?? 'go';
     const gofmt = options.gofmt ?? 'gofmt';
     const directory = await mkdtemp(join(tmpdir(), 'laminar-go-'));
@@ -70,9 +67,7 @@ export async function buildAndRunGo(source: string, options: GoBuildOptions = {}
 
     await writeFile(input, source);
 
-    const [compilerVersion] = await Promise.all([
-        getVersion(compiler),
-    ]);
+    const [compilerVersion] = await Promise.all([getVersion(compiler)]);
 
     await writeFile(
         join(directory, 'build.json'),
@@ -121,10 +116,14 @@ export async function buildAndRunGo(source: string, options: GoBuildOptions = {}
     try {
         const { results, output: printed } = parseRun(text);
         if (options.output !== undefined && printed !== options.output)
-            throw Error(`Expected output ${JSON.stringify(options.output)}, got ${JSON.stringify(printed)}`);
+            throw Error(
+                `Expected output ${JSON.stringify(options.output)}, got ${JSON.stringify(printed)}`,
+            );
 
         if (options.expected && JSON.stringify(results) !== JSON.stringify(options.expected)) {
-            throw Error(`Expected ${JSON.stringify(options.expected)}, got ${JSON.stringify(results)}`);
+            throw Error(
+                `Expected ${JSON.stringify(options.expected)}, got ${JSON.stringify(results)}`,
+            );
         }
 
         await rm(directory, { recursive: true });

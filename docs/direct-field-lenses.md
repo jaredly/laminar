@@ -5,6 +5,11 @@ this supersedes as the way to remove the payload copy. Box reuse (implemented) s
 the allocation but not the copy. Parts of this document are plans I have not checked
 against the code; they are marked as open questions.
 
+Implementation status: option 3 below (the concrete `in-place` form) is implemented in
+C and Go. A same-layout borrowed constructor match, such as `bump`, now emits no
+payload copy, `Backing` struct or rebuild. The typed-IR `focus` (option 1) is not
+started.
+
 The motivation is **intelligible generated code**, not speed. A reader of the Go or C
 for `bump` should see "add one to the head, recurse on the tail", not a payload copy,
 a `Backing` struct and a rebuild. Performance may improve, but it is not the criterion.
@@ -255,6 +260,20 @@ So there are three ways to get the readable output:
    containment. The typed IR keeps the move-out-and-rebuild encoding, but it stays a
    semantic form and the physical decision lives where the representation decisions
    already live.
+
+Option 3 as implemented: `markBoxReuse` in `lower-concrete.ts` sets `inPlace` on an
+`aslens` that has a retained box, a same-layout lens (no `replacement` field) and a
+root constructor pattern whose items are all plain binds. `verify-concrete.ts` checks
+the same conditions plus that the box is reused exactly once. In C and Go the
+temporary's view is the box payload (live reads through the box); fields are written
+back only when changed; the owner is restored to what it held before the match moved
+it out; and the cleanup block is not emitted. A same-layout lens over live storage is
+passed to a callee by address (C `adapt`), which removes the `Backing` struct. Dead
+`move` and `tuple` results are now pruned in C.
+
+Remaining noise in the `bump` output: the field write happens after the recursive call
+(storage is versioned and written back at the end of the lens scope), and the owner's
+header is still written back after the case join (`*(xs).read = v28`).
 
 Option 3 gets the readable output with the smallest blast radius and is a strict
 stepping stone: its concrete contract is the same one `focus` lowering needs.

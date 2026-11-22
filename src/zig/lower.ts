@@ -1,10 +1,21 @@
-import type { ConcreteProgram, ConcreteBlock, ConcreteLayout, ConcreteCode } from '../concrete-ir.ts';
+import type {
+    ConcreteProgram,
+    ConcreteBlock,
+    ConcreteLayout,
+    ConcreteCode,
+} from '../concrete-ir.ts';
 import type { IRPattern, SlotRef } from '../typed-ir.ts';
 import { verifyConcreteProgram } from '../verify-concrete.ts';
 import { BackendDiagnostic } from '../backend/target.ts';
 import { Storage, type Data, type View } from './storage.ts';
 import { field, name, nullLit, type Expr, type Stmt } from './ast.ts';
-import { identifier, sourceIdentifier, type Statement, type ZigFile, type ZigFunction } from './syntax.ts';
+import {
+    identifier,
+    sourceIdentifier,
+    type Statement,
+    type ZigFile,
+    type ZigFunction,
+} from './syntax.ts';
 
 const unsupported = (message: string): never => {
     throw new BackendDiagnostic('unsupported-zig', message);
@@ -65,11 +76,7 @@ export function lowerZig(program: ConcreteProgram): ZigFile {
                 `Tuple_${l.fields.map((f) => type((f as { layout: string }).layout)).join('_')}`,
                 globals,
             );
-        else
-            result = sourceIdentifier(
-                callableLayouts.has(id) ? 'Callable' : 'Record',
-                globals,
-            );
+        else result = sourceIdentifier(callableLayouts.has(id) ? 'Callable' : 'Record', globals);
         typeNames.set(id, result);
         return result;
     };
@@ -80,7 +87,9 @@ export function lowerZig(program: ConcreteProgram): ZigFile {
     // generic definition has several specializations.
     const baseName = (c: ConcreteCode) =>
         definitionName(c.function) ??
-        definitionName(program.semantic.program.units.find((u) => u.id === c.unit)?.functions[0]?.id) ??
+        definitionName(
+            program.semantic.program.units.find((u) => u.id === c.unit)?.functions[0]?.id,
+        ) ??
         'entry';
     const groups = new Map<string, ConcreteCode[]>();
     program.code.forEach((c) => groups.set(baseName(c), [...(groups.get(baseName(c)) ?? []), c]));
@@ -98,7 +107,9 @@ export function lowerZig(program: ConcreteProgram): ZigFile {
             ),
         ),
     );
-    const entryNames = new Map(program.code.map((c) => [c.id, sourceIdentifier(`${codes.get(c.id)}_entry`, globals)]));
+    const entryNames = new Map(
+        program.code.map((c) => [c.id, sourceIdentifier(`${codes.get(c.id)}_entry`, globals)]),
+    );
 
     const dataFields = (l: ConcreteLayout) => {
         if (!l.fields.every((f) => f.kind === 'value' && f.name.startsWith('item')))
@@ -129,12 +140,16 @@ export function lowerZig(program: ConcreteProgram): ZigFile {
         return {
             k: 'struct',
             type: type(id),
-            fields: fields.map((f, i) => ({ name: identifier(f.name), value: read(parts[i]!, f.layout) })),
+            fields: fields.map((f, i) => ({
+                name: identifier(f.name),
+                value: read(parts[i]!, f.layout),
+            })),
         };
     };
 
     const literal = (v: unknown, id: string): Expr => {
-        if (v === null) return layout(id).kind === 'unit' ? unitExpr() : unsupported('Null literal');
+        if (v === null)
+            return layout(id).kind === 'unit' ? unitExpr() : unsupported('Null literal');
         if (typeof v === 'boolean') return { k: 'lit', text: String(v) };
         if (typeof v === 'number') return { k: 'lit', text: String(v), untyped: true };
         if (v && typeof v === 'object' && 'number' in v) {
@@ -186,7 +201,10 @@ export function lowerZig(program: ConcreteProgram): ZigFile {
         nativeCodes.set(w.id, fn);
         functions.push({
             name: fn,
-            params: [{ name: 'environment', type: '?*anyopaque' }, ...abi.arguments.map((id, i) => ({ name: 'ab'[i] ?? `arg${i}`, type: type(id) }))],
+            params: [
+                { name: 'environment', type: '?*anyopaque' },
+                ...abi.arguments.map((id, i) => ({ name: 'ab'[i] ?? `arg${i}`, type: type(id) })),
+            ],
             result: type(abi.result),
             body: [{ k: 'return', value: { k: 'binary', op, left: name('a'), right: name('b') } }],
         });
@@ -221,11 +239,15 @@ export function lowerZig(program: ConcreteProgram): ZigFile {
                     p.slot.place,
                     storage.own(
                         source && !Array.isArray(data)
-                            ? { expression: declare(data.layout, data.expression, source), layout: data.layout }
+                            ? {
+                                  expression: declare(data.layout, data.expression, source),
+                                  layout: data.layout,
+                              }
                             : data,
                     ),
                 );
-            } else if (p.kind === 'tuple') p.items.forEach((item, i) => bind(item, storage.parts(data)[i]!));
+            } else if (p.kind === 'tuple')
+                p.items.forEach((item, i) => bind(item, storage.parts(data)[i]!));
             else if (p.kind === 'drop') {
                 // Plain data needs no disposal; owned callables arrive in Phase 4.
             } else unsupported(`Pattern ${p.kind} requires a later backend phase`);
@@ -233,7 +255,10 @@ export function lowerZig(program: ConcreteProgram): ZigFile {
 
         const params = c.parameters.map((p, i) => {
             if (p.lensPlace) unsupported('Lens parameters require Phase 2');
-            const source = p.pattern.kind === 'bind' && !p.pattern.slot.path.length ? placeName(p.pattern.slot.place) : undefined;
+            const source =
+                p.pattern.kind === 'bind' && !p.pattern.slot.path.length
+                    ? placeName(p.pattern.slot.place)
+                    : undefined;
             const n = sourceIdentifier(source ?? `arg${i}`, taken);
             const data = { expression: name(n), layout: p.layout };
             if (p.pattern.kind === 'bind') places.set(p.pattern.slot.place, storage.own(data));
@@ -243,7 +268,8 @@ export function lowerZig(program: ConcreteProgram): ZigFile {
 
         const ref = (s: SlotRef) =>
             storage.project(places.get(s.place) ?? unsupported('Unavailable Zig place'), s.path);
-        const value = (id: string) => values.get(id) ?? unsupported('Missing value in Zig lowering');
+        const value = (id: string) =>
+            values.get(id) ?? unsupported('Missing value in Zig lowering');
 
         const outputLayouts = new Map<string, string>();
         const index = (b: ConcreteBlock) =>
@@ -256,7 +282,10 @@ export function lowerZig(program: ConcreteProgram): ZigFile {
         const block = (b: ConcreteBlock): Expr => {
             for (const i of b.instructions) {
                 if (i.op === 'bind') {
-                    bind(i.pattern, { expression: value(i.value), layout: outputLayouts.get(i.value)! });
+                    bind(i.pattern, {
+                        expression: value(i.value),
+                        layout: outputLayouts.get(i.value)!,
+                    });
                     continue;
                 }
                 if (i.op === 'borrow') return unsupported('Borrows require Phase 2');
@@ -271,7 +300,10 @@ export function lowerZig(program: ConcreteProgram): ZigFile {
                         expr = {
                             k: 'struct',
                             type: type(id),
-                            fields: i.items.map((it, n) => ({ name: identifier(fields[n]!.name), value: value(it) })),
+                            fields: i.items.map((it, n) => ({
+                                name: identifier(fields[n]!.name),
+                                value: value(it),
+                            })),
                         };
                         break;
                     }
@@ -292,9 +324,25 @@ export function lowerZig(program: ConcreteProgram): ZigFile {
                                 const w = e.wrapper ? wrappers.get(e.wrapper) : undefined;
                                 if (!w) return [];
                                 const f = identifier(e.field);
-                                if (w.kind === 'invoke') return [{ name: f, value: { k: 'lit', text: `&${entryNames.get(w.code)}` } }];
+                                if (w.kind === 'invoke')
+                                    return [
+                                        {
+                                            name: f,
+                                            value: { k: 'lit', text: `&${entryNames.get(w.code)}` },
+                                        },
+                                    ];
                                 if (w.kind === 'native')
-                                    return nativeCodes.has(w.id) ? [{ name: f, value: { k: 'lit', text: `&${nativeCodes.get(w.id)}` } }] : [];
+                                    return nativeCodes.has(w.id)
+                                        ? [
+                                              {
+                                                  name: f,
+                                                  value: {
+                                                      k: 'lit',
+                                                      text: `&${nativeCodes.get(w.id)}`,
+                                                  },
+                                              },
+                                          ]
+                                        : [];
                                 return unsupported(`Callable entry ${w.kind} requires Phase 4`);
                             }),
                         };
@@ -307,15 +355,26 @@ export function lowerZig(program: ConcreteProgram): ZigFile {
                             return unsupported('Lens results require Phase 5');
                         if (i.field !== undefined) {
                             const callee = value(i.callee);
-                            const hasEnvironment = layout(outputLayouts.get(i.callee)!).fields.some((f) => f.name === 'environment');
+                            const hasEnvironment = layout(outputLayouts.get(i.callee)!).fields.some(
+                                (f) => f.name === 'environment',
+                            );
                             expr = {
                                 k: 'call',
                                 callee: { k: 'unwrap', of: field(callee, identifier(i.field)) },
-                                args: [hasEnvironment ? field(callee, 'environment') : nullLit, ...args],
+                                args: [
+                                    hasEnvironment ? field(callee, 'environment') : nullLit,
+                                    ...args,
+                                ],
                             };
-                        } else if (w?.kind === 'invoke') expr = { k: 'call', callee: name(codes.get(w.code)!), args };
+                        } else if (w?.kind === 'invoke')
+                            expr = { k: 'call', callee: name(codes.get(w.code)!), args };
                         else if (w?.kind === 'native' && arithmetic[w.definition.slice(7)])
-                            expr = { k: 'binary', op: w.definition.slice(7), left: args[0]!, right: args[1]! };
+                            expr = {
+                                k: 'binary',
+                                op: w.definition.slice(7),
+                                left: args[0]!,
+                                right: args[1]!,
+                            };
                         else return unsupported(`Call through ${w?.kind ?? 'unknown'} wrapper`);
                         break;
                     }
@@ -342,7 +401,16 @@ export function lowerZig(program: ConcreteProgram): ZigFile {
             name: entryNames.get(c.id)!,
             params: [{ name: 'environment', type: '?*anyopaque' }, ...adapterParams],
             result,
-            body: [{ k: 'return', value: { k: 'call', callee: name(fn), args: adapterParams.map((p) => name(p.name)) } }],
+            body: [
+                {
+                    k: 'return',
+                    value: {
+                        k: 'call',
+                        callee: name(fn),
+                        args: adapterParams.map((p) => name(p.name)),
+                    },
+                },
+            ],
         });
     }
 
@@ -354,9 +422,14 @@ export function lowerZig(program: ConcreteProgram): ZigFile {
             { head: 'if (std.math.isNan(x))', body: ['_ = printf("{\\"number\\":\\"NaN\\"}");'] },
             {
                 head: 'else if (std.math.isInf(x))',
-                body: ['_ = printf(if (x < 0) "{\\"number\\":\\"-Infinity\\"}" else "{\\"number\\":\\"Infinity\\"}");'],
+                body: [
+                    '_ = printf(if (x < 0) "{\\"number\\":\\"-Infinity\\"}" else "{\\"number\\":\\"Infinity\\"}");',
+                ],
             },
-            { head: 'else if (x == 0 and std.math.signbit(x))', body: ['_ = printf("{\\"number\\":\\"-0\\"}");'] },
+            {
+                head: 'else if (x == 0 and std.math.signbit(x))',
+                body: ['_ = printf("{\\"number\\":\\"-0\\"}");'],
+            },
             { head: 'else', body: ['_ = printf("%.17g", x);'] },
         ],
     });

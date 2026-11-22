@@ -631,13 +631,15 @@ export function compileConcreteProgram(
  * reconstruction that rebuilds it, so the box is rewritten in place. Reuse needs
  * the same constructor and the same union layout (hence payload layout), and a
  * plain-valued case, whose temporary lenses are all restored inside the arm.
- * Everything else keeps freeing and allocating.
+ * Everything else keeps freeing and allocating. When the temporary lens over the
+ * payload is same-layout and binds every field, it is also marked `inPlace`.
  */
 function markBoxReuse(bodies: ConcreteBlock[], layouts: Map<string, ConcreteLayout>): void {
     type Arm = { layout: string; name: string };
     const boxed = (layout: string, name: string): boolean =>
         layouts.get(layout)?.fields.some((f) => f.name === name && f.kind === 'pointer') ?? false;
     const retained = new Map<string, { arm: { retains?: string }; layout: string; name: string }>();
+    const candidates: { aslens: { inPlace?: string }; id: string }[] = [];
     const visit = (
         block: ConcreteBlock,
         open: Map<string, Arm>,
@@ -648,9 +650,17 @@ function markBoxReuse(bodies: ConcreteBlock[], layouts: Map<string, ConcreteLayo
             if (i.op === 'bind' || i.op === 'borrow') continue;
             valueLayouts.set(i.out.id, i.out.layout);
             if (i.op === 'scope') visit(i.body, open, reconstructing, valueLayouts);
-            else if (i.op === 'aslens')
+            else if (i.op === 'aslens') {
                 visit(i.cleanup, open, i.reconstruction?.reconstructionId, valueLayouts);
-            else if (i.op === 'case') {
+                const r = i.reconstruction;
+                if (
+                    r?.reconstructionId &&
+                    r.kind === 'constructor' &&
+                    r.items.every((item) => item.kind === 'bind') &&
+                    !layouts.get(i.out.layout)?.fields.some((f) => f.name === 'replacement')
+                )
+                    candidates.push({ aslens: i, id: r.reconstructionId });
+            } else if (i.op === 'case') {
                 i.cases.forEach((arm) => {
                     const inner = new Map(open);
                     const layout = valueLayouts.get(i.value);
@@ -697,4 +707,8 @@ function markBoxReuse(bodies: ConcreteBlock[], layouts: Map<string, ConcreteLayo
     };
     bodies.forEach(collect);
     for (const [id, { arm }] of retained) if (reused.has(id)) arm.retains = id;
+    // With the box retained and every field keeping its layout, the temporary's
+    // storage can be the box payload itself.
+    for (const { aslens, id } of candidates)
+        if (reused.has(id) && retained.get(id)?.arm.retains === id) aslens.inPlace = id;
 }

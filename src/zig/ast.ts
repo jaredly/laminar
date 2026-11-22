@@ -52,7 +52,8 @@ const children = (e: Expr): Expr[] =>
               : [];
 
 const hasCall = (e: Expr): boolean => e.k === 'call' || children(e).some(hasCall);
-const calls = (e: Expr): number => (e.k === 'call' ? 1 : 0) + children(e).reduce((n, c) => n + calls(c), 0);
+const calls = (e: Expr): number =>
+    (e.k === 'call' ? 1 : 0) + children(e).reduce((n, c) => n + calls(c), 0);
 const uses = (e: Expr, n: string): number =>
     (e.k === 'name' && e.name === n ? 1 : 0) + children(e).reduce((s, c) => s + uses(c, n), 0);
 const hasName = (e: Expr): boolean => e.k === 'name' || children(e).some(hasName);
@@ -95,7 +96,8 @@ const fold = (e: Expr): Expr =>
     });
 
 const stmtExprs = (s: Stmt): Expr[] => (s.k === 'raw' ? [] : [s.value]);
-const withExpr = (s: Stmt, f: (e: Expr) => Expr): Stmt => (s.k === 'raw' ? s : { ...s, value: f(s.value) });
+const withExpr = (s: Stmt, f: (e: Expr) => Expr): Stmt =>
+    s.k === 'raw' ? s : { ...s, value: f(s.value) };
 
 /** Names read anywhere in `body` (used to drop unused parameters to `_`). */
 export function usedNames(body: Stmt[]): Set<string> {
@@ -105,13 +107,14 @@ export function usedNames(body: Stmt[]): Set<string> {
         children(e).forEach(visit);
     };
     body.forEach((s) => stmtExprs(s).forEach(visit));
-    for (const s of body) if (s.k === 'raw') s.text.match(/[A-Za-z_][A-Za-z_0-9]*/g)?.forEach((n) => found.add(n));
+    for (const s of body)
+        if (s.k === 'raw') s.text.match(/[A-Za-z_][A-Za-z_0-9]*/g)?.forEach((n) => found.add(n));
     return found;
 }
 
 export function tidy(input: Stmt[]): Stmt[] {
     let body = input.map((s) => withExpr(s, fold));
-    for (let changed = true; changed; ) {
+    for (let changed = true; changed;) {
         changed = false;
         for (let i = 0; i < body.length; i++) {
             const s = body[i]!;
@@ -199,7 +202,9 @@ export function printExpr(e: Expr, typed = false): string {
         case 'unwrap':
             return `${printExpr(e.of, true)}.?`;
         case 'struct': {
-            const fields = e.fields.filter((f) => !(f.value.k === 'lit' && f.value.text === 'null'));
+            const fields = e.fields.filter(
+                (f) => !(f.value.k === 'lit' && f.value.text === 'null'),
+            );
             const inner = fields.map((f) => `.${f.name} = ${printExpr(f.value)}`).join(', ');
             return `${typed ? e.type : '.'}{${inner ? ` ${inner} ` : ''}}`;
         }

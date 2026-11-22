@@ -39,10 +39,7 @@ export function targetConfig(config: TargetConfig): TargetConfig {
             'Unsupported address width, byte order, or ABI',
         );
     if (config.abi === 'go' && config.toolchain.compiler !== 'go')
-        throw new BackendDiagnostic(
-            'invalid-target',
-            'Go ABI requires the Go compiler toolchain',
-        );
+        throw new BackendDiagnostic('invalid-target', 'Go ABI requires the Go compiler toolchain');
     if (
         config.runtime.startsWith('emscripten') &&
         (config.toolchain.compiler !== 'emscripten' ||

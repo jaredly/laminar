@@ -566,6 +566,7 @@ export function verifyConcreteProgram(p: ConcreteProgram): void {
         // Box reuse: arms that retain a box, and the reconstructions that reuse it.
         const retained = new Map<string, { layout: string; name: string }>();
         const reused = new Set<string>();
+        const inPlace = new Set<string>();
         const body_ = (b: ConcreteBlock) =>
             b.instructions.filter(
                 (s): s is Extract<ConcreteBlock['instructions'][number], { op: 'swap' }> =>
@@ -609,10 +610,22 @@ export function verifyConcreteProgram(p: ConcreteProgram): void {
                 if (i.op === 'aslens') {
                     if (o.op !== 'aslens') return fail('Temporary lens operation changed');
                     eq(
-                        { ...o, out: undefined, cleanup: undefined },
+                        { ...o, out: undefined, cleanup: undefined, inPlace: undefined },
                         { ...i, out: undefined, cleanup: undefined },
                         'Temporary lens contract changed',
                     );
+                    if (o.inPlace !== undefined) {
+                        const r = i.reconstruction;
+                        if (
+                            o.inPlace !== r?.reconstructionId ||
+                            !open.has(o.inPlace) ||
+                            r.kind !== 'constructor' ||
+                            !r.items.every((item) => item.kind === 'bind') ||
+                            ls.get(o.out.layout)?.fields.some((f) => f.name === 'replacement')
+                        )
+                            fail('Invalid in-place temporary');
+                        inPlace.add(o.inPlace);
+                    }
                     walk(i.cleanup, o.cleanup, open, i.reconstruction?.reconstructionId);
                 } else if (i.op === 'scope') {
                     if (o.op !== 'scope') return fail('Scope operation changed');
@@ -804,6 +817,8 @@ export function verifyConcreteProgram(p: ConcreteProgram): void {
         walk(original, body);
         if (retained.size !== reused.size || [...retained.keys()].some((id) => !reused.has(id)))
             fail('Retained box is not reused exactly once');
+        if ([...inPlace].some((id) => !reused.has(id)))
+            fail('In-place temporary without box reuse');
     };
     const expectedCode = new Set<string>();
     for (const v of p.analysis.variants) {

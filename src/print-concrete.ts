@@ -351,6 +351,7 @@ export function lconcrete(program: ConcreteProgram, options: ConcretePrintOption
                 case 'aslens':
                     expression = words(
                         'aslens',
+                        ...(i.inPlace ? ['in-place'] : []),
                         value(i.initial),
                         'backing',
                         slot({ place: i.backing, path: [] }),
