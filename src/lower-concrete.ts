@@ -32,6 +32,7 @@ import type {
     ConcreteInstruction,
     ConcreteCode,
     ConcreteField,
+    ConcreteLayout,
 } from './concrete-ir.ts';
 import { verifyConcreteProgram } from './verify-concrete.ts';
 
@@ -571,6 +572,10 @@ export function lowerConcreteProgram(
     });
     groups.forEach(callable);
     const finished = table.finish();
+    markBoxReuse(
+        code.map((c) => c.body),
+        new Map(finished.layouts.map((l) => [l.id, l])),
+    );
     const output: ConcreteProgram = {
         schemaVersion: 1,
         target: semantic.target,
@@ -619,4 +624,77 @@ export function compileConcreteProgram(
         ),
     });
     return lowerConcreteProgram(semantic, analysis);
+}
+
+/**
+ * Pair each borrowed match that destructures a boxed constructor with the
+ * reconstruction that rebuilds it, so the box is rewritten in place. Reuse needs
+ * the same constructor and the same union layout (hence payload layout), and a
+ * plain-valued case, whose temporary lenses are all restored inside the arm.
+ * Everything else keeps freeing and allocating.
+ */
+function markBoxReuse(bodies: ConcreteBlock[], layouts: Map<string, ConcreteLayout>): void {
+    type Arm = { layout: string; name: string };
+    const boxed = (layout: string, name: string): boolean =>
+        layouts.get(layout)?.fields.some((f) => f.name === name && f.kind === 'pointer') ?? false;
+    const retained = new Map<string, { arm: { retains?: string }; layout: string; name: string }>();
+    const visit = (
+        block: ConcreteBlock,
+        open: Map<string, Arm>,
+        reconstructing: string | undefined,
+        valueLayouts: Map<string, string>,
+    ): void => {
+        for (const i of block.instructions) {
+            if (i.op === 'bind' || i.op === 'borrow') continue;
+            valueLayouts.set(i.out.id, i.out.layout);
+            if (i.op === 'scope') visit(i.body, open, reconstructing, valueLayouts);
+            else if (i.op === 'aslens')
+                visit(i.cleanup, open, i.reconstruction?.reconstructionId, valueLayouts);
+            else if (i.op === 'case') {
+                i.cases.forEach((arm) => {
+                    const inner = new Map(open);
+                    const layout = valueLayouts.get(i.value);
+                    const p = arm.pattern;
+                    if (
+                        !i.lensJoin &&
+                        layout &&
+                        p.kind === 'constructor' &&
+                        p.reconstructionId &&
+                        boxed(layout, p.name)
+                    ) {
+                        inner.set(p.reconstructionId, { layout, name: p.name });
+                        retained.set(p.reconstructionId, { arm, layout, name: p.name });
+                    }
+                    visit(arm.body, inner, reconstructing, valueLayouts);
+                });
+            } else if (i.op === 'construct' && reconstructing) {
+                const arm = open.get(reconstructing);
+                const root = block.instructions.find(
+                    (s): s is Extract<ConcreteInstruction, { op: 'swap' }> => s.op === 'swap',
+                );
+                if (
+                    arm &&
+                    root?.value === i.out.id &&
+                    arm.name === i.name &&
+                    arm.layout === i.out.layout &&
+                    !i.reuses
+                )
+                    i.reuses = reconstructing;
+            }
+        }
+    };
+    bodies.forEach((b) => visit(b, new Map(), undefined, new Map()));
+    // A retained box must be reused exactly where the arm said; otherwise release it normally.
+    const reused = new Set<string>();
+    const collect = (block: ConcreteBlock): void => {
+        for (const i of block.instructions) {
+            if (i.op === 'bind' || i.op === 'borrow') continue;
+            if (i.op === 'construct' && i.reuses) reused.add(i.reuses);
+            if (i.op === 'scope') collect(i.body);
+            else if (i.op === 'aslens') collect(i.cleanup);
+            else if (i.op === 'case') i.cases.forEach((a) => collect(a.body));
+        }
+    };
+    bodies.forEach(collect);
+    for (const [id, { arm }] of retained) if (reused.has(id)) arm.retains = id;
 }

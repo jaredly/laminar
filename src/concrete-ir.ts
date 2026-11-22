@@ -68,10 +68,27 @@ export type ConcreteInstruction =
     | (Exclude<
           Instruction,
           {
-              op: 'bind' | 'borrow' | 'scope' | 'case' | 'call' | 'global' | 'closure' | 'aslens';
+              op:
+                  | 'bind'
+                  | 'borrow'
+                  | 'scope'
+                  | 'case'
+                  | 'call'
+                  | 'global'
+                  | 'closure'
+                  | 'aslens'
+                  | 'construct';
           }
       > &
           ConcreteOutput)
+    | (Extract<Instruction, { op: 'construct' }> &
+          ConcreteOutput & {
+              /**
+               * Reuse of the box a borrowed match retained (`retains` with the same id):
+               * write the payload into it instead of allocating.
+               */
+              reuses?: string;
+          })
     | (Omit<Extract<Instruction, { op: 'aslens' }>, 'cleanup' | 'out'> &
           ConcreteOutput & { cleanup: ConcreteBlock })
     | ({
@@ -88,6 +105,12 @@ export type ConcreteInstruction =
               body: ConcreteBlock;
               setup?: Cleanup[];
               restored?: Cleanup[];
+              /**
+               * The arm's root constructor pattern keeps its payload box instead of
+               * releasing it; exactly one `construct` reuses it (see `reuses`).
+               * Only a plain-valued case may retain, so the box never outlives the arm.
+               */
+              retains?: string;
           }[];
           lensJoin?: { kind: 'selected'; arms: string[]; result: string };
       } & ConcreteOutput)

@@ -1,6 +1,23 @@
 # Mutable heap data: `dup` pays for copies
 
-Status: proposal (2026-11-21). Nothing here is implemented yet except for vectors.
+Status: partly implemented (2026-11-21). Vectors, Go `dup` copying boxes (step 1), the
+concrete IR reuse contract and verifier (step 2), and C reuse (step 3) are done. Go
+reuse, direct field lenses and owned reuse are not, and no benchmark has been run.
+
+Implemented as follows:
+
+- Go `dup` copies every box and vector it reaches (`reachesHeap`/`copyValue` in
+  `src/go/lower.ts`). Leaves are copied lazily, so a duplicated field the program
+  never reads is never copied.
+- `lower-concrete.ts` (`markBoxReuse`) sets `retains` on a case arm and `reuses` on
+  the root `construct` of the matching reconstruction. It does so only for a
+  plain-valued case with the same constructor and the same union layout.
+  `verify-concrete.ts` checks the pairing (lexical containment, boxed variant,
+  same constructor and layout, retained exactly once).
+- `src/c/lower.ts` keeps the box in a local and writes `*box = payload`. The
+  same-layout `bump` above has no `allocate_context` or `release_context`.
+- Lens-valued cases (`lensJoin`) fall back to free and allocate.
+- Go does not reuse boxes yet (see the open questions).
 
 ## Summary
 

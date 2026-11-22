@@ -310,6 +310,7 @@ export function lconcrete(program: ConcreteProgram, options: ConcretePrintOption
                     break;
                 case 'construct':
                     expression = call(i.name, i.items.map(value));
+                    if (i.reuses) expression = words(expression, 'reuses', i.reuses);
                     break;
                 case 'move':
                     expression = words('move', slot(i.slot));
@@ -383,6 +384,7 @@ export function lconcrete(program: ConcreteProgram, options: ConcretePrintOption
                             i.cases.map((c) =>
                                 words(
                                     pattern(c.pattern),
+                                    ...(c.retains ? ['retains', c.retains] : []),
                                     '->',
                                     ...(c.setup?.length
                                         ? [words('setup', braces(c.setup.map(cleanup)))]

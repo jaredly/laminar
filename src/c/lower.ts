@@ -794,7 +794,9 @@ export function lowerC(
             return name;
         };
         const setup: Statement[] = [];
-        const bind = (p: IRPattern, data: Data, body: Statement[] = setup) => {
+        /** Boxes kept by borrowed matches, by reconstruction id, until a construct reuses them. */
+        const retainedBoxes = new Map<string, string>();
+        const bind = (p: IRPattern, data: Data, body: Statement[] = setup, retains?: string) => {
             if (p.kind === 'bind') places.set(p.slot.place, storage.own(data));
             else if (p.kind === 'tuple')
                 p.items.forEach((p, i) => bind(p, storage.parts(data)[i]!, body));
@@ -813,7 +815,18 @@ export function lowerC(
                         expression: declare(v.layout, contents.expression, body),
                         layout: v.layout,
                     };
-                    body.push(cc`release_context((${data.expression}).as.v${n});`);
+                    if (retains !== undefined) {
+                        // The reconstruction writes its payload into this box.
+                        retainedBoxes.set(
+                            retains,
+                            cell(
+                                fresh(),
+                                `${type(v.layout)} *`,
+                                cc`(${data.expression}).as.v${n}`,
+                                body,
+                            ),
+                        );
+                    } else body.push(cc`release_context((${data.expression}).as.v${n});`);
                 }
                 if (p.items.length === 1) bind(p.items[0]!, contents, body);
                 else p.items.forEach((item, k) => bind(item, storage.parts(contents)[k]!, body));
@@ -1146,13 +1159,17 @@ export function lowerC(
                                   ? value(i.items[0]!)
                                   : cc`(${type(v.layout)}){${joinCode(i.items.map(value), ', ')}}`;
                         if (v.boxed) {
-                            const box = fresh();
-                            cell(
-                                box,
-                                `${type(v.layout)} *`,
-                                cc`allocate_context(sizeof *${box})`,
-                                body,
-                            );
+                            let box = i.reuses ? retainedBoxes.get(i.reuses) : undefined;
+                            if (i.reuses && !box) return unsupported('Missing retained box');
+                            if (!box) {
+                                box = fresh();
+                                cell(
+                                    box,
+                                    `${type(v.layout)} *`,
+                                    cc`allocate_context(sizeof *${box})`,
+                                    body,
+                                );
+                            }
                             body.push(cc`*${box} = ${contents};`);
                             contents = box;
                         }
@@ -1365,6 +1382,7 @@ export function lowerC(
                                     layout: outputLayouts.get(i.value)!,
                                 },
                                 nested,
+                                arm.retains,
                             );
                             const result = block(arm.body, nested);
                             nested.push(locals.assign(name, result));

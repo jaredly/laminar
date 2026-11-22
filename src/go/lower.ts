@@ -291,8 +291,8 @@ export function lowerGo(program: ConcreteProgram): GoFile {
         const n = layout(id).fields.findIndex((f) => f.name === name);
         return n < 0 ? unsupported(goText`Constructor ${name} is absent from its union layout`) : n;
     };
-    // Boxed payloads are never written in place (binding copies them out and
-    // construction allocates), so `dup` and moves may share them.
+    // A boxed payload has exactly one owner: `dup` copies it (`copyValue`) and a move
+    // leaves its source dead, so the owner may write it in place.
     const payload = (expr: Expr, id: string, n: number): Expr =>
         variant(id, n).boxed ? go`(*(${expr}).v${n})` : go`(${expr}).v${n}`;
     const nativeEntries = new Set([
@@ -347,25 +347,29 @@ export function lowerGo(program: ConcreteProgram): GoFile {
         helpers.push(make(name));
         return name;
     };
-    /** Whether values of a layout can reach a vector, whose elements are written in place. */
-    const vectorReach = new Map<string, boolean>();
-    const reachesVector = (id: string): boolean => {
-        const known = vectorReach.get(id);
+    /**
+     * Whether values of a layout can reach heap data that is written in place: a
+     * vector buffer or a boxed union payload. Every live value owns its allocations.
+     */
+    const heapReach = new Map<string, boolean>();
+    const reachesHeap = (id: string): boolean => {
+        const known = heapReach.get(id);
         if (known !== undefined) return known;
-        vectorReach.set(id, false);
+        heapReach.set(id, false);
         const l = layout(id);
         const result =
             l.kind === 'vector' ||
-            l.fields.some((f) => f.kind !== 'code' && !!f.layout && reachesVector(f.layout));
-        vectorReach.set(id, result);
+            (l.kind === 'union' && l.fields.some((f) => f.kind === 'pointer')) ||
+            l.fields.some((f) => f.kind !== 'code' && !!f.layout && reachesHeap(f.layout));
+        heapReach.set(id, result);
         return result;
     };
     /**
-     * Copy for affine `dup`. Immutable data may be shared under Go's GC, but vector
-     * elements are written in place, so every vector reached gets its own buffer.
+     * Copy for affine `dup`. Vector buffers and boxed payloads are written in place by
+     * their owner, so every allocation reached is copied.
      */
     const copyValue = (expr: Expr, id: string): Expr => {
-        if (!reachesVector(id)) return expr;
+        if (!reachesHeap(id)) return expr;
         const l = layout(id);
         if (l.kind === 'vector')
             return go`${vectorHelper('dup', id, (name) => ({
@@ -385,7 +389,7 @@ export function lowerGo(program: ConcreteProgram): GoFile {
                 body: [
                     ...l.fields.flatMap((_, n): Statement[] => {
                         const v = variant(id, n);
-                        if (!reachesVector(v.layout)) return [];
+                        if (!v.boxed && !reachesHeap(v.layout)) return [];
                         return [
                             {
                                 head: go`if value.tag == ${tagValue(id, n)}`,
@@ -1539,18 +1543,32 @@ export function lowerGo(program: ConcreteProgram): GoFile {
                         if (
                             w?.kind === 'native' &&
                             w.definition === 'native/dup' &&
-                            reachesVector(id)
+                            reachesHeap(id)
                         ) {
+                            // Each leaf that reaches heap data is copied lazily, so a field the
+                            // program never reads is never copied. Copying is allocation only.
                             const lens = lenses.get(i.args[0]!)!;
-                            declare(
-                                id,
-                                copyValue(read(storage.get(lens.view), id), id),
-                                body,
-                                name,
-                            );
-                            values.set(i.out.id, name);
-                            lens.finish(body);
-                            continue;
+                            const copy = (data: Data, layoutId: string): Data =>
+                                Array.isArray(data)
+                                    ? data.map((d, n) =>
+                                          copy(
+                                              d,
+                                              (layout(layoutId).fields[n] as { layout: string })
+                                                  .layout,
+                                          ),
+                                      )
+                                    : reachesHeap(layoutId)
+                                      ? defer(
+                                            layoutId,
+                                            () => copyValue(read(data, layoutId), layoutId),
+                                            body,
+                                            fresh(),
+                                            true,
+                                        )
+                                      : data;
+                            duplicate = copy(snapshot(storage.get(lens.view), id, body, name), id);
+                            expr = () => read(duplicate!, id);
+                            adapters.push({ finish: lens.finish });
                         } else if (w?.kind === 'native' && w.definition === 'native/dup') {
                             const lens = lenses.get(i.args[0]!)!;
                             duplicate = snapshot(storage.get(lens.view), id, body, name);

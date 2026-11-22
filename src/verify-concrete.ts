@@ -563,7 +563,20 @@ export function verifyConcreteProgram(p: ConcreteProgram): void {
     ): void => {
         const reps = new Map(r.values.map((v) => [v.value, v.representation])),
             calls = new Map(r.calls.map((c) => [c.value, c]));
-        const walk = (src: IRBlock, dst: ConcreteBlock): void => {
+        // Box reuse: arms that retain a box, and the reconstructions that reuse it.
+        const retained = new Map<string, { layout: string; name: string }>();
+        const reused = new Set<string>();
+        const body_ = (b: ConcreteBlock) =>
+            b.instructions.filter(
+                (s): s is Extract<ConcreteBlock['instructions'][number], { op: 'swap' }> =>
+                    s.op === 'swap',
+            );
+        const walk = (
+            src: IRBlock,
+            dst: ConcreteBlock,
+            open: ReadonlyMap<string, { layout: string; name: string }> = new Map(),
+            reconstructing?: string,
+        ): void => {
             eq(
                 {
                     origin: dst.origin,
@@ -600,12 +613,12 @@ export function verifyConcreteProgram(p: ConcreteProgram): void {
                         { ...i, out: undefined, cleanup: undefined },
                         'Temporary lens contract changed',
                     );
-                    walk(i.cleanup, o.cleanup);
+                    walk(i.cleanup, o.cleanup, open, i.reconstruction?.reconstructionId);
                 } else if (i.op === 'scope') {
                     if (o.op !== 'scope') return fail('Scope operation changed');
                     eq(o.origin, i.origin, 'Scope origin changed');
                     if ('retainedStorage' in o) fail('Unexpected retained storage contract');
-                    walk(i.body, o.body);
+                    walk(i.body, o.body, open, reconstructing);
                 } else if (i.op === 'case') {
                     if (o.op !== 'case') return fail('Case operation changed');
                     if (
@@ -645,7 +658,26 @@ export function verifyConcreteProgram(p: ConcreteProgram): void {
                             'Case restoration normalization changed',
                         );
                         eq(o.cases[j]!.pattern, c.pattern, 'Case pattern changed');
-                        walk(c.body, o.cases[j]!.body);
+                        const retains = o.cases[j]!.retains;
+                        let inner = open;
+                        if (retains !== undefined) {
+                            const layout = storage(reps.get(i.value)!),
+                                pattern = c.pattern;
+                            const name = pattern.kind === 'constructor' ? pattern.name : '';
+                            if (
+                                join ||
+                                pattern.kind !== 'constructor' ||
+                                pattern.reconstructionId !== retains ||
+                                retained.has(retains) ||
+                                !ls
+                                    .get(layout)
+                                    ?.fields.some((f) => f.name === name && f.kind === 'pointer')
+                            )
+                                fail('Invalid retained box');
+                            retained.set(retains, { layout, name });
+                            inner = new Map(open).set(retains, { layout, name });
+                        }
+                        walk(c.body, o.cases[j]!.body, inner, reconstructing);
                     });
                 } else if (i.op === 'global' || i.op === 'closure') {
                     if (i.out.type.tag !== 'plain') return fail('Callable produced a lens');
@@ -747,10 +779,31 @@ export function verifyConcreteProgram(p: ConcreteProgram): void {
                         },
                         'Concrete invocation target/ABI changed',
                     );
+                } else if (i.op === 'construct') {
+                    if (o.op !== 'construct') return fail('Construction changed');
+                    const { reuses, ...rest } = o;
+                    eq(rest, { ...i, out: o.out }, 'Concrete operation changed');
+                    if (reuses !== undefined) {
+                        const arm = open.get(reuses);
+                        const swap = body_(dst).find((s) => s.op === 'swap');
+                        if (
+                            reuses !== reconstructing ||
+                            !arm ||
+                            reused.has(reuses) ||
+                            arm.name !== i.name ||
+                            arm.layout !== o.out.layout ||
+                            !swap ||
+                            swap.value !== i.out.id
+                        )
+                            fail('Invalid box reuse');
+                        reused.add(reuses);
+                    }
                 } else eq(o, { ...i, out: o.out }, 'Concrete operation changed');
             });
         };
         walk(original, body);
+        if (retained.size !== reused.size || [...retained.keys()].some((id) => !reused.has(id)))
+            fail('Retained box is not reused exactly once');
     };
     const expectedCode = new Set<string>();
     for (const v of p.analysis.variants) {

@@ -67,6 +67,60 @@ export const vectorSamples = [
             { kind: 'variant', name: 'Some', items: [[2]] },
         ],
     },
+    // Boxed payloads have one owner: `dup` copies them, so updating one copy is
+    // unobservable through the other.
+    {
+        name: 'dup copies list cells',
+        source: 'fn bump(~xs) {\n match ~xs {\n [] -> ()\n [h, ...t] -> {\n h := h + 1\n bump(~t)\n }\n }\n}\n{let a = [1, 2, 3]\n let b = dup(~a)\n bump(~b)\n (a, b)}',
+        expected: [
+            [1, 2, 3],
+            [2, 3, 4],
+        ],
+    },
+    {
+        name: 'dup copies list cells updated in the original',
+        source: 'fn bump(~xs) {\n match ~xs {\n [] -> ()\n [h, ...t] -> {\n h := h + 1\n bump(~t)\n }\n }\n}\n{let a = [1, 2, 3]\n let b = dup(~a)\n bump(~a)\n bump(~a)\n (a, b)}',
+        expected: [
+            [3, 4, 5],
+            [1, 2, 3],
+        ],
+    },
+    {
+        name: 'dup copies tree nodes',
+        source: 'type Tree { Leaf(Number)\n Node(Tree, Tree) }\nfn inc(~t) {\n match ~t {\n Leaf(n) -> { n := n + 1 }\n Node(l, r) -> {\n inc(~l)\n }\n }\n}\n{let a = Node(Node(Leaf(1), Leaf(2)), Leaf(3))\n let b = dup(~a)\n inc(~b)\n (a, b)}',
+        expected: [
+            {
+                kind: 'variant',
+                name: 'Node',
+                items: [
+                    {
+                        kind: 'variant',
+                        name: 'Node',
+                        items: [
+                            { kind: 'variant', name: 'Leaf', items: [1] },
+                            { kind: 'variant', name: 'Leaf', items: [2] },
+                        ],
+                    },
+                    { kind: 'variant', name: 'Leaf', items: [3] },
+                ],
+            },
+            {
+                kind: 'variant',
+                name: 'Node',
+                items: [
+                    {
+                        kind: 'variant',
+                        name: 'Node',
+                        items: [
+                            { kind: 'variant', name: 'Leaf', items: [2] },
+                            { kind: 'variant', name: 'Leaf', items: [2] },
+                        ],
+                    },
+                    { kind: 'variant', name: 'Leaf', items: [3] },
+                ],
+            },
+        ],
+    },
     {
         name: 'first-class dup copies the buffer',
         source: '{let d = dup\n let v = [:[:1:]:]\n let w = d(~v)\n w[0][0] := 2\n (v, w)}',
