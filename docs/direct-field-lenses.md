@@ -216,23 +216,52 @@ header is physically fine because the owner is inaccessible.
 
 ### Where `focus` is introduced
 
-Two options. The first looks cheaper, but I have not read `lower-typed.ts` closely
-enough to be sure it is workable.
+`lower-typed.ts` shows the borrowed expansion arrives as three separate nodes that
+`focus` must merge:
 
-1. **Recognize the existing expansion in `lower-typed.ts`.** Normalization and the
-   checker stay as they are. The checker's borrow bookkeeping for a borrowed pattern
-   lives in `infer.ts` `aslens` (`temporaryLenses`, `scopes`, `provenance`), and I do
-   not want to re-derive it. An `aslens` that carries `reconstruction` metadata is
-   exactly a borrowed pattern, and `verify-elaboration.ts` already checks the pairing.
-   `lower-typed.ts` would emit `focus` for those and `aslens` for user temporaries.
-   The `reconstruction*` fields then stay in the AST and elaborated form (the checker
-   still uses them) and disappear only from the typed IR and `verify-ir.ts`.
-2. **Emit `focus` from `normalize-borrowed.ts` and teach the checker about it.**
-   Cleaner end state, but the checker would need borrow bookkeeping for the new node,
-   and `infer.ts` currently rejects matching a lens value in lens position
-   (`unsupported-lens-case`: "requires scoped restoration checking").
+- the `case owner { P_owned -> ... }` arm, which selects the constructor
+  (`case 'case'`, with `edgeDrops` and per-arm `drops`);
+- the `let P_public = lens(...)` that binds the field lenses by name;
+- the `aslens` (`case 'aslens'` in `lens`), which lowers `initial` (the private
+  tuple), the cleanup block (`move` of the backing, then a `bind` or refutable
+  `case` of the final pattern, then the owner assignment) and the `reconstruction`
+  pattern from `e.temporaryLenses`.
 
-I recommend option 1 first, with option 2 as a possible later cleanup.
+The field bindings are not independent of the `aslens`: the loans and `holds` ledger
+in `verify-ir.ts` is keyed on the aslens backing place. The loans on `$p1.0`/`$p1.1`
+have `owners` pointing at that backing, and about ten sites in `verify-ir.ts` handle
+an `aslens` specially (the reconstruction check, the held-slot state, loan release,
+escape analysis for returned temporaries). A `focus` instruction needs its own
+versions of all of them: the field places it introduces are owned by the focus, and
+the focus holds the owner.
+
+So there are three ways to get the readable output:
+
+1. **`focus` in the typed IR, produced by `lower-typed.ts`.** `lower-typed` recognizes
+   a case arm whose pattern carries `reconstructionOwner` and whose body is the
+   `let`/`aslens` pair, and emits one `focus`. The checker and normalizer are
+   unchanged. `verify-ir.ts` needs the focus ownership rules above, and the
+   `reconstruction` check is replaced by the op's own definition. This is the cleanest
+   typed IR for the checked shape, and it is the largest change of the three.
+2. **`focus` from the normalizer, with the checker taught about it.** Cleaner end state,
+   but `infer.ts` would need borrow bookkeeping for the new node, and it currently
+   rejects matching a lens value in lens position (`unsupported-lens-case`).
+3. **Concrete-only `in-place` form.** Keep the typed IR as it is. The `aslens` already
+   carries `reconstruction`, and `verify-ir.ts` has already proved it an identity on
+   the matched fields. `lower-concrete.ts` marks the `aslens` and its case arm
+   `in-place` (as it marks `retains`/`reuses` today) when the field layouts match.
+   Backends bind field lenses as pointers into the retained box and emit neither the
+   initial tuple nor the cleanup block. `verify-concrete.ts` checks the layouts and
+   containment. The typed IR keeps the move-out-and-rebuild encoding, but it stays a
+   semantic form and the physical decision lives where the representation decisions
+   already live.
+
+Option 3 gets the readable output with the smallest blast radius and is a strict
+stepping stone: its concrete contract is the same one `focus` lowering needs.
+Option 1 is the principled destination. I recommend staging them: option 3 first, then
+option 1 once it has proven the concrete form, deleting the `reconstruction*` check
+at that point. If that staging is not wanted and `focus` is the goal, option 1 is the
+route, but it needs the `verify-ir.ts` work up front.
 
 ### Lens-valued cases
 
@@ -296,6 +325,11 @@ after for the `rebuild` paths (see Testing) to confirm it does not get harder to
 
 ## Open questions
 
+Decided:
+
+- The typed IR form is a `case-focus` (a case over an owner lens whose arms bind field
+  lenses), not a separate lens-producing instruction.
+
 Resolved by reading the code:
 
 - *New `LensRep` kind or a path on `thin`?* Neither. `thin(read, replacement)` already
@@ -306,13 +340,8 @@ Resolved by reading the code:
 
 Still open:
 
-- Is a dedicated `case-focus` right, or a separate lens-producing instruction
-  (`focus %owner C -> (%a, %b)`) that `case` selects on? The second keeps `case`
-  unchanged but needs the tag test to be expressible on a lens. I lean towards
-  `case-focus`.
 - Can `lensJoin` adapters join projection shapes, or must lens-valued cases always use
   the rebuild form? I have not read the `lensJoin` code in `lower-concrete.ts` and the
   backends closely enough to say; a small prototype may be needed.
-- Is option 1 under "Where `focus` is introduced" workable? That needs a close read of
-  `lower-typed.ts`, where `aslens`, the selected-pattern case and the public `let` are
-  separate nodes that `focus` would have to merge.
+- Stage option 3 before option 1 (recommended above), or go straight to `focus` in the
+  typed IR? Option 1 needs the focus ownership rules in `verify-ir.ts` first.
