@@ -30,14 +30,10 @@ void *allocate_context(size_t size);
 void release_context(void *context);
 laminar_string *string_new(const char *bytes, size_t length);
 void string_drop(laminar_string *s);
-laminar_string *string_dup(laminar_string *s);
 _Bool string_equals(laminar_string *s, const char *bytes, size_t length);
 void builder_bytes(string_builder *b, const char *bytes, size_t length);
-void builder_string(string_builder *b, laminar_string *s);
-void builder_bool(string_builder *b, _Bool value);
 void builder_number(string_builder *b, double x);
 laminar_string *builder_finish(string_builder *b);
-void print_string(laminar_string *s);
 double step(void *environment, double steps, Scattered_Lens_double_Lens_double_Lens_double min_max_lastGuess);
 Tuple_Tuple_Number_Number_Number_Number game(void *environment);
 double nextGuess(void *environment, Direction direction, Scattered_Lens_double_Lens_double_Lens_double min_max_lastGuess);
@@ -254,9 +250,6 @@ void string_drop(laminar_string *s) {
         release_context(s);
     }
 }
-laminar_string *string_dup(laminar_string *s) {
-    return s ? string_new((const char *)s->bytes, s->length) : NULL;
-}
 _Bool string_equals(laminar_string *s, const char *bytes, size_t length) {
     size_t n = s ? s->length : 0;
     return n == length && (!length || memcmp(s->bytes, bytes, length) == 0);
@@ -279,20 +272,6 @@ void builder_bytes(string_builder *b, const char *bytes, size_t length) {
     }
     memcpy(b->bytes + b->length, bytes, length);
     b->length += length;
-}
-void builder_string(string_builder *b, laminar_string *s) {
-    if (s) {
-        builder_bytes(b, (const char *)s->bytes, s->length);
-        string_drop(s);
-    }
-}
-void builder_bool(string_builder *b, _Bool value) {
-    if (value) {
-        builder_bytes(b, "true", 4);
-    }
-    else {
-        builder_bytes(b, "false", 5);
-    }
 }
 void builder_number(string_builder *b, double x) {
     if (isnan(x)) {
@@ -364,24 +343,6 @@ laminar_string *builder_finish(string_builder *b) {
     laminar_string *s = string_new((const char *)b->bytes, b->length);
     free(b->bytes);
     return s;
-}
-void print_string(laminar_string *s) {
-    putchar(34);
-    size_t n = s ? s->length : 0;
-    for (size_t i = 0; i < n; i++) {
-        unsigned char c = s->bytes[i];
-        if (c == 34 || c == 92) {
-            putchar(92);
-            putchar(c);
-        }
-        else if (c < 32) {
-            printf("\\u%04x", c);
-        }
-        else {
-            putchar(c);
-        }
-    }
-    putchar(34);
 }
 void *allocate_context(size_t size) {
     void *context = malloc(size);

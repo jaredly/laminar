@@ -43,16 +43,9 @@ func bump(xs Lens_List_Number) Unit {
 		*(xs).read = v13
 	case List_Number_cons:
 		v16 := (v2).v1
-		v17 := (*(v2).v1)
-		v18 := (v17).item0
-		v19 := (v17).item1
-		var back0 Backing_List_Number_946144c3f6
-		back0.read0 = v19
-		bump(Lens_List_Number{read: &back0.read0})
-		v39 := back0.read0
-		*v16 = Tuple_Number_List_Number{item0: (v18 + 1.0), item1: v39}
-		v43 := List_Number{tag: List_Number_cons, v1: v16}
-		*(xs).read = v43
+		head := ((*v16)).item0
+		(*v16).item0 = (head + 1.0)
+		bump(Lens_List_Number{read: &(*v16).item1})
 	}
 	return Unit{}
 }

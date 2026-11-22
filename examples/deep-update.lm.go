@@ -49,29 +49,15 @@ func replace(needle float64, repl float64, lst Lens_List_Number) Unit {
 	switch (v2).tag {
 	case List_Number_cons:
 		v5 := (v2).v1
-		v6 := (*(v2).v1)
-		v7 := (v6).item0
-		v8 := (v6).item1
-		var v37 float64
-		var v38 List_Number
-		if (v7 == needle) {
-			v37 = repl
-			v38 = v8
+		one := ((*v5)).item0
+		if (one == needle) {
+			(*v5).item0 = repl
 		} else {
-			var back0 Backing_List_Number_946144c3f6
-			back0.read0 = v8
-			replace(needle, repl, Lens_List_Number{read: &back0.read0})
-			v37 = v7
-			v38 = back0.read0
+			replace(needle, repl, Lens_List_Number{read: &(*v5).item1})
 		}
-		v40 := v37
-		v41 := v38
-		*v5 = Tuple_Number_List_Number{item0: v40, item1: v41}
-		v45 := List_Number{tag: List_Number_cons, v1: v5}
-		*(lst).read = v45
 	case List_Number_nil:
-		v55 := List_Number{tag: List_Number_nil, v0: Unit{}}
-		*(lst).read = v55
+		v44 := List_Number{tag: List_Number_nil, v0: Unit{}}
+		*(lst).read = v44
 	}
 	return Unit{}
 }

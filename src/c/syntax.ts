@@ -2,6 +2,7 @@
 import { isExpr } from '../backend/imperative/code.ts';
 import type { Syntax } from '../backend/imperative/locals.ts';
 import type { Statement } from '../backend/imperative/statements.ts';
+import { cScalars } from './names.ts';
 
 export type { Statement } from '../backend/imperative/statements.ts';
 export type TranslationUnit = {
@@ -38,6 +39,16 @@ export const cSyntax: Syntax = {
     statement: (value) => `${value};`,
 };
 
+/** The zero value of a declared C type, spelled for what the type is. */
+const zeroOf = (type: string): string =>
+    ['double', 'int', 'size_t'].includes(type)
+        ? '0'
+        : type === 'bool'
+          ? 'false'
+          : type.endsWith('*') || type === cScalars.string
+            ? 'NULL'
+            : '{0}';
+
 export const printStatements = (body: Statement[], depth = 0): string[] => {
     const indent = (n: number) => '    '.repeat(n);
     const lines: string[] = [];
@@ -49,7 +60,7 @@ export const printStatements = (body: Statement[], depth = 0): string[] => {
                 indent(depth) +
                     (s.kind === 'set'
                         ? `${s.name} = ${s.value};`
-                        : `${s.type} ${s.name} = ${s.value ?? '{0}'};`),
+                        : `${s.type} ${s.name} = ${s.value ?? zeroOf(s.type)};`),
             );
         else if ('kind' in s && s.kind === 'if')
             s.arms.forEach((arm, n) => {

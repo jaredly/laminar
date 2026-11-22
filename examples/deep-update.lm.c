@@ -26,11 +26,10 @@ Unit replace(void *environment, double needle, double repl, Lens_List_Number lst
 Lens_bool_to_double find(void *environment, double needle, Lens_List_Number lst);
 List_Number entry(void *environment);
 typedef struct { List_Number read0; } Backing0;
-typedef struct { List_Number read0; } Backing1;
-typedef struct { Lens_List_Number lst; int v4; Tuple_Number_List_Number v9; int v19; Backing1 * back1; Lens_List_Number v26; Lens_bool_to_double v25; bool focus; double focusout; } Restore2;
-Unit restore2(void *opaque, double replacement);
+typedef struct { Lens_List_Number lst; int v4; Tuple_Number_List_Number v9; int v19; Backing0 * back0; Lens_List_Number v26; Lens_bool_to_double v25; bool focus; double focusout; } Restore1;
+Unit restore1(void *opaque, double replacement);
+typedef struct { List_Number read0; } Backing2;
 typedef struct { List_Number read0; } Backing3;
-typedef struct { List_Number read0; } Backing4;
 void print_number(double x);
 void print_List_Number(List_Number value);
 Unit drop_List_Number(List_Number value);
@@ -38,63 +37,41 @@ Unit replace(void *environment, double needle, double repl, Lens_List_Number lst
     (void)environment;
     List_Number v2 = *(lst).read;
     Unit v3 = {0};
-    List_Number v43 = {0};
+    List_Number v33 = {0};
     if ((v2).tag == List_Number_cons) {
-        Tuple_Number_List_Number v4 = (*(v2).as.v1);
-        Tuple_Number_List_Number * v5 = (v2).as.v1;
-        double v6 = (v4).item0;
-        List_Number v7 = (v4).item1;
-        Tuple_Number_List_Number v8 = (Tuple_Number_List_Number){v6, v7};
-        double one = (v8).item0;
-        bool v16 = (one == needle);
-        Unit v17 = {0};
-        double v27 = {0};
-        List_Number v28 = {0};
-        if (v16 == 1) {
-            double v19 = (v8).item0;
-            (void)v19;
-            v17 = (Unit){0};
-            v27 = repl;
-            v28 = (v8).item1;
+        Tuple_Number_List_Number * v4 = (v2).as.v1;
+        double one = ((*v4)).item0;
+        bool v15 = (one == needle);
+        Unit v16 = {0};
+        if (v15 == 1) {
+            double v18 = ((*v4)).item0;
+            (void)v18;
+            (*v4).item0 = repl;
+            v16 = (Unit){0};
         }
-        else if (v16 == 0) {
-            Backing0 back0 = {0};
-            back0.read0 = (v8).item1;
-            Lens_List_Number v25 = (Lens_List_Number){.read=&back0.read0};
-            Unit v24 = replace(((Callable_Value_196fc0868a){0}).environment, needle, repl, v25);
-            List_Number v26 = *(v25).read;
-            v17 = v24;
-            v27 = (v8).item0;
-            v28 = v26;
+        else if (v15 == 0) {
+            Lens_List_Number v24 = (Lens_List_Number){.read=&(*v4).item1};
+            v16 = replace(((Callable_Value_196fc0868a){0}).environment, needle, repl, v24);
         }
         else {
             abort();
         }
-        Tuple_Number_List_Number v29 = (Tuple_Number_List_Number){v27, v28};
-        double v31 = (v29).item0;
-        List_Number v32 = (v29).item1;
-        *v5 = (Tuple_Number_List_Number){v31, v32};
-        List_Number v33 = (List_Number){.tag=List_Number_cons, .as.v1=v5};
-        Unit v34 = {0};
-        (void)v34;
-        v3 = v17;
-        v43 = v33;
+        v3 = v16;
+        v33 = *(lst).read;
     }
     else if ((v2).tag == List_Number_nil) {
-        Unit v38 = {0};
-        Unit v39 = {0};
-        (void)v39;
-        List_Number v41 = (List_Number){.tag=List_Number_nil, .as.v0=(Unit){0}};
-        Unit v42 = {0};
-        (void)v42;
-        v3 = v38;
-        v43 = v41;
+        Unit v28 = {0};
+        List_Number v31 = (List_Number){.tag=List_Number_nil, .as.v0=(Unit){0}};
+        Unit v32 = {0};
+        (void)v32;
+        v3 = v28;
+        v33 = v31;
     }
     else {
         abort();
     }
     Unit v1 = v3;
-    *(lst).read = v43;
+    *(lst).read = v33;
     return v1;
 }
 Lens_bool_to_double find(void *environment, double needle, Lens_List_Number lst) {
@@ -104,7 +81,7 @@ Lens_bool_to_double find(void *environment, double needle, Lens_List_Number lst)
     bool v5 = {0};
     Tuple_Number_List_Number v9 = {0};
     int v19 = {0};
-    Backing1 * back1 = {0};
+    Backing0 * back0 = {0};
     Lens_List_Number v26 = {0};
     Lens_bool_to_double v25 = {0};
     if ((v2).tag == List_Number_cons) {
@@ -122,12 +99,12 @@ Lens_bool_to_double find(void *environment, double needle, Lens_List_Number lst)
             v20 = 1;
         }
         else if (v17 == 0) {
-            back1 = allocate_context(sizeof *back1);
-            if (!back1) {
+            back0 = allocate_context(sizeof *back0);
+            if (!back0) {
                 abort();
             }
-            back1->read0 = (v9).item1;
-            v26 = (Lens_List_Number){.read=&back1->read0};
+            back0->read0 = (v9).item1;
+            v26 = (Lens_List_Number){.read=&back0->read0};
             v25 = find(((Callable_Value_196fc0868a){0}).environment, needle, v26);
             v19 = 1;
             v20 = *(v25).read;
@@ -145,7 +122,7 @@ Lens_bool_to_double find(void *environment, double needle, Lens_List_Number lst)
     else {
         abort();
     }
-    Restore2 *ctx = allocate_context(sizeof *ctx);
+    Restore1 *ctx = allocate_context(sizeof *ctx);
     if (!ctx) {
         abort();
     }
@@ -153,12 +130,12 @@ Lens_bool_to_double find(void *environment, double needle, Lens_List_Number lst)
     ctx->v4 = v4;
     ctx->v9 = v9;
     ctx->v19 = v19;
-    ctx->back1 = back1;
+    ctx->back0 = back0;
     ctx->v26 = v26;
     ctx->v25 = v25;
     ctx->focus = v5;
     Lens_bool_to_double v53 = (Lens_bool_to_double){.read=&ctx->focus, .replacement=&ctx->focusout};
-    v53.restore = restore2;
+    v53.restore = restore1;
     v53.context = ctx;
     return v53;
 }
@@ -177,18 +154,18 @@ List_Number entry(void *environment) {
     Tuple_Number_List_Number * v11 = allocate_context(sizeof *v11);
     *v11 = (Tuple_Number_List_Number){1, v9};
     List_Number x = (List_Number){.tag=List_Number_cons, .as.v1=v11};
-    Backing3 back3 = {0};
-    back3.read0 = x;
-    Lens_List_Number v18 = (Lens_List_Number){.read=&back3.read0};
+    Backing2 back2 = {0};
+    back2.read0 = x;
+    Lens_List_Number v18 = (Lens_List_Number){.read=&back2.read0};
     Unit v17 = replace(((Callable_Value_196fc0868a){0}).environment, 2, 5, v18);
     (void)v17;
     List_Number v19 = *(v18).read;
-    Backing4 * back4 = allocate_context(sizeof *back4);
-    if (!back4) {
+    Backing3 * back3 = allocate_context(sizeof *back3);
+    if (!back3) {
         abort();
     }
-    back4->read0 = v19;
-    Lens_List_Number v25 = (Lens_List_Number){.read=&back4->read0};
+    back3->read0 = v19;
+    Lens_List_Number v25 = (Lens_List_Number){.read=&back3->read0};
     Lens_bool_to_double v24 = find(((Callable_Value_196fc0868a){0}).environment, 3, v25);
     double v26 = 10;
     bool v27 = *(v24).read;
@@ -200,11 +177,11 @@ List_Number entry(void *environment) {
         *(v24).replacement = v26;
     }
     List_Number v29 = *(v25).read;
-    release_context(back4);
+    release_context(back3);
     return v29;
 }
-Unit restore2(void *opaque, double replacement) {
-    Restore2 *ctx = opaque;
+Unit restore1(void *opaque, double replacement) {
+    Restore1 *ctx = opaque;
     (void)replacement;
     List_Number v52 = (List_Number){0};
     if (ctx->v4 == 0) {
@@ -230,7 +207,7 @@ Unit restore2(void *opaque, double replacement) {
                 *(ctx->v25).replacement = replacement;
             }
             List_Number v37 = *(ctx->v26).read;
-            release_context(ctx->back1);
+            release_context(ctx->back0);
             v38 = (ctx->v9).item0;
             v39 = v37;
         }

@@ -22,9 +22,8 @@ Unit fillRange(void *environment, double n, double end, Lens_Vector_Number arr);
 Vector_Number range(void *environment, double n);
 Tuple_Vector_Number_Vector_Number entry(void *environment);
 double * vector_at_Vector_Number(Vector_Number value, double index);
-typedef struct { Vector_Number read0; } Backing0;
 Vector_Number vector_array_Vector_Number(double length, double init);
-typedef struct { Vector_Number read0; } Backing1;
+typedef struct { Vector_Number read0; } Backing0;
 Vector_Number vector_push_Vector_Number(Vector_Number value, double item);
 void print_number(double x);
 void vector_drop_Vector_Number(Vector_Number value);
@@ -32,36 +31,28 @@ Unit fillRange(void *environment, double n, double end, Lens_Vector_Number arr) 
     (void)environment;
     bool v5 = (n >= end);
     Unit v6 = {0};
-    Vector_Number v26 = {0};
     if (v5 == 1) {
         v6 = (Unit){0};
-        v26 = *(arr).read;
     }
     else if (v5 == 0) {
         double * v13 = vector_at_Vector_Number(*(arr).read, n);
         double v16 = (*v13);
         (void)v16;
         *v13 = n;
-        Backing0 back0 = {0};
-        back0.read0 = *(arr).read;
-        Lens_Vector_Number v24 = (Lens_Vector_Number){.read=&back0.read0};
-        Unit v23 = fillRange(((Callable_Value_196fc0868a){0}).environment, (n + 1), end, v24);
-        Vector_Number v25 = *(v24).read;
-        v6 = v23;
-        v26 = v25;
+        Lens_Vector_Number v24 = (Lens_Vector_Number){.read=(arr).read};
+        v6 = fillRange(((Callable_Value_196fc0868a){0}).environment, (n + 1), end, v24);
     }
     else {
         abort();
     }
-    *(arr).read = v26;
     return v6;
 }
 Vector_Number range(void *environment, double n) {
     (void)environment;
     Vector_Number arr = vector_array_Vector_Number(n, 0);
-    Backing1 back1 = {0};
-    back1.read0 = arr;
-    Lens_Vector_Number v9 = (Lens_Vector_Number){.read=&back1.read0};
+    Backing0 back0 = {0};
+    back0.read0 = arr;
+    Lens_Vector_Number v9 = (Lens_Vector_Number){.read=&back0.read0};
     Unit v8 = fillRange(((Callable_Value_196fc0868a){0}).environment, 0, n, v9);
     (void)v8;
     return *(v9).read;
