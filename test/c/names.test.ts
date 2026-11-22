@@ -77,8 +77,10 @@ it('names union tags in constructors, matches and runtime helpers', () => {
     );
     expect(code).toContain('enum { List_Number_nil = 0, List_Number_cons = 1 };');
     expect(code).toContain('.tag=List_Number_cons');
-    expect(code).toContain('.tag == List_Number_cons');
+    // A complete match on every constructor is a switch over the named constants.
+    expect(code).toContain('case List_Number_cons:');
     expect(code).not.toMatch(/\.tag\s*(?:=|==)\s*\d/);
+    expect(code).not.toMatch(/case \d/);
 });
 
 it('keeps constructor constants distinct across specializations', () => {

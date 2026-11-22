@@ -97,8 +97,7 @@ double entry(void *environment) {
     Backing0 back0 = {0};
     back0.read0 = 1;
     Lens_double v5 = (Lens_double){.read=&back0.read0};
-    Unit v4 = inc(((Callable_Value_d6f73c1cde){0}).environment, v5);
-    (void)v4;
+    inc(NULL, v5);
     return *(v5).read;
 }
 void print_number(double x) {
@@ -166,8 +165,7 @@ Tuple_Number_Number entry(void *environment) {
     back0.read0 = 1;
     back0.read1 = 2;
     Scattered_Lens_double_Lens_double v9 = (Scattered_Lens_double_Lens_double){.item0=(Lens_double){.read=&back0.read0}, .item1=(Lens_double){.read=&back0.read1}};
-    Unit v8 = inc(((Callable_Value_d6f73c1cde){0}).environment, v9);
-    (void)v8;
+    inc(NULL, v9);
     Tuple_Number_Number v10 = (Tuple_Number_Number){*((v9).item0).read, *((v9).item1).read};
     double a = (v10).item0;
     double b = (v10).item1;
@@ -266,11 +264,9 @@ Tuple_Bool_Tuple_Number_Number entry(void *environment) {
     back1->read2 = 2;
     back1->write2 = (Tuple_Number_Number){0};
     Scattered_Lens_double_to_bool_Lens_double_to_Tuple_Number_Number v9 = (Scattered_Lens_double_to_bool_Lens_double_to_Tuple_Number_Number){.item0=(Lens_double_to_bool){.read=&back1->read0, .replacement=&back1->write0}, .item1=(Lens_double_to_Tuple_Number_Number){.read=&back1->read2, .replacement=&back1->write2}};
-    Scattered_Lens_double_to_bool_Lens_double_to_Tuple_Number_Number v8 = both(((Callable_Value_d6f73c1cde){0}).environment, v9);
+    Scattered_Lens_double_to_bool_Lens_double_to_Tuple_Number_Number v8 = both(NULL, v9);
     Tuple_Number_Number v13 = (Tuple_Number_Number){3, 4};
     Tuple_Bool_Tuple_Number_Number v14 = (Tuple_Bool_Tuple_Number_Number){1, v13};
-    Tuple_Number_Number v15 = (Tuple_Number_Number){*((v8).item0).read, *((v8).item1).read};
-    (void)v15;
     Tuple_Bool_Tuple_Number_Number v16 = (Tuple_Bool_Tuple_Number_Number){(v14).item0, (v14).item1};
     if ((v8).restore) {
         (v8).restore((v8).context, v16);
@@ -397,10 +393,8 @@ Tuple_Bool_Number entry(void *environment) {
     back1->read0 = x;
     back1->write0 = (Tuple_Bool_Number){0};
     Lens_Tuple_Number_Number_to_Tuple_Bool_Number v6 = (Lens_Tuple_Number_Number_to_Tuple_Bool_Number){.read=&back1->read0, .replacement=&back1->write0};
-    Lens_double_to_bool v5 = first(((Callable_Value_d6f73c1cde){0}).environment, v6);
+    Lens_double_to_bool v5 = first(NULL, v6);
     bool v7 = 1;
-    double v8 = *(v5).read;
-    (void)v8;
     if ((v5).restore) {
         (v5).restore((v5).context, v7);
     }
@@ -478,20 +472,16 @@ bool entry(void *environment);
 bool entry(void *environment) {
     (void)environment;
     double v0 = 1;
-    bool v2 = 1;
     double v3 = {0};
     (void)v3;
     bool v10 = {0};
-    if (v2 == 1) {
+    if (1) {
         v3 = v0;
         v10 = 1;
     }
-    else if (v2 == 0) {
+    else {
         v3 = v0;
         v10 = 0;
-    }
-    else {
-        abort();
     }
     return v10;
 }

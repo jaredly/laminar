@@ -20,6 +20,8 @@ export type Syntax = {
     binary: (op: string, left: string, right: string) => string;
     /** A return statement; `return value` when absent. */
     returns?: (value: string) => string;
+    /** An expression evaluated only for its effects; the bare expression when absent. */
+    statement?: (value: string) => string;
 };
 const numeric = (op: string, a: number, b: number): number | boolean => {
     switch (op) {
@@ -136,6 +138,14 @@ export class Locals {
             spell(String(value)),
         );
     }
+    /** An expression evaluated only for its effects, as a statement. */
+    private statement(value: Expr): Expr {
+        const spell = this.syntax.statement ?? ((v: string) => v);
+        return this.code(
+            { kind: 'compose', parts: [this.recipe(value)], emit: ([v]) => spell(v!) },
+            spell(String(value)),
+        );
+    }
     /** Every local some expression in `body` reads. Assignment targets are not reads. */
     reads(body: Statement[]): Set<string> {
         const result = new Set<string>();
@@ -183,7 +193,13 @@ export class Locals {
         name: string,
         type: string,
         value?: Expr,
-        options: { pure?: boolean; inline?: boolean; zeroInitial?: boolean; load?: boolean } = {},
+        options: {
+            pure?: boolean;
+            inline?: boolean;
+            zeroInitial?: boolean;
+            load?: boolean;
+            effect?: boolean;
+        } = {},
     ): LocalDeclaration {
         this.reference(name);
         if (this.declarations.has(name)) throw Error(`Duplicate local ${name}`);
@@ -434,7 +450,24 @@ export class Locals {
                 if (isLocal(s)) return s.kind === 'local' && !live.has(s.name) ? [] : [s];
                 return [mapScope(s, (e) => e, prune)];
             });
-        return prune(result);
+        const pruned = prune(result);
+        // A call whose result nothing reads still runs, as a statement at its point.
+        const used = this.reads(pruned);
+        const discard = (array: Statement[]): Statement[] =>
+            array.flatMap((s): Statement[] => {
+                if (Array.isArray(s)) return [discard(s)];
+                if (isExpr(s)) return [s];
+                if (isLocal(s))
+                    return s.kind === 'local' &&
+                        s.effect &&
+                        s.value !== undefined &&
+                        !used.has(s.name) &&
+                        !blocked.has(s.name)
+                        ? [this.statement(s.value)]
+                        : [s];
+                return [mapScope(s, (e) => e, discard)];
+            });
+        return discard(pruned);
     }
 
     /** Place each declaration in the common lexical scope of its definition and

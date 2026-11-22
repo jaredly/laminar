@@ -445,6 +445,58 @@ declarations already carry explicit metadata). Moving them onto `References` is
 the same pattern: `type(id)`, `codes.get(id)`, helper factories, `hostHelpers`,
 `charLists`, `printers` and the runtime names would each call `use`.
 
+### Follow-up: dead values, simpler matches and NULL environments in C
+
+Reading the generated C after the earlier slices showed that the largest remaining
+noise was not the lack of demand-driven materialization. It was four smaller things
+that the existing eager structure can handle, so this slice does them first.
+
+- **Unused results.** `LocalDeclaration` has an `effect` flag, set by C lowering for
+  call declarations (direct, indirect and adapter calls, and native calls that are
+  not arithmetic). In `Locals.simplify`, a call whose result nothing reads and that
+  nothing writes becomes an expression statement at the same point, spelled by the
+  new optional `Syntax.statement` (`f(x);` in C, the bare expression by default).
+  A value without effects still goes only if it is `pure`. `Unit v34 =
+  host_print_Unit(v33); (void)v34;` is now `host_print_Unit(v33);`. Go never has an
+  unread effectful declaration, so its output does not change.
+- **Removable values.** `declare` marks a declaration `pure` (removable, never
+  movable) when its initializer is the layout's zero value, and the old-value read of
+  a `swap` is marked the same way. An unread projection and an unread unit value
+  disappear, together with their `(void)` lines.
+- **Matches.** `emitMatch` follows Go's rules. A catch-all ends ordered matching and
+  becomes the `else`, and a leading catch-all emits its arm directly. A match
+  covering every constructor with irrefutable payloads is a `switch` over the named
+  constants with no trap, and a missing constructor adds a `default` that aborts. A
+  Bool match tests its condition once as `if (c) … else …`. Only a match that can
+  fall through keeps `abort()`. This replaces `else if (1) {…} else { abort(); }`.
+- **Environments.** A direct call whose callee has no captures (a wrapper of captured
+  code takes its environment; an adapter takes its source's) passes `NULL` rather than
+  `((Callable_…){0}).environment`. Indirect calls keep the record's environment.
+
+Effect on the examples' C, before and after this slice: `ok.lm` 397 to 385 lines,
+15 to 10 `(void)` lines and 7 to 4 `abort()` calls, with its `else if (1)` gone;
+`deep-update.lm` 308 to 299 lines, 19 to 15 `(void)` and 12 to 8 `abort()`;
+`snake.lm` 178 to 171; `bump.lm` 139 to 137. A `switch` adds lines for its braces
+and `break`, so the gain in readability is larger than the line counts show:
+`nextGuess` is a two-case `switch (direction)`, `step` and `handleResponse` call
+with `NULL`, and the dead locals and their `(void)` lines are gone.
+
+Not done, with reasons that this slice made clearer:
+
+- Demand-driven materialization. With dead values and matches fixed, what remains
+  is staged lens backing (`Backing3 back3 = {0}; back3.read0 = …`) and reconstructed
+  aggregates. Those are Go's items 9 and 6, and they need Go's storage-reuse
+  analysis, not just deferral. Explicit ownership nodes are not a prerequisite
+  for the work done here: drops and releases already read the values they free, so
+  nothing moves a read past one.
+- Helpers still start with a blanket `(void)value;`.
+
+Validation: Go output is byte-identical to `HEAD` across all 773 corpus and
+sample programs. `test/c/control-flow.test.ts` covers each rule, including the
+partial matches that must keep their trap, and runs ten programs natively.
+Exact-text C expectations were regenerated, and one assertion that expected a tag
+comparison now expects the named `case`.
+
 ### Step 5: unify the per-instruction lowering
 
 Merge the two per-op lowerers behind the capability interface. Decide after

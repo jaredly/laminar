@@ -794,6 +794,15 @@ export function lowerC(
             continue;
         }
     }
+    /** Whether a directly called wrapper reads its environment: only captured code does. */
+    const takesEnvironment = (id: string): boolean => {
+        const w = program.wrappers.find((w) => w.id === id)!;
+        return w.kind === 'invoke'
+            ? program.code.find((c) => c.id === w.code)!.captures.length > 0
+            : w.kind === 'adapt-lens-result'
+              ? takesEnvironment(w.source)
+              : false;
+    };
     const wrapperFunction = (id: string): string => {
         const w = program.wrappers.find((w) => w.id === id)!;
         return use(
@@ -825,13 +834,16 @@ export function lowerC(
                 expression: Expr,
                 body: Statement[],
                 name = fresh(),
-                options: { pure?: boolean; inline?: boolean } = {},
+                options: { pure?: boolean; inline?: boolean; effect?: boolean } = {},
             ): string => {
                 variables.push({ name, type: type(id) });
+                const zeroInitial = same(expression, zero(id));
                 body.push(
                     locals.declaration(name, type(id), expression, {
                         ...options,
-                        zeroInitial: same(expression, zero(id)),
+                        // A zero value nothing reads or writes has no purpose.
+                        pure: options.pure || zeroInitial,
+                        zeroInitial,
                     }),
                 );
                 return name;
@@ -1172,6 +1184,83 @@ export function lowerC(
                     ' && ',
                 );
             };
+            const irrefutable = (p: IRPattern): boolean =>
+                p.kind === 'bind' ||
+                p.kind === 'drop' ||
+                (p.kind === 'tuple' && p.items.every(irrefutable));
+            /**
+             * Arms in order, as the simplest structure that keeps the semantics. A catch-all
+             * ends ordered matching (later arms cannot run) and becomes the `else`; a match
+             * on every constructor with irrefutable payloads is a `switch` with no trap; a
+             * Bool match tests its condition once. Only a match that can fall through
+             * keeps an unmatched-case trap.
+             */
+            const emitMatch = (
+                patterns: IRPattern[],
+                arms: Statement[][],
+                subject: Expr,
+                id: string,
+                body: Statement[],
+            ) => {
+                const wildcard = patterns.findIndex(irrefutable);
+                const count = wildcard < 0 ? patterns.length : wildcard + 1;
+                const used = patterns.slice(0, count);
+                if (wildcard === 0) {
+                    body.push(arms[0]!);
+                    return;
+                }
+                const tests = used.slice(0, wildcard < 0 ? count : count - 1);
+                const bool = (p: IRPattern) => p.kind === 'literal' && typeof p.value === 'boolean';
+                const test = (p: IRPattern): Expr =>
+                    bool(p) && (p as { value: boolean }).value
+                        ? subject
+                        : bool(p)
+                          ? cc`!(${subject})`
+                          : matches(p, subject, id);
+                if (
+                    layout(id).kind === 'bool' &&
+                    tests.length === 2 &&
+                    tests.every(bool) &&
+                    (tests[0] as { value: boolean }).value !==
+                        (tests[1] as { value: boolean }).value
+                ) {
+                    body.push({
+                        kind: 'if',
+                        arms: [{ condition: test(tests[0]!), body: arms[0]! }, { body: arms[1]! }],
+                    });
+                    return;
+                }
+                const labels = tests.map((p) =>
+                    p.kind === 'constructor' ? tagValue(id, tagOf(id, p.name)) : '',
+                );
+                if (
+                    layout(id).kind === 'union' &&
+                    tests.length &&
+                    tests.every((p) => p.kind === 'constructor' && p.items.every(irrefutable)) &&
+                    new Set(labels).size === labels.length
+                ) {
+                    const cases: { label?: Expr; body: Statement[] }[] = labels.map((label, n) => ({
+                        label,
+                        body: arms[n]!,
+                    }));
+                    if (wildcard >= 0) cases.push({ body: arms[count - 1]! });
+                    else if (labels.length !== layout(id).fields.length)
+                        cases.push({ body: ['abort();'] });
+                    body.push({ kind: 'switch', subject: cc`(${subject}).tag`, cases });
+                    return;
+                }
+                body.push({
+                    kind: 'if',
+                    arms: [
+                        ...used.map((p, n) =>
+                            irrefutable(p)
+                                ? { body: arms[n]! }
+                                : { condition: test(p), body: arms[n]! },
+                        ),
+                        ...(wildcard < 0 ? [{ body: ['abort();'] }] : []),
+                    ],
+                });
+            };
             const block = (b: ConcreteBlock, body: Statement[]): Expr => {
                 for (const i of b.instructions) {
                     if (i.op === 'bind') {
@@ -1208,6 +1297,8 @@ export function lowerC(
                     let pure = false;
                     /** Unused results of these are dropped: they only read or aggregate. */
                     let removable = false;
+                    /** The value is a call: an unused result leaves the call as a statement. */
+                    let effect = false;
                     switch (i.op) {
                         case 'aslens': {
                             const payload = outputLayouts.get(i.initial)!;
@@ -1394,7 +1485,8 @@ export function lowerC(
                             const lens = lenses.get(i.lens)!;
                             const contents = storage.get(lens.view);
                             expr = read(contents, id);
-                            declare(id, expr, body, name);
+                            // The old value is only read here; an unused one is just dropped.
+                            declare(id, expr, body, name, { pure: true });
                             const live =
                                 Array.isArray(lens.view) || !inPlaceCells.has(lens.view.cell)
                                     ? undefined
@@ -1548,20 +1640,13 @@ export function lowerC(
                                 });
                                 storage.reset(before);
                                 merge(arms, body);
-                                body.push({
-                                    kind: 'if',
-                                    arms: [
-                                        ...i.cases.map((arm, n) => ({
-                                            condition: matches(
-                                                arm.pattern,
-                                                value(i.value),
-                                                outputLayouts.get(i.value)!,
-                                            ),
-                                            body: arms[n]!.nested,
-                                        })),
-                                        { body: ['abort();'] },
-                                    ],
-                                });
+                                emitMatch(
+                                    i.cases.map((arm) => arm.pattern),
+                                    arms.map((arm) => arm.nested),
+                                    value(i.value),
+                                    outputLayouts.get(i.value)!,
+                                    body,
+                                );
                                 lenses.set(i.out.id, {
                                     view: joined,
                                     finish: (output) => {
@@ -1663,20 +1748,13 @@ export function lowerC(
                                         previous,
                                     )),
                             );
-                            body.push({
-                                kind: 'if',
-                                arms: [
-                                    ...i.cases.map((arm, n) => ({
-                                        condition: matches(
-                                            arm.pattern,
-                                            value(i.value),
-                                            outputLayouts.get(i.value)!,
-                                        ),
-                                        body: arms[n]!.nested,
-                                    })),
-                                    { body: ['abort();'] },
-                                ],
-                            });
+                            emitMatch(
+                                i.cases.map((arm) => arm.pattern),
+                                arms.map((arm) => arm.nested),
+                                value(i.value),
+                                outputLayouts.get(i.value)!,
+                                body,
+                            );
                             values.set(i.out.id, name);
                             continue;
                         }
@@ -1763,7 +1841,11 @@ export function lowerC(
                                 )
                                     expr =
                                         i.field === undefined
-                                            ? cc`${wrapperFunction(i.wrapper!)}((${value(i.callee)}).environment${joinCode(
+                                            ? cc`${wrapperFunction(i.wrapper!)}(${
+                                                  takesEnvironment(i.wrapper!)
+                                                      ? cc`(${value(i.callee)}).environment`
+                                                      : 'NULL'
+                                              }${joinCode(
                                                   args.map((a) => cc`, ${a}`),
                                                   '',
                                               )})`
@@ -1774,6 +1856,7 @@ export function lowerC(
                                 else if (w?.kind === 'native') {
                                     const op = requireImport(w.definition, 'c').name;
                                     pure = ['+', '-', '*', '/', '==', '>=', '<='].includes(op);
+                                    effect = !pure && op !== 'heapsize' && op !== '[::]';
                                     expr =
                                         simpleNative(op, args, id, abi.arguments) ??
                                         unsupported(cText`Native import ${w.definition}`);
@@ -1782,6 +1865,7 @@ export function lowerC(
                             declare(id, expr, body, name, {
                                 pure: pure || removable,
                                 inline: pure,
+                                effect: effect || !!(i.field !== undefined || w?.kind !== 'native'),
                             });
                             values.set(i.out.id, name);
                             if (isLens)

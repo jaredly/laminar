@@ -35,6 +35,7 @@ export const cSyntax: Syntax = {
     scalar: cScalar,
     binary: (op, left, right) => `(${left} ${op} ${right})`,
     returns: (value) => `return ${value};`,
+    statement: (value) => `${value};`,
 };
 
 export const printStatements = (body: Statement[], depth = 0): string[] => {

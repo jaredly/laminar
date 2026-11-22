@@ -29,22 +29,17 @@ void print_number(double x);
 Tuple_Bool_Number entry(void *environment) {
     (void)environment;
     double v0 = 1;
-    bool v4 = 0;
     int v6 = 0;
     double v7 = {0};
-    if (v4 == 1) {
+    (void)v7;
+    if (0) {
         v6 = 0;
         v7 = v0;
     }
-    else if (v4 == 0) {
+    else {
         v6 = 1;
         v7 = v0;
     }
-    else {
-        abort();
-    }
-    double v14 = v7;
-    (void)v14;
     if (v6 == 0) {
     }
     else if (v6 == 1) {
@@ -52,8 +47,6 @@ Tuple_Bool_Number entry(void *environment) {
     else {
         abort();
     }
-    Unit v18 = {0};
-    (void)v18;
     return (Tuple_Bool_Number){1, 3};
 }
 void print_number(double x) {

@@ -15,6 +15,9 @@ export type LocalDeclaration = {
     pure?: boolean;
     inline?: boolean;
     load?: boolean;
+    /** The initializer is a call whose effects happen even when its result is unused:
+     * an unread result becomes a statement rather than a local. */
+    effect?: boolean;
     // The initializer equals this type's default value. It may be omitted only
     // when the declaration stays here; hoisted cells still need their reset.
     zeroInitial?: boolean;
