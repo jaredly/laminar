@@ -19,7 +19,7 @@ export function identifier(name: string): string {
 /** Literal spelling shared by lowering and the passes' constant folding. */
 export const cScalar = (v: number | boolean): string =>
     typeof v === 'boolean'
-        ? String(+v)
+        ? String(v)
         : Number.isNaN(v)
           ? 'NAN'
           : v === Infinity

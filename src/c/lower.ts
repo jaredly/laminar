@@ -1223,7 +1223,7 @@ export function lowerC(
                 v === null
                     ? zero(id)
                     : typeof v === 'boolean'
-                      ? String(+v)
+                      ? String(v)
                       : typeof v === 'number'
                         ? // Integral literals beyond the safe range exceed every C integer type.
                           Number.isSafeInteger(v) || /[.e]/.test(String(v))
