@@ -165,6 +165,8 @@ the contract must cover every arm.
 
 ### 3. Later: direct field lenses into boxes
 
+See [the focus operation proposal](direct-field-lenses.md) for the detailed design.
+
 Instead of copying fields into private storage and back, a field alias could be a
 pointer into the payload, as vector element lenses are. That is only possible when
 the field's read and replacement layouts match, so representation analysis would
