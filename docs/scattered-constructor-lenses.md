@@ -132,6 +132,37 @@ only unknown is now the flag, so the call builds `flow(read, write, ρ)` with a 
 boolean meta `ρ`. The body's result then resolves it (`false` for `find`). No open
 arm table is needed.
 
+## Surface syntax for types
+
+Annotations need a way to say "not replaceable": to pin a function's result, and to
+accept such a lens as a parameter (open question 2). Today `~A` is `A/A` and `A/B` is a
+lens with distinct read and write types (`Type` in `src/laminar.cst`, AST
+`{ type: "lens", left, right? }`).
+
+| syntax | type |
+|---|---|
+| `A` | `plain(A)` |
+| `~A` | `flow(A, A, true)` |
+| `A/B` | `flow(A, B, true)` |
+| `=A` | `flow(A, A, false)` |
+| `A/=B` | `flow(A, B, false)` |
+
+The AST lens type gains `replaceable?: boolean` (default true). Annotations feed the
+flag through `unifyFlow` like any other type, so `fn f(...) ~Option(A)` on a body that
+returns `Some(x)` is a type error with no extra rule. Unannotated functions infer it.
+
+- **Prefix `=A`.** `=` is reserved but only appears infix (`let p = v`, `==`, `=>`),
+  so a prefix use in `Type` should not collide. It may read as "equals"; a sigil such
+  as `^A` is the alternative. Taste, not a technical issue.
+- **Infix `A/=B`** (decided). `A//B` is unusable because `//` starts a line comment
+  in `.lm` files. The lexer reads operator characters greedily (`oprx` in
+  `src/lexer.ts`: `/[-+/~=*!@:#$%^&<>?.|]+/`), so `/=` is one token distinct from
+  `/`, and nothing else in the grammar or builtins uses `/=`. The `Type` rule is
+  `left:Type "/=" right:Type`. Because of the greedy lexing, `A/=B` (no spaces) is the
+  non-replaceable lens, while `A/ =B` would be `A/` applied to the prefix form `=B`;
+  the checker should reject a lens-typed write endpoint (whether it already does for `A/~B` was not checked).
+  Consequence: `/=` is no longer free as a future not-equal operator.
+
 ## Where it plugs into `infer.ts`
 
 The checker's lens abstraction is `View { read, put, targets, provenance, empty }`.
@@ -212,7 +243,8 @@ Rejected by `infer.ts`:
 
 ## Plan
 
-1. Grammar/AST: constructor in `Lens`; parse and print tests.
+1. Grammar/AST: constructor in `Lens`; `=A` and the infix form in `Type`; parse and
+   print tests.
 2. `types.ts`: the `replaceable` flag, unify/map/generalize/instantiate.
 3. `infer.ts`: constructor view (sharing code with `tuple`), flag propagation, join,
    `match` over a non-replaceable view with derived field types, checks at `:=`,
@@ -228,7 +260,7 @@ Rejected by `infer.ts`:
    `flow(…, …, true)`, but the inner lens is not replaceable. Lift by giving each
    field its own flag in the derived type; cheap, deferred.
 2. **Parameters of non-replaceable lens type.** Returning one is enough for `find`;
-   accepting one needs surface syntax and variant specialization.
+   accepting one needs variant specialization (the syntax is above).
 3. **`case-focus` over a constructor `Cap`.** Second owner form or a new instruction.
 4. **Type-changing fields.** `[A→B]` in `Some` should be forced to `A = B` by the
    unfocused remainder (the rest of the list), as `case-focus` requires. Not verified.
