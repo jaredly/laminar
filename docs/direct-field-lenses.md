@@ -5,6 +5,10 @@ this supersedes as the way to remove the payload copy. Box reuse (implemented) s
 the allocation but not the copy. Parts of this document are plans I have not checked
 against the code; they are marked as open questions.
 
+The motivation is **intelligible generated code**, not speed. A reader of the Go or C
+for `bump` should see "add one to the head, recurse on the tail", not a payload copy,
+a `Backing` struct and a rebuild. Performance may improve, but it is not the criterion.
+
 ## Summary
 
 A borrowed match (`match ~xs { [head, ...tail] -> ... }`) is a projection of the owner
@@ -148,19 +152,27 @@ not a moved-out value.
 - Sub-patterns: a literal constrains the selected variant and its field is not
   bound; a nested constructor pattern is a nested focus on that field's lens.
 
-**Reference semantics (`eval-typed.ts`).** Selecting the arm reads the owner's
-constructor. Field lenses are places inside the owner's cell, reached by path
-(the evaluator already uses `getPath` and place paths for `$p1.0`-style slots), so
-the evaluator never moves the owner out. At arm exit the owner is whatever the
-field places contain. There is no reconstruction step to execute or verify.
+**Places, not paths.** Slot paths (`SlotRef.path`) index tuples only: `verify-ir.ts`
+updates slot types through tuples, and the evaluator's `getPath`/`setPath` require
+arrays. There is no path form for a variant argument, and `focus` does not need one.
+It introduces the field bindings as *new places* (`$f0`, `$f1`), not as paths into the
+owner. Whether those places are physically the owner's storage is a backend choice.
+
+**Reference semantics (`eval-typed.ts`).** Defined at the IR level: selecting the arm
+reads the owner's constructor, the field places start with its fields, and at arm
+exit the owner holds `C(B1..Bn)` built from the final field places. The evaluator may
+implement this literally with cells and a rebuild. The operation's semantics define
+the rebuild, so the verifier no longer has to prove it is an identity, and the
+evaluator stays simple while backends use the in-place form.
 
 ### What is removed
 
-- The expansion in `normalize-borrowed.ts` for all three entry points (`match`,
-  `let`, lens-typed parameter). The normalizer shrinks to producing the focus form.
-- `reconstructionOwner`, `reconstructionId` and `reconstructionPattern` across
-  `ast.ts`, `infer.ts`, `lower-typed.ts`, `elaborated.ts`, `verify-elaboration.ts`
-  and `verify-ir.ts`, and the large reconstruction check in `verify-ir.ts`.
+- From the typed IR: the `reconstruction*` fields on patterns and `aslens`, and the
+  large reconstruction check in `verify-ir.ts`.
+- Later, with "Where `focus` is introduced" option 2: the expansion in
+  `normalize-borrowed.ts` for all three entry points (`match`, `let`, lens-typed
+  parameter), and the `reconstruction*` fields in `ast.ts`, `infer.ts`,
+  `elaborated.ts` and `verify-elaboration.ts`.
 - `retains`/`reuses` from `concrete-ir.ts`: the contract becomes an internal choice
   of the focus lowering (below).
 
@@ -168,13 +180,20 @@ field places contain. There is no reconstruction step to execute or verify.
 
 ### Representation inference
 
-A focus's field lenses get a new shape tied to the owner: "field `i` of constructor
-`C` of the owner's lens", with its own read and write layouts. This composes through
-`reps.project` the same way `fst` does. Because the field's read and write types are
-in the IR, inference can tell, per focus, whether each field's layouts match.
+No new `LensRep` kind is needed. `reps.thin(read, replacement)` in
+`src/representations.ts` is already a pointer pair keyed only by the two layouts, and
+its backing records `access: 'same-layout' | 'separate-slots'`. That is exactly the
+`in-place` / `rebuild` distinction, per field. A focus's field lenses are
+`thin(Ai, Bi)` shapes (a `tuple` of them for the whole focus), so a type-changing
+field gets `separate-slots` and a same-layout field gets `same-layout` with no new
+machinery.
 
-Open question: whether this is a new `LensRep` kind or a path on `thin`. I have not
-read `reps.thin` and `reps.project` closely enough to say which is smaller.
+What a thin shape does not say is *where* it points: shapes carry layouts, not
+places. Where the pointer points (into the owner's box or into private storage) is
+decided when the `focus` instruction is lowered and is stated in the concrete
+contract below, as `retains`/`reuses` is today. `reps.project` only handles tuple
+layouts (it throws otherwise), so a focus must create its field shapes directly with
+`thin` and not by projecting the owner's shape.
 
 ### Concrete IR and lowering
 
@@ -195,6 +214,26 @@ form assumes, and the case has no unsupported join.
 Selecting the constructor still tests the tag of the owner's header. Copying the
 header is physically fine because the owner is inaccessible.
 
+### Where `focus` is introduced
+
+Two options. The first looks cheaper, but I have not read `lower-typed.ts` closely
+enough to be sure it is workable.
+
+1. **Recognize the existing expansion in `lower-typed.ts`.** Normalization and the
+   checker stay as they are. The checker's borrow bookkeeping for a borrowed pattern
+   lives in `infer.ts` `aslens` (`temporaryLenses`, `scopes`, `provenance`), and I do
+   not want to re-derive it. An `aslens` that carries `reconstruction` metadata is
+   exactly a borrowed pattern, and `verify-elaboration.ts` already checks the pairing.
+   `lower-typed.ts` would emit `focus` for those and `aslens` for user temporaries.
+   The `reconstruction*` fields then stay in the AST and elaborated form (the checker
+   still uses them) and disappear only from the typed IR and `verify-ir.ts`.
+2. **Emit `focus` from `normalize-borrowed.ts` and teach the checker about it.**
+   Cleaner end state, but the checker would need borrow bookkeeping for the new node,
+   and `infer.ts` currently rejects matching a lens value in lens position
+   (`unsupported-lens-case`: "requires scoped restoration checking").
+
+I recommend option 1 first, with option 2 as a possible later cleanup.
+
 ### Lens-valued cases
 
 `lensJoin` joins per-arm lens storage. Whether projection shapes can be joined, or a
@@ -214,16 +253,14 @@ lens-valued focus must always use `rebuild`, is unresolved. The first version us
 5. When nothing emits the old expansion for borrowed patterns, delete the
    reconstruction machinery listed above and the `retains`/`reuses` contract.
 
-Step 5 deletes box reuse as it exists today, so benchmark before and after (see
-Testing) to confirm nothing is lost on `rebuild` paths.
+Step 5 deletes box reuse as it exists today. Compare the generated code before and
+after for the `rebuild` paths (see Testing) to confirm it does not get harder to read.
 
 ## Risks
 
 - **Size.** This touches normalization, inference, typed IR lowering, `verify-ir`,
   the reference evaluator, representation inference, concrete IR, its verifier and
   both backends. It is a much larger change than the box reuse work.
-- **Slot paths.** Existing slot paths index tuples. Constructor arguments need a
-  path form for variants, including which constructor a path assumes.
 - **Mixed fields.** A focus where some fields change type and others do not. The
   `rebuild` lowering must still point same-layout fields into the box or copy them
   consistently; I have not settled which.
@@ -252,18 +289,30 @@ Testing) to confirm nothing is lost on `rebuild` paths.
   lens-valued matches each have a sample and are ASan clean in C.
 - Verifier: reject an `in-place` focus whose field layouts differ or whose case has
   an unsupported join.
-- Benchmark: updating every element of an n-element list and a path update in a
-  tree, before and after, in C and Go. Step 4 of the mutable-boxes plan still needs
-  this measurement.
+- Readability: keep golden outputs for `examples/bump.lm` and a tree update in C and
+  Go, and review them as text. The pass criterion is that the output reads like the
+  source (no payload copy, no `Backing` struct, no rebuild for same-layout fields).
+  Speed is not measured as a gate.
 
 ## Open questions
 
-- Is a dedicated `case-focus` right, or should the focus be a separate lens-producing
-  instruction (`focus %owner C -> (%a, %b)`) that `case` selects on? The second keeps
-  `case` unchanged but needs the tag test to be expressible on a lens.
-- New `LensRep` kind or a path on `thin`?
-- How do slot paths name variant arguments, and how do nested focuses compose?
-- Can `lensJoin` adapters join projection shapes?
-- Does the benchmark show enough gain over box reuse alone, particularly in Go, to
-  justify the size of the change? If not, the right stopping point is the box reuse
-  already implemented.
+Resolved by reading the code:
+
+- *New `LensRep` kind or a path on `thin`?* Neither. `thin(read, replacement)` already
+  distinguishes same-layout from separate-slots, and the target of the pointer belongs
+  to the concrete `focus` contract.
+- *How do slot paths name variant arguments?* They do not; `focus` introduces new
+  places for the fields.
+
+Still open:
+
+- Is a dedicated `case-focus` right, or a separate lens-producing instruction
+  (`focus %owner C -> (%a, %b)`) that `case` selects on? The second keeps `case`
+  unchanged but needs the tag test to be expressible on a lens. I lean towards
+  `case-focus`.
+- Can `lensJoin` adapters join projection shapes, or must lens-valued cases always use
+  the rebuild form? I have not read the `lensJoin` code in `lower-concrete.ts` and the
+  backends closely enough to say; a small prototype may be needed.
+- Is option 1 under "Where `focus` is introduced" workable? That needs a close read of
+  `lower-typed.ts`, where `aslens`, the selected-pattern case and the public `let` are
+  separate nodes that `focus` would have to merge.
