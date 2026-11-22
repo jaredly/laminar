@@ -26,29 +26,12 @@ typedef struct Tuple_Number_Bool_Unit Tuple_Number_Bool_Unit;
 struct Unit { unsigned char inhabitant; };
 struct Tuple_Number_Bool_Unit { double item0; bool item1; Unit item2; };
 static size_t live_contexts = 0;
-void *allocate_context(size_t size);
-void release_context(void *context);
 Tuple_Number_Bool_Unit entry(void *environment);
 void print_number(double x);
 Tuple_Number_Bool_Unit entry(void *environment) {
     (void)environment;
     Unit v2 = {0};
     return (Tuple_Number_Bool_Unit){1, 1, v2};
-}
-void *allocate_context(size_t size) {
-    void *context = malloc(size);
-    if (!context) {
-        abort();
-    }
-    ++live_contexts;
-    return context;
-}
-void release_context(void *context) {
-    if (!context || live_contexts == 0) {
-        abort();
-    }
-    --live_contexts;
-    free(context);
 }
 void print_number(double x) {
     if (isnan(x)) {
@@ -98,8 +81,6 @@ struct Unit { unsigned char inhabitant; };
 struct Lens_double { double *read; Func_double_to_Unit_47414720dc restore; void *context; };
 struct Callable_Value_d6f73c1cde { void *environment; Func_to_Unit_b3b0e12625 dispose; };
 static size_t live_contexts = 0;
-void *allocate_context(size_t size);
-void release_context(void *context);
 Unit inc(void *environment, Lens_double x);
 double entry(void *environment);
 typedef struct { double read0; } Backing0;
@@ -119,21 +100,6 @@ double entry(void *environment) {
     Unit v4 = inc(((Callable_Value_d6f73c1cde){0}).environment, v5);
     (void)v4;
     return *(v5).read;
-}
-void *allocate_context(size_t size) {
-    void *context = malloc(size);
-    if (!context) {
-        abort();
-    }
-    ++live_contexts;
-    return context;
-}
-void release_context(void *context) {
-    if (!context || live_contexts == 0) {
-        abort();
-    }
-    --live_contexts;
-    free(context);
 }
 void print_number(double x) {
     if (isnan(x)) {
@@ -183,8 +149,6 @@ struct Unit { unsigned char inhabitant; };
 struct Tuple_Number_Number { double item0; double item1; };
 struct Callable_Value_d6f73c1cde { void *environment; Func_to_Unit_b3b0e12625 dispose; };
 static size_t live_contexts = 0;
-void *allocate_context(size_t size);
-void release_context(void *context);
 Unit inc(void *environment, Scattered_Lens_double_Lens_double x_y);
 Tuple_Number_Number entry(void *environment);
 typedef struct { double read0; double read1; } Backing0;
@@ -208,21 +172,6 @@ Tuple_Number_Number entry(void *environment) {
     double a = (v10).item0;
     double b = (v10).item1;
     return (Tuple_Number_Number){a, b};
-}
-void *allocate_context(size_t size) {
-    void *context = malloc(size);
-    if (!context) {
-        abort();
-    }
-    ++live_contexts;
-    return context;
-}
-void release_context(void *context) {
-    if (!context || live_contexts == 0) {
-        abort();
-    }
-    --live_contexts;
-    free(context);
 }
 void print_number(double x) {
     if (isnan(x)) {
@@ -525,10 +474,7 @@ it('prints complete branch-change C', () => {
 typedef struct Unit Unit;
 struct Unit { unsigned char inhabitant; };
 static size_t live_contexts = 0;
-void *allocate_context(size_t size);
-void release_context(void *context);
 bool entry(void *environment);
-void print_number(double x);
 bool entry(void *environment) {
     (void)environment;
     double v0 = 1;
@@ -548,35 +494,6 @@ bool entry(void *environment) {
         abort();
     }
     return v10;
-}
-void *allocate_context(size_t size) {
-    void *context = malloc(size);
-    if (!context) {
-        abort();
-    }
-    ++live_contexts;
-    return context;
-}
-void release_context(void *context) {
-    if (!context || live_contexts == 0) {
-        abort();
-    }
-    --live_contexts;
-    free(context);
-}
-void print_number(double x) {
-    if (isnan(x)) {
-        fputs("{\\"number\\":\\"NaN\\"}", stdout);
-    }
-    else if (isinf(x)) {
-        fputs(x < 0 ? "{\\"number\\":\\"-Infinity\\"}" : "{\\"number\\":\\"Infinity\\"}", stdout);
-    }
-    else if (x == 0 && signbit(x)) {
-        fputs("{\\"number\\":\\"-0\\"}", stdout);
-    }
-    else {
-        printf("%.17g", x);
-    }
 }
 int main(void) {
     bool result0 = entry(NULL);

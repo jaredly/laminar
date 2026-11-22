@@ -52,3 +52,50 @@ export function typeDependencies(
         );
     return graph;
 }
+
+/**
+ * Records which package symbols each generated declaration mentions, as lowering
+ * mentions them. Nothing is recovered from printed text. Lowering wraps the
+ * construction of a declaration in `within` and routes every mention of another
+ * package symbol (a function, a runtime helper, a type) through `use`.
+ *
+ * Mentions are conservative: building an expression that a later pass simplifies
+ * away still records its symbols. A mention made outside any `within` has no owner
+ * and is a root.
+ */
+export class References {
+    readonly edges = new Map<string, Set<string>>();
+    readonly roots = new Set<string>();
+    private owner: string | undefined;
+
+    /** Attribute every mention made while `build` runs to `owner`. */
+    within<T>(owner: string, build: () => T): T {
+        const outer = this.owner;
+        this.owner = owner;
+        if (!this.edges.has(owner)) this.edges.set(owner, new Set());
+        try {
+            return build();
+        } finally {
+            this.owner = outer;
+        }
+    }
+    /** Record a mention of `name` by the current owner and return it unchanged. */
+    use<T extends string>(name: T): T {
+        if (this.owner === undefined) this.roots.add(name);
+        else this.edges.get(this.owner)!.add(name);
+        return name;
+    }
+    /**
+     * The declaration graph: `base` edges plus the recorded mentions. Every mentioned
+     * name is a node, so a declaration with nothing to mention (a counter, a leaf
+     * function, `main`) is live when something reaches it.
+     */
+    graph(base: ReadonlyMap<string, Iterable<string>> = new Map()): Map<string, Set<string>> {
+        const graph = new Map([...base].map(([k, v]) => [k, new Set(v)]));
+        for (const [owner, uses] of this.edges)
+            graph.set(owner, new Set([...(graph.get(owner) ?? []), ...uses]));
+        for (const name of [...this.roots, ...[...this.edges.values()].flatMap((u) => [...u])])
+            if (!graph.has(name)) graph.set(name, new Set());
+        return graph;
+    }
+}

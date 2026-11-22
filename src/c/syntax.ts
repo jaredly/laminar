@@ -6,7 +6,7 @@ import type { Statement } from '../backend/imperative/statements.ts';
 export type { Statement } from '../backend/imperative/statements.ts';
 export type TranslationUnit = {
     declarations: string[];
-    functions: { signature: string; body: Statement[] }[];
+    functions: { name?: string; signature: string; body: Statement[] }[];
     /** Library mode: the host-facing header for the exported functions. */
     header?: string[];
 };

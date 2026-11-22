@@ -88,5 +88,5 @@ it('reconstructs borrowed constructor patterns without a pattern-specific runtim
         `${tree}{let t = Node(Leaf, 1, Leaf)\n match ~t {Leaf -> (); Node(l, x, r) -> {x := 9\n ()}}\n t}`,
     );
     verifyConcreteProgram(JSON.parse(JSON.stringify(concrete)));
-    expect(emitC(concrete)).toContain('.tag == 1');
+    expect(emitC(concrete)).toMatch(/\.tag == \w+_Node\b/);
 });

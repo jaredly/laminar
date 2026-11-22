@@ -385,7 +385,65 @@ Emscripten cache and omitted the shell's macOS `CPATH`. TypeScript checking pass
 
 Remaining before broader unification: structural function/runtime/import
 references (and C function/helper pruning), plus explicit ownership effects before
-adopting Go's demand-driven materialization and partial aggregates in C.
+adopting Go's demand-driven materialization and partial aggregates in C. The next
+follow-up does the C half of the first item.
+
+### Follow-up: structural C function and runtime pruning
+
+`References` in `src/backend/reachable.ts` records which package symbols each
+generated declaration mentions, as lowering mentions them. Lowering wraps the
+construction of a declaration in `within(owner, …)` and routes every mention of
+another function, helper or runtime symbol through `use(name)`. A mention made
+outside any owner has no owner and is a root. `graph()` turns the recorded edges
+into the graph that `reachableNames` already walks; every mentioned name is a node,
+so a declaration with nothing to mention is live once reached. `reachableNames`
+itself is unchanged.
+
+C uses it for functions, prototypes and runtime helpers:
+
+- Every generated function is named and owns its mentions: source functions,
+  union and vector helpers, native entries, disposers, result adapters and their
+  restoration functions, and runtime functions. Shared helpers (`drop_List`,
+  `vector_push_…`) use `within` so what they call is attributed to them, not to
+  whichever function first created them.
+- Function mentions are spelled through `use`: calls, `.invoke`/`.dispose`/
+  `.restore` entries, `wrapperFunction`, the entry call in `main` and in each host
+  export, and each runtime call (`allocate_context`, `release_context`,
+  `string_*`, `builder_*`, `print_*`). `appendFunction(kind)` names the
+  interpolation function so the same mapping serves the mention and the call.
+- The string runtime declares its own dependencies: each function in
+  `stringRuntime()` has an explicit `name` and `uses`. `live_contexts`,
+  `allocate_context`, `release_context` and `print_number` are declarations like
+  any other. A program that never allocates no longer emits the allocator.
+- Prototypes, `LensResult`/`Restore` context typedefs and helper prototypes are
+  `Declaration`s named after their function or type, so they leave with it.
+- The roots are `main` for a program, and for a library every host export and its
+  support code (built outside any owner). `laminar_live_allocations` mentions the
+  counter.
+
+Type declarations are still pruned by the earlier, conservative rule: every
+`type()` mention is a root, including mentions made while building a function that
+is later dropped. Making type roots follow the kept functions needs the types a
+shared helper's *signature* mentions attributed to the helper rather than to its
+first caller, since the factories receive those names already computed. That is the
+next refinement here.
+
+Effect across the 773 corpus and sample programs: 260 change, and C is 10% smaller
+by lines (102,848 to 92,564). `examples/ok.lm`'s C drops from 436 to 360 lines, and
+`snake.lm`'s from 178 to 132. Programs without strings emit no string runtime,
+those that never interpolate omit the builder, and `print_number` appears only
+when a Number is printed. Go output is byte-identical to `HEAD`.
+
+Validation: `test/c/functions.test.ts` covers what is kept and dropped for scalar,
+Bool, string-literal, interpolation, `dup` and match entries, checks that every
+runtime or helper function any execution sample calls is defined, covers library
+mode, and runs five programs natively. The native corpus passes under ASan/UBSan at
+`-O0` and at `-O2`.
+
+Still lexical: Go's function, import and type mentions in function bodies (its
+declarations already carry explicit metadata). Moving them onto `References` is
+the same pattern: `type(id)`, `codes.get(id)`, helper factories, `hostHelpers`,
+`charLists`, `printers` and the runtime names would each call `use`.
 
 ### Step 5: unify the per-instruction lowering
 

@@ -1,4 +1,4 @@
-import { Declaration, reachableNames, typeDependencies } from '../backend/reachable.ts';
+import { Declaration, References, reachableNames, typeDependencies } from '../backend/reachable.ts';
 import type { ConcreteProgram, ConcreteBlock } from '../concrete-ir.ts';
 import { Storage, type Cell, type Data, type View } from './storage.ts';
 import { decodeNumber, type IRPattern, type SlotRef } from '../typed-ir.ts';
@@ -8,7 +8,7 @@ import { cSyntax, identifier, type Statement, type TranslationUnit } from './syn
 import { Locals } from '../backend/imperative/locals.ts';
 import { isExpr, same, type Expr } from '../backend/imperative/code.ts';
 import { isLocal, isScope, mapScope, visit } from '../backend/imperative/statements.ts';
-import { appendPart, cBytes, stringRuntime, stringType } from './strings.ts';
+import { appendFunction, appendPart, cBytes, stringRuntime, stringType } from './strings.ts';
 import { requireImport, usesHost } from '../runtime-imports.ts';
 import { functionNames } from '../backend/names.ts';
 import { localNames, takesName } from '../backend/local-names.ts';
@@ -73,6 +73,10 @@ export function lowerC(
     const declarationTypes = typeDependencies(program, names, abiNames);
     const typeRoots = new Set<string>();
     let trackTypeUses = false;
+    // Which functions each generated function calls or points to, recorded as lowering
+    // mentions them (see References). Types stay conservative roots, as before.
+    const refs = new References();
+    const use = <T extends string>(name: T): T => refs.use(name);
     const type = (id: string) => {
         const name = names.get(id)!;
         if (trackTypeUses) typeRoots.add(name);
@@ -204,20 +208,30 @@ export function lowerC(
     ];
     const declareType = (name: string, text: string) =>
         declarations.push(new Declaration(name, text, declarationTypes.get(name)));
+    const retained = () => ({
+        types: reachableNames(declarationTypes, typeRoots),
+        functions: reachableNames(refs.graph(), refs.roots),
+    });
     const retainedDeclarations = (): string[] => {
-        const live = reachableNames(declarationTypes, typeRoots);
+        const live = retained();
         return declarations
-            .filter((d) => !(d instanceof Declaration) || live.has(d.name))
+            .filter(
+                (d) =>
+                    !(d instanceof Declaration) ||
+                    live.types.has(d.name) ||
+                    live.functions.has(d.name),
+            )
             .map(String);
+    };
+    /** Functions that nothing reachable from `main` or a host export mentions are dropped. */
+    const retainedFunctions = (all: TranslationUnit['functions']) => {
+        const live = retained().functions;
+        // The library's exported functions are unnamed: they are the roots themselves.
+        return all.filter((f) => f.name === undefined || live.has(f.name));
     };
     const strings = program.layouts.some((l) => l.kind === 'string');
     const runtime = strings ? stringRuntime() : undefined;
-    if (runtime)
-        declarations.push(
-            '#include <string.h>',
-            runtime.declarations[0]!,
-            runtime.declarations[1]!,
-        );
+    if (runtime) declarations.push('#include <string.h>', ...runtime.types);
     for (const l of program.layouts)
         if (l.kind === 'string')
             declareType(type(l.id), cText`typedef ${stringType} *${type(l.id)};`);
@@ -263,17 +277,20 @@ export function lowerC(
     trackTypeUses = true;
     const signature = (c: ConcreteProgram['code'][number]) =>
         cText`${type(c.body.layout)} ${codes.get(c.id)}(void *environment${c.parameters.map((p, i) => `, ${type(p.layout)} ${naming.get(c.id)!.parameterNames[i]}`).join('')})`;
+    // The allocation counter is a package symbol: only code that mentions it keeps it.
     declarations.push(
-        'static size_t live_contexts = 0;',
-        'void *allocate_context(size_t size);',
-        'void release_context(void *context);',
-        ...(runtime?.declarations.slice(2) ?? []),
+        new Declaration('live_contexts', 'static size_t live_contexts = 0;'),
+        new Declaration('allocate_context', 'void *allocate_context(size_t size);'),
+        new Declaration('release_context', 'void release_context(void *context);'),
+        ...(runtime?.functions.map((f) => new Declaration(f.name, f.signature + ';')) ?? []),
     );
-    program.code.forEach((c) => declarations.push(signature(c) + ';'));
+    program.code.forEach((c) =>
+        declarations.push(new Declaration(codes.get(c.id)!, signature(c) + ';')),
+    );
     const helpers: TranslationUnit['functions'] = [];
     let helperCounter = 0;
     const disposers = new Map(
-        program.wrappers.filter((w) => w.kind === 'dispose').map((w, i) => [w.id, cc`dispose${i}`]),
+        program.wrappers.filter((w) => w.kind === 'dispose').map((w, i) => [w.id, `dispose${i}`]),
     );
     // Union operations are recursive C functions, generated once per layout on first use.
     const unionHelpers = new Map<string, string>();
@@ -286,14 +303,17 @@ export function lowerC(
     ): string => {
         const key = cText`${kind}:${id}`;
         const existing = unionHelpers.get(key);
-        if (existing) return existing;
+        if (existing) return use(existing);
         const name = cText`${kind}_${type(id)}`;
         unionHelpers.set(key, name);
-        const signature = cText`${result} ${name}(${parameter} value)`;
-        declarations.push(signature + ';');
-        const body: Statement[] = ['(void)value;'];
-        generate(body);
-        helpers.push({ signature, body });
+        use(name);
+        refs.within(name, () => {
+            const signature = cText`${result} ${name}(${parameter} value)`;
+            declarations.push(new Declaration(name, signature + ';'));
+            const body: Statement[] = ['(void)value;'];
+            generate(body);
+            helpers.push({ name, signature, body });
+        });
         return name;
     };
     /** Vector operations are C functions generated once per vector layout on first use. */
@@ -307,14 +327,17 @@ export function lowerC(
     ): string => {
         const key = cText`${kind}:${id}`;
         const existing = vectorHelpers.get(key);
-        if (existing) return existing;
+        if (existing) return use(existing);
         const name = cText`vector_${kind}_${type(id)}`;
         vectorHelpers.set(key, name);
-        const signature = cText`${result} ${name}(${parameters})`;
-        declarations.push(signature + ';');
-        const body: Statement[] = [];
-        generate(body);
-        helpers.push({ signature, body });
+        use(name);
+        refs.within(name, () => {
+            const signature = cText`${result} ${name}(${parameters})`;
+            declarations.push(new Declaration(name, signature + ';'));
+            const body: Statement[] = [];
+            generate(body);
+            helpers.push({ name, signature, body });
+        });
         return name;
     };
     /** `[:push:]` consumes the vector and appends, doubling the buffer when it is full. */
@@ -330,14 +353,14 @@ export function lowerC(
                         head: 'if (value.length == value.capacity)',
                         body: [
                             'size_t capacity = value.capacity ? value.capacity * 2 : 4;',
-                            cc`${type(element(id))} *elements = allocate_context(capacity * sizeof *elements);`,
+                            cc`${type(element(id))} *elements = ${use('allocate_context')}(capacity * sizeof *elements);`,
                             {
                                 head: 'for (size_t i = 0; i < value.length; i++)',
                                 body: ['elements[i] = value.elements[i];'],
                             },
                             {
                                 head: 'if (value.elements)',
-                                body: ['release_context(value.elements);'],
+                                body: [cc`${use('release_context')}(value.elements);`],
                             },
                             'value.elements = elements;',
                             'value.capacity = capacity;',
@@ -365,7 +388,7 @@ export function lowerC(
                     cc`${type(id)} value = {0};`,
                     { head: 'if (length == 0)', body: [...none, 'return value;'] },
                     'value.length = value.capacity = (size_t)length;',
-                    'value.elements = allocate_context(value.length * sizeof *value.elements);',
+                    cc`value.elements = ${use('allocate_context')}(value.length * sizeof *value.elements);`,
                     {
                         head: 'for (size_t i = 0; i + 1 < value.length; i++)',
                         body: [cc`value.elements[i] = ${duplicate('init', element(id))};`],
@@ -417,7 +440,7 @@ export function lowerC(
                         head: cc`${n ? 'else if' : 'if'} (value.tag == ${tagValue(id, n)})`,
                         body: v.boxed
                             ? [
-                                  cc`copy.as.v${n} = allocate_context(sizeof *copy.as.v${n});`,
+                                  cc`copy.as.v${n} = ${use('allocate_context')}(sizeof *copy.as.v${n});`,
                                   cc`*copy.as.v${n} = ${copied};`,
                               ]
                             : [cc`copy.as.v${n} = ${copied};`],
@@ -425,14 +448,14 @@ export function lowerC(
                 });
                 body.push('return copy;');
             })}(${expr})`;
-        if (l.kind === 'string') return cc`string_dup(${expr})`;
+        if (l.kind === 'string') return cc`${use('string_dup')}(${expr})`;
         if (l.kind === 'vector')
             return cc`${vectorHelper('dup', id, type(id), cText`${type(id)} value`, (body) =>
                 body.push(
                     cc`${type(id)} copy = {0};`,
                     { head: 'if (!value.length)', body: ['return copy;'] },
                     'copy.length = copy.capacity = value.length;',
-                    'copy.elements = allocate_context(copy.length * sizeof *copy.elements);',
+                    cc`copy.elements = ${use('allocate_context')}(copy.length * sizeof *copy.elements);`,
                     {
                         head: 'for (size_t i = 0; i < value.length; i++)',
                         body: [
@@ -459,7 +482,7 @@ export function lowerC(
                     const v = variant(id, n);
                     const arm: Statement[] = [];
                     drop({ expression: payload('value', id, n), layout: v.layout }, arm);
-                    if (v.boxed) arm.push(cc`release_context(value.as.v${n});`);
+                    if (v.boxed) arm.push(cc`${use('release_context')}(value.as.v${n});`);
                     if (arm.length)
                         body.push({
                             head: cc`${body.length > 1 ? 'else if' : 'if'} (value.tag == ${tagValue(id, n)})`,
@@ -470,7 +493,7 @@ export function lowerC(
             });
             body.push(cc`${name}(${data.expression});`);
         } else if (l.kind === 'string') {
-            body.push(cc`string_drop(${data.expression});`);
+            body.push(cc`${use('string_drop')}(${data.expression});`);
         } else if (l.kind === 'vector') {
             const id = data.layout;
             const name = vectorHelper('drop', id, 'void', cText`${type(id)} value`, (body) => {
@@ -480,7 +503,7 @@ export function lowerC(
                     body.push({ head: 'for (size_t i = 0; i < value.length; i++)', body: each });
                 body.push({
                     head: 'if (value.elements)',
-                    body: ['release_context(value.elements);'],
+                    body: [cc`${use('release_context')}(value.elements);`],
                 });
             });
             body.push(cc`${name}(${data.expression});`);
@@ -521,13 +544,13 @@ export function lowerC(
                                 head: 'while (start > 0 && (value->bytes[start] & 0xC0) == 0x80)',
                                 body: ['start--;'],
                             },
-                            cc`${type(cell.layout)} *cell = allocate_context(sizeof *cell);`,
-                            cc`*cell = (${type(cell.layout)}){(${type(text)})string_new((const char *)value->bytes + start, end - start), out};`,
+                            cc`${type(cell.layout)} *cell = ${use('allocate_context')}(sizeof *cell);`,
+                            cc`*cell = (${type(cell.layout)}){(${type(text)})${use('string_new')}((const char *)value->bytes + start, end - start), out};`,
                             cc`out = (${type(result)}){.tag=${tagValue(result, cons)}, .as.v${cons}=cell};`,
                             'end = start;',
                         ],
                     },
-                    'string_drop(value);',
+                    cc`${use('string_drop')}(value);`,
                     'return out;',
                 );
             },
@@ -572,7 +595,7 @@ export function lowerC(
                             body: ['fwrite(value->bytes, 1, value->length, stdout);'],
                         },
                         'putchar(10);',
-                        'string_drop(value);',
+                        cc`${use('string_drop')}(value);`,
                         cc`return ${zero(result)};`,
                     ),
                 type(parameters[0]!),
@@ -589,14 +612,17 @@ export function lowerC(
                             body: ['fwrite(value->bytes, 1, value->length, stdout);'],
                         },
                         'fflush(stdout);',
-                        'string_drop(value);',
+                        cc`${use('string_drop')}(value);`,
                         'string_builder line = {0};',
                         'int c;',
                         {
                             head: 'while ((c = getchar()) != EOF && c != 10)',
-                            body: ['char byte = (char)c;', 'builder_bytes(&line, &byte, 1);'],
+                            body: [
+                                'char byte = (char)c;',
+                                cc`${use('builder_bytes')}(&line, &byte, 1);`,
+                            ],
                         },
-                        'return builder_finish(&line);',
+                        cc`return ${use('builder_finish')}(&line);`,
                     ),
                 type(parameters[0]!),
             )}(${args[0]})`;
@@ -604,14 +630,17 @@ export function lowerC(
     };
     for (const w of program.wrappers) {
         if (w.kind !== 'dispose' || !w.captures.length) continue;
-        const signature = cText`${type(unit.id)} ${disposers.get(w.id)}(void *environment)`;
-        declarations.push(signature + ';');
-        const body: Statement[] = [cc`${type(w.environment)} *captured = environment;`];
-        w.captures.forEach((id, i) =>
-            drop({ expression: cc`captured->capture${i}`, layout: id }, body),
-        );
-        body.push('release_context(captured);', cc`return ${zero(unit.id)};`);
-        helpers.push({ signature, body });
+        const name = disposers.get(w.id)!;
+        refs.within(name, () => {
+            const signature = cText`${type(unit.id)} ${name}(void *environment)`;
+            declarations.push(new Declaration(name, signature + ';'));
+            const body: Statement[] = [cc`${type(w.environment)} *captured = environment;`];
+            w.captures.forEach((id, i) =>
+                drop({ expression: cc`captured->capture${i}`, layout: id }, body),
+            );
+            body.push(cc`${use('release_context')}(captured);`, cc`return ${zero(unit.id)};`);
+            helpers.push({ name, signature, body });
+        });
     }
     // Native values fill their type's ABI entries; direct intrinsics retain the
     // explicit storage lowering below.
@@ -632,58 +661,60 @@ export function lowerC(
         const abi = program.abis.find((a) => a.id === w.abi)!;
         const name = cText`native${nativeCodes.size}`;
         nativeCodes.set(w.id, name);
-        const signature = cText`${type(abi.result)} ${name}(void *environment${abi.arguments.map((id, i) => cText`, ${type(id)} arg${i}`).join('')})`;
-        declarations.push(signature + ';');
-        const body: Statement[] = [
-            '(void)environment;',
-            ...abi.arguments.map((_, i) => cc`(void)arg${i};`),
-        ];
-        let result: Expr;
-        const op = requireImport(w.definition, 'c').name;
-        const simple = simpleNative(
-            op,
-            abi.arguments.map((_, i) => `arg${i}`),
-            abi.result,
-            abi.arguments,
-        );
-        if (simple !== undefined) result = simple;
-        else if (op === 'size') {
-            const vector = endpoint(abi.arguments[0]!, 'read');
-            result = cc`(double)(${read(storage.get(incoming('arg0', abi.arguments[0]!)), vector)}).length`;
-        } else if (op === 'dup')
-            result = duplicate(
-                read(storage.get(incoming('arg0', abi.arguments[0]!)), abi.result),
+        refs.within(name, () => {
+            const signature = cText`${type(abi.result)} ${name}(void *environment${abi.arguments.map((id, i) => cText`, ${type(id)} arg${i}`).join('')})`;
+            declarations.push(new Declaration(name, signature + ';'));
+            const body: Statement[] = [
+                '(void)environment;',
+                ...abi.arguments.map((_, i) => cc`(void)arg${i};`),
+            ];
+            let result: Expr;
+            const op = requireImport(w.definition, 'c').name;
+            const simple = simpleNative(
+                op,
+                abi.arguments.map((_, i) => `arg${i}`),
                 abi.result,
+                abi.arguments,
             );
-        else if (op === 'fst') {
-            const input = layout(abi.arguments[0]!),
-                output = layout(abi.result);
-            const pointer = input.fields.find((f) => f.name === 'read');
-            if (pointer?.kind === 'pointer' && pointer.layout) {
-                const replacement = input.fields.find((f) => f.name === 'replacement');
-                if (replacement?.kind === 'pointer' && replacement.layout) {
-                    // Distinct replacement backing must preserve every untouched field.
-                    const reads = layout(pointer.layout).fields,
-                        writes = layout(replacement.layout).fields;
-                    for (let n = 1; n < writes.length; n++) {
-                        const from = reads[n]!,
-                            to = writes[n]!;
-                        if (
-                            from.kind !== 'value' ||
-                            to.kind !== 'value' ||
-                            from.layout !== to.layout
-                        )
-                            return unsupported('Native fst changed an untouched field');
-                        body.push(
-                            cc`arg0.replacement->${member(to.name)} = arg0.read->${member(from.name)};`,
-                        );
+            if (simple !== undefined) result = simple;
+            else if (op === 'size') {
+                const vector = endpoint(abi.arguments[0]!, 'read');
+                result = cc`(double)(${read(storage.get(incoming('arg0', abi.arguments[0]!)), vector)}).length`;
+            } else if (op === 'dup')
+                result = duplicate(
+                    read(storage.get(incoming('arg0', abi.arguments[0]!)), abi.result),
+                    abi.result,
+                );
+            else if (op === 'fst') {
+                const input = layout(abi.arguments[0]!),
+                    output = layout(abi.result);
+                const pointer = input.fields.find((f) => f.name === 'read');
+                if (pointer?.kind === 'pointer' && pointer.layout) {
+                    const replacement = input.fields.find((f) => f.name === 'replacement');
+                    if (replacement?.kind === 'pointer' && replacement.layout) {
+                        // Distinct replacement backing must preserve every untouched field.
+                        const reads = layout(pointer.layout).fields,
+                            writes = layout(replacement.layout).fields;
+                        for (let n = 1; n < writes.length; n++) {
+                            const from = reads[n]!,
+                                to = writes[n]!;
+                            if (
+                                from.kind !== 'value' ||
+                                to.kind !== 'value' ||
+                                from.layout !== to.layout
+                            )
+                                return unsupported('Native fst changed an untouched field');
+                            body.push(
+                                cc`arg0.replacement->${member(to.name)} = arg0.read->${member(from.name)};`,
+                            );
+                        }
                     }
-                }
-                result = cc`(${type(abi.result)}){.read=&arg0.read->item0${output.fields.some((f) => f.name === 'replacement') ? cc`, .replacement=&arg0.${replacement ? 'replacement' : 'read'}->item0` : ''}}`;
-            } else result = 'arg0.item0';
-        } else return unsupported(cText`Native import ${w.definition}`);
-        body.push(cc`return ${result};`);
-        helpers.push({ signature, body });
+                    result = cc`(${type(abi.result)}){.read=&arg0.read->item0${output.fields.some((f) => f.name === 'replacement') ? cc`, .replacement=&arg0.${replacement ? 'replacement' : 'read'}->item0` : ''}}`;
+                } else result = 'arg0.item0';
+            } else return unsupported(cText`Native import ${w.definition}`);
+            body.push(cc`return ${result};`);
+            helpers.push({ name, signature, body });
+        });
     }
     const resultAdapters = new Map(
         program.wrappers
@@ -697,726 +728,877 @@ export function lowerC(
         if (source.kind !== 'invoke' && source.kind !== 'native')
             return unsupported('Result adapter requires a concrete body or native import');
         const raw = program.abis.find((a) => a.id === source.abi)!;
-        const signature = cText`${type(abi.result)} ${resultAdapters.get(w.id)}(void *environment${abi.arguments.map((id, n) => cText`, ${type(id)} arg${n}`).join('')})`;
-        declarations.push(signature + ';');
-        const sourceCode =
-            source.kind === 'invoke' ? codes.get(source.code)! : nativeCodes.get(source.id)!;
+        const adapter = resultAdapters.get(w.id)!;
+        const signature = cText`${type(abi.result)} ${adapter}(void *environment${abi.arguments.map((id, n) => cText`, ${type(id)} arg${n}`).join('')})`;
+        declarations.push(new Declaration(adapter, signature + ';'));
         if (w.kind === 'adapt-lens-result') {
-            const context = cc`LensResult${resultAdapters.get(w.id)}`,
-                restore = cc`restore_${resultAdapters.get(w.id)}`;
+            const context = `LensResult${adapter}`,
+                restore = `restore_${adapter}`;
             const input = endpoint(abi.result, 'read'),
                 replacement = endpoint(abi.result, 'replacement');
             const separate = layout(abi.result).fields.some((f) => f.name === 'replacement');
             declarations.push(
-                cText`typedef struct { ${type(raw.result)} source; ${type(input)} read; ${separate ? cc`${type(replacement)} write;` : ''} } ${context};`,
+                new Declaration(
+                    context,
+                    cText`typedef struct { ${type(raw.result)} source; ${type(input)} read; ${separate ? cc`${type(replacement)} write;` : ''} } ${context};`,
+                ),
             );
-            const restoreSignature = cText`${type(unit.id)} ${restore}(void *environment, ${type(replacement)} replacement)`;
-            declarations.push(restoreSignature + ';');
-            const fallback: Statement[] = [];
-            flush(
-                'ctx->source',
-                raw.result,
-                { expression: 'replacement', layout: replacement },
-                fallback,
-            );
-            helpers.push({
-                signature: restoreSignature,
-                body: [
-                    cc`${context} *ctx = environment;`,
-                    {
-                        head: 'if (ctx->source.restore)',
-                        body: ['ctx->source.restore(ctx->source.context, replacement);'],
-                    },
-                    { head: 'else', body: fallback },
-                    'release_context(ctx);',
-                    cc`return ${zero(unit.id)};`,
-                ],
+            // The restoration function runs when the lens ends; it and its context
+            // exist only because the adapter hands them out.
+            refs.within(restore, () => {
+                use(context);
+                const restoreSignature = cText`${type(unit.id)} ${restore}(void *environment, ${type(replacement)} replacement)`;
+                declarations.push(new Declaration(restore, restoreSignature + ';'));
+                const fallback: Statement[] = [];
+                flush(
+                    'ctx->source',
+                    raw.result,
+                    { expression: 'replacement', layout: replacement },
+                    fallback,
+                );
+                helpers.push({
+                    name: restore,
+                    signature: restoreSignature,
+                    body: [
+                        cc`${context} *ctx = environment;`,
+                        {
+                            head: 'if (ctx->source.restore)',
+                            body: ['ctx->source.restore(ctx->source.context, replacement);'],
+                        },
+                        { head: 'else', body: fallback },
+                        cc`${use('release_context')}(ctx);`,
+                        cc`return ${zero(unit.id)};`,
+                    ],
+                });
             });
-            helpers.push({
-                signature,
-                body: [
-                    cc`${type(raw.result)} result = ${sourceCode}(environment${abi.arguments.map((_, n) => cc`, arg${n}`).join('')});`,
-                    cc`${context} *ctx = allocate_context(sizeof *ctx);`,
-                    'ctx->source = result;',
-                    cc`ctx->read = ${read(storage.get(incoming('ctx->source', raw.result)), input)};`,
-                    cc`return (${type(abi.result)}){.read=&ctx->read${separate ? ', .replacement=&ctx->write' : ''}, .restore=${restore}, .context=ctx};`,
-                ],
+            refs.within(adapter, () => {
+                use(context);
+                use(restore);
+                const sourceCode = use(
+                    source.kind === 'invoke'
+                        ? codes.get(source.code)!
+                        : nativeCodes.get(source.id)!,
+                );
+                helpers.push({
+                    name: adapter,
+                    signature,
+                    body: [
+                        cc`${type(raw.result)} result = ${sourceCode}(environment${abi.arguments.map((_, n) => cc`, arg${n}`).join('')});`,
+                        cc`${context} *ctx = ${use('allocate_context')}(sizeof *ctx);`,
+                        'ctx->source = result;',
+                        cc`ctx->read = ${read(storage.get(incoming('ctx->source', raw.result)), input)};`,
+                        cc`return (${type(abi.result)}){.read=&ctx->read${separate ? ', .replacement=&ctx->write' : ''}, .restore=${restore}, .context=ctx};`,
+                    ],
+                });
             });
             continue;
         }
     }
     const wrapperFunction = (id: string): string => {
         const w = program.wrappers.find((w) => w.id === id)!;
-        return (
+        return use(
             (w.kind === 'invoke' ? codes.get(w.code) : undefined) ??
-            resultAdapters.get(id) ??
-            nativeCodes.get(id) ??
-            unsupported('Wrapper has no callable function')
+                resultAdapters.get(id) ??
+                nativeCodes.get(id) ??
+                unsupported('Wrapper has no callable function'),
         );
     };
-    const functions = program.code.map((c) => {
-        const values = new Map<string, Expr>(),
-            lenses = new Map<string, Lens>(),
-            places = new Map<string, View>();
-        const locals = new Locals(cSyntax);
-        activeLocals = locals;
-        let counter = 0;
-        const fresh = () => locals.reference(`v${counter++}`);
-        const { parameterNames: sources, bindingName, versionName, hint } = naming.get(c.id)!;
-        const parameterNames = ['environment', ...sources];
-        parameterNames.forEach((n) => locals.reference(n));
-        const variables: Variable[] = c.parameters.map((p, i) => ({
-            name: sources[i]!,
-            type: type(p.layout),
-        }));
-        const lensSlots = new Map<string, SlotRef>();
-        const declare = (
-            id: string,
-            expression: Expr,
-            body: Statement[],
-            name = fresh(),
-            options: { pure?: boolean; inline?: boolean } = {},
-        ): string => {
-            variables.push({ name, type: type(id) });
-            body.push(
-                locals.declaration(name, type(id), expression, {
-                    ...options,
-                    zeroInitial: same(expression, zero(id)),
-                }),
-            );
-            return name;
-        };
-        /** A local that raw statements write through or address: never substituted or pruned. */
-        const cell = (name: string, ctype: string, init: Expr | undefined, body: Statement[]) => {
-            variables.push({ name, type: ctype });
-            body.push(locals.declaration(name, ctype, init));
-            locals.mutable(name);
-            return name;
-        };
-        const setup: Statement[] = [];
-        /** Boxes kept by borrowed matches, by reconstruction id, until a construct reuses them. */
-        const retainedBoxes = new Map<string, string>();
-        /** Reconstructions whose temporary lens is the retained box's payload. */
-        const inPlaceIds = new Set<string>();
-        /** Storage cells that are a retained box's payload. */
-        const inPlaceCells = new Set<Cell>();
-        /** The live leaf an in-place field had before a move emptied it, by cell and path. */
-        const homes = new Map<Cell, Map<string, Data>>();
-        const rememberHome = (view: View) => {
-            if (Array.isArray(view) || !inPlaceCells.has(view.cell)) return;
-            const leaf = storage.get(view);
-            if (Array.isArray(leaf) || !leaf.address) return;
-            const at = homes.get(view.cell) ?? new Map<string, Data>();
-            at.set(JSON.stringify(view.path), leaf);
-            homes.set(view.cell, at);
-        };
-        const home = (view: View): Data | undefined =>
-            Array.isArray(view) ? undefined : homes.get(view.cell)?.get(JSON.stringify(view.path));
-        /** What a retained arm's owner held before the match moved it out, by reconstruction id. */
-        const retainedOwners = new Map<string, Data>();
-        /** The storage each moved value came from. */
-        const movedFrom = new Map<string, Data>();
-        /** An lvalue for the storage behind an address. */
-        const through = (address: Expr): Expr => {
-            const text = String(address);
-            return text.startsWith('&') ? text.slice(1) : cc`*${address}`;
-        };
-        /** Store each payload field that no longer reads its own live storage. */
-        const writeBack = (before: Data, after: Data, id: string, body: Statement[]) => {
-            if (Array.isArray(before) || !before.address) return;
-            if (!Array.isArray(after) && same(after.address, before.address)) return;
-            const items = layout(id).fields.filter((f) => f.name.startsWith('item'));
-            if (layout(id).kind !== 'record' || !items.length) {
-                body.push(cc`${through(before.address)} = ${read(after, id)};`);
-                return;
-            }
-            const from = storage.parts(before),
-                to = storage.parts(after);
-            items.forEach((f, n) =>
-                writeBack(from[n]!, to[n]!, (f as { layout: string }).layout, body),
-            );
-        };
-        const bind = (p: IRPattern, data: Data, body: Statement[] = setup, retains?: string) => {
-            if (p.kind === 'bind') places.set(p.slot.place, storage.own(data));
-            else if (p.kind === 'tuple')
-                p.items.forEach((p, i) => bind(p, storage.parts(data)[i]!, body));
-            else if (p.kind === 'constructor') {
-                // Borrowed matches moved their owner out first; reconstruction is explicit IR.
-                if (Array.isArray(data)) return unsupported('Constructor pattern over a tuple');
-                const n = tagOf(data.layout, p.name),
-                    v = variant(data.layout, n);
-                // The case already selected this variant; take its payload and free the box.
-                let contents: Data = {
-                    expression: payload(data.expression, data.layout, n),
-                    layout: v.layout,
-                };
-                if (v.boxed && retains !== undefined && inPlaceIds.has(retains)) {
-                    // The fields stay in the box and are read and written through it.
-                    const box = cell(
-                        fresh(),
-                        `${type(v.layout)} *`,
-                        cc`(${data.expression}).as.v${n}`,
-                        body,
-                    );
-                    retainedBoxes.set(retains, box);
-                    contents = { expression: cc`(*${box})`, layout: v.layout, address: box };
-                } else if (v.boxed) {
-                    contents = {
-                        expression: declare(v.layout, contents.expression, body),
+    const functions: TranslationUnit['functions'] = program.code.map((c) =>
+        refs.within(codes.get(c.id)!, () => {
+            const values = new Map<string, Expr>(),
+                lenses = new Map<string, Lens>(),
+                places = new Map<string, View>();
+            const locals = new Locals(cSyntax);
+            activeLocals = locals;
+            let counter = 0;
+            const fresh = () => locals.reference(`v${counter++}`);
+            const { parameterNames: sources, bindingName, versionName, hint } = naming.get(c.id)!;
+            const parameterNames = ['environment', ...sources];
+            parameterNames.forEach((n) => locals.reference(n));
+            const variables: Variable[] = c.parameters.map((p, i) => ({
+                name: sources[i]!,
+                type: type(p.layout),
+            }));
+            const lensSlots = new Map<string, SlotRef>();
+            const declare = (
+                id: string,
+                expression: Expr,
+                body: Statement[],
+                name = fresh(),
+                options: { pure?: boolean; inline?: boolean } = {},
+            ): string => {
+                variables.push({ name, type: type(id) });
+                body.push(
+                    locals.declaration(name, type(id), expression, {
+                        ...options,
+                        zeroInitial: same(expression, zero(id)),
+                    }),
+                );
+                return name;
+            };
+            /** A local that raw statements write through or address: never substituted or pruned. */
+            const cell = (
+                name: string,
+                ctype: string,
+                init: Expr | undefined,
+                body: Statement[],
+            ) => {
+                variables.push({ name, type: ctype });
+                body.push(locals.declaration(name, ctype, init));
+                locals.mutable(name);
+                return name;
+            };
+            const setup: Statement[] = [];
+            /** Boxes kept by borrowed matches, by reconstruction id, until a construct reuses them. */
+            const retainedBoxes = new Map<string, string>();
+            /** Reconstructions whose temporary lens is the retained box's payload. */
+            const inPlaceIds = new Set<string>();
+            /** Storage cells that are a retained box's payload. */
+            const inPlaceCells = new Set<Cell>();
+            /** The live leaf an in-place field had before a move emptied it, by cell and path. */
+            const homes = new Map<Cell, Map<string, Data>>();
+            const rememberHome = (view: View) => {
+                if (Array.isArray(view) || !inPlaceCells.has(view.cell)) return;
+                const leaf = storage.get(view);
+                if (Array.isArray(leaf) || !leaf.address) return;
+                const at = homes.get(view.cell) ?? new Map<string, Data>();
+                at.set(JSON.stringify(view.path), leaf);
+                homes.set(view.cell, at);
+            };
+            const home = (view: View): Data | undefined =>
+                Array.isArray(view)
+                    ? undefined
+                    : homes.get(view.cell)?.get(JSON.stringify(view.path));
+            /** What a retained arm's owner held before the match moved it out, by reconstruction id. */
+            const retainedOwners = new Map<string, Data>();
+            /** The storage each moved value came from. */
+            const movedFrom = new Map<string, Data>();
+            /** An lvalue for the storage behind an address. */
+            const through = (address: Expr): Expr => {
+                const text = String(address);
+                return text.startsWith('&') ? text.slice(1) : cc`*${address}`;
+            };
+            /** Store each payload field that no longer reads its own live storage. */
+            const writeBack = (before: Data, after: Data, id: string, body: Statement[]) => {
+                if (Array.isArray(before) || !before.address) return;
+                if (!Array.isArray(after) && same(after.address, before.address)) return;
+                const items = layout(id).fields.filter((f) => f.name.startsWith('item'));
+                if (layout(id).kind !== 'record' || !items.length) {
+                    body.push(cc`${through(before.address)} = ${read(after, id)};`);
+                    return;
+                }
+                const from = storage.parts(before),
+                    to = storage.parts(after);
+                items.forEach((f, n) =>
+                    writeBack(from[n]!, to[n]!, (f as { layout: string }).layout, body),
+                );
+            };
+            const bind = (
+                p: IRPattern,
+                data: Data,
+                body: Statement[] = setup,
+                retains?: string,
+            ) => {
+                if (p.kind === 'bind') places.set(p.slot.place, storage.own(data));
+                else if (p.kind === 'tuple')
+                    p.items.forEach((p, i) => bind(p, storage.parts(data)[i]!, body));
+                else if (p.kind === 'constructor') {
+                    // Borrowed matches moved their owner out first; reconstruction is explicit IR.
+                    if (Array.isArray(data)) return unsupported('Constructor pattern over a tuple');
+                    const n = tagOf(data.layout, p.name),
+                        v = variant(data.layout, n);
+                    // The case already selected this variant; take its payload and free the box.
+                    let contents: Data = {
+                        expression: payload(data.expression, data.layout, n),
                         layout: v.layout,
                     };
-                    if (retains !== undefined) {
-                        // The reconstruction writes its payload into this box.
-                        retainedBoxes.set(
-                            retains,
-                            cell(
-                                fresh(),
-                                `${type(v.layout)} *`,
-                                cc`(${data.expression}).as.v${n}`,
-                                body,
-                            ),
+                    if (v.boxed && retains !== undefined && inPlaceIds.has(retains)) {
+                        // The fields stay in the box and are read and written through it.
+                        const box = cell(
+                            fresh(),
+                            `${type(v.layout)} *`,
+                            cc`(${data.expression}).as.v${n}`,
+                            body,
                         );
-                    } else body.push(cc`release_context((${data.expression}).as.v${n});`);
-                }
-                if (p.items.length === 1) bind(p.items[0]!, contents, body);
-                else p.items.forEach((item, k) => bind(item, storage.parts(contents)[k]!, body));
-            } else if (p.kind === 'drop' || p.kind === 'literal') drop(data, body);
-        };
-        const parameters: { expression: string; layout: string; view: View }[] = [];
-        c.parameters.forEach((p, i) => {
-            if (p.lensPlace) {
-                const view = incoming(sources[i]!, p.layout);
-                places.set(p.lensPlace, view);
-                parameters.push({ expression: sources[i]!, layout: p.layout, view });
-            } else bind(p.pattern, { expression: sources[i]!, layout: p.layout });
-        });
-        const flushParameters = (body: Statement[]) =>
-            parameters.forEach((p) => flush(p.expression, p.layout, storage.get(p.view), body));
-        const ref = (s: SlotRef) =>
-            storage.project(places.get(s.place) ?? unsupported('Unavailable C place'), s.path);
-        const value = (id: string) =>
-            values.get(id) ?? unsupported('Indirect/function value requires phase 6');
-        // Adapt input/output backing at calls. Escaping calls use heap backing, so
-        // a returned continuation never retains a pointer into the caller frame.
-        const adapt = (
-            lens: Lens,
-            id: string,
-            escapes: boolean,
-            body: Statement[],
-        ): { expression: string; finish: (body: Statement[]) => void } => {
-            // A same-layout lens over live storage (a field of an in-place box, or an
-            // incoming lens) is passed by address: nothing is copied or restored.
-            const l = layout(id),
-                input = l.fields.find((f) => f.name === 'read');
-            if (
-                !escapes &&
-                input?.kind === 'pointer' &&
-                input.layout &&
-                !l.fields.some((f) => f.name === 'replacement')
-            ) {
-                const d = storage.get(lens.view);
-                if (!Array.isArray(d) && d.address && d.layout === input.layout) {
-                    const live = d;
-                    return {
-                        expression: declare(id, cc`(${type(id)}){.read=${live.address}}`, body),
-                        finish: (body) => {
-                            storage.put(lens.view, live);
-                            lens.finish(body);
-                        },
-                    };
-                }
-            }
-            const index = helperCounter++,
-                name = locals.reference(`back${index}`),
-                fields: string[] = [],
-                init: Statement[] = [];
-            const build = (id: string, path: string): Expr => {
+                        retainedBoxes.set(retains, box);
+                        contents = { expression: cc`(*${box})`, layout: v.layout, address: box };
+                    } else if (v.boxed) {
+                        contents = {
+                            expression: declare(v.layout, contents.expression, body),
+                            layout: v.layout,
+                        };
+                        if (retains !== undefined) {
+                            // The reconstruction writes its payload into this box.
+                            retainedBoxes.set(
+                                retains,
+                                cell(
+                                    fresh(),
+                                    `${type(v.layout)} *`,
+                                    cc`(${data.expression}).as.v${n}`,
+                                    body,
+                                ),
+                            );
+                        } else
+                            body.push(
+                                cc`${use('release_context')}((${data.expression}).as.v${n});`,
+                            );
+                    }
+                    if (p.items.length === 1) bind(p.items[0]!, contents, body);
+                    else
+                        p.items.forEach((item, k) => bind(item, storage.parts(contents)[k]!, body));
+                } else if (p.kind === 'drop' || p.kind === 'literal') drop(data, body);
+            };
+            const parameters: { expression: string; layout: string; view: View }[] = [];
+            c.parameters.forEach((p, i) => {
+                if (p.lensPlace) {
+                    const view = incoming(sources[i]!, p.layout);
+                    places.set(p.lensPlace, view);
+                    parameters.push({ expression: sources[i]!, layout: p.layout, view });
+                } else bind(p.pattern, { expression: sources[i]!, layout: p.layout });
+            });
+            const flushParameters = (body: Statement[]) =>
+                parameters.forEach((p) => flush(p.expression, p.layout, storage.get(p.view), body));
+            const ref = (s: SlotRef) =>
+                storage.project(places.get(s.place) ?? unsupported('Unavailable C place'), s.path);
+            const value = (id: string) =>
+                values.get(id) ?? unsupported('Indirect/function value requires phase 6');
+            // Adapt input/output backing at calls. Escaping calls use heap backing, so
+            // a returned continuation never retains a pointer into the caller frame.
+            const adapt = (
+                lens: Lens,
+                id: string,
+                escapes: boolean,
+                body: Statement[],
+            ): { expression: string; finish: (body: Statement[]) => void } => {
+                // A same-layout lens over live storage (a field of an in-place box, or an
+                // incoming lens) is passed by address: nothing is copied or restored.
                 const l = layout(id),
                     input = l.fields.find((f) => f.name === 'read');
-                if (input?.kind === 'pointer' && input.layout) {
-                    const output = l.fields.find((f) => f.name === 'replacement');
-                    const n = fields.length,
-                        r = `read${n}`,
-                        w = output ? `write${n}` : r;
-                    fields.push(cText`${type(input.layout)} ${r};`);
-                    const d = storage.get(
-                        storage.project(lens.view, path ? path.split('.').map(Number) : []),
-                    );
-                    init.push(cc`${name}${escapes ? '->' : '.'}${r} = ${read(d, input.layout)};`);
-                    if (output?.kind === 'pointer' && output.layout) {
-                        fields.push(cText`${type(output.layout)} ${w};`);
-                        init.push(cc`${name}${escapes ? '->' : '.'}${w} = ${zero(output.layout)};`);
+                if (
+                    !escapes &&
+                    input?.kind === 'pointer' &&
+                    input.layout &&
+                    !l.fields.some((f) => f.name === 'replacement')
+                ) {
+                    const d = storage.get(lens.view);
+                    if (!Array.isArray(d) && d.address && d.layout === input.layout) {
+                        const live = d;
+                        return {
+                            expression: declare(id, cc`(${type(id)}){.read=${live.address}}`, body),
+                            finish: (body) => {
+                                storage.put(lens.view, live);
+                                lens.finish(body);
+                            },
+                        };
                     }
-                    return cc`(${type(id)}){.read=&${name}${escapes ? '->' : '.'}${r}${output ? cc`, .replacement=&${name}${escapes ? '->' : '.'}${w}` : ''}}`;
                 }
-                return cc`(${type(id)}){${
-                    joinCode(
-                        l.fields
-                            .filter((f) => f.name.startsWith('item'))
-                            .map(
-                                (f, i) =>
-                                    cc`.${member(f.name)}=${build((f as { layout: string }).layout, path ? path + '.' + i : String(i))}`,
-                            ),
-                        ', ',
-                    ) || '0'
-                }}`;
-            };
-            const expression = build(id, '');
-            const backingType = `Backing${index}`;
-            declarations.push(
-                cText`typedef struct { ${fields.join(' ') || 'unsigned char inhabitant;'} } ${backingType};`,
-            );
-            cell(
-                name,
-                backingType + (escapes ? ' *' : ''),
-                escapes ? cc`allocate_context(sizeof *${name})` : undefined,
-                body,
-            );
-            if (escapes)
-                body.push({ kind: 'if', arms: [{ condition: cc`!${name}`, body: ['abort();'] }] });
-            body.push(...init);
-            const arg = declare(id, expression, body);
-            const outputs = (expr: Expr, id: string): Data => {
-                const l = layout(id),
-                    f =
-                        l.fields.find((f) => f.name === 'replacement') ??
-                        l.fields.find((f) => f.name === 'read');
-                if (f?.kind === 'pointer' && f.layout)
-                    return { expression: cc`*(${expr}).${member(f.name)}`, layout: f.layout };
-                return l.fields
-                    .filter((f) => f.name.startsWith('item'))
-                    .map((f) =>
-                        outputs(cc`(${expr}).${member(f.name)}`, (f as { layout: string }).layout),
-                    );
-            };
-            return {
-                expression: arg,
-                finish: (body) => {
-                    // Copy before freeing backing; subsequent versions never reference freed memory.
-                    const result = declare(
-                        endpoint(id, 'replacement'),
-                        read(outputs(arg, id), endpoint(id, 'replacement')),
-                        body,
-                    );
-                    storage.put(lens.view, {
-                        expression: result,
-                        layout: endpoint(id, 'replacement'),
-                    });
-                    lens.finish(body);
-                    if (escapes) body.push(cc`release_context(${name});`);
-                },
-            };
-        };
-        const runtimeLens = (
-            name: string,
-            id: string,
-            after: (body: Statement[]) => void,
-        ): Lens => {
-            const view = incoming(name, id);
-            return {
-                view,
-                finish: (body) => {
-                    const replacement = declare(
-                        endpoint(id, 'replacement'),
-                        read(storage.get(view), endpoint(id, 'replacement')),
-                        body,
-                    );
-                    body.push(
-                        {
-                            head: cc`if ((${name}).restore)`,
-                            body: [cc`(${name}).restore((${name}).context, ${replacement});`],
-                        },
-                        {
-                            head: 'else',
-                            body: (() => {
-                                const b: Statement[] = [];
-                                flush(name, id, storage.get(view), b);
-                                return b;
-                            })(),
-                        },
-                    );
-                    after(body);
-                },
-            };
-        };
-        const loans = new Map<string, Lens>();
-        const literal = (v: unknown, id: string): Expr =>
-            v === null
-                ? zero(id)
-                : typeof v === 'boolean'
-                  ? String(+v)
-                  : typeof v === 'number'
-                    ? // Integral literals beyond the safe range exceed every C integer type.
-                      Number.isSafeInteger(v) || /[.e]/.test(String(v))
-                        ? String(v)
-                        : cc`${v}.0`
-                    : v && typeof v === 'object' && 'number' in v
-                      ? {
-                            NaN: 'NAN',
-                            Infinity: 'INFINITY',
-                            '-Infinity': '(-INFINITY)',
-                            '-0': '(-0.0)',
-                        }[String(v.number)]!
-                      : unsupported('Literal');
-        const matches = (p: IRPattern, expr: Expr, id: string): Expr => {
-            if (p.kind === 'literal') {
-                if (layout(id).kind !== 'string')
-                    return cc`${expr} == ${literal(p.value, unit.id)}`;
-                if (typeof p.value !== 'string') return unsupported('String literal pattern');
-                const text = cBytes(p.value);
-                return cc`string_equals(${expr}, ${text.literal}, ${text.length})`;
-            }
-            const fields = layout(id).fields as { layout: string }[];
-            if (p.kind === 'tuple')
-                return (
-                    joinCode(
-                        p.items.map((p, i) => matches(p, field(expr, i), fields[i]!.layout)),
-                        ' && ',
-                    ) || '1'
+                const index = helperCounter++,
+                    name = locals.reference(`back${index}`),
+                    fields: string[] = [],
+                    init: Statement[] = [];
+                const build = (id: string, path: string): Expr => {
+                    const l = layout(id),
+                        input = l.fields.find((f) => f.name === 'read');
+                    if (input?.kind === 'pointer' && input.layout) {
+                        const output = l.fields.find((f) => f.name === 'replacement');
+                        const n = fields.length,
+                            r = `read${n}`,
+                            w = output ? `write${n}` : r;
+                        fields.push(cText`${type(input.layout)} ${r};`);
+                        const d = storage.get(
+                            storage.project(lens.view, path ? path.split('.').map(Number) : []),
+                        );
+                        init.push(
+                            cc`${name}${escapes ? '->' : '.'}${r} = ${read(d, input.layout)};`,
+                        );
+                        if (output?.kind === 'pointer' && output.layout) {
+                            fields.push(cText`${type(output.layout)} ${w};`);
+                            init.push(
+                                cc`${name}${escapes ? '->' : '.'}${w} = ${zero(output.layout)};`,
+                            );
+                        }
+                        return cc`(${type(id)}){.read=&${name}${escapes ? '->' : '.'}${r}${output ? cc`, .replacement=&${name}${escapes ? '->' : '.'}${w}` : ''}}`;
+                    }
+                    return cc`(${type(id)}){${
+                        joinCode(
+                            l.fields
+                                .filter((f) => f.name.startsWith('item'))
+                                .map(
+                                    (f, i) =>
+                                        cc`.${member(f.name)}=${build((f as { layout: string }).layout, path ? path + '.' + i : String(i))}`,
+                                ),
+                            ', ',
+                        ) || '0'
+                    }}`;
+                };
+                const expression = build(id, '');
+                const backingType = `Backing${index}`;
+                declarations.push(
+                    cText`typedef struct { ${fields.join(' ') || 'unsigned char inhabitant;'} } ${backingType};`,
                 );
-            if (p.kind !== 'constructor') return '1';
-            const n = tagOf(id, p.name),
-                v = variant(id, n),
-                contents = payload(expr, id, n);
-            const items =
-                p.items.length === 1
-                    ? [matches(p.items[0]!, contents, v.layout)]
-                    : p.items.map((item, k) =>
-                          matches(
-                              item,
-                              field(contents, k),
-                              (layout(v.layout).fields[k] as { layout: string }).layout,
-                          ),
-                      );
-            return joinCode(
-                [cc`(${expr}).tag == ${tagValue(id, n)}`, ...items.filter((m) => !same(m, '1'))],
-                ' && ',
-            );
-        };
-        const block = (b: ConcreteBlock, body: Statement[]): Expr => {
-            for (const i of b.instructions) {
-                if (i.op === 'bind') {
-                    bind(
-                        i.pattern,
-                        {
-                            expression: value(i.value),
-                            layout: outputLayouts.get(i.value)!,
-                        },
-                        body,
+                cell(
+                    name,
+                    backingType + (escapes ? ' *' : ''),
+                    escapes ? cc`${use('allocate_context')}(sizeof *${name})` : undefined,
+                    body,
+                );
+                if (escapes)
+                    body.push({
+                        kind: 'if',
+                        arms: [{ condition: cc`!${name}`, body: ['abort();'] }],
+                    });
+                body.push(...init);
+                const arg = declare(id, expression, body);
+                const outputs = (expr: Expr, id: string): Data => {
+                    const l = layout(id),
+                        f =
+                            l.fields.find((f) => f.name === 'replacement') ??
+                            l.fields.find((f) => f.name === 'read');
+                    if (f?.kind === 'pointer' && f.layout)
+                        return { expression: cc`*(${expr}).${member(f.name)}`, layout: f.layout };
+                    return l.fields
+                        .filter((f) => f.name.startsWith('item'))
+                        .map((f) =>
+                            outputs(
+                                cc`(${expr}).${member(f.name)}`,
+                                (f as { layout: string }).layout,
+                            ),
+                        );
+                };
+                return {
+                    expression: arg,
+                    finish: (body) => {
+                        // Copy before freeing backing; subsequent versions never reference freed memory.
+                        const result = declare(
+                            endpoint(id, 'replacement'),
+                            read(outputs(arg, id), endpoint(id, 'replacement')),
+                            body,
+                        );
+                        storage.put(lens.view, {
+                            expression: result,
+                            layout: endpoint(id, 'replacement'),
+                        });
+                        lens.finish(body);
+                        if (escapes) body.push(cc`${use('release_context')}(${name});`);
+                    },
+                };
+            };
+            const runtimeLens = (
+                name: string,
+                id: string,
+                after: (body: Statement[]) => void,
+            ): Lens => {
+                const view = incoming(name, id);
+                return {
+                    view,
+                    finish: (body) => {
+                        const replacement = declare(
+                            endpoint(id, 'replacement'),
+                            read(storage.get(view), endpoint(id, 'replacement')),
+                            body,
+                        );
+                        body.push(
+                            {
+                                head: cc`if ((${name}).restore)`,
+                                body: [cc`(${name}).restore((${name}).context, ${replacement});`],
+                            },
+                            {
+                                head: 'else',
+                                body: (() => {
+                                    const b: Statement[] = [];
+                                    flush(name, id, storage.get(view), b);
+                                    return b;
+                                })(),
+                            },
+                        );
+                        after(body);
+                    },
+                };
+            };
+            const loans = new Map<string, Lens>();
+            const literal = (v: unknown, id: string): Expr =>
+                v === null
+                    ? zero(id)
+                    : typeof v === 'boolean'
+                      ? String(+v)
+                      : typeof v === 'number'
+                        ? // Integral literals beyond the safe range exceed every C integer type.
+                          Number.isSafeInteger(v) || /[.e]/.test(String(v))
+                            ? String(v)
+                            : cc`${v}.0`
+                        : v && typeof v === 'object' && 'number' in v
+                          ? {
+                                NaN: 'NAN',
+                                Infinity: 'INFINITY',
+                                '-Infinity': '(-INFINITY)',
+                                '-0': '(-0.0)',
+                            }[String(v.number)]!
+                          : unsupported('Literal');
+            const matches = (p: IRPattern, expr: Expr, id: string): Expr => {
+                if (p.kind === 'literal') {
+                    if (layout(id).kind !== 'string')
+                        return cc`${expr} == ${literal(p.value, unit.id)}`;
+                    if (typeof p.value !== 'string') return unsupported('String literal pattern');
+                    const text = cBytes(p.value);
+                    return cc`${use('string_equals')}(${expr}, ${text.literal}, ${text.length})`;
+                }
+                const fields = layout(id).fields as { layout: string }[];
+                if (p.kind === 'tuple')
+                    return (
+                        joinCode(
+                            p.items.map((p, i) => matches(p, field(expr, i), fields[i]!.layout)),
+                            ' && ',
+                        ) || '1'
                     );
-                    continue;
-                }
-                if (i.op === 'borrow') {
-                    const loan = program.semantic.program.units
-                        .find((u) => u.id === c.unit)
-                        ?.loans.find((l) => l.id === i.loan);
-                    if (!loan) unsupported('Missing loan');
-                    const lens = lenses.get(i.lens)!;
-                    // Direct subloans retain absolute paths into the original owner.
-                    // Only computed lenses introduce a new backing place.
-                    if (loan!.owners) places.set(loan!.place, lens.view);
-                    loans.set(i.loan, lens);
-                    continue;
-                }
-                const hinted = hint(i, (id) => lensSlots.get(id));
-                const id = i.out.layout,
-                    name = hinted && takesName(i) ? locals.reference(versionName(hinted)) : fresh();
-                let expr!: Expr;
-                // Only side-effect-free values that read no memory may be inlined or pruned.
-                let pure = false;
-                /** Unused results of these are dropped: they only read or aggregate. */
-                let removable = false;
-                switch (i.op) {
-                    case 'aslens': {
-                        const payload = outputLayouts.get(i.initial)!;
-                        const box = i.inPlace ? retainedBoxes.get(i.inPlace) : undefined;
-                        if (i.inPlace) {
-                            const owner = retainedOwners.get(i.inPlace),
-                                slot = i.reconstruction?.reconstructionOwner;
-                            if (!box || !owner || !slot) return unsupported('Missing retained box');
-                            // The temporary is the box payload: fields are live reads through
-                            // it, written back only when changed. The owner's header is
-                            // unchanged, so restoring it needs no reconstruction.
+                if (p.kind !== 'constructor') return '1';
+                const n = tagOf(id, p.name),
+                    v = variant(id, n),
+                    contents = payload(expr, id, n);
+                const items =
+                    p.items.length === 1
+                        ? [matches(p.items[0]!, contents, v.layout)]
+                        : p.items.map((item, k) =>
+                              matches(
+                                  item,
+                                  field(contents, k),
+                                  (layout(v.layout).fields[k] as { layout: string }).layout,
+                              ),
+                          );
+                return joinCode(
+                    [
+                        cc`(${expr}).tag == ${tagValue(id, n)}`,
+                        ...items.filter((m) => !same(m, '1')),
+                    ],
+                    ' && ',
+                );
+            };
+            const block = (b: ConcreteBlock, body: Statement[]): Expr => {
+                for (const i of b.instructions) {
+                    if (i.op === 'bind') {
+                        bind(
+                            i.pattern,
+                            {
+                                expression: value(i.value),
+                                layout: outputLayouts.get(i.value)!,
+                            },
+                            body,
+                        );
+                        continue;
+                    }
+                    if (i.op === 'borrow') {
+                        const loan = program.semantic.program.units
+                            .find((u) => u.id === c.unit)
+                            ?.loans.find((l) => l.id === i.loan);
+                        if (!loan) unsupported('Missing loan');
+                        const lens = lenses.get(i.lens)!;
+                        // Direct subloans retain absolute paths into the original owner.
+                        // Only computed lenses introduce a new backing place.
+                        if (loan!.owners) places.set(loan!.place, lens.view);
+                        loans.set(i.loan, lens);
+                        continue;
+                    }
+                    const hinted = hint(i, (id) => lensSlots.get(id));
+                    const id = i.out.layout,
+                        name =
+                            hinted && takesName(i)
+                                ? locals.reference(versionName(hinted))
+                                : fresh();
+                    let expr!: Expr;
+                    // Only side-effect-free values that read no memory may be inlined or pruned.
+                    let pure = false;
+                    /** Unused results of these are dropped: they only read or aggregate. */
+                    let removable = false;
+                    switch (i.op) {
+                        case 'aslens': {
+                            const payload = outputLayouts.get(i.initial)!;
+                            const box = i.inPlace ? retainedBoxes.get(i.inPlace) : undefined;
+                            if (i.inPlace) {
+                                const owner = retainedOwners.get(i.inPlace),
+                                    slot = i.reconstruction?.reconstructionOwner;
+                                if (!box || !owner || !slot)
+                                    return unsupported('Missing retained box');
+                                // The temporary is the box payload: fields are live reads through
+                                // it, written back only when changed. The owner's header is
+                                // unchanged, so restoring it needs no reconstruction.
+                                const view = storage.own({
+                                    expression: cc`(*${box})`,
+                                    layout: payload,
+                                    address: box,
+                                });
+                                const live = storage.get(view);
+                                if (!Array.isArray(view)) inPlaceCells.add(view.cell);
+                                places.set(i.backing, view);
+                                lenses.set(i.out.id, {
+                                    view,
+                                    finish: (output) => {
+                                        writeBack(live, storage.get(view), payload, output);
+                                        storage.put(ref(slot), owner);
+                                    },
+                                });
+                                continue;
+                            }
                             const view = storage.own({
-                                expression: cc`(*${box})`,
+                                expression: value(i.initial),
                                 layout: payload,
-                                address: box,
                             });
-                            const live = storage.get(view);
-                            if (!Array.isArray(view)) inPlaceCells.add(view.cell);
                             places.set(i.backing, view);
                             lenses.set(i.out.id, {
                                 view,
                                 finish: (output) => {
-                                    writeBack(live, storage.get(view), payload, output);
-                                    storage.put(ref(slot), owner);
+                                    const result = block(i.cleanup, output);
+                                    drop({ expression: result, layout: i.cleanup.layout }, output);
                                 },
                             });
                             continue;
                         }
-                        const view = storage.own({
-                            expression: value(i.initial),
-                            layout: payload,
-                        });
-                        places.set(i.backing, view);
-                        lenses.set(i.out.id, {
-                            view,
-                            finish: (output) => {
-                                const result = block(i.cleanup, output);
-                                drop({ expression: result, layout: i.cleanup.layout }, output);
-                            },
-                        });
-                        continue;
-                    }
-                    case 'make-callable': {
-                        const callable = program.callables.find((c) => c.id === i.callable)!;
-                        const entries = callable.entries
-                            .map((e) => {
-                                const w = program.wrappers.find((w) => w.id === e.wrapper)!;
-                                // Runtime joins reify native entries; ordinary intrinsics keep their storage lowering.
-                                return w.kind === 'invoke'
-                                    ? cc`, .${member(e.field)}=${codes.get(w.code)}`
-                                    : w.kind === 'adapt-lens-result'
-                                      ? cc`, .${member(e.field)}=${resultAdapters.get(w.id)}`
-                                      : w.kind === 'native' && nativeCodes.has(w.id)
-                                        ? cc`, .${member(e.field)}=${nativeCodes.get(w.id)}`
-                                        : '';
-                            })
-                            .join('');
-                        if (!i.captures.length && !entries) {
-                            values.set(i.out.id, zero(id));
-                            continue;
-                        }
-                        if (
-                            !i.captures.length ||
-                            (options.optimize &&
-                                layout(callable.environment).fields.every(
-                                    (f) => f.kind === 'value' && layout(f.layout).kind === 'unit',
-                                ))
-                        ) {
-                            expr = cc`(${type(id)}){.environment=NULL${entries}}`;
-                            break;
-                        }
-                        const environment = fresh();
-                        cell(
-                            environment,
-                            `${type(callable.environment)} *`,
-                            cc`allocate_context(sizeof *${environment})`,
-                            body,
-                        );
-                        i.captures.forEach((capture, n) =>
-                            body.push(cc`${environment}->capture${n} = ${value(capture.value)};`),
-                        );
-                        expr = cc`(${type(id)}){.environment=${environment}, .dispose=${disposers.get(callable.dispose)}${entries}}`;
-                        break;
-                    }
-                    case 'constant':
-                        expr = literal(i.value, id);
-                        if (i.value !== null)
-                            expr = locals.scalar(
-                                String(expr),
-                                typeof i.value === 'boolean' ? i.value : decodeNumber(i.value),
+                        case 'make-callable': {
+                            const callable = program.callables.find((c) => c.id === i.callable)!;
+                            const entries = callable.entries
+                                .map((e) => {
+                                    const w = program.wrappers.find((w) => w.id === e.wrapper)!;
+                                    // Runtime joins reify native entries; ordinary intrinsics keep their storage lowering.
+                                    return w.kind === 'invoke'
+                                        ? cc`, .${member(e.field)}=${use(codes.get(w.code)!)}`
+                                        : w.kind === 'adapt-lens-result'
+                                          ? cc`, .${member(e.field)}=${use(resultAdapters.get(w.id)!)}`
+                                          : w.kind === 'native' && nativeCodes.has(w.id)
+                                            ? cc`, .${member(e.field)}=${use(nativeCodes.get(w.id)!)}`
+                                            : '';
+                                })
+                                .join('');
+                            if (!i.captures.length && !entries) {
+                                values.set(i.out.id, zero(id));
+                                continue;
+                            }
+                            if (
+                                !i.captures.length ||
+                                (options.optimize &&
+                                    layout(callable.environment).fields.every(
+                                        (f) =>
+                                            f.kind === 'value' && layout(f.layout).kind === 'unit',
+                                    ))
+                            ) {
+                                expr = cc`(${type(id)}){.environment=NULL${entries}}`;
+                                break;
+                            }
+                            const environment = fresh();
+                            cell(
+                                environment,
+                                `${type(callable.environment)} *`,
+                                cc`${use('allocate_context')}(sizeof *${environment})`,
+                                body,
                             );
-                        pure = true;
-                        break;
-                    case 'string': {
-                        const head = cBytes(i.head);
-                        if (!i.parts.length) {
-                            expr = cc`string_new(${head.literal}, ${head.length})`;
-                            break;
-                        }
-                        // Parts were evaluated in source order; appending consumes each one.
-                        const builder = fresh();
-                        cell(builder, 'string_builder', undefined, body);
-                        body.push(cc`builder_bytes(&${builder}, ${head.literal}, ${head.length});`);
-                        for (const part of i.parts) {
-                            const tail = cBytes(part.tail);
-                            const appended = value(part.value);
-                            body.push(
-                                locals.format(
-                                    (builder, appended) =>
-                                        appendPart(
-                                            builder,
-                                            layout(outputLayouts.get(part.value)!).kind,
-                                            appended,
-                                        ),
-                                    builder,
-                                    appended,
+                            i.captures.forEach((capture, n) =>
+                                body.push(
+                                    cc`${environment}->capture${n} = ${value(capture.value)};`,
                                 ),
-                                cc`builder_bytes(&${builder}, ${tail.literal}, ${tail.length});`,
                             );
+                            expr = cc`(${type(id)}){.environment=${environment}, .dispose=${use(disposers.get(callable.dispose)!)}${entries}}`;
+                            break;
                         }
-                        expr = cc`builder_finish(&${builder})`;
-                        break;
-                    }
-                    case 'construct': {
-                        const n = tagOf(id, i.name),
-                            v = variant(id, n);
-                        let contents =
-                            i.items.length === 0
-                                ? zero(v.layout)
-                                : i.items.length === 1
-                                  ? value(i.items[0]!)
-                                  : cc`(${type(v.layout)}){${joinCode(i.items.map(value), ', ')}}`;
-                        if (v.boxed) {
-                            let box = i.reuses ? retainedBoxes.get(i.reuses) : undefined;
-                            if (i.reuses && !box) return unsupported('Missing retained box');
-                            if (!box) {
-                                box = fresh();
-                                cell(
-                                    box,
-                                    `${type(v.layout)} *`,
-                                    cc`allocate_context(sizeof *${box})`,
-                                    body,
+                        case 'constant':
+                            expr = literal(i.value, id);
+                            if (i.value !== null)
+                                expr = locals.scalar(
+                                    String(expr),
+                                    typeof i.value === 'boolean' ? i.value : decodeNumber(i.value),
+                                );
+                            pure = true;
+                            break;
+                        case 'string': {
+                            const head = cBytes(i.head);
+                            if (!i.parts.length) {
+                                expr = cc`${use('string_new')}(${head.literal}, ${head.length})`;
+                                break;
+                            }
+                            // Parts were evaluated in source order; appending consumes each one.
+                            const builder = fresh();
+                            cell(builder, 'string_builder', undefined, body);
+                            body.push(
+                                cc`${use('builder_bytes')}(&${builder}, ${head.literal}, ${head.length});`,
+                            );
+                            for (const part of i.parts) {
+                                const tail = cBytes(part.tail);
+                                const appended = value(part.value);
+                                use(appendFunction(layout(outputLayouts.get(part.value)!).kind));
+                                body.push(
+                                    locals.format(
+                                        (builder, appended) =>
+                                            appendPart(
+                                                builder,
+                                                layout(outputLayouts.get(part.value)!).kind,
+                                                appended,
+                                            ),
+                                        builder,
+                                        appended,
+                                    ),
+                                    cc`${use('builder_bytes')}(&${builder}, ${tail.literal}, ${tail.length});`,
                                 );
                             }
-                            body.push(cc`*${box} = ${contents};`);
-                            contents = box;
+                            expr = cc`${use('builder_finish')}(&${builder})`;
+                            break;
                         }
-                        expr = cc`(${type(id)}){.tag=${tagValue(id, n)}, .as.v${n}=${contents}}`;
-                        break;
-                    }
-                    case 'tuple':
-                        expr = cc`(${type(id)}){${joinCode(i.items.map(value), ', ') || '0'}}`;
-                        removable = true;
-                        break;
-                    case 'move':
-                        removable = true;
-                        movedFrom.set(i.out.id, storage.get(ref(i.slot)));
-                        rememberHome(ref(i.slot));
-                        expr = read(storage.get(ref(i.slot)), id);
-                        storage.put(ref(i.slot), { expression: zero(unit.id), layout: unit.id });
-                        break;
-                    case 'acquire':
-                        lensSlots.set(i.out.id, i.slot);
-                        lenses.set(i.out.id, { view: ref(i.slot), finish: noFinish });
-                        continue;
-                    case 'lens-tuple':
-                        lenses.set(i.out.id, {
-                            view: i.items.map((v) => lenses.get(v)!.view),
-                            finish: (body) => i.items.forEach((v) => lenses.get(v)!.finish(body)),
-                        });
-                        continue;
-                    case 'swap': {
-                        const lens = lenses.get(i.lens)!;
-                        const contents = storage.get(lens.view);
-                        expr = read(contents, id);
-                        declare(id, expr, body, name);
-                        const live =
-                            Array.isArray(lens.view) || !inPlaceCells.has(lens.view.cell)
-                                ? undefined
-                                : !Array.isArray(contents) && contents.address
-                                  ? contents
-                                  : home(lens.view);
-                        if (
-                            live &&
-                            !Array.isArray(live) &&
-                            live.address &&
-                            live.layout === outputLayouts.get(i.value)
-                        ) {
-                            // The box is the storage and nothing else can observe it, so the
-                            // store happens here and the field goes back to reading the box.
-                            body.push(cc`${through(live.address)} = ${value(i.value)};`);
-                            storage.put(lens.view, live);
-                        } else
-                            storage.put(lens.view, {
-                                expression: value(i.value),
-                                layout: outputLayouts.get(i.value)!,
+                        case 'construct': {
+                            const n = tagOf(id, i.name),
+                                v = variant(id, n);
+                            let contents =
+                                i.items.length === 0
+                                    ? zero(v.layout)
+                                    : i.items.length === 1
+                                      ? value(i.items[0]!)
+                                      : cc`(${type(v.layout)}){${joinCode(i.items.map(value), ', ')}}`;
+                            if (v.boxed) {
+                                let box = i.reuses ? retainedBoxes.get(i.reuses) : undefined;
+                                if (i.reuses && !box) return unsupported('Missing retained box');
+                                if (!box) {
+                                    box = fresh();
+                                    cell(
+                                        box,
+                                        `${type(v.layout)} *`,
+                                        cc`${use('allocate_context')}(sizeof *${box})`,
+                                        body,
+                                    );
+                                }
+                                body.push(cc`*${box} = ${contents};`);
+                                contents = box;
+                            }
+                            expr = cc`(${type(id)}){.tag=${tagValue(id, n)}, .as.v${n}=${contents}}`;
+                            break;
+                        }
+                        case 'tuple':
+                            expr = cc`(${type(id)}){${joinCode(i.items.map(value), ', ') || '0'}}`;
+                            removable = true;
+                            break;
+                        case 'move':
+                            removable = true;
+                            movedFrom.set(i.out.id, storage.get(ref(i.slot)));
+                            rememberHome(ref(i.slot));
+                            expr = read(storage.get(ref(i.slot)), id);
+                            storage.put(ref(i.slot), {
+                                expression: zero(unit.id),
+                                layout: unit.id,
                             });
-                        lens.finish(body);
-                        values.set(i.out.id, name);
-                        continue;
-                    }
-                    case 'scope': {
-                        const result = block(i.body, body);
-                        if (lenses.has(i.body.result)) {
-                            lenses.set(i.out.id, lenses.get(i.body.result)!);
+                            break;
+                        case 'acquire':
+                            lensSlots.set(i.out.id, i.slot);
+                            lenses.set(i.out.id, { view: ref(i.slot), finish: noFinish });
+                            continue;
+                        case 'lens-tuple':
+                            lenses.set(i.out.id, {
+                                view: i.items.map((v) => lenses.get(v)!.view),
+                                finish: (body) =>
+                                    i.items.forEach((v) => lenses.get(v)!.finish(body)),
+                            });
+                            continue;
+                        case 'swap': {
+                            const lens = lenses.get(i.lens)!;
+                            const contents = storage.get(lens.view);
+                            expr = read(contents, id);
+                            declare(id, expr, body, name);
+                            const live =
+                                Array.isArray(lens.view) || !inPlaceCells.has(lens.view.cell)
+                                    ? undefined
+                                    : !Array.isArray(contents) && contents.address
+                                      ? contents
+                                      : home(lens.view);
+                            if (
+                                live &&
+                                !Array.isArray(live) &&
+                                live.address &&
+                                live.layout === outputLayouts.get(i.value)
+                            ) {
+                                // The box is the storage and nothing else can observe it, so the
+                                // store happens here and the field goes back to reading the box.
+                                body.push(cc`${through(live.address)} = ${value(i.value)};`);
+                                storage.put(lens.view, live);
+                            } else
+                                storage.put(lens.view, {
+                                    expression: value(i.value),
+                                    layout: outputLayouts.get(i.value)!,
+                                });
+                            lens.finish(body);
+                            values.set(i.out.id, name);
                             continue;
                         }
-                        expr = result;
-                        break;
-                    }
-                    case 'case': {
-                        if (i.lensJoin) {
-                            const before = storage.snapshot();
-                            const selected = fresh();
-                            variables.push({ name: selected, type: 'int' });
-                            body.push(locals.declaration(selected, 'int', '0'));
-                            const input = endpoint(id, 'read');
-                            const focus = declare(input, zero(input), body);
-                            const joined = storage.own({ expression: focus, layout: input });
-                            const normalize = (
-                                actions: (typeof i.cases)[number]['setup'],
-                                output: Statement[],
-                            ) =>
-                                actions?.forEach((a) => {
-                                    if (a.kind !== 'drop-place')
-                                        return unsupported('Invalid branch normalization');
-                                    drop(storage.get(ref(a.slot)), output);
-                                    storage.put(ref(a.slot), {
-                                        expression: zero(unit.id),
-                                        layout: unit.id,
+                        case 'scope': {
+                            const result = block(i.body, body);
+                            if (lenses.has(i.body.result)) {
+                                lenses.set(i.out.id, lenses.get(i.body.result)!);
+                                continue;
+                            }
+                            expr = result;
+                            break;
+                        }
+                        case 'case': {
+                            if (i.lensJoin) {
+                                const before = storage.snapshot();
+                                const selected = fresh();
+                                variables.push({ name: selected, type: 'int' });
+                                body.push(locals.declaration(selected, 'int', '0'));
+                                const input = endpoint(id, 'read');
+                                const focus = declare(input, zero(input), body);
+                                const joined = storage.own({ expression: focus, layout: input });
+                                const normalize = (
+                                    actions: (typeof i.cases)[number]['setup'],
+                                    output: Statement[],
+                                ) =>
+                                    actions?.forEach((a) => {
+                                        if (a.kind !== 'drop-place')
+                                            return unsupported('Invalid branch normalization');
+                                        drop(storage.get(ref(a.slot)), output);
+                                        storage.put(ref(a.slot), {
+                                            expression: zero(unit.id),
+                                            layout: unit.id,
+                                        });
                                     });
-                                });
-                            const merge = (
-                                arms: {
-                                    nested: Statement[];
-                                    state: Map<import('./storage.ts').Cell, Data>;
-                                }[],
-                                into: Statement[],
-                            ) => {
-                                // Even one selected arm is a C scope: changed versions must
-                                // be materialized outside it before later restoration uses them.
-                                const join = (data: Data[], previous?: Data): Data => {
-                                    if (
-                                        data.every(
-                                            (d) => JSON.stringify(d) === JSON.stringify(data[0]),
-                                        ) &&
-                                        (arms.length > 1 ||
-                                            JSON.stringify(data[0]) === JSON.stringify(previous))
-                                    )
-                                        return data[0]!;
-                                    const first = data[0]!;
-                                    if (
-                                        !Array.isArray(first) &&
-                                        data.every(
-                                            (d) => !Array.isArray(d) && d.layout === first.layout,
+                                const merge = (
+                                    arms: {
+                                        nested: Statement[];
+                                        state: Map<import('./storage.ts').Cell, Data>;
+                                    }[],
+                                    into: Statement[],
+                                ) => {
+                                    // Even one selected arm is a C scope: changed versions must
+                                    // be materialized outside it before later restoration uses them.
+                                    const join = (data: Data[], previous?: Data): Data => {
+                                        if (
+                                            data.every(
+                                                (d) =>
+                                                    JSON.stringify(d) === JSON.stringify(data[0]),
+                                            ) &&
+                                            (arms.length > 1 ||
+                                                JSON.stringify(data[0]) ===
+                                                    JSON.stringify(previous))
                                         )
-                                    ) {
-                                        const phi = declare(first.layout, zero(first.layout), into);
-                                        arms.forEach((arm, n) =>
-                                            arm.nested.push(
-                                                locals.assign(phi, read(data[n]!, first.layout)),
+                                            return data[0]!;
+                                        const first = data[0]!;
+                                        if (
+                                            !Array.isArray(first) &&
+                                            data.every(
+                                                (d) =>
+                                                    !Array.isArray(d) && d.layout === first.layout,
+                                            )
+                                        ) {
+                                            const phi = declare(
+                                                first.layout,
+                                                zero(first.layout),
+                                                into,
+                                            );
+                                            arms.forEach((arm, n) =>
+                                                arm.nested.push(
+                                                    locals.assign(
+                                                        phi,
+                                                        read(data[n]!, first.layout),
+                                                    ),
+                                                ),
+                                            );
+                                            return { expression: phi, layout: first.layout };
+                                        }
+                                        const parts = data.map((d) => storage.parts(d));
+                                        if (
+                                            !parts[0]?.length ||
+                                            parts.some((p) => p.length !== parts[0]!.length)
+                                        )
+                                            return unsupported(
+                                                'Branch owner storage requires an adapter',
+                                            );
+                                        return parts[0].map((_, n) =>
+                                            join(
+                                                parts.map((p) => p[n]!),
+                                                previous && storage.parts(previous)[n],
                                             ),
                                         );
-                                        return { expression: phi, layout: first.layout };
-                                    }
-                                    const parts = data.map((d) => storage.parts(d));
-                                    if (
-                                        !parts[0]?.length ||
-                                        parts.some((p) => p.length !== parts[0]!.length)
-                                    )
-                                        return unsupported(
-                                            'Branch owner storage requires an adapter',
-                                        );
-                                    return parts[0].map((_, n) =>
-                                        join(
-                                            parts.map((p) => p[n]!),
-                                            previous && storage.parts(previous)[n],
-                                        ),
+                                    };
+                                    before.forEach(
+                                        (previous, cell) =>
+                                            (cell.data = join(
+                                                arms.map((a) => a.state.get(cell)!),
+                                                previous,
+                                            )),
                                     );
                                 };
-                                before.forEach(
-                                    (previous, cell) =>
-                                        (cell.data = join(
-                                            arms.map((a) => a.state.get(cell)!),
-                                            previous,
-                                        )),
-                                );
-                            };
-                            const arms = i.cases.map((arm, n) => {
+                                const arms = i.cases.map((arm, n) => {
+                                    storage.reset(before);
+                                    const start = variables.length;
+                                    const nested: Statement[] = [];
+                                    bind(
+                                        arm.pattern,
+                                        {
+                                            expression: value(i.value),
+                                            layout: outputLayouts.get(i.value)!,
+                                        },
+                                        nested,
+                                    );
+                                    block(arm.body, nested);
+                                    normalize(arm.setup, nested);
+                                    const lens = lenses.get(arm.body.result)!;
+                                    nested.push(
+                                        locals.assign(selected, String(n)),
+                                        locals.assign(focus, read(storage.get(lens.view), input)),
+                                    );
+                                    // Setup storage used by deferred cleanup is declared in the arm;
+                                    // declaration placement lifts it out of the conditional.
+                                    return {
+                                        nested,
+                                        state: storage.snapshot(),
+                                        lens,
+                                        arm,
+                                        index: n,
+                                    };
+                                });
                                 storage.reset(before);
-                                const start = variables.length;
+                                merge(arms, body);
+                                body.push({
+                                    kind: 'if',
+                                    arms: [
+                                        ...i.cases.map((arm, n) => ({
+                                            condition: matches(
+                                                arm.pattern,
+                                                value(i.value),
+                                                outputLayouts.get(i.value)!,
+                                            ),
+                                            body: arms[n]!.nested,
+                                        })),
+                                        { body: ['abort();'] },
+                                    ],
+                                });
+                                lenses.set(i.out.id, {
+                                    view: joined,
+                                    finish: (output) => {
+                                        const current = storage.snapshot();
+                                        const replacement = storage.get(joined);
+                                        const restored = arms.map((arm) => {
+                                            storage.reset(arm.state);
+                                            before.forEach(
+                                                (_, cell) => (cell.data = current.get(cell)!),
+                                            );
+                                            storage.put(arm.lens.view, replacement);
+                                            const nested: Statement[] = [];
+                                            arm.lens.finish(nested);
+                                            normalize(arm.arm.restored, nested);
+                                            return { nested, state: storage.snapshot() };
+                                        });
+                                        storage.reset(current);
+                                        merge(restored, output);
+                                        output.push({
+                                            kind: 'if',
+                                            arms: [
+                                                ...restored.map((arm, n) => ({
+                                                    condition: cc`${selected} == ${n}`,
+                                                    body: arm.nested,
+                                                })),
+                                                { body: ['abort();'] },
+                                            ],
+                                        });
+                                    },
+                                });
+                                continue;
+                            }
+                            declare(id, zero(id), body, name);
+                            const before = storage.snapshot(),
+                                outerVariables = variables.length;
+                            const arms = i.cases.map((arm, armIndex) => {
+                                storage.reset(before);
                                 const nested: Statement[] = [];
                                 bind(
                                     arm.pattern,
@@ -1425,26 +1607,62 @@ export function lowerC(
                                         layout: outputLayouts.get(i.value)!,
                                     },
                                     nested,
+                                    arm.retains,
                                 );
-                                block(arm.body, nested);
-                                normalize(arm.setup, nested);
-                                const lens = lenses.get(arm.body.result)!;
-                                nested.push(
-                                    locals.assign(selected, String(n)),
-                                    locals.assign(focus, read(storage.get(lens.view), input)),
-                                );
-                                // Setup storage used by deferred cleanup is declared in the arm;
-                                // declaration placement lifts it out of the conditional.
-                                return {
-                                    nested,
-                                    state: storage.snapshot(),
-                                    lens,
-                                    arm,
-                                    index: n,
-                                };
+                                if (arm.retains && movedFrom.has(i.value))
+                                    retainedOwners.set(arm.retains, movedFrom.get(i.value)!);
+                                const result = block(arm.body, nested);
+                                nested.push(locals.assign(name, result));
+                                const state = storage.snapshot();
+                                variables.length = outerVariables;
+                                return { nested, state };
                             });
                             storage.reset(before);
-                            merge(arms, body);
+                            // A single arm can also produce branch-local storage versions.
+                            const merge = (data: Data[], previous?: Data): Data => {
+                                if (
+                                    data.every(
+                                        (d) => JSON.stringify(d) === JSON.stringify(data[0]),
+                                    ) &&
+                                    (arms.length > 1 ||
+                                        JSON.stringify(data[0]) === JSON.stringify(previous))
+                                )
+                                    return data[0]!;
+                                const first = data[0]!;
+                                if (
+                                    !Array.isArray(first) &&
+                                    data.every(
+                                        (d) => !Array.isArray(d) && d.layout === first.layout,
+                                    )
+                                ) {
+                                    const phi = declare(first.layout, zero(first.layout), body);
+                                    arms.forEach((arm, n) =>
+                                        arm.nested.push(
+                                            locals.assign(phi, read(data[n]!, first.layout)),
+                                        ),
+                                    );
+                                    return { expression: phi, layout: first.layout };
+                                }
+                                const parts = data.map((d) => storage.parts(d));
+                                if (
+                                    !parts[0]?.length ||
+                                    parts.some((p) => p.length !== parts[0]!.length)
+                                )
+                                    return unsupported('Storage version join requires an adapter');
+                                return parts[0].map((_, n) =>
+                                    merge(
+                                        parts.map((p) => p[n]!),
+                                        previous && storage.parts(previous)[n],
+                                    ),
+                                );
+                            };
+                            before.forEach(
+                                (previous, cell) =>
+                                    (cell.data = merge(
+                                        arms.map((a) => a.state.get(cell)!),
+                                        previous,
+                                    )),
+                            );
                             body.push({
                                 kind: 'if',
                                 arms: [
@@ -1459,391 +1677,321 @@ export function lowerC(
                                     { body: ['abort();'] },
                                 ],
                             });
-                            lenses.set(i.out.id, {
-                                view: joined,
-                                finish: (output) => {
-                                    const current = storage.snapshot();
-                                    const replacement = storage.get(joined);
-                                    const restored = arms.map((arm) => {
-                                        storage.reset(arm.state);
-                                        before.forEach(
-                                            (_, cell) => (cell.data = current.get(cell)!),
-                                        );
-                                        storage.put(arm.lens.view, replacement);
-                                        const nested: Statement[] = [];
-                                        arm.lens.finish(nested);
-                                        normalize(arm.arm.restored, nested);
-                                        return { nested, state: storage.snapshot() };
-                                    });
-                                    storage.reset(current);
-                                    merge(restored, output);
-                                    output.push({
-                                        kind: 'if',
-                                        arms: [
-                                            ...restored.map((arm, n) => ({
-                                                condition: cc`${selected} == ${n}`,
-                                                body: arm.nested,
-                                            })),
-                                            { body: ['abort();'] },
-                                        ],
-                                    });
-                                },
-                            });
+                            values.set(i.out.id, name);
                             continue;
                         }
-                        declare(id, zero(id), body, name);
-                        const before = storage.snapshot(),
-                            outerVariables = variables.length;
-                        const arms = i.cases.map((arm, armIndex) => {
-                            storage.reset(before);
-                            const nested: Statement[] = [];
-                            bind(
-                                arm.pattern,
-                                {
-                                    expression: value(i.value),
-                                    layout: outputLayouts.get(i.value)!,
-                                },
-                                nested,
-                                arm.retains,
-                            );
-                            if (arm.retains && movedFrom.has(i.value))
-                                retainedOwners.set(arm.retains, movedFrom.get(i.value)!);
-                            const result = block(arm.body, nested);
-                            nested.push(locals.assign(name, result));
-                            const state = storage.snapshot();
-                            variables.length = outerVariables;
-                            return { nested, state };
-                        });
-                        storage.reset(before);
-                        // A single arm can also produce branch-local storage versions.
-                        const merge = (data: Data[], previous?: Data): Data => {
+                        case 'invoke': {
+                            // An indirect call goes through the callee record's entry; a
+                            // direct call invokes its known member's wrapper itself.
                             if (
-                                data.every((d) => JSON.stringify(d) === JSON.stringify(data[0])) &&
-                                (arms.length > 1 ||
-                                    JSON.stringify(data[0]) === JSON.stringify(previous))
+                                i.field !== undefined &&
+                                !program.callables.some(
+                                    (x) =>
+                                        x.layout === outputLayouts.get(i.callee) &&
+                                        x.entries.some(
+                                            (e) => e.field === i.field && e.abi === i.abi,
+                                        ),
+                                )
                             )
-                                return data[0]!;
-                            const first = data[0]!;
-                            if (
-                                !Array.isArray(first) &&
-                                data.every((d) => !Array.isArray(d) && d.layout === first.layout)
-                            ) {
-                                const phi = declare(first.layout, zero(first.layout), body);
-                                arms.forEach((arm, n) =>
-                                    arm.nested.push(
-                                        locals.assign(phi, read(data[n]!, first.layout)),
+                                unsupported('Missing callable storage contract');
+                            const w = program.wrappers.find((w) => w.id === i.wrapper)!;
+                            const abi = program.abis.find((a) => a.id === i.abi)!;
+                            const isLens = layout(id).fields.some((f) => f.name === 'restore');
+                            const adapters: { finish: (body: Statement[]) => void }[] = [];
+                            let args: Expr[] = [];
+                            if (w?.kind === 'native' && w.definition === 'native/dup') {
+                                const lens = lenses.get(i.args[0]!)!;
+                                expr = duplicate(read(storage.get(lens.view), id), id);
+                                adapters.push({ finish: lens.finish });
+                            } else if (w?.kind === 'native' && w.definition === 'native/size') {
+                                const lens = lenses.get(i.args[0]!)!,
+                                    vector = endpoint(outputLayouts.get(i.args[0]!)!, 'read');
+                                expr = cc`(double)(${read(storage.get(lens.view), vector)}).length`;
+                                adapters.push({ finish: lens.finish });
+                            } else if (w?.kind === 'native' && w.definition === 'native/[]') {
+                                // The element lives in the heap buffer, so writing through its
+                                // address updates the vector without changing the vector struct.
+                                const parent = lenses.get(i.args[1]!)!,
+                                    vector = endpoint(outputLayouts.get(i.args[1]!)!, 'read'),
+                                    item = element(vector);
+                                const at = fresh();
+                                cell(
+                                    at,
+                                    `${type(item)} *`,
+                                    cc`${vectorAt(vector)}(${read(storage.get(parent.view), vector)}, ${value(i.args[0]!)})`,
+                                    body,
+                                );
+                                const view = storage.own({
+                                    expression: cc`(*${at})`,
+                                    layout: item,
+                                    address: at,
+                                });
+                                lenses.set(i.out.id, {
+                                    view,
+                                    finish: (body) => {
+                                        // Restoring the element's own live contents changes nothing.
+                                        const d = storage.get(view);
+                                        if (Array.isArray(d) || !same(d.address, at))
+                                            body.push(cc`*${at} = ${read(d, item)};`);
+                                        parent.finish(body);
+                                    },
+                                });
+                                continue;
+                            } else if (w?.kind === 'native' && w.definition === 'native/fst') {
+                                const parent = lenses.get(i.args[0]!)!;
+                                lenses.set(i.out.id, {
+                                    view: storage.project(parent.view, [0]),
+                                    finish: parent.finish,
+                                });
+                                continue;
+                            } else {
+                                args = i.args.map((v, n) => {
+                                    if (!lenses.has(v)) return value(v);
+                                    const a = adapt(
+                                        lenses.get(v)!,
+                                        abi.arguments[n]!,
+                                        isLens,
+                                        body,
+                                    );
+                                    adapters.push(a);
+                                    return a.expression;
+                                });
+                                if (
+                                    i.field !== undefined ||
+                                    w?.kind === 'invoke' ||
+                                    w?.kind === 'adapt-lens-result'
+                                )
+                                    expr =
+                                        i.field === undefined
+                                            ? cc`${wrapperFunction(i.wrapper!)}((${value(i.callee)}).environment${joinCode(
+                                                  args.map((a) => cc`, ${a}`),
+                                                  '',
+                                              )})`
+                                            : cc`(${value(i.callee)}).${member(i.field)}((${value(i.callee)}).environment${joinCode(
+                                                  args.map((a) => cc`, ${a}`),
+                                                  '',
+                                              )})`;
+                                else if (w?.kind === 'native') {
+                                    const op = requireImport(w.definition, 'c').name;
+                                    pure = ['+', '-', '*', '/', '==', '>=', '<='].includes(op);
+                                    expr =
+                                        simpleNative(op, args, id, abi.arguments) ??
+                                        unsupported(cText`Native import ${w.definition}`);
+                                } else return unsupported('Disposer invocation');
+                            }
+                            declare(id, expr, body, name, {
+                                pure: pure || removable,
+                                inline: pure,
+                            });
+                            values.set(i.out.id, name);
+                            if (isLens)
+                                lenses.set(
+                                    i.out.id,
+                                    runtimeLens(name, id, (body) =>
+                                        adapters.forEach((a) => a.finish(body)),
                                     ),
                                 );
-                                return { expression: phi, layout: first.layout };
-                            }
-                            const parts = data.map((d) => storage.parts(d));
-                            if (
-                                !parts[0]?.length ||
-                                parts.some((p) => p.length !== parts[0]!.length)
-                            )
-                                return unsupported('Storage version join requires an adapter');
-                            return parts[0].map((_, n) =>
-                                merge(
-                                    parts.map((p) => p[n]!),
-                                    previous && storage.parts(previous)[n],
-                                ),
-                            );
-                        };
-                        before.forEach(
-                            (previous, cell) =>
-                                (cell.data = merge(
-                                    arms.map((a) => a.state.get(cell)!),
-                                    previous,
-                                )),
-                        );
-                        body.push({
-                            kind: 'if',
-                            arms: [
-                                ...i.cases.map((arm, n) => ({
-                                    condition: matches(
-                                        arm.pattern,
-                                        value(i.value),
-                                        outputLayouts.get(i.value)!,
-                                    ),
-                                    body: arms[n]!.nested,
-                                })),
-                                { body: ['abort();'] },
-                            ],
-                        });
-                        values.set(i.out.id, name);
-                        continue;
-                    }
-                    case 'invoke': {
-                        // An indirect call goes through the callee record's entry; a
-                        // direct call invokes its known member's wrapper itself.
-                        if (
-                            i.field !== undefined &&
-                            !program.callables.some(
-                                (x) =>
-                                    x.layout === outputLayouts.get(i.callee) &&
-                                    x.entries.some((e) => e.field === i.field && e.abi === i.abi),
-                            )
-                        )
-                            unsupported('Missing callable storage contract');
-                        const w = program.wrappers.find((w) => w.id === i.wrapper)!;
-                        const abi = program.abis.find((a) => a.id === i.abi)!;
-                        const isLens = layout(id).fields.some((f) => f.name === 'restore');
-                        const adapters: { finish: (body: Statement[]) => void }[] = [];
-                        let args: Expr[] = [];
-                        if (w?.kind === 'native' && w.definition === 'native/dup') {
-                            const lens = lenses.get(i.args[0]!)!;
-                            expr = duplicate(read(storage.get(lens.view), id), id);
-                            adapters.push({ finish: lens.finish });
-                        } else if (w?.kind === 'native' && w.definition === 'native/size') {
-                            const lens = lenses.get(i.args[0]!)!,
-                                vector = endpoint(outputLayouts.get(i.args[0]!)!, 'read');
-                            expr = cc`(double)(${read(storage.get(lens.view), vector)}).length`;
-                            adapters.push({ finish: lens.finish });
-                        } else if (w?.kind === 'native' && w.definition === 'native/[]') {
-                            // The element lives in the heap buffer, so writing through its
-                            // address updates the vector without changing the vector struct.
-                            const parent = lenses.get(i.args[1]!)!,
-                                vector = endpoint(outputLayouts.get(i.args[1]!)!, 'read'),
-                                item = element(vector);
-                            const at = fresh();
-                            cell(
-                                at,
-                                `${type(item)} *`,
-                                cc`${vectorAt(vector)}(${read(storage.get(parent.view), vector)}, ${value(i.args[0]!)})`,
-                                body,
-                            );
-                            const view = storage.own({
-                                expression: cc`(*${at})`,
-                                layout: item,
-                                address: at,
-                            });
-                            lenses.set(i.out.id, {
-                                view,
-                                finish: (body) => {
-                                    // Restoring the element's own live contents changes nothing.
-                                    const d = storage.get(view);
-                                    if (Array.isArray(d) || !same(d.address, at))
-                                        body.push(cc`*${at} = ${read(d, item)};`);
-                                    parent.finish(body);
-                                },
-                            });
+                            else adapters.forEach((a) => a.finish(body));
                             continue;
-                        } else if (w?.kind === 'native' && w.definition === 'native/fst') {
-                            const parent = lenses.get(i.args[0]!)!;
-                            lenses.set(i.out.id, {
-                                view: storage.project(parent.view, [0]),
-                                finish: parent.finish,
-                            });
-                            continue;
-                        } else {
-                            args = i.args.map((v, n) => {
-                                if (!lenses.has(v)) return value(v);
-                                const a = adapt(lenses.get(v)!, abi.arguments[n]!, isLens, body);
-                                adapters.push(a);
-                                return a.expression;
-                            });
-                            if (
-                                i.field !== undefined ||
-                                w?.kind === 'invoke' ||
-                                w?.kind === 'adapt-lens-result'
-                            )
-                                expr =
-                                    i.field === undefined
-                                        ? cc`${wrapperFunction(i.wrapper!)}((${value(i.callee)}).environment${joinCode(
-                                              args.map((a) => cc`, ${a}`),
-                                              '',
-                                          )})`
-                                        : cc`(${value(i.callee)}).${member(i.field)}((${value(i.callee)}).environment${joinCode(
-                                              args.map((a) => cc`, ${a}`),
-                                              '',
-                                          )})`;
-                            else if (w?.kind === 'native') {
-                                const op = requireImport(w.definition, 'c').name;
-                                pure = ['+', '-', '*', '/', '==', '>=', '<='].includes(op);
-                                expr =
-                                    simpleNative(op, args, id, abi.arguments) ??
-                                    unsupported(cText`Native import ${w.definition}`);
-                            } else return unsupported('Disposer invocation');
                         }
-                        declare(id, expr, body, name, { pure: pure || removable, inline: pure });
-                        values.set(i.out.id, name);
-                        if (isLens)
-                            lenses.set(
-                                i.out.id,
-                                runtimeLens(name, id, (body) =>
-                                    adapters.forEach((a) => a.finish(body)),
-                                ),
+                        default:
+                            return unsupported(
+                                cText`Unknown operation ${(i as { op: string }).op}`,
                             );
-                        else adapters.forEach((a) => a.finish(body));
-                        continue;
                     }
-                    default:
-                        return unsupported(cText`Unknown operation ${(i as { op: string }).op}`);
+                    declare(id, expr, body, name, { pure: pure || removable });
+                    values.set(i.out.id, name);
                 }
-                declare(id, expr, body, name, { pure: pure || removable });
-                values.set(i.out.id, name);
-            }
-            const finish = (body: Statement[]) =>
-                b.cleanup.forEach((c) => {
-                    if (c.kind === 'release') {
-                        const lens = loans.get(c.loan);
-                        if (lens) lens.finish(body);
-                    } else if (c.kind === 'drop-place') {
-                        drop(storage.get(ref(c.slot)), body);
-                        storage.put(ref(c.slot), { expression: zero(unit.id), layout: unit.id });
-                    }
-                });
-            if (lenses.has(b.result)) {
-                const lens = lenses.get(b.result)!;
-                lenses.set(b.result, {
-                    view: lens.view,
-                    finish: (body) => {
-                        lens.finish(body);
-                        finish(body);
-                    },
-                });
-                return '';
-            }
-            finish(body);
-            return value(b.result);
-        };
-        const outputLayouts = new Map<string, string>();
-        const index = (b: ConcreteBlock) =>
-            b.instructions.forEach((i) => {
-                if ('out' in i) outputLayouts.set(i.out.id, i.out.layout);
-                if (i.op === 'scope') index(i.body);
-                if (i.op === 'aslens') {
-                    if (i.inPlace) inPlaceIds.add(i.inPlace);
-                    index(i.cleanup);
+                const finish = (body: Statement[]) =>
+                    b.cleanup.forEach((c) => {
+                        if (c.kind === 'release') {
+                            const lens = loans.get(c.loan);
+                            if (lens) lens.finish(body);
+                        } else if (c.kind === 'drop-place') {
+                            drop(storage.get(ref(c.slot)), body);
+                            storage.put(ref(c.slot), {
+                                expression: zero(unit.id),
+                                layout: unit.id,
+                            });
+                        }
+                    });
+                if (lenses.has(b.result)) {
+                    const lens = lenses.get(b.result)!;
+                    lenses.set(b.result, {
+                        view: lens.view,
+                        finish: (body) => {
+                            lens.finish(body);
+                            finish(body);
+                        },
+                    });
+                    return '';
                 }
-                if (i.op === 'case') i.cases.forEach((a) => index(a.body));
-            });
-        index(c.body);
-        const body: Statement[] = [...setup];
-        c.captures.forEach((capture, i) => {
-            const base = bindingName({ place: capture.place, path: [] });
-            const name = declare(
-                capture.layout,
-                erasedEnvironment(c.captures)
-                    ? zero(capture.layout)
-                    : cc`((${type(c.environment)} *)${'environment'})->capture${i}`,
-                body,
-                base ? locals.reference(versionName(base)) : fresh(),
-            );
-            places.set(capture.place, storage.own({ expression: name, layout: capture.layout }));
-        });
-        if (c.captures.length && !erasedEnvironment(c.captures))
-            body.push('release_context(environment);');
-        const result = block(c.body, body);
-        if (lenses.has(c.body.result)) {
-            const lens = lenses.get(c.body.result)!;
-            const h = helperCounter++,
-                context = `Restore${h}`,
-                restore = `restore${h}`;
-            const candidates = [...variables];
-            const contextFields: string[] = [];
-            const initial: Statement[] = [];
-            const build = (view: View, id: string, path: string): Expr => {
-                const l = layout(id),
-                    input = l.fields.find((f) => f.name === 'read');
-                if (input?.kind === 'pointer' && input.layout) {
-                    const r = `focus${path}`,
-                        output = l.fields.find((f) => f.name === 'replacement');
-                    contextFields.push(cText`${type(input.layout)} ${r};`);
-                    initial.push(cc`ctx->${r} = ${read(storage.get(view), input.layout)};`);
-                    if (output?.kind === 'pointer' && output.layout)
-                        contextFields.push(cText`${type(output.layout)} ${r}out;`);
-                    return cc`(${type(id)}){.read=&ctx->${r}${output ? cc`, .replacement=&ctx->${r}out` : ''}}`;
-                }
-                return cc`(${type(id)}){${
-                    joinCode(
-                        l.fields
-                            .filter((f) => f.name.startsWith('item'))
-                            .map(
-                                (f, i) =>
-                                    cc`.${member(f.name)}=${build(storage.project(view, [i]), (f as { layout: string }).layout, path + '_' + i)}`,
-                            ),
-                        ', ',
-                    ) || '0'
-                }}`;
+                finish(body);
+                return value(b.result);
             };
-            const resultExpression = build(lens.view, c.body.layout, '');
-            const replacement = endpoint(c.body.layout, 'replacement');
-            const saved = storage.snapshot();
-            storage.put(lens.view, { expression: 'replacement', layout: replacement });
-            const cleanup: Statement[] = [];
-            lens.finish(cleanup);
-            flushParameters(cleanup);
-            storage.reset(saved);
-            // Only frame locals referenced by cleanup survive in the heap context.
-            // Cleanup's own declarations were created after the candidate snapshot.
-            const references = locals.reads(cleanup);
-            visit(cleanup, (s) => {
-                if (isLocal(s) && s.kind === 'set') references.add(s.name);
-            });
-            const captured = candidates.filter((v) => references.has(v.name));
-            contextFields.unshift(...captured.map((v) => `${v.type} ${v.name};`));
-            const replacements = new Map(
-                captured.map((v) => [v.name, locals.literal(`ctx->${v.name}`)]),
-            );
-            const rewrite = (value: Expr) => locals.rewriteReferences(value, replacements);
-            const rewriteBody = (body: Statement[]): Statement[] =>
-                body.map((s): Statement => {
-                    if (Array.isArray(s)) return rewriteBody(s);
-                    if (isExpr(s)) return rewrite(s);
-                    if (isLocal(s)) {
-                        if (s.kind === 'set' && replacements.has(s.name))
-                            return cc`${replacements.get(s.name)} = ${rewrite(s.value)};`;
-                        return {
-                            ...s,
-                            ...(s.value === undefined ? {} : { value: rewrite(s.value) }),
-                        };
+            const outputLayouts = new Map<string, string>();
+            const index = (b: ConcreteBlock) =>
+                b.instructions.forEach((i) => {
+                    if ('out' in i) outputLayouts.set(i.out.id, i.out.layout);
+                    if (i.op === 'scope') index(i.body);
+                    if (i.op === 'aslens') {
+                        if (i.inPlace) inPlaceIds.add(i.inPlace);
+                        index(i.cleanup);
                     }
-                    return mapScope(s, rewrite, rewriteBody);
+                    if (i.op === 'case') i.cases.forEach((a) => index(a.body));
                 });
-            declarations.push(
-                cText`typedef struct { ${contextFields.join(' ') || 'unsigned char inhabitant;'} } ${context};`,
-            );
-            declarations.push(
-                cText`${type(unit.id)} ${restore}(void *opaque, ${type(replacement)} replacement);`,
-            );
-            helpers.push({
-                signature: cText`${type(unit.id)} ${restore}(void *opaque, ${type(replacement)} replacement)`,
-                body: [
-                    cc`${context} *ctx = opaque;`,
-                    '(void)replacement;',
-                    ...rewriteBody(suppressUnused(locals, cleanup, [])),
-                    'release_context(ctx);',
-                    cc`return ${zero(unit.id)};`,
-                ],
+            index(c.body);
+            const body: Statement[] = [...setup];
+            c.captures.forEach((capture, i) => {
+                const base = bindingName({ place: capture.place, path: [] });
+                const name = declare(
+                    capture.layout,
+                    erasedEnvironment(c.captures)
+                        ? zero(capture.layout)
+                        : cc`((${type(c.environment)} *)${'environment'})->capture${i}`,
+                    body,
+                    base ? locals.reference(versionName(base)) : fresh(),
+                );
+                places.set(
+                    capture.place,
+                    storage.own({ expression: name, layout: capture.layout }),
+                );
             });
-            body.push(`${context} *ctx = allocate_context(sizeof *ctx);`, {
-                kind: 'if',
-                arms: [{ condition: '!ctx', body: ['abort();'] }],
-            });
-            captured.forEach((v) => body.push(cc`ctx->${locals.literal(v.name)} = ${v.name};`));
-            body.push(...initial);
-            const out = fresh();
-            body.push(
-                cc`${type(c.body.layout)} ${out} = ${resultExpression};`,
-                cc`${out}.restore = ${restore};`,
-                cc`${out}.context = ctx;`,
-                cc`return ${out};`,
-            );
-        } else {
-            flushParameters(body);
-            body.push(locals.returnValue(result));
-        }
-        const placed = locals.place(body);
-        activeLocals = undefined;
-        return { signature: signature(c), body: suppressUnused(locals, placed, parameterNames) };
-    });
+            if (c.captures.length && !erasedEnvironment(c.captures))
+                body.push(cc`${use('release_context')}(environment);`);
+            const result = block(c.body, body);
+            if (lenses.has(c.body.result)) {
+                const lens = lenses.get(c.body.result)!;
+                const h = helperCounter++,
+                    context = `Restore${h}`,
+                    restore = `restore${h}`;
+                // This body hands out the restoration function and its context.
+                use(context);
+                use(restore);
+                const candidates = [...variables];
+                const contextFields: string[] = [];
+                const initial: Statement[] = [];
+                const build = (view: View, id: string, path: string): Expr => {
+                    const l = layout(id),
+                        input = l.fields.find((f) => f.name === 'read');
+                    if (input?.kind === 'pointer' && input.layout) {
+                        const r = `focus${path}`,
+                            output = l.fields.find((f) => f.name === 'replacement');
+                        contextFields.push(cText`${type(input.layout)} ${r};`);
+                        initial.push(cc`ctx->${r} = ${read(storage.get(view), input.layout)};`);
+                        if (output?.kind === 'pointer' && output.layout)
+                            contextFields.push(cText`${type(output.layout)} ${r}out;`);
+                        return cc`(${type(id)}){.read=&ctx->${r}${output ? cc`, .replacement=&ctx->${r}out` : ''}}`;
+                    }
+                    return cc`(${type(id)}){${
+                        joinCode(
+                            l.fields
+                                .filter((f) => f.name.startsWith('item'))
+                                .map(
+                                    (f, i) =>
+                                        cc`.${member(f.name)}=${build(storage.project(view, [i]), (f as { layout: string }).layout, path + '_' + i)}`,
+                                ),
+                            ', ',
+                        ) || '0'
+                    }}`;
+                };
+                const resultExpression = build(lens.view, c.body.layout, '');
+                const replacement = endpoint(c.body.layout, 'replacement');
+                const saved = storage.snapshot();
+                storage.put(lens.view, { expression: 'replacement', layout: replacement });
+                const cleanup: Statement[] = [];
+                lens.finish(cleanup);
+                flushParameters(cleanup);
+                storage.reset(saved);
+                // Only frame locals referenced by cleanup survive in the heap context.
+                // Cleanup's own declarations were created after the candidate snapshot.
+                const references = locals.reads(cleanup);
+                visit(cleanup, (s) => {
+                    if (isLocal(s) && s.kind === 'set') references.add(s.name);
+                });
+                const captured = candidates.filter((v) => references.has(v.name));
+                contextFields.unshift(...captured.map((v) => `${v.type} ${v.name};`));
+                const replacements = new Map(
+                    captured.map((v) => [v.name, locals.literal(`ctx->${v.name}`)]),
+                );
+                const rewrite = (value: Expr) => locals.rewriteReferences(value, replacements);
+                const rewriteBody = (body: Statement[]): Statement[] =>
+                    body.map((s): Statement => {
+                        if (Array.isArray(s)) return rewriteBody(s);
+                        if (isExpr(s)) return rewrite(s);
+                        if (isLocal(s)) {
+                            if (s.kind === 'set' && replacements.has(s.name))
+                                return cc`${replacements.get(s.name)} = ${rewrite(s.value)};`;
+                            return {
+                                ...s,
+                                ...(s.value === undefined ? {} : { value: rewrite(s.value) }),
+                            };
+                        }
+                        return mapScope(s, rewrite, rewriteBody);
+                    });
+                declarations.push(
+                    new Declaration(
+                        context,
+                        cText`typedef struct { ${contextFields.join(' ') || 'unsigned char inhabitant;'} } ${context};`,
+                    ),
+                    new Declaration(
+                        restore,
+                        cText`${type(unit.id)} ${restore}(void *opaque, ${type(replacement)} replacement);`,
+                    ),
+                );
+                // What the cleanup mentions was recorded against this function, which is
+                // the only function that can reach the restoration function.
+                refs.within(restore, () => {
+                    use(context);
+                    helpers.push({
+                        name: restore,
+                        signature: cText`${type(unit.id)} ${restore}(void *opaque, ${type(replacement)} replacement)`,
+                        body: [
+                            cc`${context} *ctx = opaque;`,
+                            '(void)replacement;',
+                            ...rewriteBody(suppressUnused(locals, cleanup, [])),
+                            cc`${use('release_context')}(ctx);`,
+                            cc`return ${zero(unit.id)};`,
+                        ],
+                    });
+                });
+                body.push(`${context} *ctx = ${use('allocate_context')}(sizeof *ctx);`, {
+                    kind: 'if',
+                    arms: [{ condition: '!ctx', body: ['abort();'] }],
+                });
+                captured.forEach((v) => body.push(cc`ctx->${locals.literal(v.name)} = ${v.name};`));
+                body.push(...initial);
+                const out = fresh();
+                body.push(
+                    cc`${type(c.body.layout)} ${out} = ${resultExpression};`,
+                    cc`${out}.restore = ${restore};`,
+                    cc`${out}.context = ctx;`,
+                    cc`return ${out};`,
+                );
+            } else {
+                flushParameters(body);
+                body.push(locals.returnValue(result));
+            }
+            const placed = locals.place(body);
+            activeLocals = undefined;
+            return {
+                name: codes.get(c.id)!,
+                signature: signature(c),
+                body: suppressUnused(locals, placed, parameterNames),
+            };
+        }),
+    );
     // Helpers generated while emitting the entry adapter (result printing and drops) follow.
     const emittedHelpers = helpers.length;
+    // Runtime functions declare what they call; the allocator mentions the counter.
+    runtime?.functions.forEach((f) => refs.within(f.name, () => f.uses.forEach(use)));
+    refs.within('allocate_context', () => use('live_contexts'));
+    refs.within('release_context', () => use('live_contexts'));
     functions.push(
         ...helpers,
         ...(runtime?.functions ?? []),
         {
+            name: 'allocate_context',
             signature: 'void *allocate_context(size_t size)',
             body: [
                 'void *context = malloc(size);',
@@ -1853,6 +2001,7 @@ export function lowerC(
             ],
         },
         {
+            name: 'release_context',
             signature: 'void release_context(void *context)',
             body: [
                 { head: 'if (!context || live_contexts == 0)', body: ['abort();'] },
@@ -1865,10 +2014,10 @@ export function lowerC(
     let printLoops = 0;
     const print = (expr: Expr, id: string, body: Statement[]) => {
         const l = layout(id);
-        if (l.kind === 'f64') body.push(`print_number(${expr});`);
+        if (l.kind === 'f64') body.push(`${use('print_number')}(${expr});`);
         else if (l.kind === 'bool') body.push(`fputs(${expr} ? "true" : "false", stdout);`);
         else if (l.kind === 'unit') body.push('fputs("null", stdout);');
-        else if (l.kind === 'string') body.push(`print_string(${expr});`);
+        else if (l.kind === 'string') body.push(`${use('print_string')}(${expr});`);
         else if (l.kind === 'vector') {
             // Nested vectors nest loops; each needs its own index.
             const i = `i${printLoops++}`;
@@ -1962,7 +2111,7 @@ export function lowerC(
         const out: TranslationUnit['functions'] = [
             {
                 signature: 'size_t laminar_live_allocations(void)',
-                body: ['return live_contexts;'],
+                body: [cc`return ${use('live_contexts')};`],
             },
         ];
         if (strings) {
@@ -1984,7 +2133,7 @@ export function lowerC(
                 },
                 {
                     signature: `void laminar_string_free(${stringType} *s)`,
-                    body: ['string_drop(s);'],
+                    body: [cc`${use('string_drop')}(s);`],
                 },
             );
         }
@@ -2018,7 +2167,7 @@ export function lowerC(
             header.push(`typedef struct ${name} ${name};`, `void ${drop_}(${name} *handle);`);
             const body: Statement[] = [`${type(id)} *cell = (${type(id)} *)(void *)handle;`];
             drop({ expression: '*cell', layout: id }, body);
-            body.push('release_context(cell);');
+            body.push(cc`${use('release_context')}(cell);`);
             declarations.push(`struct ${name};`);
             out.push({ signature: `void ${drop_}(struct ${name} *handle)`, body });
             return name;
@@ -2047,7 +2196,7 @@ export function lowerC(
                 if (kind === 'string') {
                     params.push(`const char *arg${n}`, `size_t arg${n}_length`);
                     hostParams.push(`const char *arg${n}`, `size_t arg${n}_length`);
-                    return args.push(`string_new(arg${n}, arg${n}_length)`);
+                    return args.push(`${use('string_new')}(arg${n}, arg${n}_length)`);
                 }
                 const name = handle(p.layout);
                 params.push(`struct ${name} *arg${n}`);
@@ -2055,13 +2204,13 @@ export function lowerC(
                 body.push(
                     `${type(p.layout)} *cell${n} = (${type(p.layout)} *)(void *)arg${n};`,
                     `${type(p.layout)} value${n} = *cell${n};`,
-                    `release_context(cell${n});`,
+                    `${use('release_context')}(cell${n});`,
                 );
                 args.push(`value${n}`);
             });
             const result = code.body.layout,
                 kind = hostKind(result);
-            const call = `${codes.get(code.id)}(NULL${args.map((a) => `, ${a}`).join('')})`;
+            const call = `${use(codes.get(code.id)!)}(NULL${args.map((a) => `, ${a}`).join('')})`;
             let returns: string, hostReturns: string;
             if (kind === 'unit') {
                 returns = hostReturns = 'void';
@@ -2079,7 +2228,7 @@ export function lowerC(
                 returns = `struct ${name} *`;
                 hostReturns = `${name} *`;
                 body.push(
-                    `${type(result)} *cell = allocate_context(sizeof *cell);`,
+                    `${type(result)} *cell = ${use('allocate_context')}(sizeof *cell);`,
                     `*cell = ${call};`,
                     `return (struct ${name} *)(void *)cell;`,
                 );
@@ -2093,8 +2242,9 @@ export function lowerC(
         }
         return { header, functions: out };
     }
-    declarations.push('void print_number(double x);');
+    declarations.push(new Declaration('print_number', 'void print_number(double x);'));
     functions.push({
+        name: 'print_number',
         signature: 'void print_number(double x)',
         body: [
             { head: 'if (isnan(x))', body: ['fputs("{\\"number\\":\\"NaN\\"}", stdout);'] },
@@ -2112,9 +2262,14 @@ export function lowerC(
         ],
     });
     if (options.exports) {
+        // Everything a host export mentions is a root: this code has no owner.
         const unit = libraryExports(options.exports);
         functions.push(...helpers.slice(emittedHelpers), ...unit.functions);
-        return { declarations: retainedDeclarations(), functions, header: unit.header };
+        return {
+            declarations: retainedDeclarations(),
+            functions: retainedFunctions(functions),
+            header: unit.header,
+        };
     }
     const main: Statement[] = [];
     const host = usesHost(imports);
@@ -2122,15 +2277,16 @@ export function lowerC(
         const c = program.code.find((c) => c.id === entry)!;
         if (c.parameters.length) unsupported('Function entry requires an explicit host adapter');
         const v = `result${main.length}`;
-        main.push(`${type(c.body.layout)} ${v} = ${codes.get(entry)}(NULL);`, `(void)${v};`);
+        main.push(`${type(c.body.layout)} ${v} = ${use(codes.get(entry)!)}(NULL);`, `(void)${v};`);
         // With host output on stdout, a record separator (U+001E) introduces each result.
         if (host) main.push('putchar(30);');
         print(v, c.body.layout, main);
         main.push('putchar(10);');
         drop({ expression: v, layout: c.body.layout }, main);
     }
-    main.push({ head: 'if (live_contexts != 0)', body: ['abort();'] }, 'return 0;');
-    functions.push({ signature: 'int main(void)', body: main });
+    main.push({ head: cText`if (${use('live_contexts')} != 0)`, body: ['abort();'] }, 'return 0;');
+    use('main'); // the program's only root; every other function is reached from it
+    functions.push({ name: 'main', signature: 'int main(void)', body: main });
     functions.push(...helpers.slice(emittedHelpers));
-    return { declarations: retainedDeclarations(), functions };
+    return { declarations: retainedDeclarations(), functions: retainedFunctions(functions) };
 }

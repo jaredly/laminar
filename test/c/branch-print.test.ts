@@ -24,8 +24,6 @@ typedef struct Unit Unit;
 struct Tuple_Bool_Number { bool item0; double item1; };
 struct Unit { unsigned char inhabitant; };
 static size_t live_contexts = 0;
-void *allocate_context(size_t size);
-void release_context(void *context);
 Tuple_Bool_Number entry(void *environment);
 void print_number(double x);
 Tuple_Bool_Number entry(void *environment) {
@@ -57,21 +55,6 @@ Tuple_Bool_Number entry(void *environment) {
     Unit v18 = {0};
     (void)v18;
     return (Tuple_Bool_Number){1, 3};
-}
-void *allocate_context(size_t size) {
-    void *context = malloc(size);
-    if (!context) {
-        abort();
-    }
-    ++live_contexts;
-    return context;
-}
-void release_context(void *context) {
-    if (!context || live_contexts == 0) {
-        abort();
-    }
-    --live_contexts;
-    free(context);
 }
 void print_number(double x) {
     if (isnan(x)) {

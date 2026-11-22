@@ -31,10 +31,22 @@ export function cBytes(text: string): { literal: string; length: number } {
     return { literal: literal + '"', length: bytes.length };
 }
 
+/** A runtime function and the package symbols its body calls. */
+export type RuntimeFunction = TranslationUnit['functions'][number] & {
+    name: string;
+    uses: readonly string[];
+};
+
 /** Runtime support emitted only when a program reaches a string layout. */
-export function stringRuntime(): Pick<TranslationUnit, 'declarations' | 'functions'> {
-    const functions: TranslationUnit['functions'] = [
+export function stringRuntime(): {
+    /** Type definitions the rest of the runtime is written against. */
+    types: string[];
+    functions: RuntimeFunction[];
+} {
+    const functions: RuntimeFunction[] = [
         {
+            name: 'string_new',
+            uses: ['allocate_context'],
             signature: `${stringType} *string_new(const char *bytes, size_t length)`,
             body: [
                 { head: 'if (!length)', body: ['return NULL;'] },
@@ -45,14 +57,20 @@ export function stringRuntime(): Pick<TranslationUnit, 'declarations' | 'functio
             ],
         },
         {
+            name: 'string_drop',
+            uses: ['release_context'],
             signature: `void string_drop(${stringType} *s)`,
             body: [{ head: 'if (s)', body: ['release_context(s);'] }],
         },
         {
+            name: 'string_dup',
+            uses: ['string_new'],
             signature: `${stringType} *string_dup(${stringType} *s)`,
             body: ['return s ? string_new((const char *)s->bytes, s->length) : NULL;'],
         },
         {
+            name: 'string_equals',
+            uses: [],
             signature: `_Bool string_equals(${stringType} *s, const char *bytes, size_t length)`,
             body: [
                 'size_t n = s ? s->length : 0;',
@@ -60,6 +78,8 @@ export function stringRuntime(): Pick<TranslationUnit, 'declarations' | 'functio
             ],
         },
         {
+            name: 'builder_bytes',
+            uses: [],
             signature: 'void builder_bytes(string_builder *b, const char *bytes, size_t length)',
             body: [
                 { head: 'if (!length)', body: ['return;'] },
@@ -80,6 +100,8 @@ export function stringRuntime(): Pick<TranslationUnit, 'declarations' | 'functio
         },
         {
             // Interpolation consumes its string operand.
+            name: 'builder_string',
+            uses: ['builder_bytes', 'string_drop'],
             signature: `void builder_string(string_builder *b, ${stringType} *s)`,
             body: [
                 {
@@ -92,6 +114,8 @@ export function stringRuntime(): Pick<TranslationUnit, 'declarations' | 'functio
             ],
         },
         {
+            name: 'builder_bool',
+            uses: ['builder_bytes'],
             signature: 'void builder_bool(string_builder *b, _Bool value)',
             body: [
                 { head: 'if (value)', body: ['builder_bytes(b, "true", 4);'] },
@@ -101,6 +125,8 @@ export function stringRuntime(): Pick<TranslationUnit, 'declarations' | 'functio
         {
             // ECMAScript Number::toString: the shortest round-tripping digits, laid out
             // in positional form for decimal exponents in (-7, 21) and exponent form otherwise.
+            name: 'builder_number',
+            uses: ['builder_bytes'],
             signature: 'void builder_number(string_builder *b, double x)',
             body: [
                 { head: 'if (isnan(x))', body: ['builder_bytes(b, "NaN", 3);', 'return;'] },
@@ -173,6 +199,8 @@ export function stringRuntime(): Pick<TranslationUnit, 'declarations' | 'functio
             ],
         },
         {
+            name: 'builder_finish',
+            uses: ['string_new'],
             signature: `${stringType} *builder_finish(string_builder *b)`,
             body: [
                 `${stringType} *s = string_new((const char *)b->bytes, b->length);`,
@@ -182,6 +210,8 @@ export function stringRuntime(): Pick<TranslationUnit, 'declarations' | 'functio
         },
         {
             // Test protocol: a JSON string. Bytes are valid UTF-8 and pass through unescaped.
+            name: 'print_string',
+            uses: [],
             signature: `void print_string(${stringType} *s)`,
             body: [
                 'putchar(34);',
@@ -200,28 +230,32 @@ export function stringRuntime(): Pick<TranslationUnit, 'declarations' | 'functio
         },
     ];
     return {
-        declarations: [
+        types: [
             `typedef struct ${stringType} { size_t length; unsigned char bytes[]; } ${stringType};`,
             'typedef struct { unsigned char *bytes; size_t length; size_t capacity; } string_builder;',
-            ...functions.map((f) => f.signature + ';'),
         ],
         functions,
     };
 }
 
-/** Statements appending one interpolated part, by its physical storage kind. */
-export function appendPart(builder: string, kind: string, expression: string): string {
+/** The runtime function appending one interpolated part, by its physical storage kind. */
+export function appendFunction(kind: string): string {
     switch (kind) {
         case 'string':
-            return `builder_string(&${builder}, ${expression});`;
+            return 'builder_string';
         case 'f64':
-            return `builder_number(&${builder}, ${expression});`;
+            return 'builder_number';
         case 'bool':
-            return `builder_bool(&${builder}, ${expression});`;
+            return 'builder_bool';
         default:
             throw new BackendDiagnostic(
                 'unsupported-c',
                 'String interpolation supports String, Number and Bool parts',
             );
     }
+}
+
+/** The statement appending one interpolated part. */
+export function appendPart(builder: string, kind: string, expression: string): string {
+    return `${appendFunction(kind)}(&${builder}, ${expression});`;
 }
