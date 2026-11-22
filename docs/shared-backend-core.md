@@ -497,6 +497,51 @@ partial matches that must keep their trap, and runs ten programs natively.
 Exact-text C expectations were regenerated, and one assertion that expected a tag
 comparison now expects the named `case`.
 
+### Follow-up: lens staging in C
+
+Go's item 9 (reduce lens staging and aggregate reconstruction) is ported, with the
+same rules. A call's lens argument is adapted in three tiers, tried in order:
+
+1. **Forward.** For a synchronous call over storage that needs no restoration (not
+   escaping, `finish === noFinish`, every endpoint a plain read pointer), if the
+   lens denotes exactly the storage of an incoming lens parameter, the parameter is
+   passed as is. "Exactly" means every endpoint has the same live address and layout;
+   equal values do not count. `step` passes `min_max_lastGuess` straight to
+   `handleResponse` and to its own recursive call.
+2. **Point at live endpoints.** Otherwise each endpoint that already has a live address
+   is pointed at directly, `(Lens){.read = (state).item0.read}`, and only the others are
+   staged into a stack backing. A lens whose endpoints are all live needs no backing at
+   all.
+3. **Keep results in place.** A staged call's results stay in the backing: the logical
+   storage keeps the backing fields' addresses rather than copying out a detached
+   aggregate. A later compatible call points into the same backing, so two sequential
+   updates of one scalar share one cell, and reading the result is `back0.read0`
+   rather than rebuilding a tuple.
+
+Type-changing calls keep separate typed read and replacement fields, and an escaping
+lens keeps heap backing with every field written (heap memory is not zeroed). A lens
+with a restoration frontend keeps the earlier copy-out path.
+
+Two supporting changes. A `lens-tuple` whose items all need no restoration now needs
+none itself, which is what let `step` be recognized; C always built a fresh closure
+before. And the incoming parameters are recorded so a call can find one to forward.
+The single thin-lens shortcut added for in-place boxes stays: it is the one place a
+lens with a restoration frontend can still be passed by address.
+
+Effect on the examples' C: `ok.lm` 385 to 343 lines, with one backing left (in `game`,
+where `state` is an owned local that must be staged); `handleResponse` and `step` no
+longer rebuild their lens. Go output is byte-identical.
+
+Left alone: `Backing` typedefs are still one per call site rather than shared by field
+layout as in Go, and a staged zero is still written over its zero-initialized backing
+(`back0.read0 = 0;`), because the zero is a named constant until the passes fold it.
+
+Validation: `test/c/lens-staging.test.ts` checks forwarding, backing reuse across
+sequential calls, typed and heap staging, and runs fifteen of Go's staging cases
+natively (reordered endpoints, snapshots before reuse, moved owners, branch joins,
+partial projections, type changes, returned-lens restoration, cleanup order, indirect
+calls).
+
 ### Step 5: unify the per-instruction lowering
 
 Merge the two per-op lowerers behind the capability interface. Decide after

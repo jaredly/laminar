@@ -98,7 +98,7 @@ double entry(void *environment) {
     back0.read0 = 1;
     Lens_double v5 = (Lens_double){.read=&back0.read0};
     inc(NULL, v5);
-    return *(v5).read;
+    return back0.read0;
 }
 void print_number(double x) {
     if (isnan(x)) {
@@ -166,9 +166,8 @@ Tuple_Number_Number entry(void *environment) {
     back0.read1 = 2;
     Scattered_Lens_double_Lens_double v9 = (Scattered_Lens_double_Lens_double){.item0=(Lens_double){.read=&back0.read0}, .item1=(Lens_double){.read=&back0.read1}};
     inc(NULL, v9);
-    Tuple_Number_Number v10 = (Tuple_Number_Number){*((v9).item0).read, *((v9).item1).read};
-    double a = (v10).item0;
-    double b = (v10).item1;
+    double a = back0.read0;
+    double b = back0.read1;
     return (Tuple_Number_Number){a, b};
 }
 void print_number(double x) {

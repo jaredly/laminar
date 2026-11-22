@@ -961,11 +961,18 @@ export function lowerC(
                 } else if (p.kind === 'drop' || p.kind === 'literal') drop(data, body);
             };
             const parameters: { expression: string; layout: string; view: View }[] = [];
+            // Incoming lenses as passed, so a call that needs the same lens can forward one.
+            const physicalLenses: { expression: string; layout: string; data: Data }[] = [];
             c.parameters.forEach((p, i) => {
                 if (p.lensPlace) {
                     const view = incoming(sources[i]!, p.layout);
                     places.set(p.lensPlace, view);
                     parameters.push({ expression: sources[i]!, layout: p.layout, view });
+                    physicalLenses.push({
+                        expression: sources[i]!,
+                        layout: p.layout,
+                        data: storage.get(view),
+                    });
                 } else bind(p.pattern, { expression: sources[i]!, layout: p.layout });
             });
             const flushParameters = (body: Statement[]) =>
@@ -974,6 +981,32 @@ export function lowerC(
                 storage.project(places.get(s.place) ?? unsupported('Unavailable C place'), s.path);
             const value = (id: string) =>
                 values.get(id) ?? unsupported('Indirect/function value requires phase 6');
+            // A lens needs no restoration when every endpoint is a plain read pointer.
+            const homogeneous = (id: string): boolean => {
+                const l = layout(id);
+                if (l.fields.some((f) => f.name === 'replacement')) return false;
+                if (l.fields.some((f) => f.name === 'read')) return true;
+                return l.fields
+                    .filter((f) => f.name.startsWith('item'))
+                    .every((f) => f.kind === 'value' && homogeneous(f.layout));
+            };
+            /** Both denote the same live storage at every endpoint. Equal values are not enough. */
+            const sameStorage = (a: Data, b: Data): boolean => {
+                if (
+                    !Array.isArray(a) &&
+                    !Array.isArray(b) &&
+                    a.layout === b.layout &&
+                    a.address &&
+                    same(a.address, b.address)
+                )
+                    return true;
+                if (!Array.isArray(a) && !Array.isArray(b)) return false;
+                const left = storage.parts(a),
+                    right = storage.parts(b);
+                return (
+                    left.length === right.length && left.every((d, n) => sameStorage(d, right[n]!))
+                );
+            };
             // Adapt input/output backing at calls. Escaping calls use heap backing, so
             // a returned continuation never retains a pointer into the caller frame.
             const adapt = (
@@ -982,6 +1015,16 @@ export function lowerC(
                 escapes: boolean,
                 body: Statement[],
             ): { expression: string; finish: (body: Statement[]) => void } => {
+                // A synchronous call over storage that needs no restoration can reuse
+                // live endpoint addresses; the call's results stay in whatever it points at.
+                const reusable = !escapes && lens.finish === noFinish && homogeneous(id);
+                if (reusable) {
+                    const data = storage.get(lens.view);
+                    const existing = physicalLenses.find(
+                        (p) => p.layout === id && sameStorage(data, p.data),
+                    );
+                    if (existing) return { expression: existing.expression, finish: noFinish };
+                }
                 // A same-layout lens over live storage (a field of an in-place box, or an
                 // incoming lens) is passed by address: nothing is copied or restored.
                 const l = layout(id),
@@ -1008,26 +1051,49 @@ export function lowerC(
                     name = locals.reference(`back${index}`),
                     fields: string[] = [],
                     init: Statement[] = [];
+                /** What each endpoint denotes after the call: its own live storage or the backing. */
+                const live = new Map<string, Data>();
                 const build = (id: string, path: string): Expr => {
                     const l = layout(id),
                         input = l.fields.find((f) => f.name === 'read');
                     if (input?.kind === 'pointer' && input.layout) {
                         const output = l.fields.find((f) => f.name === 'replacement');
-                        const n = fields.length,
-                            r = `read${n}`,
-                            w = output ? `write${n}` : r;
-                        fields.push(cText`${type(input.layout)} ${r};`);
                         const d = storage.get(
                             storage.project(lens.view, path ? path.split('.').map(Number) : []),
                         );
-                        init.push(
-                            cc`${name}${escapes ? '->' : '.'}${r} = ${read(d, input.layout)};`,
-                        );
+                        // An endpoint already over live storage is pointed at, not copied.
+                        if (
+                            !escapes &&
+                            lens.finish === noFinish &&
+                            !output &&
+                            !Array.isArray(d) &&
+                            d.layout === input.layout &&
+                            d.address
+                        ) {
+                            live.set(path, d);
+                            return cc`(${type(id)}){.read=${d.address}}`;
+                        }
+                        const n = fields.length,
+                            r = `read${n}`,
+                            w = output ? `write${n}` : r;
+                        const access = cc`${name}${escapes ? '->' : '.'}${r}`;
+                        live.set(path, {
+                            expression: access,
+                            address: cc`&${name}${escapes ? '->' : '.'}${w}`,
+                            layout:
+                                output?.kind === 'pointer' && output.layout
+                                    ? output.layout
+                                    : input.layout,
+                        });
+                        fields.push(cText`${type(input.layout)} ${r};`);
+                        // Heap backing is not zeroed; stack backing is, so only a nonzero
+                        // value needs writing there.
+                        const initial = read(d, input.layout);
+                        if (escapes || !same(initial, zero(input.layout)))
+                            init.push(cc`${access} = ${initial};`);
                         if (output?.kind === 'pointer' && output.layout) {
                             fields.push(cText`${type(output.layout)} ${w};`);
-                            init.push(
-                                cc`${name}${escapes ? '->' : '.'}${w} = ${zero(output.layout)};`,
-                            );
+                            if (escapes) init.push(cc`${name}->${w} = ${zero(output.layout)};`);
                         }
                         return cc`(${type(id)}){.read=&${name}${escapes ? '->' : '.'}${r}${output ? cc`, .replacement=&${name}${escapes ? '->' : '.'}${w}` : ''}}`;
                     }
@@ -1044,6 +1110,15 @@ export function lowerC(
                     }}`;
                 };
                 const expression = build(id, '');
+                // Every endpoint was already live storage: there is nothing to stage.
+                if (!fields.length)
+                    return {
+                        expression: declare(id, expression, body, undefined, {
+                            pure: true,
+                            inline: true,
+                        }),
+                        finish: lens.finish,
+                    };
                 const backingType = `Backing${index}`;
                 declarations.push(
                     cText`typedef struct { ${fields.join(' ') || 'unsigned char inhabitant;'} } ${backingType};`,
@@ -1061,6 +1136,20 @@ export function lowerC(
                     });
                 body.push(...init);
                 const arg = declare(id, expression, body);
+                if (reusable) {
+                    const result = (id: string, path = ''): Data =>
+                        live.get(path) ??
+                        layout(id)
+                            .fields.filter((f) => f.name.startsWith('item'))
+                            .map((f, n) =>
+                                result(
+                                    (f as { layout: string }).layout,
+                                    path ? path + '.' + n : String(n),
+                                ),
+                            );
+                    const data = result(id);
+                    return { expression: arg, finish: () => storage.put(lens.view, data) };
+                }
                 const outputs = (expr: Expr, id: string): Data => {
                     const l = layout(id),
                         f =
@@ -1475,10 +1564,12 @@ export function lowerC(
                             lenses.set(i.out.id, { view: ref(i.slot), finish: noFinish });
                             continue;
                         case 'lens-tuple':
+                            // A tuple of lenses that need no restoration needs none itself.
                             lenses.set(i.out.id, {
                                 view: i.items.map((v) => lenses.get(v)!.view),
-                                finish: (body) =>
-                                    i.items.forEach((v) => lenses.get(v)!.finish(body)),
+                                finish: i.items.every((v) => lenses.get(v)!.finish === noFinish)
+                                    ? noFinish
+                                    : (body) => i.items.forEach((v) => lenses.get(v)!.finish(body)),
                             });
                             continue;
                         case 'swap': {
