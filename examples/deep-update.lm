@@ -1,0 +1,65 @@
+
+// type Option(a) {
+//     Some(a)
+//     None
+// }
+
+fn replace(needle, repl, ~lst) {
+    match ~lst {
+        [one, ...rest] -> {
+            match (dup(~one) == dup(~needle)) {
+                true -> {
+                    one := repl
+                    ()
+                }
+                false -> {
+                    replace(needle, repl, ~rest)
+                }
+            }
+        }
+        [] -> ()
+    }
+}
+
+fn find_(needle, ~lst) ~{
+    match ~lst {
+        [one, ...rest] -> {
+            match (dup(~one) == dup(~needle)) {
+                true -> {
+                    one
+                }
+                false -> {
+                    find_(needle, ~rest)
+                }
+            }
+        }
+    }
+}
+
+fn find(needle, ~lst) ~{
+    match ~lst {
+        [one, ...rest] -> {
+            match (dup(~one) == dup(~needle)) {
+                true -> {
+                    lens res <- true
+                    one := res
+                    ()
+                }
+                false -> {
+                    find(needle, ~rest)
+                }
+            }
+        }
+        [] -> {
+            lens res <- false
+            ()
+        }
+    }
+}
+
+{
+    let x = [1,2,3,4]
+    replace(2, 5, ~x)
+    find(3, ~x) := 10
+    x
+}

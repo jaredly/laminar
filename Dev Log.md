@@ -1,4 +1,41 @@
 
+Thinking about scattered constructors, which we currently don't support.
+
+Like `~Some(x)`
+
+What I think would be cool, is to allow returning scattered constructor lenses, but requiring that they be handled as scattered, instead of as thin. Is that possible? b/c it would be really cool to be able to do:
+
+```lm
+match ~find(needle, ~lst) {
+    Some(one) -> (
+        one := two
+        ()
+    )
+    None -> ()
+}
+
+fn find(needle, ~lst) ~{
+    match ~lst {
+        [one, ...two] -> if (dup(~one) == dup(~needle)) {
+            Some(one)
+        } else {
+            find(needle, ~two)
+        }
+        [] -> None
+    }
+}
+```
+
+That would be super cool.
+But it would be invalid if someone did
+```lm
+match (find(what, []) := None) {`
+    Some(one) -> OH NO DOUBLE USE
+    None -> ()
+}
+```
+
+
 
 ---
 

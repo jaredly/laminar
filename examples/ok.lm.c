@@ -9,35 +9,21 @@ typedef struct { unsigned char *bytes; size_t length; size_t capacity; } string_
 typedef struct Callable_Value_196fc0868a Callable_Value_196fc0868a;
 typedef struct Lens_double Lens_double;
 typedef struct Unit Unit;
-typedef struct Lens_Tuple_Number_Number_Number Lens_Tuple_Number_Number_Number;
-typedef struct Environment_Empty_74f5f28086 Environment_Empty_74f5f28086;
 typedef struct Scattered_Lens_double_Lens_double_Lens_double Scattered_Lens_double_Lens_double_Lens_double;
 typedef laminar_string *String;
 typedef struct Tuple_Number_Number_Number Tuple_Number_Number_Number;
 typedef struct Tuple_Tuple_Number_Number_Number_Number Tuple_Tuple_Number_Number_Number_Number;
-typedef struct Lens_Unit_to_double Lens_Unit_to_double;
 typedef struct Direction Direction;
 typedef Unit (*Func_double_to_Unit_19aa1fe566)(void *, double);
 typedef Unit (*Func_Tuple_Number_Number_Number_to_Unit_29d831fc54)(void *, Tuple_Number_Number_Number);
 typedef Unit (*Func_to_Unit_67b7c9ce73)(void *);
-typedef String (*Func_String_to_String_99bd3030ba)(void *, String);
-typedef double (*Func_Direction_Scattered_Lens_double_Lens_double_Lens_double_to_double_9b3b8049c1)(void *, Direction, Scattered_Lens_double_Lens_double_Lens_double);
-typedef double (*Func_double_to_double_a0f1ef8045)(void *, double);
-typedef Unit (*Func_String_to_Unit_b25b30ea0f)(void *, String);
-typedef double (*Func_double_double_to_double_c4a74b6cb8)(void *, double, double);
-typedef double (*Func_Lens_double_to_double_d0c43c87b3)(void *, Lens_double);
-typedef bool (*Func_String_Scattered_Lens_double_Lens_double_Lens_double_to_bool_d9b8427e43)(void *, String, Scattered_Lens_double_Lens_double_Lens_double);
-typedef Tuple_Tuple_Number_Number_Number_Number (*Func_to_Tuple_Tuple_Number_Number_Number_Number_ec56a17ec7)(void *);
-typedef double (*Func_double_Scattered_Lens_double_Lens_double_Lens_double_to_double_ef93641c08)(void *, double, Scattered_Lens_double_Lens_double_Lens_double);
 struct Callable_Value_196fc0868a { void *environment; Func_to_Unit_67b7c9ce73 dispose; };
 struct Lens_double { double *read; Func_double_to_Unit_19aa1fe566 restore; void *context; };
 struct Unit { unsigned char inhabitant; };
-struct Lens_Tuple_Number_Number_Number { Tuple_Number_Number_Number *read; Func_Tuple_Number_Number_Number_to_Unit_29d831fc54 restore; void *context; };
-struct Environment_Empty_74f5f28086 { unsigned char inhabitant; };
 struct Scattered_Lens_double_Lens_double_Lens_double { Lens_double item0; Lens_double item1; Lens_double item2; Func_Tuple_Number_Number_Number_to_Unit_29d831fc54 restore; void *context; };
 struct Tuple_Number_Number_Number { double item0; double item1; double item2; };
 struct Tuple_Tuple_Number_Number_Number_Number { Tuple_Number_Number_Number item0; double item1; };
-struct Lens_Unit_to_double { Unit *read; double *replacement; Func_double_to_Unit_19aa1fe566 restore; void *context; };
+enum { Direction_Higher = 0, Direction_Lower = 1 };
 struct Direction { uint32_t tag; union { Unit v0; Unit v1; } as; };
 static size_t live_contexts = 0;
 void *allocate_context(size_t size);
@@ -129,12 +115,12 @@ Tuple_Tuple_Number_Number_Number_Number game(void *environment) {
 double nextGuess(void *environment, Direction direction, Scattered_Lens_double_Lens_double_Lens_double min_max_lastGuess) {
     (void)environment;
     double v1 = {0};
-    if ((direction).tag == 0) {
+    if ((direction).tag == Direction_Higher) {
         double max = *((min_max_lastGuess).item1).read;
         double lastGuess = *((min_max_lastGuess).item2).read;
         v1 = ((max + lastGuess) / 2);
     }
-    else if ((direction).tag == 1) {
+    else if ((direction).tag == Direction_Lower) {
         double lastGuess_2 = *((min_max_lastGuess).item2).read;
         double min = *((min_max_lastGuess).item0).read;
         v1 = ((lastGuess_2 + min) / 2);
@@ -152,7 +138,7 @@ bool handleResponse(void *environment, String response, Scattered_Lens_double_Le
     double v39 = {0};
     if (string_equals(response, "higher", 6)) {
         string_drop(response);
-        Direction v3 = (Direction){.tag=0, .as.v0=(Unit){0}};
+        Direction v3 = (Direction){.tag=Direction_Higher, .as.v0=(Unit){0}};
         Backing3 back3 = {0};
         back3.read0 = *((state).item0).read;
         back3.read1 = *((state).item1).read;
@@ -172,7 +158,7 @@ bool handleResponse(void *environment, String response, Scattered_Lens_double_Le
     }
     else if (string_equals(response, "lower", 5)) {
         string_drop(response);
-        Direction v18 = (Direction){.tag=1, .as.v1=(Unit){0}};
+        Direction v18 = (Direction){.tag=Direction_Lower, .as.v1=(Unit){0}};
         Backing4 back4 = {0};
         back4.read0 = *((state).item0).read;
         back4.read1 = *((state).item1).read;

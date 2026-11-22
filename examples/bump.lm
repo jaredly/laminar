@@ -1,0 +1,14 @@
+fn bump(~xs) {
+    match ~xs {
+        [] -> ()
+        [head, ...tail] -> {
+            head := head + 1
+            bump(~tail)
+        }
+    }
+}
+{
+    let x = [1,2,3]
+    bump(~x)
+    x
+}
