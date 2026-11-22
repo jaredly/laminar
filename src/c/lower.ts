@@ -1,6 +1,6 @@
 import { Declaration, reachableNames, typeDependencies } from '../backend/reachable.ts';
 import type { ConcreteProgram, ConcreteBlock } from '../concrete-ir.ts';
-import { Storage, type Data, type View } from './storage.ts';
+import { Storage, type Cell, type Data, type View } from './storage.ts';
 import { decodeNumber, type IRPattern, type SlotRef } from '../typed-ir.ts';
 import { verifyConcreteProgram } from '../verify-concrete.ts';
 import { BackendDiagnostic } from '../backend/target.ts';
@@ -798,6 +798,20 @@ export function lowerC(
         const retainedBoxes = new Map<string, string>();
         /** Reconstructions whose temporary lens is the retained box's payload. */
         const inPlaceIds = new Set<string>();
+        /** Storage cells that are a retained box's payload. */
+        const inPlaceCells = new Set<Cell>();
+        /** The live leaf an in-place field had before a move emptied it, by cell and path. */
+        const homes = new Map<Cell, Map<string, Data>>();
+        const rememberHome = (view: View) => {
+            if (Array.isArray(view) || !inPlaceCells.has(view.cell)) return;
+            const leaf = storage.get(view);
+            if (Array.isArray(leaf) || !leaf.address) return;
+            const at = homes.get(view.cell) ?? new Map<string, Data>();
+            at.set(JSON.stringify(view.path), leaf);
+            homes.set(view.cell, at);
+        };
+        const home = (view: View): Data | undefined =>
+            Array.isArray(view) ? undefined : homes.get(view.cell)?.get(JSON.stringify(view.path));
         /** What a retained arm's owner held before the match moved it out, by reconstruction id. */
         const retainedOwners = new Map<string, Data>();
         /** The storage each moved value came from. */
@@ -1129,6 +1143,7 @@ export function lowerC(
                                 address: box,
                             });
                             const live = storage.get(view);
+                            if (!Array.isArray(view)) inPlaceCells.add(view.cell);
                             places.set(i.backing, view);
                             lenses.set(i.out.id, {
                                 view,
@@ -1268,6 +1283,7 @@ export function lowerC(
                     case 'move':
                         removable = true;
                         movedFrom.set(i.out.id, storage.get(ref(i.slot)));
+                        rememberHome(ref(i.slot));
                         expr = read(storage.get(ref(i.slot)), id);
                         storage.put(ref(i.slot), { expression: zero(unit.id), layout: unit.id });
                         break;
@@ -1283,12 +1299,30 @@ export function lowerC(
                         continue;
                     case 'swap': {
                         const lens = lenses.get(i.lens)!;
-                        expr = read(storage.get(lens.view), id);
+                        const contents = storage.get(lens.view);
+                        expr = read(contents, id);
                         declare(id, expr, body, name);
-                        storage.put(lens.view, {
-                            expression: value(i.value),
-                            layout: outputLayouts.get(i.value)!,
-                        });
+                        const live =
+                            Array.isArray(lens.view) || !inPlaceCells.has(lens.view.cell)
+                                ? undefined
+                                : !Array.isArray(contents) && contents.address
+                                  ? contents
+                                  : home(lens.view);
+                        if (
+                            live &&
+                            !Array.isArray(live) &&
+                            live.address &&
+                            live.layout === outputLayouts.get(i.value)
+                        ) {
+                            // The box is the storage and nothing else can observe it, so the
+                            // store happens here and the field goes back to reading the box.
+                            body.push(cc`${through(live.address)} = ${value(i.value)};`);
+                            storage.put(lens.view, live);
+                        } else
+                            storage.put(lens.view, {
+                                expression: value(i.value),
+                                layout: outputLayouts.get(i.value)!,
+                            });
                         lens.finish(body);
                         values.set(i.out.id, name);
                         continue;

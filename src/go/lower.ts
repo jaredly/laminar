@@ -783,6 +783,20 @@ export function lowerGo(program: ConcreteProgram): GoFile {
         const retainedBoxes = new Map<string, string>();
         /** Reconstructions whose temporary lens is the retained box's payload. */
         const inPlaceIds = new Set<string>();
+        /** Storage cells that are a retained box's payload. */
+        const inPlaceCells = new Set<import('./storage.ts').Cell>();
+        /** The live leaf an in-place field had before a move emptied it, by cell and path. */
+        const homes = new Map<import('./storage.ts').Cell, Map<string, Data>>();
+        const rememberHome = (view: View) => {
+            if (Array.isArray(view) || !inPlaceCells.has(view.cell)) return;
+            const leaf = storage.get(view);
+            if (Array.isArray(leaf) || !leaf.address) return;
+            const at = homes.get(view.cell) ?? new Map<string, Data>();
+            at.set(JSON.stringify(view.path), leaf);
+            homes.set(view.cell, at);
+        };
+        const home = (view: View): Data | undefined =>
+            Array.isArray(view) ? undefined : homes.get(view.cell)?.get(JSON.stringify(view.path));
         /** What a retained arm's owner held before the match moved it out, by reconstruction id. */
         const retainedOwners = new Map<string, Data>();
         /** The storage each moved value came from. */
@@ -1469,6 +1483,7 @@ export function lowerGo(program: ConcreteProgram): GoFile {
                     case 'move': {
                         const contents = storage.get(ref(i.slot));
                         movedFrom.set(i.out.id, contents);
+                        rememberHome(ref(i.slot));
                         const moved = snapshot(contents, id, body, name);
                         storage.put(ref(i.slot), { expression: zero(unit.id), layout: unit.id });
                         dataValues.set(i.out.id, moved);
@@ -1496,7 +1511,24 @@ export function lowerGo(program: ConcreteProgram): GoFile {
                         const lens = lenses.get(i.lens)!;
                         const contents = storage.get(lens.view);
                         const old = snapshot(contents, id, body, name);
-                        storage.put(lens.view, datum(i.value));
+                        const live =
+                            Array.isArray(lens.view) || !inPlaceCells.has(lens.view.cell)
+                                ? undefined
+                                : !Array.isArray(contents) && contents.address
+                                  ? contents
+                                  : home(lens.view);
+                        if (
+                            live &&
+                            !Array.isArray(live) &&
+                            live.address &&
+                            live.layout === outputLayouts.get(i.value)
+                        ) {
+                            // The box is the storage and nothing else can observe it, so the
+                            // store happens here (after the old value's reserved read) and the
+                            // field goes back to reading the box.
+                            body.push(go`${through(live.address)} = ${value(i.value)}`);
+                            storage.put(lens.view, live);
+                        } else storage.put(lens.view, datum(i.value));
                         lens.finish(body);
                         dataValues.set(i.out.id, old);
                         values.set(i.out.id, () => read(old, id));
@@ -1783,6 +1815,7 @@ export function lowerGo(program: ConcreteProgram): GoFile {
                                 address: box,
                             });
                             const live = storage.get(view);
+                            if (!Array.isArray(view)) inPlaceCells.add(view.cell);
                             places.set(i.backing, view);
                             lenses.set(i.out.id, {
                                 view,

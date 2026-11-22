@@ -271,9 +271,15 @@ it out; and the cleanup block is not emitted. A same-layout lens over live stora
 passed to a callee by address (C `adapt`), which removes the `Backing` struct. Dead
 `move` and `tuple` results are now pruned in C.
 
-Remaining noise in the `bump` output: the field write happens after the recursive call
-(storage is versioned and written back at the end of the lens scope), and the owner's
-header is still written back after the case join (`*(xs).read = v28`).
+A `swap` on an in-place field stores through the box immediately (after reading the
+old value) and puts the field back to a live read, so the write sits where the source
+puts it. Moving a field out of an in-place box remembers its live leaf so the later
+`swap` can find the address. Other lenses keep the deferred, versioned write-back,
+which is needed when the backing is a private copy, the layouts differ, or a user
+`lens` put-back must run at scope end.
+
+Remaining noise in the `bump` output: the owner's header is still written back after
+the case join (`*(xs).read = v28`) even though it is unchanged.
 
 Option 3 gets the readable output with the smallest blast radius and is a strict
 stepping stone: its concrete contract is the same one `focus` lowering needs.

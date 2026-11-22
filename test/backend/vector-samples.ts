@@ -122,6 +122,11 @@ export const vectorSamples = [
         ],
     },
     {
+        name: 'in-place list fields read back what they just wrote',
+        source: 'fn f(~xs) {\n match ~xs {\n [] -> 0\n [h, ...t] -> {\n h := h + 1\n h := h * 2\n dup(~h) + f(~t)\n }\n }\n}\n{let x = [1, 2]\n let r = f(~x)\n (r, x)}',
+        expected: [10, [4, 6]],
+    },
+    {
         name: 'first-class dup copies the buffer',
         source: '{let d = dup\n let v = [:[:1:]:]\n let w = d(~v)\n w[0][0] := 2\n (v, w)}',
         expected: [[[1]], [[2]]],
