@@ -323,6 +323,9 @@ export function lconcrete(program: ConcreteProgram, options: ConcretePrintOption
                 case 'lens-tuple':
                     expression = call('lens-tuple', i.items.map(value));
                     break;
+                case 'lens-construct':
+                    expression = call(`lens-construct ${i.name}`, i.items.map(value));
+                    break;
                 case 'swap':
                     expression = call('swap', [value(i.lens), value(i.value)]);
                     break;

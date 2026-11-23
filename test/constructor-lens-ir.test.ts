@@ -184,13 +184,18 @@ describe('verifying constructor lenses independently', () => {
 });
 
 describe('backends', () => {
-    it('report that constructor lenses have no concrete representation yet', () => {
+    it('give a constructor lens a thin shape backed by a temporary', () => {
         const p = typedProgram(updateFirst('[1, 2, 3]', 2, 20));
         const specialized = specializeProgram(p, wasm32Emscripten('test'), [
             { unit: p.units.at(-1)!.id, arguments: [] },
         ]);
-        expect(() => inferRepresentations(specialized)).toThrow(
-            'Constructor lenses have no concrete representation yet',
-        );
+        // Representation inference verifies its own output before returning it.
+        const analysis = inferRepresentations(specialized);
+        const found = analysis.variants.find((v) => v.result.kind === 'lens')!;
+        expect(found).toBeDefined();
+        const shape = analysis.shapes.find(
+            (r) => found.result.kind === 'lens' && r.id === found.result.shape,
+        )!;
+        expect(shape.kind).toBe('thin');
     });
 });

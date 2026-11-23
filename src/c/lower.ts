@@ -1600,6 +1600,54 @@ export function lowerC(
                                     : (body) => i.items.forEach((v) => lenses.get(v)!.finish(body)),
                             });
                             continue;
+                        case 'lens-construct': {
+                            // A constructor of lenses has no storage of its own. Its temporary
+                            // holds the value built from the field lenses' current contents (a
+                            // read, not a move: ownership stays explicit in the IR), and
+                            // restoration checks the tag and writes each payload field back.
+                            const union = endpoint(id, 'read');
+                            const n = tagOf(union, i.name),
+                                v = variant(union, n);
+                            if (v.boxed)
+                                return unsupported('Constructor lens over a boxed variant');
+                            const fields = i.items.map((item) => lenses.get(item)!);
+                            const contents = (): Expr => {
+                                const items = fields.map((f) => storage.get(f.view));
+                                if (items.length === 0) return zero(v.layout);
+                                if (items.length === 1) return read(items[0]!, v.layout);
+                                const types = layout(v.layout).fields;
+                                return cc`(${type(v.layout)}){${joinCode(
+                                    items.map((d, k) =>
+                                        read(d, (types[k] as { layout: string }).layout),
+                                    ),
+                                    ', ',
+                                )}}`;
+                            };
+                            const view = storage.own({
+                                expression: cc`(${type(union)}){.tag=${tagValue(union, n)}, .as.v${n}=${contents()}}`,
+                                layout: union,
+                            });
+                            lenses.set(i.out.id, {
+                                view,
+                                finish: (output) => {
+                                    const replacement = storage.get(view);
+                                    if (Array.isArray(replacement))
+                                        return unsupported('Constructor lens replacement shape');
+                                    output.push({
+                                        head: cc`if (${dot(replacement.expression, 'tag')} != ${tagValue(union, n)})`,
+                                        body: ['abort();'],
+                                    });
+                                    const inner: Data = {
+                                        expression: payload(replacement.expression, union, n),
+                                        layout: v.layout,
+                                    };
+                                    const parts = fields.length === 1 ? [inner] : storage.parts(inner);
+                                    fields.forEach((f, k) => storage.put(f.view, parts[k]!));
+                                    fields.forEach((f) => f.finish(output));
+                                },
+                            });
+                            continue;
+                        }
                         case 'swap': {
                             const lens = lenses.get(i.lens)!;
                             const contents = storage.get(lens.view);

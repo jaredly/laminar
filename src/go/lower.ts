@@ -1507,6 +1507,60 @@ export function lowerGo(program: ConcreteProgram): GoFile {
                             finish: (body) => i.items.forEach((v) => lenses.get(v)!.finish(body)),
                         });
                         continue;
+                    case 'lens-construct': {
+                        // The temporary holds the value built from the field lenses' current
+                        // contents (a read: ownership stays explicit in the IR); restoration
+                        // checks the tag and writes each payload field back.
+                        const union = endpoint(id, 'read');
+                        const n = tagOf(union, i.name),
+                            v = variant(union, n);
+                        if (v.boxed) return unsupported('Constructor lens over a boxed variant');
+                        const fields = i.items.map((item) => lenses.get(item)!);
+                        const l = layout(v.layout);
+                        const items = fields.map((f) => storage.get(f.view));
+                        const contents: Expr =
+                            items.length === 0
+                                ? zero(v.layout)
+                                : items.length === 1
+                                  ? read(items[0]!, v.layout)
+                                  : go`${type(v.layout)}{${joinCode(
+                                        items.map(
+                                            (d, k) =>
+                                                go`${field(l.fields[k]!.name)}: ${read(d, (l.fields[k] as { layout: string }).layout)}`,
+                                        ),
+                                        ', ',
+                                    )}}`;
+                        const view = storage.own({
+                            expression: go`${type(union)}{tag: ${tagValue(union, n)}, v${n}: ${contents}}`,
+                            layout: union,
+                        });
+                        lenses.set(i.out.id, {
+                            view,
+                            finish: (output) => {
+                                const replacement = storage.get(view);
+                                if (Array.isArray(replacement))
+                                    return unsupported('Constructor lens replacement shape');
+                                const target = code(replacement.expression);
+                                output.push({
+                                    kind: 'if',
+                                    arms: [
+                                        {
+                                            condition: go`${dot(target, 'tag')} != ${tagValue(union, n)}`,
+                                            body: ['panic("constructor lens tag mismatch")'],
+                                        },
+                                    ],
+                                });
+                                const inner: Data = {
+                                    expression: payload(target, union, n),
+                                    layout: v.layout,
+                                };
+                                const parts = fields.length === 1 ? [inner] : storage.parts(inner);
+                                fields.forEach((f, k) => storage.put(f.view, parts[k]!));
+                                fields.forEach((f) => f.finish(output));
+                            },
+                        });
+                        continue;
+                    }
                     case 'swap': {
                         const lens = lenses.get(i.lens)!;
                         const contents = storage.get(lens.view);

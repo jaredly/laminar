@@ -481,6 +481,12 @@ export function verifyRepresentations(
                         if (lens(v).kind !== 'thin') fail('Temporary lens must have owned storage');
                         block(i.cleanup, clone(s));
                         break;
+                    case 'lens-construct':
+                        s.knownPlaces.clear();
+                        if (lens(v).kind !== 'thin')
+                            fail('Constructor lens must have temporary storage');
+                        i.items.forEach((id) => lens(get(s, id)));
+                        break;
                     case 'lens-tuple': {
                         const r = lens(v);
                         if (r.kind !== 'tuple') return fail('Lens tuple lost its topology');

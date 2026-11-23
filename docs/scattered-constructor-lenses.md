@@ -4,13 +4,12 @@ Status: design sketch (2026-11-22). Nothing here is implemented. Statements abou
 checker come from reading `src/infer.ts`, `src/types.ts` and `src/laminar.cst`; items
 not settled by that reading are in "Open questions".
 
-## Status (steps 1-4 done, 2026-11-22)
+## Status (steps 1-5 done, 2026-11-22)
 
-Implemented and tested through the reference evaluator (`test/constructor-lens*.test.ts`,
-`test/replaceable-flag.test.ts`). The concrete backends (representations, C, Go, Wasm)
-do not support constructor lenses: representation inference stops with "Constructor
-lenses have no concrete representation yet". See "Representation and backend" for the
-investigation and plan.
+Implemented and tested through the reference evaluator and the native C and Go backends
+(`test/constructor-lens*.test.ts`, `test/c/constructor-lens.test.ts`,
+`test/replaceable-flag.test.ts`). Wasm shares the C output but was not built here. See "Representation
+and backend" for how the backends lower it.
 
 - **Grammar/AST:** constructor in `Lens`; `=A` and `A/=B` in `Type`.
 - **Types:** `flow(read, write, replaceable)` with `REPLACEABLE | FIXED | meta`;
@@ -290,7 +289,7 @@ tag and binds the component lenses directly. Whether that is a second owner form
 
 ## Representation and backend
 
-Status: not implemented. Investigation (step 5, 2026-11-22) found the following.
+Status: implemented for C and Go (step 5); Wasm shares the C output but was not built here. The investigation that led to the design:
 
 ### How returned lenses work in the concrete backends today
 
@@ -323,34 +322,40 @@ reports `unrestored-lens` or `use-after-move`. The hand-written workaround avoid
 only because it never moves `x`. A constructor lens must read its fields lazily (when
 the caller matches), which is what the reference evaluator's runtime lens does.
 
-### Plan: a scattered `constructor` shape, normalized to thin at joins and returns
+### What was built (step 5)
 
-Keep `lens-construct` in the IR and give it a scattered shape in the representation
-layer, parallel to `tuple`:
+The planned scattered `constructor` shape turned out to be unnecessary. A constructor
+lens is given the *thin* shape (`reps.thin(read, write)`), like an `aslens`, and the
+backends read its field lenses lazily when they lower the instruction:
 
-```
-constructor(name, items)    items: LensRepId[]   (tag is the constructor name)
-```
+- **Representations:** `lens-construct` yields a thin shape; its items must be lenses.
+  `verifyRepresentations` checks the same. No change to `RepresentationTable`, call ABIs
+  or lens topologies, because a constructor lens never crosses a call as an argument
+  (a stored-lens parameter rejects it by type) and results and joins already normalize
+  to thin.
+- **C (`src/c/lower.ts`):** `lens-construct` creates a temporary cell (`storage.own`) whose
+  initial value is the constructor applied to the field lenses' *current* contents.
+  This is a read, not a move: in the C storage model emptiness is symbolic and moves are
+  explicit IR `move`s, so the field cells simply hold a stale copy until restoration
+  overwrites them. The lens's `finish` checks the tag (`abort()` on mismatch), extracts
+  the payload from the replacement and `storage.put`s each field back, then runs the
+  fields' own `finish`. Calls, restore callbacks and `lensJoin: selected` are unchanged.
+  Boxed variants (recursive data) are reported as unsupported.
+- **Go (`src/go/lower.ts`):** the same, with `panic` for a tag mismatch.
+- **Why this avoids the problem that sank the `aslens` rewrite:** the aslens consumed
+  the field when built, so the arms of a join disagreed about which places were empty.
+  Here nothing is consumed until the caller's match moves the whole value out of the
+  joined temporary, and the checker's typed IR (no moves) is what the backends lower.
 
-- It is never a call ABI. At a function result and at a `lensJoin: selected` it is
-  normalized to the thin shape of its read/replacement types, exactly as a scattered
-  tuple arm is today: the joined temporary receives `Some(<contents of the item
-  lenses>)` (or `None`), the selector records the arm, and restoration for that arm
-  checks the tag and routes each field of the replacement back to its item lens.
-- Inference: `lens-construct` produces the shape; `case` arms may be `constructor`
-  shapes with a thin result; a function whose body is directly a constructor lens
-  needs the same normalization at its return (which is where `pick` would need it).
-- Concrete IR and verifier: no new instruction beyond `lens-construct`; representation
-  verification checks tag, item count and item shapes.
-- C (and Go): a new view kind for a constructor lens whose `storage.get` builds the
-  tagged value from the item views and whose `storage.put` matches the tag and puts each
-  field. Everything else (calls, restore callbacks, selected joins) is existing machinery.
-- Fields whose shape is not thin (a scattered tuple field) would need the same adapters
-  that thin-to-scattered conversion needs today; report them as unsupported.
+Observed: `fn pick(~a) ~{Some(a)}` compiles to a callee that stores
+`Some(*a.read)` in its restore context and returns a `Lens_Option_Number` whose
+`restore0` checks the tag and does `*ctx->a.read = replacement.as.v0`. The recursive
+`find` runs natively under ASan/UBSan at -O0 and at -O2 and in Go, and updates the
+found element in place.
 
-Risk: the C lowerer's storage model is the part least covered by what I read. The first
-check is whether `storage.get`/`storage.put` over a view array can be extended with a
-tag-checking constructor view without disturbing `lensJoin` bookkeeping.
+Not covered: a constructor lens over a boxed variant (for example a lens constructor of a
+recursive tree type), and a field that is itself a scattered tuple lens with
+restoration of its own (the generic fallback path was not exercised).
 
 ## Examples
 
@@ -380,8 +385,8 @@ Rejected by `infer.ts`:
    lens arguments and aliases, return typing, boolean meta at lens-position calls.
 4. Typed IR and `lower-typed.ts`: lower the constructor lens and the match (done).
 5. `verify-ir.ts`: constructor `Cap`, independent rules, corruption tests (done).
-6. Representations, concrete IR and the C backend: `sum` shape, tag dispatch,
-   restoration of each component. Native and wasm32 execution tests.
+6. Representations, concrete IR, C and Go: thin shape, lazy field reads, tag-checked
+   restoration; native and Go execution tests (done).
 
 ## Open questions
 

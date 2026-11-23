@@ -493,9 +493,17 @@ export function inferRepresentations(
                     };
                     break;
                 case 'lens-construct':
-                    return fail(
-                        'Constructor lenses have no concrete representation yet (see docs/scattered-constructor-lenses.md)',
-                    );
+                    // The lens is backed by a temporary holding the constructed value; the
+                    // field lenses are only read when a backend materializes it and written
+                    // back when it restores, so the shape is thin whatever the fields' are.
+                    s.knownPlaces.clear();
+                    if (i.out.type.tag !== 'flow') return fail('Constructor lens produced data');
+                    i.items.forEach((id) => shape(get(s, id)));
+                    out = {
+                        kind: 'lens',
+                        shape: reps.thin(i.out.type.read, i.out.type.write),
+                    };
+                    break;
                 case 'global':
                 case 'closure': {
                     if (i.out.type.tag !== 'plain') return fail('Callable produced a lens');
