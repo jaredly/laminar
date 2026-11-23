@@ -16,6 +16,7 @@ import type { Elaboration } from './elaborated.ts';
 import { importScheme, lowerTypedProgram, lowerTypedUnit } from './lower-typed.ts';
 import type { IRScheme, IRUnit, TypedProgram } from './typed-ir.ts';
 import { verifyTypedProgram } from './verify-ir.ts';
+import { pureMode, type Policy } from './mode.ts';
 
 export type CheckedExpression = Inference & { readonly ast: Linear };
 
@@ -41,6 +42,8 @@ export class Checker {
         environment: TypeEnvironment = builtinTypes(),
         constructors: TypeEnvironment = constructorTypes(),
         private unitId = 'unit',
+        /** Where the pure and dual languages differ; the checker consults it in later phases. */
+        readonly policy: Policy = pureMode,
     ) {
         this.environment = structuredClone(new Map(environment));
         this.constructors = structuredClone(new Map(constructors));

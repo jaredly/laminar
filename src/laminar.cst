@@ -1,5 +1,5 @@
 @config {
-    reserved: [let lens ~ <- = := case :: => _ @]
+    reserved: [let lens mut linear ~ <- = := case :: => _ @]
 }
 
 File {

@@ -18,6 +18,7 @@ import { lowerC } from './c/lower.ts';
 import { printC } from './c/syntax.ts';
 import type { SemanticType } from './elaborated.ts';
 import { emitGo } from './go/emit.ts';
+import { declaredMode, modes, policyFor, type Mode, type Policy } from './mode.ts';
 
 export type CompileStage = 'usage' | 'parse' | 'type' | 'backend' | 'build';
 export type SourceLocation = { line: number; column: number };
@@ -48,15 +49,42 @@ function locate(source: string, offset: number): SourceLocation {
     return { line: before.length, column: before.at(-1)!.length + 1 };
 }
 
+/**
+ * The mode a program is compiled in: the `// laminar: <mode>` pragma, else the requested mode,
+ * else `pure`. A pragma that disagrees with the requested mode is an error, because the two
+ * languages are never mixed.
+ */
+export function resolvePolicy(source: string, requested?: Mode): Policy {
+    const declared = declaredMode(source);
+    if (declared && typeof declared === 'object')
+        throw new CompileError(
+            'usage',
+            'unknown-mode',
+            `Unknown mode "${declared.invalid}"; expected ${modes.join(' or ')}`,
+        );
+    if (declared && requested && declared !== requested)
+        throw new CompileError(
+            'usage',
+            'mode-mismatch',
+            `The file declares ${declared} mode but ${requested} mode was requested`,
+        );
+    const mode = declared ?? requested ?? 'pure';
+    const policy = policyFor(mode);
+    if (!policy)
+        throw new CompileError('usage', 'unimplemented-mode', `${mode} mode is not implemented yet`);
+    return policy;
+}
+
 /** Parse and type check a source file, producing verified typed IR. */
-export function checkSource(source: string): TypedProgram {
+export function checkSource(source: string, options: { mode?: Mode } = {}): TypedProgram {
+    const policy = resolvePolicy(source, options.mode);
     let nodes;
     try {
         nodes = readLines(source).nodes;
     } catch (error) {
         throw new CompileError('parse', 'lex', (error as Error).message);
     }
-    const checker = new Checker(),
+    const checker = new Checker(undefined, undefined, undefined, policy),
         elaborations: Elaboration[] = [];
     let declaration: Decl | undefined;
     for (const node of nodes) {
@@ -121,7 +149,11 @@ function backendError(error: unknown, source: string, program?: TypedProgram): C
     );
 }
 
-export type CompileOptions = { target: TargetConfig; specializeLenses?: readonly string[] };
+export type CompileOptions = {
+    target: TargetConfig;
+    specializeLenses?: readonly string[];
+    mode?: Mode;
+};
 export type Compiled = {
     program: TypedProgram;
     concrete: ConcreteProgram;
@@ -135,7 +167,7 @@ export type Compiled = {
  * symbol names depend only on the program and target.
  */
 export function compileSource(source: string, options: CompileOptions): Compiled {
-    const program = checkSource(source);
+    const program = checkSource(source, { mode: options.mode });
     const entry = program.units.findLast((u) => !u.definition);
     if (!entry)
         throw new CompileError('backend', 'missing-entry', 'No top-level expression to run');
@@ -233,9 +265,10 @@ export function compileLibrary(
         target: TargetConfig;
         exports: readonly HostExport[];
         specializeLenses?: readonly string[];
+        mode?: Mode;
     },
 ): CompiledLibrary {
-    const program = checkSource(source);
+    const program = checkSource(source, { mode: options.mode });
     if (options.target.abi !== 'c11')
         throw new CompileError('backend', 'unsupported-export', 'Host exports use the C ABI');
     if (!options.exports.length)

@@ -26,13 +26,15 @@ import {
 } from '../src/compiler.ts';
 import { detectTarget, targetNames, type TargetName } from '../src/backend/host.ts';
 import { BackendDiagnostic } from '../src/backend/target.ts';
+import { modes, type Mode } from '../src/mode.ts';
 import { executeTypedProgram } from '../src/eval-typed.ts';
 import { printConcreteProgram } from '../src/print-concrete.ts';
 
 const usage = `usage: laminar check <file>
        laminar emit <file> [--target native|wasm32|go] [-o <path>] [--export <name,...> --header <path>] [--concrete]
        laminar run <file> [--target native|wasm32|go|reference] [--optimize] [--sanitize]
-       emit/run: [--specialize-lenses <definition,...|*>] (default: off)`;
+       emit/run: [--specialize-lenses <definition,...|*>] (default: off)
+       all: [--mode pure|dual] (default: pure, or the file's \`// laminar: <mode>\` pragma)`;
 
 function parseArgs(argv: string[]) {
     const [command, file, ...rest] = argv;
@@ -45,6 +47,7 @@ function parseArgs(argv: string[]) {
         optimize: false,
         sanitize: false,
         specializeLenses: [] as string[],
+        mode: undefined as Mode | undefined,
     };
     for (let i = 0; i < rest.length; i++) {
         const arg = rest[i]!;
@@ -54,7 +57,16 @@ function parseArgs(argv: string[]) {
         else if (arg === '--concrete') flags.concrete = true;
         else if (arg === '--export')
             flags.exports.push(...(rest[++i] ?? '').split(',').filter(Boolean));
-        else if (arg === '--optimize') flags.optimize = true;
+        else if (arg === '--mode') {
+            const mode = rest[++i] ?? '';
+            if (!(modes as readonly string[]).includes(mode))
+                throw new CompileError(
+                    'usage',
+                    'usage',
+                    `Unknown mode ${mode}; expected ${modes.join(', ')}`,
+                );
+            flags.mode = mode as Mode;
+        } else if (arg === '--optimize') flags.optimize = true;
         else if (arg === '--sanitize') flags.sanitize = true;
         else if (arg === '--specialize-lenses') {
             const names = rest[++i];
@@ -96,12 +108,12 @@ async function main(argv: string[]): Promise<number> {
         file = args.file;
         const source = readFileSync(file, 'utf8');
         if (args.command === 'check') {
-            checkSource(source);
+            checkSource(source, { mode: args.mode });
             console.log(`${file}: ok`);
             return 0;
         }
         if (args.command === 'run' && args.target === 'reference') {
-            const result = executeTypedProgram(checkSource(source), {
+            const result = executeTypedProgram(checkSource(source, { mode: args.mode }), {
                 stdout: (text) => process.stdout.write(text),
                 stdin: readLine,
             });
@@ -114,13 +126,18 @@ async function main(argv: string[]): Promise<number> {
                 target,
                 exports: args.exports.map((name) => ({ name })),
                 specializeLenses: args.specializeLenses,
+                mode: args.mode,
             });
             writeFileSync(args.header!, library.header);
             if (args.output) writeFileSync(args.output, library.code);
             else process.stdout.write(library.code);
             return 0;
         }
-        const compiled = compileSource(source, { target, specializeLenses: args.specializeLenses });
+        const compiled = compileSource(source, {
+            target,
+            specializeLenses: args.specializeLenses,
+            mode: args.mode,
+        });
         if (args.command === 'emit') {
             const text = args.concrete
                 ? printConcreteProgram(compiled.concrete) + '\n'

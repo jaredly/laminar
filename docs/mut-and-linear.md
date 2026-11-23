@@ -20,7 +20,7 @@ These rules define a separate "dual" language. The paper's language ("pure": eve
 consume-once, explicit `dup`) stays as it is, and the two are never mixed in one program. See
 "Two languages" in [mut-and-linear-plan.md](mut-and-linear-plan.md).
 
-Entries marked **proposed** change or extend the notes above and need the author's sign-off.
+Entries marked **accepted** change or extend the notes above and have the author's sign-off.
 
 ### Two axes
 
@@ -51,17 +51,17 @@ case. A getter-only lens may come later as a capability restriction, never as a 
 
 ### Decisions
 
-1. **What makes a value linear (proposed).** Only *observable* cleanup does: closing an fd, ending
+1. **What makes a value linear (accepted).** Only *observable* cleanup does: closing an fd, ending
    a connection, anything a program can see happen. Plain memory reclamation does not. This revises
    "anything on the heap is linear". Otherwise the freeze rule means nothing heap-allocated can
    ever be shared. A type declares observable cleanup by being `linear` and naming its cleanup
    function; the exact syntax is left for phase 2. Alternative if you prefer to keep "all heap is
    linear": add an explicit `shared` wrapper that consumes a linear value and runs its cleanup on
    the last drop. That weakens static single ownership at one visible point.
-2. **Reclaiming shared memory (proposed).** Go relies on its GC. C uses reference counts. Frozen
+2. **Reclaiming shared memory (accepted).** Go relies on its GC. C uses reference counts. Frozen
    data is immutable and built bottom-up, so it cannot form cycles, and counts are enough. A write
    path never sees shared memory, because plain to `mut` goes through `dup()`, which deep-copies.
-3. **Scalars (proposed).** Number and Bool: stored inline, no allocation, implicitly copied. String
+3. **Scalars (accepted).** Number and Bool: stored inline, no allocation, implicitly copied. String
    and every aggregate (tuple, record, union) are ordinary shareable immutable data, not scalars,
    even when their fields are scalars.
 4. **Getter-only lenses:** out of scope for this work.

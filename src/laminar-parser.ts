@@ -35,7 +35,7 @@ import {
 } from './ast.ts';
 
 export const grammar = new Grammar({
-    reserved: ['let', 'lens', '~', '<-', '=', ':=', 'case', '::', '=>', '_', '@'],
+    reserved: ['let', 'lens', 'mut', 'linear', '~', '<-', '=', ':=', 'case', '::', '=>', '_', '@'],
 });
 
 grammar.add('File', [

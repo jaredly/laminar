@@ -25,8 +25,10 @@ non-`mut` bindings become readable more than once, and `mut`/`linear` keep today
 The paper's language ("pure": today's behaviour) and the new language ("dual") are separate
 languages that are never mixed. Everything below applies to dual only; pure stays as it is.
 
-- **Selection.** The mode is a compiler option (CLI flag and API option), and a file pragma may
-  override it. It applies to a whole program. There is no cross-mode linking, so loading a
+- **Selection.** The mode is a compiler option (`--mode` on the CLI, `mode` in the API) or a
+  `// laminar: <mode>` pragma on the first non-blank line. With neither, the mode is pure. A
+  pragma that disagrees with the requested mode is an error (`mode-mismatch`). It applies to a
+  whole program. There is no cross-mode linking, so loading a
   program in the other mode, or importing across modes, is an error. Host exports are not
   affected.
 - **Same text, different meaning.** In pure, `let x = ...` is a binding you can assign and lens.
@@ -69,8 +71,7 @@ allocation with observable cleanup, `aslens`). It is not only a type declaration
 
 ## Phase 0: settle the open design points (no code)
 
-Status: drafted in `mut-and-linear.md` ("Settled rules"). Decisions 1 to 3 are marked proposed
-and wait on the author's sign-off.
+Status: drafted in `mut-and-linear.md` ("Settled rules"). Decisions 1 to 3 are accepted.
 
 1. **Which cleanup makes a value linear.** If every heap value is linear and freezing a linear
    value is an error, nothing heap-allocated can be shared, which defeats the feature. Proposed:
@@ -160,6 +161,12 @@ immutable values.
 - Update `examples/` that currently write `!x` on scalars.
 
 ## Phase 0.5: mode plumbing
+
+Status: done. `src/mode.ts` holds `Mode`, `Policy` (just `mode` for now), the pragma reader and
+`policyFor`, which returns nothing for dual, so dual reports `unimplemented-mode`. `Checker`
+takes the policy. `mut` and `linear` are reserved in the grammar, so using them as identifiers is
+a parse error. The "needs dual mode" checker error arrives with the dual syntax in phases 2 and 3.
+Tests are in `test/mode.test.ts`; the rest of the suite is unchanged.
 
 Add the compiler option, the pragma, the reserved keywords `mut` and `linear` with a
 checker-level "needs dual mode" error in pure, and the policy object, with pure as the only
