@@ -142,12 +142,13 @@ the pure language.
   `dup(~x)` / `!x` is allowed.
 - Reading a `mut` binding consumes it for every type, so `:=` is unchanged.
 - `mut` into plain needs an explicit `dup`, so crossing the boundary in either direction is a real
-  copy that appears in the source. `let p = m`, `let p = (m, 1)` and `match m { p -> ... }` with
-  a `mut` `m` are a `mut-to-plain` error; write `let p = dup(~m)` or `let mut p = m`. Taking a
-  `mut` value apart (`let (a, b) = m`, `match m { (a, b) -> ... }`) binds `mut` parts, because
-  the parts are still owned. This is decided by binding modes alone, so it needs no types, and
-  `dup(~m)` of a linear value is already `dup-linear`. Not done: passing a `mut` value to a plain
-  parameter, because function types do not record a parameter's mode (see phase 5).
+  copy that appears in the source. Binding a moved `mut` value to plain names is a `mut-to-plain`
+  error: `let p = m`, `let (a, b) = m`, `let p = (m, 1)` and `match m { (a, b) -> ... }`. Write
+  `let p = dup(~m)`, or make the whole pattern `mut`: `let mut (a, b) = m`,
+  `match m { mut Fd(n) -> ... }`. `mut` applies to a whole pattern and never to single names, so
+  the parts of one pattern cannot differ. This is decided by binding modes alone, so it needs no
+  types, and `dup(~m)` of a linear value is already `dup-linear`. Not done: passing a `mut` value
+  to a plain parameter, because function types do not record a parameter's mode (see phase 5).
 - A closure that reads a plain binding captures a copy (`let $plainN = dup(~x)`) and rebinds the
   name plain inside its body, so it can read it repeatedly.
 - A callee is never copied, so closures stay affine: a plain parameter holding a function can be

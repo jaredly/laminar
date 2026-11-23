@@ -105,20 +105,19 @@ export function desugarPlain(source: Linear): PlainResult {
     };
 
     /**
-     * The mode of the names a pattern binds from a value. Taking apart a `mut` value leaves its
-     * parts owned, so they are `mut`. Naming the whole of it plain would freeze it, which takes
-     * an explicit `dup`.
+     * The mode of the names a pattern binds from a value. Moving a `mut` value into plain names
+     * would freeze it, which takes an explicit `dup`, so a pattern over one must be `mut`.
      */
-    const patternMode = (pat: Pat, value: Term, scope: Scope): Mode => {
+    const patternMode = (pat: Pat, value: Term, scope: Scope, mut?: boolean): Mode => {
+        if (mut) return 'mut';
         const root = ids(pat).length ? moved(value, scope) : undefined;
-        if (!root) return 'plain';
-        if (pat.type === 'id')
+        if (root)
             throw new TypeDiagnostic(
                 'mut-to-plain',
                 root.loc,
-                `${root.text} is mut, so it cannot become a plain binding by moving; use \`dup(~${root.text})\` for a shared copy, or declare the binding \`mut\``,
+                `${root.text} is mut, so it cannot become a plain binding by moving; use \`dup(~${root.text})\` for a shared copy, or bind it \`mut\``,
             );
-        return 'mut';
+        return 'plain';
     };
 
     const letScope = (n: { pat: Pat; value: Term; mut?: boolean }, scope: Scope): Scope => {
@@ -128,14 +127,14 @@ export function desugarPlain(source: Linear): PlainResult {
             n.value.type === 'lens' ||
             (n.pat.type === 'drop' && n.value.type === 'fn' && n.value.name)
                 ? 'mut'
-                : patternMode(n.pat, n.value, scope);
+                : patternMode(n.pat, n.value, scope, n.mut);
         const next = bind(scope, n.pat, mode);
         if (n.pat.type === 'drop' && n.value.type === 'fn' && n.value.name)
             return new Map(next).set(n.value.name, 'mut');
         return next;
     };
-    const arm = (value: Term, pat: Pat, scope: Scope): Scope =>
-        bind(scope, pat, value.type === 'lens' ? 'mut' : patternMode(pat, value, scope));
+    const arm = (value: Term, c: { pat: Pat; mut?: boolean }, scope: Scope): Scope =>
+        bind(scope, c.pat, value.type === 'lens' ? 'mut' : patternMode(c.pat, value, scope, c.mut));
 
     const linear = (n: Linear, scope: Scope): Linear => {
         switch (n.type) {
@@ -187,9 +186,9 @@ export function desugarPlain(source: Linear): PlainResult {
                 return {
                     ...n,
                     value: term(n.value, scope),
-                    cases: n.cases.map((c) => ({
+                    cases: n.cases.map(({ mut: _, ...c }) => ({
                         ...c,
-                        body: linear(c.body, arm(n.value, c.pat, scope)),
+                        body: linear(c.body, arm(n.value, { ...c, mut: _ }, scope)),
                     })),
                 };
         }
@@ -272,9 +271,9 @@ export function desugarPlain(source: Linear): PlainResult {
                 return {
                     ...n,
                     value: term(n.value, scope),
-                    cases: n.cases.map((c) => ({
+                    cases: n.cases.map(({ mut: _, ...c }) => ({
                         ...c,
-                        body: lens(c.body, arm(n.value, c.pat, scope)),
+                        body: lens(c.body, arm(n.value, { ...c, mut: _ }, scope)),
                     })),
                 };
         }

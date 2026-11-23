@@ -71,7 +71,7 @@ export type Lens =
      * type it is not replaceable as a whole (see docs/scattered-constructor-lenses.md).
      */
     | { type: 'constructor'; name: string; args: Lens[]; loc: Loc }
-    | { type: 'case'; value: Term; cases: { pat: Pat; body: Lens }[]; loc: Loc };
+    | { type: 'case'; value: Term; cases: { pat: Pat; body: Lens; mut?: boolean }[]; loc: Loc };
 
 export type Term = Linear | { type: 'lens'; lens: Lens };
 
@@ -134,7 +134,7 @@ export type Linear =
     | { type: 'vector'; items: Linear[]; loc: Loc }
     | { type: 'record'; fields: { name: string; value: Linear; loc: Loc }[]; loc: Loc }
     | { type: 'constructor'; name: string; args: Linear[]; loc: Loc }
-    | { type: 'case'; value: Term; cases: { pat: Pat; body: Linear }[]; loc: Loc };
+    | { type: 'case'; value: Term; cases: { pat: Pat; body: Linear; mut?: boolean }[]; loc: Loc };
 
 export const names = (pat: Pat): string[] => {
     switch (pat.type) {

@@ -47,7 +47,7 @@ it('requires a union that holds a linear value to be linear too', () => {
 it('requires a linear local to be consumed', () => {
     expect(code(`${fd}{let mut f = Fd(1)\n 2}`)).toBe('linear-unconsumed');
     expect(code(`${fd}{let mut f = Fd(1)\n f}`)).toBe('ok');
-    expect(code(`${fd}{let mut f = Fd(1)\n match f {\n Fd(n) -> n\n }}`)).toBe('ok');
+    expect(code(`${fd}{let mut f = Fd(1)\n match f {\n mut Fd(n) -> n\n }}`)).toBe('ok');
 });
 
 it('treats what `lens p <- v` binds as linear by provenance', () => {

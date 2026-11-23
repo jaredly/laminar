@@ -231,10 +231,12 @@ FnArg {
 
 LinearCase {
     [" " pat:Pat "->" ...body:*Linear] -> ({pat, body})
+    [" " "mut" pat:Pat "->" ...body:*Linear] -> ({pat, body, mut: true})
 }
 
 LensCase {
     [" " pat:Pat "->" ...body:*Lens] -> ({pat, body})
+    [" " "mut" pat:Pat "->" ...body:*Lens] -> ({pat, body, mut: true})
 }
 
 LinearInterp {

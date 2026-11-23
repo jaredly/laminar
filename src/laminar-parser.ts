@@ -1337,6 +1337,15 @@ grammar.add('LinearCase', [
             body,
         }),
     ),
+    // LinearCase:2
+    option(
+        list(' ', lit('mut'), b('pat', 'Pat'), lit('->'), rest('body', 'Linear', false)),
+        ({ pat, body, node }: { pat: Pat; body: Linear; node: Node }): LinearCase => ({
+            pat,
+            body,
+            mut: true,
+        }),
+    ),
 ]);
 
 grammar.add('LensCase', [
@@ -1344,6 +1353,15 @@ grammar.add('LensCase', [
     option(
         list(' ', b('pat', 'Pat'), lit('->'), rest('body', 'Lens', false)),
         ({ pat, body, node }: { pat: Pat; body: Lens; node: Node }): LensCase => ({ pat, body }),
+    ),
+    // LensCase:2
+    option(
+        list(' ', lit('mut'), b('pat', 'Pat'), lit('->'), rest('body', 'Lens', false)),
+        ({ pat, body, node }: { pat: Pat; body: Lens; node: Node }): LensCase => ({
+            pat,
+            body,
+            mut: true,
+        }),
     ),
 ]);
 

@@ -60,9 +60,13 @@ it('freezes a mut binding into a plain one only through an explicit dup', () => 
     // Staying mut, borrowing, or discarding is not a freeze.
     expect(run('{let mut m = (1, 2)\n let mut q = m\n q}')).toEqual([1, 2]);
     expect(code('{let mut m = (1, 2)\n let _ = m\n 0}')).toBe('ok');
-    // Taking a mut value apart leaves owned, mut parts.
-    expect(run('{let mut m = (1, 2)\n match m {\n (a, b) -> (b, a)\n }}')).toEqual([2, 1]);
-    expect(code('{let mut m = (1, 2)\n let (a, b) = m\n (a, a)}')).toBe('use-after-move');
+    // A pattern over a mut value must be mut as a whole, never name by name.
+    expect(code('{let mut m = (1, 2)\n let (a, b) = m\n a}')).toBe('mut-to-plain');
+    expect(code('{let mut m = (1, 2)\n match m {\n (a, b) -> a\n }}')).toBe('mut-to-plain');
+    expect(run('{let mut m = (1, 2)\n let mut (a, b) = m\n (b, a)}')).toEqual([2, 1]);
+    expect(run('{let mut m = (1, 2)\n match m {\n mut (a, b) -> (b, a)\n }}')).toEqual([2, 1]);
+    expect(code('{let mut m = (1, 2)\n let mut (a, b) = m\n (a, a)}')).toBe('use-after-move');
+    expect(code('{let m = (1, 2)\n let (a, b) = m\n (a, a)}')).toBe('ok');
     expect(code('{let mut n = 1\n let p = n + 1\n p}')).toBe('ok');
 });
 
@@ -73,6 +77,7 @@ it('copies a plain binding into a closure', () => {
 it('rejects mut in pure mode', () => {
     expect(code('{let mut n = 1\n n}', 'pure')).toBe('dual-only');
     expect(code('fn f(mut x) {x}\nf(1)', 'pure')).toBe('dual-only');
+    expect(code('{let m = (1, 2)\n match m {\n mut (a, b) -> a\n }}', 'pure')).toBe('dual-only');
 });
 
 it('rejects a linear value in a plain binding', () => {
