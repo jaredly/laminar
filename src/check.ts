@@ -12,12 +12,13 @@ import { builtinTypes, constructorTypes } from './builtins.ts';
 import { TypeDiagnostic, type Scheme } from './types.ts';
 import { desugarRecords } from './desugar-records.ts';
 import { verifyElaboration } from './backend/verify-elaboration.ts';
-import type { Elaboration } from './elaborated.ts';
+import type { Elaboration, SemanticType } from './elaborated.ts';
 import { importScheme, lowerTypedProgram, lowerTypedUnit } from './lower-typed.ts';
 import type { IRScheme, IRUnit, TypedProgram } from './typed-ir.ts';
 import { verifyTypedProgram } from './verify-ir.ts';
 import { pureMode, type Policy } from './mode.ts';
 import { isLinear } from './linear.ts';
+import { desugarPlain } from './desugar-plain.ts';
 import { pureMode, type Policy } from './mode.ts';
 
 export type CheckedExpression = Inference & { readonly ast: Linear };
@@ -37,6 +38,8 @@ export class Checker {
             scheme: Scheme;
             definitionId: string;
             elaboration: Elaboration;
+            /** Type variables that must not be instantiated at a linear type. */
+            copyBounds: Set<string>;
             imports: IRScheme[];
         }
     >();
@@ -70,24 +73,59 @@ export class Checker {
             ),
         ];
     }
+    /** Per published definition: the type variables its plain bindings and `dup`s copy. */
+    private copyBounds = new Map<string, Set<string>>();
     private declaredLinear = (name: string): boolean => {
         const definition = this.types.get(name);
         return definition?.kind === 'union' && !!definition.linear;
     };
 
     /** Dual mode: a linear value is neither copied nor left unconsumed at the end of its scope. */
-    private checkLinear(elaboration: Elaboration): void {
+    private checkLinear(elaboration: Elaboration, plainBinders: Set<number>): Set<string> {
         const loc = (node: string) => elaboration.nodes.find((n) => n.id === node)?.loc ?? 0;
-        for (const inst of elaboration.instantiations) {
-            if (inst.definition !== 'native/dup' || inst.type.tag !== 'fn') continue;
-            const argument = inst.type.args[0];
-            const read = argument?.tag === 'flow' ? argument.read : argument?.value;
-            if (read && isLinear(read, this.declaredLinear))
+        for (const b of elaboration.bindings)
+            if (
+                b.kind === 'local' &&
+                b.declaration &&
+                plainBinders.has(loc(b.declaration)) &&
+                isLinear(b.initialType, this.declaredLinear)
+            )
+                throw new TypeDiagnostic(
+                    'linear-plain',
+                    loc(b.declaration),
+                    `${b.name} holds a linear value, so it must be declared \`mut\``,
+                );
+        // Type variables whose values this definition copies, so they cannot be linear.
+        const copied = new Set<string>();
+        const copy = (type: SemanticType, what: string, node: string) => {
+            if (isLinear(type, this.declaredLinear))
                 throw new TypeDiagnostic(
                     'dup-linear',
-                    loc(inst.node),
-                    'A linear value cannot be copied with dup',
+                    loc(node),
+                    `${what} cannot copy a linear value`,
                 );
+            variables(type).forEach((id) => copied.add(id));
+        };
+        for (const b of elaboration.bindings)
+            if (b.kind === 'local' && b.declaration && plainBinders.has(loc(b.declaration)))
+                variables(b.initialType).forEach((id) => copied.add(id));
+        for (const inst of elaboration.instantiations) {
+            if (inst.definition === 'native/dup' && inst.type.tag === 'fn') {
+                const argument = inst.type.args[0];
+                const read = argument?.tag === 'flow' ? argument.read : argument?.value;
+                if (read) copy(read, 'dup', inst.node);
+                continue;
+            }
+            const bounds = this.copyBounds.get(inst.definition);
+            if (!bounds) continue;
+            const name = decodeURIComponent(inst.definition.split('/').at(-1)!);
+            for (const argument of inst.arguments)
+                if (bounds.has(argument.parameter))
+                    copy(
+                        argument.type,
+                        `${name} (its plain bindings are copied, so it)`,
+                        inst.node,
+                    );
         }
         for (const scope of elaboration.scopes) {
             const owned = new Set(
@@ -109,6 +147,7 @@ export class Checker {
                     'A linear value must be consumed before its scope ends',
                 );
         }
+        return new Set([...copied].filter((id) => elaboration.signature.quantified.includes(id)));
     }
 
     get typeDefinitions(): TypeDefinitions {
@@ -159,6 +198,13 @@ export class Checker {
             ast.type === 'fn' && ast.name
                 ? `${this.unitId}/definition/${encodeURIComponent(ast.name)}`
                 : `${this.unitId}/expression/${this.nextExpression++}`;
+        let plainBinders = new Set<number>();
+        if (this.policy.plainBindings) ({ ast, plainBinders } = desugarPlain(ast));
+        else {
+            const mut = findMut(ast);
+            if (mut !== undefined)
+                throw new TypeDiagnostic('dual-only', mut, '`mut` needs dual mode');
+        }
         const inference = new Inferencer(
             this.environment,
             this.constructors,
@@ -166,7 +212,9 @@ export class Checker {
             this.types,
         ).infer(ast, declaration);
         verifyElaboration(inference.elaboration);
-        if (this.policy.linearTypes) this.checkLinear(inference.elaboration);
+        const copyBounds = this.policy.linearTypes
+            ? this.checkLinear(inference.elaboration, plainBinders)
+            : new Set<string>();
         const result = { ...inference, ast: inference.elaboration.source };
         this.checked.set(result, {
             ast: inference.elaboration.source,
@@ -174,6 +222,7 @@ export class Checker {
             scheme: structuredClone(inference.scheme),
             definitionId: inference.elaboration.id,
             elaboration: inference.elaboration,
+            copyBounds,
             imports: [
                 ...[...this.environment].map(([name, scheme]) =>
                     importScheme(this.definitionIds.get(name)!, scheme),
@@ -214,6 +263,7 @@ export class Checker {
             );
         this.environment.set(stored.ast.name, structuredClone(stored.scheme));
         this.definitionIds.set(stored.ast.name, stored.definitionId);
+        this.copyBounds.set(stored.definitionId, stored.copyBounds);
     }
     define(
         ast: Linear & { type: 'fn' },
@@ -309,4 +359,31 @@ function checkItems(
             'Declaration has no implementation',
         );
     return { checker, expressions };
+}
+
+/** The offset of the first `mut` in a tree, which only dual mode accepts. */
+function findMut(tree: unknown): number | undefined {
+    if (!tree || typeof tree !== 'object') return undefined;
+    if (Array.isArray(tree)) return tree.map(findMut).find((loc) => loc !== undefined);
+    const node = tree as { mut?: boolean; loc?: number; pat?: { loc?: number } };
+    if (node.mut === true) return node.loc ?? node.pat?.loc ?? 0;
+    return Object.values(node)
+        .map(findMut)
+        .find((loc) => loc !== undefined);
+}
+
+/** Every type variable in a type. */
+function variables(type: SemanticType): string[] {
+    switch (type.tag) {
+        case 'variable':
+            return [type.id];
+        case 'con':
+            return type.args.flatMap(variables);
+        case 'tuple':
+            return type.items.flatMap(variables);
+        case 'record':
+            return type.fields.flatMap((f) => variables(f.type));
+        case 'fn':
+            return [];
+    }
 }

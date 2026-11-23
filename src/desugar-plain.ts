@@ -1,0 +1,246 @@
+import { captureUses } from './captures.ts';
+import { names, type FnArg, type Id, type Lens, type Linear, type Pat, type Term } from './ast.ts';
+import { TypeDiagnostic } from './types.ts';
+
+/**
+ * Dual mode's binding modes, as a rewrite in front of the checker. A binding is either `mut`
+ * (exclusive and lensable, consumed by a read, as in the pure language) or plain (shared and
+ * immutable, readable any number of times). Plain is the default; `let mut`, `fn (mut x)`,
+ * `~x` parameters, `let x = ~lens` aliases and the names a borrowed `match ~x` binds are `mut`.
+ *
+ * Reading a plain binding is rewritten to `dup(~x)`, so a shared value is, for now, a deep copy
+ * that nothing can tell apart from sharing. The checker, IR and backends see only the pure
+ * language. Borrowing or assigning a plain binding is an error. A closure that reads a plain
+ * binding captures a copy and rebinds the name plain inside its body.
+ */
+type Mode = 'plain' | 'mut';
+type Scope = ReadonlyMap<string, Mode>;
+
+export type PlainResult = {
+    ast: Linear;
+    /** Source offsets of the plain binders, for the checks that need their types. */
+    plainBinders: Set<number>;
+};
+
+const ids = (pat: Pat): Id[] => {
+    switch (pat.type) {
+        case 'id':
+            return [pat];
+        case 'tuple':
+            return pat.items.flatMap(ids);
+        case 'constructor':
+            return pat.args.flatMap(ids);
+        case 'record':
+            return pat.fields.flatMap((f) => ids(f.pat));
+        case 'lens':
+            return ids(pat.inner);
+        default:
+            return [];
+    }
+};
+
+export function desugarPlain(source: Linear): PlainResult {
+    const plainBinders = new Set<number>();
+    let fresh = 0;
+    const bind = (scope: Scope, pat: Pat, mode: Mode): Scope => {
+        const next = new Map(scope);
+        for (const id of ids(pat)) {
+            next.set(id.text, mode);
+            if (mode === 'plain') plainBinders.add(id.loc);
+        }
+        return next;
+    };
+    const rootOf = (n: { type: string }): Id | undefined => {
+        let node = n as Linear | Lens;
+        while (node.type === 'field') node = node.target;
+        return node.type === 'id' ? node : undefined;
+    };
+    const copyOf = (place: Lens, loc: number): Linear => ({
+        type: 'apply',
+        fn: { type: 'id', text: 'dup', loc },
+        args: [{ type: 'lens', lens: place }],
+        loc,
+    });
+    const isDup = (n: { type: string; fn?: Linear; args?: Term[] }, scope: Scope) =>
+        n.type === 'apply' &&
+        n.fn?.type === 'id' &&
+        n.fn.text === 'dup' &&
+        !scope.has('dup') &&
+        n.args?.length === 1 &&
+        n.args[0].type === 'lens';
+
+    const term = (n: Term, scope: Scope, dup = false): Term =>
+        n.type === 'lens' ? { ...n, lens: lens(n.lens, scope, dup) } : linear(n, scope);
+
+    /** A borrowed place. Only the explicit `dup(~x)` may borrow a plain binding. */
+    const place = (n: Lens, scope: Scope, dup: boolean): void => {
+        const root = rootOf(n);
+        if (root && scope.get(root.text) === 'plain' && !dup)
+            throw new TypeDiagnostic(
+                'plain-lens',
+                root.loc,
+                `${root.text} is not mut, so it cannot be borrowed or assigned; declare it \`mut\``,
+            );
+    };
+
+    const letScope = (n: { pat: Pat; value: Term; mut?: boolean }, scope: Scope): Scope => {
+        // A named function, or an alias of a lens, is owned and consumed like a pure binding.
+        const mode: Mode =
+            n.mut ||
+            n.value.type === 'lens' ||
+            (n.pat.type === 'drop' && n.value.type === 'fn' && n.value.name)
+                ? 'mut'
+                : 'plain';
+        const next = bind(scope, n.pat, mode);
+        if (n.pat.type === 'drop' && n.value.type === 'fn' && n.value.name)
+            return new Map(next).set(n.value.name, 'mut');
+        return next;
+    };
+    const arm = (value: Term, pat: Pat, scope: Scope): Scope =>
+        bind(scope, pat, value.type === 'lens' ? 'mut' : 'plain');
+
+    const linear = (n: Linear, scope: Scope): Linear => {
+        switch (n.type) {
+            case 'id':
+                return scope.get(n.text) === 'plain' ? copyOf(n, n.loc) : n;
+            case 'op':
+            case 'number':
+            case 'bool':
+                return n;
+            case 'string':
+                return {
+                    ...n,
+                    interp: n.interp.map((p) => ({ ...p, value: linear(p.value, scope) })),
+                };
+            case 'tuple':
+            case 'vector':
+                return { ...n, items: n.items.map((v) => linear(v, scope)) };
+            case 'index':
+                return { ...n, index: term(n.index, scope) };
+            case 'field': {
+                const root = rootOf(n);
+                return root && scope.get(root.text) === 'plain'
+                    ? copyOf(n as unknown as Lens, n.loc)
+                    : n;
+            }
+            case 'constructor':
+                return { ...n, args: n.args.map((v) => linear(v, scope)) };
+            case 'record':
+                return {
+                    ...n,
+                    fields: n.fields.map((f) => ({ ...f, value: linear(f.value, scope) })),
+                };
+            case 'assign':
+                place(n.lens, scope, false);
+                return { ...n, lens: lens(n.lens, scope, false), value: linear(n.value, scope) };
+            case 'apply':
+                return application(n, scope);
+            case 'fn':
+                return closure(n, scope);
+            case 'let': {
+                const { mut: _, ...rest } = n;
+                return {
+                    ...rest,
+                    value: term(n.value, scope),
+                    body: linear(n.body, letScope(n, scope)),
+                };
+            }
+            case 'case':
+                return {
+                    ...n,
+                    value: term(n.value, scope),
+                    cases: n.cases.map((c) => ({
+                        ...c,
+                        body: linear(c.body, arm(n.value, c.pat, scope)),
+                    })),
+                };
+        }
+    };
+
+    const application = <T extends Linear | Lens>(n: T & { type: 'apply' }, scope: Scope): T => {
+        const dup = isDup(n, scope);
+        // A callee is consumed, not copied: closures are affine and cannot be duplicated.
+        const fn = n.fn.type === 'id' ? n.fn : linear(n.fn, scope);
+        return { ...n, fn, args: n.args.map((a) => term(a, scope, dup)) };
+    };
+
+    const closure = (n: Linear & { type: 'fn' }, scope: Scope): Linear => {
+        const argMode = (a: FnArg): Mode => (a.mut || a.pat.type === 'lens' ? 'mut' : 'plain');
+        let inner = scope;
+        for (const a of n.args) inner = bind(inner, a.pat, argMode(a));
+        const bound = new Set(n.args.flatMap((a) => names(a.pat)));
+        const { values } = captureUses(n.body, bound);
+        const captured = [...values].filter((name) => scope.get(name) === 'plain');
+        const args = n.args.map(({ mut: _, ...a }) => a);
+        let body = term(n.body, inner);
+        const loc = n.loc;
+        const temporaries = captured.map((name) => `$plain${fresh++}`);
+        // Inside the body the copy is bound plain again, under the original name.
+        captured.forEach((name, i) => {
+            const rebind = {
+                pat: { type: 'id', text: name, loc } as Pat,
+                value: { type: 'id', text: temporaries[i], loc } as Term,
+            };
+            body =
+                body.type === 'lens'
+                    ? { type: 'lens', lens: { type: 'let', ...rebind, body: body.lens, loc } }
+                    : { type: 'let', ...rebind, body, loc };
+        });
+        let result: Linear = { ...n, args, body };
+        captured.forEach((name, i) => {
+            const index = captured.length - 1 - i;
+            result = {
+                type: 'let',
+                pat: { type: 'id', text: temporaries[index], loc },
+                value: copyOf({ type: 'id', text: captured[index], loc }, loc),
+                body: result,
+                loc,
+            };
+        });
+        return result;
+    };
+
+    const lens = (n: Lens, scope: Scope, dup = false): Lens => {
+        switch (n.type) {
+            case 'id':
+            case 'field':
+                place(n, scope, dup);
+                return n;
+            case 'index':
+                place(n.target, scope, dup);
+                return { ...n, index: term(n.index, scope) };
+            case 'tuple':
+                return { ...n, items: n.items.map((v) => lens(v, scope, dup)) };
+            case 'constructor':
+                return { ...n, args: n.args.map((v) => lens(v, scope, dup)) };
+            case 'apply':
+                return application(n, scope);
+            case 'aslens':
+                // The pattern is an owned temporary that the body consumes.
+                return {
+                    ...n,
+                    value: linear(n.value, scope),
+                    body: linear(n.body, bind(scope, n.pat, 'mut')),
+                };
+            case 'let': {
+                const { mut: _, ...rest } = n;
+                return {
+                    ...rest,
+                    value: term(n.value, scope),
+                    body: lens(n.body, letScope(n, scope)),
+                };
+            }
+            case 'case':
+                return {
+                    ...n,
+                    value: term(n.value, scope),
+                    cases: n.cases.map((c) => ({
+                        ...c,
+                        body: lens(c.body, arm(n.value, c.pat, scope)),
+                    })),
+                };
+        }
+    };
+
+    return { ast: linear(source, new Map()), plainBinders };
+}

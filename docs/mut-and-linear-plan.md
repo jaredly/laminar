@@ -113,9 +113,8 @@ Status: done for unions (checker only). Dual mode is now selectable, and the che
 
 Not covered yet (each is a known gap, not a design change):
 
-- `dup` inside a generic function is only checked at concrete types, so `fn copy(x) {!x}` applied
-  to a linear value is not rejected. This needs a copy bound on type variables, or a check when
-  generics are specialized.
+- `dup` inside a generic function was only checked at concrete types; phase 3 adds copy bounds
+  on type variables that close this.
 - `_` patterns, unused function parameters and discarded expression statements can still drop a
   linear value. Only let-bound locals are checked.
 - Closures that capture a linear value are not treated as linear.
@@ -126,22 +125,48 @@ Exit: `type linear Fd { Fd(Number) }` parses, `dup` on it is a type error, and p
 
 ## Phase 3: `mut` bindings and plain shared bindings
 
-- Syntax: `let mut x =` and `fn (mut x) {}`; carry a `mut` flag through the parser and the
-  `Binding` record in `src/infer.ts`. A `~x` parameter sets it implicitly.
-- Plain bindings: reading does not consume, for every non-linear type. Reject assignment, lens
-  use and `~` on them.
-- `mut` bindings: unchanged consume-once semantics.
-- Freeze (`mut` to plain) is a move. Plain to `mut` requires `dup()`, which is implied when the
-  value is a scalar (Number or Bool), so `let mut n = x` works. Reads of `mut` bindings never
-  copy. Both are checked in `src/infer.ts`; the linear checks come from phase 2.
-- Typed IR and verification: add a "binding is shared" fact so `verify-ir.ts` allows repeated
-  reads without a move, and rejects a write or lens on a shared place.
-- Closures (`lambda` in `src/infer.ts`) capture plain bindings by sharing and `mut` bindings by
-  move; check that rule against `captureUses` and `src/captures.ts`.
-- Tests: the full table above, one test per row, including the error rows.
+Status: done for the checker and the reference evaluator. Backends are untouched.
 
-Exit: the table is enforced by the checker, and the reference evaluator runs programs that share
-immutable values.
+How it works. Binding modes are a rewrite in front of the pure checker (`src/desugar-plain.ts`),
+run by `Checker.check` in dual mode. The checker, typed IR, evaluators and backends only ever see
+the pure language.
+
+- Syntax: `let mut pat = ...` and `fn (mut x)` (`src/laminar.cst`, `mut` flag on `let` and
+  `FnArg`). In pure mode `mut` is a `dual-only` error.
+- Plain is the default. `mut` is: `let mut`, `fn (mut x)`, `~x` parameters, `let x = ~lens`
+  aliases, owned `lens` temporaries, named local functions, and the names a borrowed `match ~x`
+  binds.
+- A read of a plain binding or a field of one becomes `dup(~x)`. So for now a shared value is a
+  deep copy that cannot be told apart from sharing. Phase 5 replaces the copy with real sharing.
+- `~x`, `x := ...` and `match ~x` on a plain binding are a `plain-lens` error. The explicit
+  `dup(~x)` / `!x` is allowed.
+- Reading a `mut` binding consumes it for every type, so `:=` is unchanged.
+- Freeze (`mut` to plain) is an ordinary move: `let p = m`.
+- A closure that reads a plain binding captures a copy (`let $plainN = dup(~x)`) and rebinds the
+  name plain inside its body, so it can read it repeatedly.
+- A callee is never copied, so closures stay affine: a plain parameter holding a function can be
+  called once.
+- Linearity: a plain binder whose type is linear is `linear-plain`. A type variable held by a
+  plain binder or copied by `dup` cannot later be instantiated at a linear type. Each published
+  definition records those variables (`Checker.copyBounds`), and a call that supplies a linear
+  type, directly or through another generic function, is `dup-linear`. This closes the generic
+  gap from phase 2. A `mut` parameter can take a linear value.
+- Tests: `test/plain.test.ts`; `test/linear.test.ts` now uses `let mut` for linear values.
+
+Deviations from the rules table, to settle:
+
+- Plain to `mut` is implicitly a deep copy for every type, not only scalars, because every plain
+  read is a `dup`. The "needs `dup()`" rule, which exists to make the cost visible, needs a
+  distinction between shared and owned values in the types. It belongs with phase 5, when a
+  plain read stops copying.
+- Scalars are not special yet.
+
+Known gaps:
+
+- Closures that capture a linear `mut` value are not treated as linear.
+- `_` patterns, unused parameters and discarded statements can still drop a linear value; only
+  let-bound locals are checked for consumption.
+- A plain parameter holding a function can only be called once.
 
 ## Phase 4: provenance-based linearity
 

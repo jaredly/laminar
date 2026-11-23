@@ -116,6 +116,7 @@ Lens {
     ["{" one:Lens] -> one
     ["("] -> ({type: "tuple", items: [], loc: node.loc})
     ["{\n" [" " "let" pat:Pat "=" ...value:*Term] ...body:*Lens] -> ({type: "let", pat, value, body, loc: node.loc})
+    ["{\n" [" " "let" "mut" pat:Pat "=" ...value:*Term] ...body:*Lens] -> ({type: "let", pat, value, body, mut: true, loc: node.loc})
     ["{\n" [" " "lens" pat:Pat "<-" ...value:*Linear] ...body:*Linear] -> ({type: "aslens", pat, value, body, loc: node.loc})
     ["{\n" one:Lens] -> one
     ["\n" one:Lens] -> one
@@ -185,6 +186,8 @@ Linear {
 
     ["{\n" [" " "let" pat:Pat "=" ...value:*Term] ...body:*Linear] -> ({type: "let", pat, value, body,loc:node.loc})
     ["\n" [" " "let" pat:Pat "=" ...value:*Term] ...body:*Linear] -> ({type: "let", pat, value, body,loc:node.loc})
+    ["{\n" [" " "let" "mut" pat:Pat "=" ...value:*Term] ...body:*Linear] -> ({type: "let", pat, value, body, mut: true, loc:node.loc})
+    ["\n" [" " "let" "mut" pat:Pat "=" ...value:*Term] ...body:*Linear] -> ({type: "let", pat, value, body, mut: true, loc:node.loc})
     ["{" one:Linear] -> one
     ["{\n" one:Linear] -> one
     ["{\n" value:Linear ...body:*Linear] -> ({type: "let", pat: {type: "drop", loc:node.loc}, value, body,loc:node.loc})
@@ -222,6 +225,8 @@ function handleSuffixes(head: Linear, suffixes: LinearOps[]): Linear {
 FnArg {
     pat:Pat -> ({pat})
     [":" pat:Pat typ:Type] -> ({pat, typ})
+    [" " "mut" pat:Pat] -> ({pat, mut: true})
+    [":" [" " "mut" pat:Pat] typ:Type] -> ({pat, typ, mut: true})
 }
 
 LinearCase {

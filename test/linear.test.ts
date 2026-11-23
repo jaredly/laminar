@@ -27,9 +27,9 @@ it('rejects a linear alias, which would be transparent', () => {
 });
 
 it('rejects dup of a linear value', () => {
-    expect(code(`${fd}{let f = Fd(1)\n !f}`)).toBe('dup-linear');
-    expect(code(`${fd}{let t = (Fd(1), 2)\n !t}`)).toBe('dup-linear');
-    expect(code(`${fd}type Wrap(a) {\n    Wrap(a)\n}\n{let w = Wrap(Fd(1))\n !w}`)).toBe(
+    expect(code(`${fd}{let mut f = Fd(1)\n !f}`)).toBe('dup-linear');
+    expect(code(`${fd}{let mut t = (Fd(1), 2)\n !t}`)).toBe('dup-linear');
+    expect(code(`${fd}type Wrap(a) {\n    Wrap(a)\n}\n{let mut w = Wrap(Fd(1))\n !w}`)).toBe(
         'dup-linear',
     );
 });
@@ -45,7 +45,7 @@ it('requires a union that holds a linear value to be linear too', () => {
 });
 
 it('requires a linear local to be consumed', () => {
-    expect(code(`${fd}{let f = Fd(1)\n 2}`)).toBe('linear-unconsumed');
-    expect(code(`${fd}{let f = Fd(1)\n f}`)).toBe('ok');
-    expect(code(`${fd}{let f = Fd(1)\n match f {\n Fd(n) -> n\n }}`)).toBe('ok');
+    expect(code(`${fd}{let mut f = Fd(1)\n 2}`)).toBe('linear-unconsumed');
+    expect(code(`${fd}{let mut f = Fd(1)\n f}`)).toBe('ok');
+    expect(code(`${fd}{let mut f = Fd(1)\n match f {\n Fd(n) -> n\n }}`)).toBe('ok');
 });

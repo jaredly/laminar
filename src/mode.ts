@@ -14,10 +14,12 @@ export type Policy = {
     readonly mode: Mode;
     /** Whether `type linear` and the linearity checks are available. */
     readonly linearTypes: boolean;
+    /** Whether bindings are plain (shared, immutable) unless declared `mut`. */
+    readonly plainBindings: boolean;
 };
 
-export const pureMode: Policy = { mode: 'pure', linearTypes: false };
-export const dualMode: Policy = { mode: 'dual', linearTypes: true };
+export const pureMode: Policy = { mode: 'pure', linearTypes: false, plainBindings: false };
+export const dualMode: Policy = { mode: 'dual', linearTypes: true, plainBindings: true };
 
 export const policyFor = (mode: Mode): Policy => (mode === 'pure' ? pureMode : dualMode);
 
@@ -31,9 +33,7 @@ export function declaredMode(source: string): Mode | undefined | { invalid: stri
         const match = pragma.exec(line);
         if (!match) return undefined;
         const value = match[1]!;
-        return (modes as readonly string[]).includes(value)
-            ? (value as Mode)
-            : { invalid: value };
+        return (modes as readonly string[]).includes(value) ? (value as Mode) : { invalid: value };
     }
     return undefined;
 }
