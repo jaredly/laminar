@@ -319,6 +319,9 @@ export function executeTypedProgram(
                 : error('Non-unit empty input to a call');
         if (t.tag === 'tuple' && t.items.length && Array.isArray(v))
             return v.map((x, i) => materialize(x, t.items[i]));
+        // Records are stored as the tuple of their name-sorted fields.
+        if (t.tag === 'record' && Array.isArray(v))
+            return v.map((x, i) => materialize(x, t.fields[i].type));
         return v;
     };
     const copy = (v: Data): Data => {

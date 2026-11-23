@@ -12,6 +12,8 @@ export type SemanticType =
     | { tag: 'variable'; id: TypeVariableId; rigid: boolean }
     | { tag: 'con'; name: string; args: SemanticType[] }
     | { tag: 'tuple'; items: SemanticType[] }
+    /** Closed record, fields sorted by name. Its runtime shape is the tuple of its fields in that order. */
+    | { tag: 'record'; fields: { name: string; type: SemanticType }[] }
     | { tag: 'fn'; args: SemanticFlow[]; result: SemanticFlow };
 export type SemanticFlow =
     | { tag: 'plain'; value: SemanticType }
@@ -29,7 +31,7 @@ export type BindingRecord = {
     definition?: DefinitionId;
     place: PlaceId;
     path: number[];
-    kind: 'global' | 'local' | 'alias' | 'capture';
+    kind: 'global' | 'local' | 'alias' | 'capture' | 'projection';
     borrow?: string;
     initialType: SemanticType;
 };
@@ -263,6 +265,11 @@ export class ElaborationBuilder {
                     return { ...t, args: t.args.map(type) };
                 case 'tuple':
                     return { ...t, items: t.items.map(type) };
+                case 'record':
+                    return {
+                        tag: 'record',
+                        fields: t.fields.map((f) => ({ name: f.name, type: type(f.type) })),
+                    };
                 case 'fn':
                     return { tag: 'fn', args: t.args.map(flow), result: flow(t.result) };
             }
@@ -281,6 +288,7 @@ export class ElaborationBuilder {
                 if (!generic.has(t.id)) unresolved.add(t.id);
             } else if (t.tag === 'con') t.args.forEach(scan);
             else if (t.tag === 'tuple') t.items.forEach(scan);
+            else if (t.tag === 'record') t.fields.forEach((f) => scan(f.type));
             else {
                 t.args.forEach(scanFlow);
                 scanFlow(t.result);

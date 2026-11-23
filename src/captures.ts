@@ -38,8 +38,14 @@ export function captureUses(body: Term, bound: Set<string>) {
                 linear(n.target, scope);
                 term(n.index, scope);
                 return;
+            case 'field':
+                linear(n.target, scope);
+                return;
             case 'constructor':
                 n.args.forEach((v) => linear(v, scope));
+                return;
+            case 'record':
+                n.fields.forEach((f) => linear(f.value, scope));
                 return;
             case 'assign':
                 lens(n.lens, scope);
@@ -72,6 +78,9 @@ export function captureUses(body: Term, bound: Set<string>) {
             case 'index':
                 lens(n.target, scope);
                 term(n.index, scope);
+                return;
+            case 'field':
+                lens(n.target, scope);
                 return;
             case 'apply':
                 linear(n.fn, scope);

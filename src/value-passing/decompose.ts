@@ -336,6 +336,8 @@ export const patToPatd = (ctx: Ctx, pat: Pat, allTags: boolean): Patd => {
             return { ...pat, items: pat.items.map((p) => patToPatd(ctx, p, allTags)) };
         case 'constructor':
             return { ...pat, args: pat.args.map((p) => patToPatd(ctx, p, allTags)) };
+        case 'record':
+            throw new Error('records are desugared before decomposition');
         case 'lens':
             throw new Error(`pat lens cant be deified`);
         // return { ...pat, inner: patToPatd(ctx, pat.inner) };
@@ -360,6 +362,8 @@ export const patValue = (ctx: Ctx, pat: Pat): Expr => {
             return { ...pat, items: pat.items.map((p) => patValue(ctx, p)) };
         case 'constructor':
             throw new Error('nope');
+        case 'record':
+            throw new Error('records are desugared before decomposition');
         case 'lens':
             throw new Error(`cant make expr out of lens`);
     }

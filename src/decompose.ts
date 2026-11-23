@@ -434,6 +434,7 @@ export const lensAsRef = (ctx: Ctx, lens: Lens): Ref => {
         case 'let':
         case 'apply':
         case 'index':
+        case 'field':
         case 'case':
             throw new Error(`complex lens`);
     }
@@ -844,6 +845,8 @@ export const patToPatd = (ctx: Ctx, pat: Pat, ref: boolean): Patd => {
             return { ...pat, items: pat.items.map((p) => patToPatd(ctx, p, ref)) };
         case 'constructor':
             return { ...pat, args: pat.args.map((p) => patToPatd(ctx, p, ref)) };
+        case 'record':
+            throw new Error('records are desugared before decomposition');
         case 'lens':
             throw new Error(`pat lens cant be deified`);
         // return { ...pat, inner: patToPatd(ctx, pat.inner) };

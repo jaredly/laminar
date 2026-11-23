@@ -71,8 +71,14 @@ export function verifyTypedProgram(program: TypedProgram): void {
         t.tag === 'plain' ? t.value : fail('Expected an owned value type');
     const functionType = (t: SemanticType): SemanticType & { tag: 'fn' } =>
         t.tag === 'fn' ? t : fail('Expected a function type');
+    /** Records are tuples of their name-sorted fields at the IR level. */
     const tupleItems = (t: SemanticType): SemanticType[] =>
-        t.tag === 'tuple' ? t.items : fail('Expected a tuple type');
+        t.tag === 'tuple'
+            ? t.items
+            : t.tag === 'record'
+              ? t.fields.map((f) => f.type)
+              : fail('Expected a tuple type');
+    const isProduct = (t: SemanticType) => t.tag === 'tuple' || t.tag === 'record';
     const validType = (t: SemanticType): void => {
         if (!t || typeof t !== 'object') fail('Missing semantic type');
         switch (t.tag) {
@@ -86,6 +92,11 @@ export function verifyTypedProgram(program: TypedProgram): void {
                 return;
             case 'tuple':
                 t.items.forEach(validType);
+                return;
+            case 'record':
+                t.fields.forEach((f) => validType(f.type));
+                if (t.fields.some((f, i) => i && t.fields[i - 1].name >= f.name))
+                    fail('Record fields must be unique and sorted');
                 return;
             case 'fn':
                 t.args.forEach(validFlow);
@@ -459,7 +470,7 @@ export function verifyTypedProgram(program: TypedProgram): void {
         const focus = (s: State, r: SlotRef): SemanticType => {
             let type = access(s, r).type;
             for (const index of r.path) {
-                if (type.tag !== 'tuple' || !type.items[index]) fail('Invalid focus projection');
+                if (!isProduct(type) || !tupleItems(type)[index]) fail('Invalid focus projection');
                 type = tupleItems(type)[index];
             }
             return type;
@@ -469,11 +480,20 @@ export function verifyTypedProgram(program: TypedProgram): void {
             const slot = access(s, r);
             const update = (t: SemanticType, path: number[]): SemanticType => {
                 if (!path.length) return value;
-                if (t.tag !== 'tuple' || !t.items[path[0]])
+                if (!isProduct(t) || !tupleItems(t)[path[0]])
                     return fail('Cannot update this projection');
+                if (t.tag === 'record')
+                    return {
+                        tag: 'record',
+                        fields: t.fields.map((f, i) =>
+                            i === path[0] ? { ...f, type: update(f.type, path.slice(1)) } : f,
+                        ),
+                    };
                 return {
                     tag: 'tuple',
-                    items: t.items.map((v, i) => (i === path[0] ? update(v, path.slice(1)) : v)),
+                    items: (t as SemanticType & { tag: 'tuple' }).items.map((v, i) =>
+                        i === path[0] ? update(v, path.slice(1)) : v,
+                    ),
                 };
             };
             slot.type = update(slot.type, r.path);
@@ -750,7 +770,7 @@ export function verifyTypedProgram(program: TypedProgram): void {
                     );
                     return;
                 case 'tuple':
-                    if (t.tag !== 'tuple' || t.items.length !== p.items.length)
+                    if (!isProduct(t) || tupleItems(t).length !== p.items.length)
                         fail('Tuple pattern arity mismatch');
                     p.items.forEach((v, i) => pattern(s, v, tupleItems(t)[i], alias, [...path, i]));
                     return;
@@ -838,12 +858,16 @@ export function verifyTypedProgram(program: TypedProgram): void {
                         i.parts.forEach((p) => plain(take(s, p.value)));
                         feq(i.out.type, irPlain(irCon('String')));
                         break;
-                    case 'tuple':
-                        feq(
-                            i.out.type,
-                            irPlain({ tag: 'tuple', items: i.items.map((v) => plain(take(s, v))) }),
-                        );
+                    case 'tuple': {
+                        const items = i.items.map((v) => plain(take(s, v)));
+                        const out = valueType(i.out.type);
+                        if (out.tag === 'record') {
+                            if (tupleItems(out).length !== items.length)
+                                fail('Record construction arity mismatch', i.origin);
+                            tupleItems(out).forEach((t, n) => eq(t, items[n], i.origin));
+                        } else feq(i.out.type, irPlain({ tag: 'tuple', items }));
                         break;
+                    }
                     case 'construct': {
                         if (i.instance.definition !== `constructor/${i.name}`)
                             fail('Constructor tag/signature mismatch');

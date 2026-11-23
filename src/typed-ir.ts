@@ -121,6 +121,14 @@ export function mapSemantic(
             return { ...type, args: type.args.map((t) => mapSemantic(t, variable)) };
         case 'tuple':
             return { ...type, items: type.items.map((t) => mapSemantic(t, variable)) };
+        case 'record':
+            return {
+                tag: 'record',
+                fields: type.fields.map((f) => ({
+                    name: f.name,
+                    type: mapSemantic(f.type, variable),
+                })),
+            };
         case 'fn':
             return {
                 tag: 'fn',
@@ -150,6 +158,8 @@ export function typeKey(type: SemanticType): string {
             return JSON.stringify(['con', type.name, type.args.map(typeKey)]);
         case 'tuple':
             return JSON.stringify(['tuple', type.items.map(typeKey)]);
+        case 'record':
+            return JSON.stringify(['record', type.fields.map((f) => [f.name, typeKey(f.type)])]);
         case 'fn':
             return JSON.stringify(['fn', type.args.map(flowKey), flowKey(type.result)]);
     }
@@ -158,3 +168,20 @@ export const flowKey = (type: SemanticFlow): string =>
     type.tag === 'plain'
         ? `value:${typeKey(type.value)}`
         : `lens:${typeKey(type.read)}:${typeKey(type.write)}`;
+
+/**
+ * Backends never see record types: a record is stored as the tuple of its
+ * name-sorted fields, which is exactly how the IR already builds and matches it.
+ * Field names only matter to the checker and the reference evaluator.
+ */
+export function eraseRecords<T>(value: T): T {
+    if (Array.isArray(value)) return value.map(eraseRecords) as T;
+    if (!value || typeof value !== 'object') return value;
+    const node = value as Record<string, unknown>;
+    if (node.tag === 'record' && Array.isArray(node.fields))
+        return {
+            tag: 'tuple',
+            items: (node.fields as { type: unknown }[]).map((f) => eraseRecords(f.type)),
+        } as T;
+    return Object.fromEntries(Object.entries(node).map(([k, v]) => [k, eraseRecords(v)])) as T;
+}
