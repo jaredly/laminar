@@ -136,9 +136,17 @@ export class Checker {
                     )
                     .map((b) => b.place),
             );
+            // Whatever `lens p <- v` binds is owned by provenance, so it is linear whatever its type.
+            const bySource = elaboration.nodes.find((n) => n.id === scope.node)?.kind === 'aslens';
+            const isUnit = (t: SemanticType) => t.tag === 'tuple' && !t.items.length;
             if (
                 scope.exit.some(
-                    (state) => owned.has(state.place) && isLinear(state.type, this.declaredLinear),
+                    (state) =>
+                        owned.has(state.place) &&
+                        (isLinear(state.type, this.declaredLinear) ||
+                            (bySource &&
+                                !state.empty.some((path) => !path.length) &&
+                                !isUnit(state.type))),
                 )
             )
                 throw new TypeDiagnostic(

@@ -39,7 +39,7 @@ is not.
 | ------------------------------- | -------------------------------------------- |
 | read a plain binding            | allowed repeatedly; yields shared immutable  |
 | read a `mut` binding            | consumes it (`:=` still yields `()`)         |
-| move `mut` into plain           | consuming freeze; type error if linear       |
+| `mut` into plain                | needs `dup()` (a real copy); a move is an error |
 | plain into `mut`                | needs `dup()`, implicit for a scalar         |
 | `dup()` of a linear value       | type error                                   |
 | linear value in a plain binding | type error                                   |

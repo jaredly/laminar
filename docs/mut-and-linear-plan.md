@@ -58,7 +58,7 @@ number of times).
 | --------------------------------- | --------------------------------------------- |
 | read a plain binding              | allowed repeatedly; yields shared immutable   |
 | read a `mut` binding              | consumes it (`:=` still yields `()`)          |
-| move `mut` into plain             | consuming freeze; type error if value linear  |
+| `mut` into plain                  | needs `dup()` (a real copy); a move is an error |
 | plain into `mut`                  | needs `dup()`; type error if value linear     |
 | `dup()` of a linear value         | type error                                    |
 | linear value into plain binding   | type error                                    |
@@ -141,7 +141,13 @@ the pure language.
 - `~x`, `x := ...` and `match ~x` on a plain binding are a `plain-lens` error. The explicit
   `dup(~x)` / `!x` is allowed.
 - Reading a `mut` binding consumes it for every type, so `:=` is unchanged.
-- Freeze (`mut` to plain) is an ordinary move: `let p = m`.
+- `mut` into plain needs an explicit `dup`, so crossing the boundary in either direction is a real
+  copy that appears in the source. `let p = m`, `let p = (m, 1)` and `match m { p -> ... }` with
+  a `mut` `m` are a `mut-to-plain` error; write `let p = dup(~m)` or `let mut p = m`. Taking a
+  `mut` value apart (`let (a, b) = m`, `match m { (a, b) -> ... }`) binds `mut` parts, because
+  the parts are still owned. This is decided by binding modes alone, so it needs no types, and
+  `dup(~m)` of a linear value is already `dup-linear`. Not done: passing a `mut` value to a plain
+  parameter, because function types do not record a parameter's mode (see phase 5).
 - A closure that reads a plain binding captures a copy (`let $plainN = dup(~x)`) and rebinds the
   name plain inside its body, so it can read it repeatedly.
 - A callee is never copied, so closures stay affine: a plain parameter holding a function can be
@@ -170,12 +176,19 @@ Known gaps:
 
 ## Phase 4: provenance-based linearity
 
-- Mark `aslens` temporaries and heap values with observable cleanup as linear, per the phase 0
-  decision. This is a checker fact, not a type declaration.
-- Make a lens-valued result of a call linear, to match "a borrow must end", and keep the existing
-  `escaping-lens` check.
-- Tests: a freeze of an `aslens` result is an error; a heap value with trivial cleanup can be
-  frozen.
+Status: partly done. What `lens p <- v` binds is linear by provenance: in dual mode the body must
+consume every name its pattern binds, whatever the type, or it is `linear-unconsumed`. Use `_`
+to discard on purpose. Pure may still drop them. The check is in `Checker.checkLinear`
+(`src/check.ts`) and tested in `test/linear.test.ts`. Those names are `mut`, so they can only be
+moved, not copied.
+
+Not done, and why:
+
+- **Freezing a provenance-linear value** is now covered: names bound by `lens` are `mut`, and
+  `mut` into plain needs `dup`.
+- **Heap values with observable cleanup** need no declaration. A linear value is cleaned up by the
+  function that consumes it (a native `close` that takes it), so nothing is inserted implicitly.
+- **Lens-valued call results** keep the existing `escaping-lens` and `unrestored-lens` checks.
 
 ## Phase 5: backends
 
@@ -183,7 +196,11 @@ Known gaps:
   shared-storage class. Mut-owned memory keeps the single-owner invariant and box reuse. Shared
   memory is read-only and never `retains`/`reuses`.
 - `dup` from shared to `mut` deep-copies as today, so mut memory never aliases shared memory.
-- `freeze` is a no-copy move into the chosen reclamation scheme from phase 0.
+- `dup` is always a real deep copy and never becomes cheap. Sharing lives only in plain reads,
+  which stop being the implicit `dup` they are today.
+- Function types need to record each parameter's mode (`mut` or plain), so a call can reject a
+  `mut` argument for a plain parameter and require `dup`. This rides with the shared/owned
+  distinction for plain into `mut`.
 - C (`src/c/lower.ts`, `src/c/storage.ts`) and Go (`src/go/lower.ts`, `src/go/storage.ts`)
   implement it. Go can lean on the GC. C needs refcounts or an arena.
 - Add the concrete-verifier rule that no write reaches a shared allocation.

@@ -83,6 +83,44 @@ export function desugarPlain(source: Linear): PlainResult {
             );
     };
 
+    /** The `mut` name whose value a literal moves into a plain binding, if any. */
+    const moved = (n: Term, scope: Scope): Id | undefined => {
+        switch (n.type) {
+            case 'id':
+                return scope.get(n.text) === 'mut' ? n : undefined;
+            case 'field': {
+                const root = rootOf(n);
+                return root && scope.get(root.text) === 'mut' ? root : undefined;
+            }
+            case 'tuple':
+            case 'vector':
+                return n.items.map((v) => moved(v, scope)).find(Boolean);
+            case 'constructor':
+                return n.args.map((v) => moved(v, scope)).find(Boolean);
+            case 'record':
+                return n.fields.map((f) => moved(f.value, scope)).find(Boolean);
+            default:
+                return undefined;
+        }
+    };
+
+    /**
+     * The mode of the names a pattern binds from a value. Taking apart a `mut` value leaves its
+     * parts owned, so they are `mut`. Naming the whole of it plain would freeze it, which takes
+     * an explicit `dup`.
+     */
+    const patternMode = (pat: Pat, value: Term, scope: Scope): Mode => {
+        const root = ids(pat).length ? moved(value, scope) : undefined;
+        if (!root) return 'plain';
+        if (pat.type === 'id')
+            throw new TypeDiagnostic(
+                'mut-to-plain',
+                root.loc,
+                `${root.text} is mut, so it cannot become a plain binding by moving; use \`dup(~${root.text})\` for a shared copy, or declare the binding \`mut\``,
+            );
+        return 'mut';
+    };
+
     const letScope = (n: { pat: Pat; value: Term; mut?: boolean }, scope: Scope): Scope => {
         // A named function, or an alias of a lens, is owned and consumed like a pure binding.
         const mode: Mode =
@@ -90,14 +128,14 @@ export function desugarPlain(source: Linear): PlainResult {
             n.value.type === 'lens' ||
             (n.pat.type === 'drop' && n.value.type === 'fn' && n.value.name)
                 ? 'mut'
-                : 'plain';
+                : patternMode(n.pat, n.value, scope);
         const next = bind(scope, n.pat, mode);
         if (n.pat.type === 'drop' && n.value.type === 'fn' && n.value.name)
             return new Map(next).set(n.value.name, 'mut');
         return next;
     };
     const arm = (value: Term, pat: Pat, scope: Scope): Scope =>
-        bind(scope, pat, value.type === 'lens' ? 'mut' : 'plain');
+        bind(scope, pat, value.type === 'lens' ? 'mut' : patternMode(pat, value, scope));
 
     const linear = (n: Linear, scope: Scope): Linear => {
         switch (n.type) {
