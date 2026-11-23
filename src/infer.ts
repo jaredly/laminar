@@ -800,6 +800,12 @@ export class Inferencer {
                 this.requireReplaceable(view, n.loc, 'assign to it');
                 const states = view.targets.map((b) => this.revision(b));
                 const value = this.linear(n.value, env);
+                if (this.solver.modeOf(this.modeOf(n.value)) === 'shared')
+                    this.error(
+                        'shared-into-mut',
+                        n.value.loc,
+                        'A plain (shared) value cannot be assigned into `mut` storage; `dup` it first',
+                    );
                 if (
                     n.lens.type !== 'id' &&
                     n.lens.type !== 'field' &&

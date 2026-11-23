@@ -84,7 +84,12 @@ export type Instruction =
           cleanup: IRBlock;
       })
     | (Output & { op: 'swap'; lens: ValueId; value: ValueId })
-    | (Output & { op: 'call'; callee: ValueId; args: ValueId[] })
+    /**
+     * `share` marks the read of a plain binding: the result is shared storage (the out type's
+     * mode is `shared`) instead of a fresh owned copy. A backend may alias it; until then it
+     * is still a `dup`.
+     */
+    | (Output & { op: 'call'; callee: ValueId; args: ValueId[]; share?: true })
     | (Output & { op: 'closure'; function: string; captures: { place: string; value: ValueId }[] })
     | (Output & { op: 'scope'; body: IRBlock })
     | (Output & {

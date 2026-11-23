@@ -219,33 +219,31 @@ export function verifyConcreteProgram(p: ConcreteProgram): void {
         abi(restore);
         const fields: ConcreteField[] =
             s.kind === 'sum'
-                ? sumLensFields(
-                      semanticLayouts.get(s.read)!.type,
-                      nominalSchemas,
-                      (type) => data(type),
+                ? sumLensFields(semanticLayouts.get(s.read)!.type, nominalSchemas, (type) =>
+                      data(type),
                   )
                 : s.kind === 'thin'
-                ? [
-                      {
-                          name: 'read',
-                          kind: 'pointer',
-                          layout: data(semanticLayouts.get(s.read)!.type),
-                      },
-                      ...(s.read === s.replacement
-                          ? []
-                          : [
-                                {
-                                    name: 'replacement',
-                                    kind: 'pointer' as const,
-                                    layout: replacement,
-                                },
-                            ]),
-                  ]
-                : s.items.map((child, i) => ({
-                      name: `item${i}`,
-                      kind: 'value',
-                      layout: storage({ kind: 'lens', shape: child }),
-                  }));
+                  ? [
+                        {
+                            name: 'read',
+                            kind: 'pointer',
+                            layout: data(semanticLayouts.get(s.read)!.type),
+                        },
+                        ...(s.read === s.replacement
+                            ? []
+                            : [
+                                  {
+                                      name: 'replacement',
+                                      kind: 'pointer' as const,
+                                      layout: replacement,
+                                  },
+                              ]),
+                    ]
+                  : s.items.map((child, i) => ({
+                        name: `item${i}`,
+                        kind: 'value',
+                        layout: storage({ kind: 'lens', shape: child }),
+                    }));
         fields.push(
             { name: 'restore', kind: 'code', abi: restore },
             { name: 'context', kind: 'pointer' },
@@ -575,6 +573,18 @@ export function verifyConcreteProgram(p: ConcreteProgram): void {
         const retained = new Map<string, { layout: string; name: string }>();
         const reused = new Set<string>();
         const inPlace = new Set<string>();
+        // Storage class: a value is shared when its type says so (a plain read, or an aggregate of one).
+        const shared = new Set<string>();
+        const collect = (b: IRBlock): void => {
+            for (const i of b.instructions) {
+                if ('out' in i && i.out.type.tag === 'plain' && i.out.type.mode === 'shared')
+                    shared.add(i.out.id);
+                if (i.op === 'scope') collect(i.body);
+                else if (i.op === 'aslens') collect(i.cleanup);
+                else if (i.op === 'case') i.cases.forEach((c) => collect(c.body));
+            }
+        };
+        collect(original);
         const body_ = (b: ConcreteBlock) =>
             b.instructions.filter(
                 (s): s is Extract<ConcreteBlock['instructions'][number], { op: 'swap' }> =>
@@ -610,6 +620,17 @@ export function verifyConcreteProgram(p: ConcreteProgram): void {
                     return;
                 }
                 if (!('out' in o)) return fail('Missing concrete output');
+                // Shared memory is read-only: nothing writes it, reuses it, or aliases it from owned storage.
+                if (i.op === 'call' && i.share && !shared.has(i.out.id))
+                    fail('A shared read must produce a shared value');
+                if (i.op === 'swap' && shared.has(i.value))
+                    fail('A shared value cannot be written into owned storage');
+                if (
+                    (i.op === 'tuple' || i.op === 'construct') &&
+                    !shared.has(i.out.id) &&
+                    i.items.some((item) => shared.has(item))
+                )
+                    fail('An aggregate holding a shared value must be shared');
                 eq(
                     o.out,
                     { ...i.out, layout: storage(reps.get(i.out.id)!) },
@@ -681,6 +702,8 @@ export function verifyConcreteProgram(p: ConcreteProgram): void {
                         eq(o.cases[j]!.pattern, c.pattern, 'Case pattern changed');
                         const retains = o.cases[j]!.retains;
                         let inner = open;
+                        if (retains !== undefined && shared.has(i.value))
+                            fail('A shared box cannot be retained for reuse');
                         if (retains !== undefined) {
                             const layout = storage(reps.get(i.value)!),
                                 pattern = c.pattern;
@@ -770,6 +793,7 @@ export function verifyConcreteProgram(p: ConcreteProgram): void {
                                 out: o.out,
                                 callee: i.callee,
                                 args: i.args,
+                                ...(i.share ? { share: true } : {}),
                                 wrapper: w.id,
                                 abi: w.abi,
                             },
@@ -794,6 +818,7 @@ export function verifyConcreteProgram(p: ConcreteProgram): void {
                             out: o.out,
                             callee: i.callee,
                             args: i.args,
+                            ...(i.share ? { share: true } : {}),
                             abi: entry.abi,
                             field: entry.field,
                         },

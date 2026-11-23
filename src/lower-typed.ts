@@ -178,7 +178,12 @@ export function lowerTypedUnit(e: Elaboration): IRUnit {
         const finalLens = last?.type === 'lens' ? lens(last.lens, b) : undefined;
         const callee = linear(n.fn, b);
         const args = n.args.map((a) => (a.type === 'lens' ? finalLens!.id : linear(a, b).id));
-        return emit(b, n, { op: 'call', callee: callee.id, args });
+        return emit(b, n, {
+            op: 'call',
+            callee: callee.id,
+            args,
+            ...((n as { share?: boolean }).share ? { share: true as const } : {}),
+        });
     };
     const letBody = (
         n: (Linear | Lens) & { type: 'let' },

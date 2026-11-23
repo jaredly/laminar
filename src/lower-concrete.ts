@@ -215,33 +215,31 @@ export function lowerConcreteProgram(
         const restore = table.abi([replacement], unitLayout);
         const fields: ConcreteField[] =
             s.kind === 'sum'
-                ? sumLensFields(
-                      dataLayouts.get(s.read)!.type,
-                      analysis.layoutDefinitions,
-                      (type) => table.data(type),
+                ? sumLensFields(dataLayouts.get(s.read)!.type, analysis.layoutDefinitions, (type) =>
+                      table.data(type),
                   )
                 : s.kind === 'thin'
-                ? [
-                      {
-                          name: 'read',
-                          kind: 'pointer',
-                          layout: table.data(dataLayouts.get(s.read)!.type),
-                      },
-                      ...(s.read === s.replacement
-                          ? []
-                          : [
-                                {
-                                    name: 'replacement',
-                                    kind: 'pointer' as const,
-                                    layout: replacement,
-                                },
-                            ]),
-                  ]
-                : s.items.map((id, i) => ({
-                      name: `item${i}`,
-                      kind: 'value',
-                      layout: layout({ kind: 'lens', shape: id }),
-                  }));
+                  ? [
+                        {
+                            name: 'read',
+                            kind: 'pointer',
+                            layout: table.data(dataLayouts.get(s.read)!.type),
+                        },
+                        ...(s.read === s.replacement
+                            ? []
+                            : [
+                                  {
+                                      name: 'replacement',
+                                      kind: 'pointer' as const,
+                                      layout: replacement,
+                                  },
+                              ]),
+                    ]
+                  : s.items.map((id, i) => ({
+                        name: `item${i}`,
+                        kind: 'value',
+                        layout: layout({ kind: 'lens', shape: id }),
+                    }));
         fields.push(
             { name: 'restore', kind: 'code', abi: restore },
             { name: 'context', kind: 'pointer' },
@@ -509,6 +507,7 @@ export function lowerConcreteProgram(
                             out,
                             callee: i.callee,
                             args: i.args,
+                            ...(i.share ? { share: true as const } : {}),
                             wrapper: w.id,
                             abi: w.abi,
                         };
@@ -525,6 +524,7 @@ export function lowerConcreteProgram(
                         out,
                         callee: i.callee,
                         args: i.args,
+                        ...(i.share ? { share: true as const } : {}),
                         abi: entry.abi,
                         field: entry.field,
                     };

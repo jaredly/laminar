@@ -213,9 +213,14 @@ owned data. Real sharing needs four pieces, in this order:
     nothing. Not checked yet: a shared result flowing into `mut` storage by other routes (`:=`,
     returned from a `mut` result position), and modes printed in types.
 - **5b. Concrete IR** (`src/concrete-ir.ts`, `src/lower-concrete.ts`, `src/verify-concrete.ts`):
-  a shared-storage class. Owned memory keeps the single-owner invariant and box reuse. Shared
-  memory is read-only and never `retains`/`reuses`. The verifier rejects any write that reaches a
-  shared allocation.
+  **done.** The storage class is the value's mode, which already survives into the typed and
+  concrete IR (`out.type.mode: 'shared'`). A plain read is a `call`/`invoke` flagged `share: true`,
+  the one place a backend may alias instead of copy (still a `dup` everywhere for now). The verifier
+  checks: a `share` read yields a shared value; an aggregate holding a shared value is shared; a
+  `swap` never writes a shared value into owned storage; a case never `retains` (so never reuses)
+  a shared scrutinee's box. The checker rejects `x := shared` as `shared-into-mut`. Writes cannot
+  otherwise reach shared memory, since a plain binding cannot be lensed. Not covered: natives that
+  store a shared argument (vector push) are not tracked by type.
 - **5c. Backends.** C (`src/c/lower.ts`) uses reference counts, valid because shared data is
   acyclic. Go (`src/go/lower.ts`) shares the pointer and lets the GC reclaim it. `dup` out of
   shared storage is a deep copy, so owned memory never aliases shared memory.

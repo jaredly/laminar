@@ -130,6 +130,8 @@ export type ConcreteInstruction =
           origin: string;
           callee: string;
           args: string[];
+          /** A read of a plain binding; see `share` on the typed call. */
+          share?: true;
           abi: string;
           /** The callee record's entry for an indirect call; absent for a direct call
            * of statically known code, which alone names a `wrapper`. */
