@@ -30,6 +30,10 @@ it('should do vectors', () => {
     expect(compact(read('[:1,2,3:]'))).toEqual(['[:,', '1', '2', '3']);
 });
 
+// it('should do record with op', () => {
+//     expect(compact(read('{x: a + 1}'))).toEqual(['{:,', 'x', [' ', 'a', '+', '1']]);
+// });
+
 it('should ignore newlines between elemesn', () => {
     expect(
         compact(
