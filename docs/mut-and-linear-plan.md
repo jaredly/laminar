@@ -190,7 +190,10 @@ Status: designed, not started. Open: whether a result's mode is inferred or writ
 Today a plain read is rewritten to `dup(~x)`, so nothing is shared and the backends see only
 owned data. Real sharing needs four pieces, in this order:
 
-- **5a. `mut` in function types.** Shared is just plain: what a non-`mut` binding holds. A
+- **5a. `mut` in function types.** Stage 1 is done: `FlowTy.plain` carries a `mode` (`$owned` or
+  `$shared`, a `Ty` that unifies like `replaceable`) and `SemanticFlow.plain` an optional
+  `mode: 'shared'`. Every position is owned for now, so behavior is unchanged. Next: stage 2,
+  expression modes and a `share` read primitive; stage 3, the errors. Shared is just plain: what a non-`mut` binding holds. A
   function type records the mode of each parameter and of its result, written with the same
   keyword: `(Number) -> mut Number`, `(mut Pair) -> Pair`. A plain result is shared, so it needs
   `dup` before it enters `mut` storage. A `mut` result is owned and can go anywhere. A plain read

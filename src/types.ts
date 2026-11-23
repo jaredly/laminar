@@ -13,9 +13,13 @@ export type Ty =
  * with the existing machinery: `REPLACEABLE`, `FIXED` or a meta (see
  * docs/scattered-constructor-lenses.md). Every lens built before constructor lenses
  * exist is `REPLACEABLE`.
+ *
+ * `mode` is the ownership of a plain position (docs/mut-and-linear-plan.md, 5a): `OWNED` for a
+ * `mut` value that nothing else can read, `SHARED` for a plain value. Like `replaceable` it is a
+ * `Ty`, so it unifies, generalizes and instantiates with the existing machinery.
  */
 export type FlowTy =
-    | { tag: 'plain'; value: Ty }
+    | { tag: 'plain'; value: Ty; mode: Ty }
     | { tag: 'flow'; read: Ty; write: Ty; replaceable: Ty };
 export type Scheme = { quantified: number[]; body: Ty };
 export const con = (name: string, ...args: Ty[]): Ty => ({ tag: 'con', name, args });
@@ -24,12 +28,16 @@ export const record = (fields: { name: string; type: Ty }[]): Ty => ({
     tag: 'record',
     fields: [...fields].sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0)),
 });
-export const plain = (value: Ty): FlowTy => ({ tag: 'plain', value });
+export const plain = (value: Ty, mode: Ty = OWNED): FlowTy => ({ tag: 'plain', value, mode });
 /** The names start with `$` so they cannot collide with a user-declared type. */
 const REPLACEABLE_NAME = '$replaceable';
 const FIXED_NAME = '$fixed';
+const OWNED_NAME = '$owned';
+const SHARED_NAME = '$shared';
 export const REPLACEABLE: Ty = con(REPLACEABLE_NAME);
 export const FIXED: Ty = con(FIXED_NAME);
+export const OWNED: Ty = con(OWNED_NAME);
+export const SHARED: Ty = con(SHARED_NAME);
 export const flow = (read: Ty, write: Ty, replaceable: Ty = REPLACEABLE): FlowTy => ({
     tag: 'flow',
     read,
@@ -72,7 +80,7 @@ export function mapType(t: Ty, replace: (t: Ty) => Ty | undefined): Ty {
 }
 export function mapFlow(t: FlowTy, f: (t: Ty) => Ty): FlowTy {
     return t.tag === 'plain'
-        ? plain(f(t.value))
+        ? plain(f(t.value), f(t.mode))
         : flow(f(t.read), f(t.write), f(t.replaceable));
 }
 
@@ -139,6 +147,28 @@ export class Solver {
               ? 'replaceable'
               : 'unknown';
     }
+    /** `unknown` while the mode is still a meta. */
+    ownership(t: FlowTy & { tag: 'plain' }): 'owned' | 'shared' | 'unknown' {
+        const r = this.prune(t.mode);
+        return r.tag === 'con' && r.name === SHARED_NAME
+            ? 'shared'
+            : r.tag === 'con' && r.name === OWNED_NAME
+              ? 'owned'
+              : 'unknown';
+    }
+    unifyMode(a: Ty, b: Ty, loc: number): void {
+        try {
+            this.unify(a, b, loc);
+        } catch (e) {
+            if (e instanceof TypeDiagnostic && e.code === 'type-mismatch')
+                throw new TypeDiagnostic(
+                    'mode-mismatch',
+                    loc,
+                    'A `mut` value does not match a plain one here; `dup` it to change modes',
+                );
+            throw e;
+        }
+    }
     unifyReplaceable(a: Ty, b: Ty, loc: number): void {
         try {
             this.unify(a, b, loc);
@@ -153,7 +183,11 @@ export class Solver {
         }
     }
     unifyFlow(a: FlowTy, b: FlowTy, loc: number): void {
-        if (a.tag === 'plain' && b.tag === 'plain') return this.unify(a.value, b.value, loc);
+        if (a.tag === 'plain' && b.tag === 'plain') {
+            this.unify(a.value, b.value, loc);
+            this.unifyMode(a.mode, b.mode, loc);
+            return;
+        }
         if (a.tag === 'flow' && b.tag === 'flow') {
             this.unify(a.read, b.read, loc);
             this.unify(a.write, b.write, loc);

@@ -16,7 +16,8 @@ export type SemanticType =
     | { tag: 'record'; fields: { name: string; type: SemanticType }[] }
     | { tag: 'fn'; args: SemanticFlow[]; result: SemanticFlow };
 export type SemanticFlow =
-    | { tag: 'plain'; value: SemanticType }
+    /** `mode: 'shared'` marks a plain (shared, immutable) position; absent means owned (`mut`). */
+    | { tag: 'plain'; value: SemanticType; mode?: 'shared' }
     /** `replaceable: false` marks a constructor of lenses, whose whole value has no storage. */
     | { tag: 'flow'; read: SemanticType; write: SemanticType; replaceable?: false };
 export type PlaceState = {
@@ -277,12 +278,18 @@ export class ElaborationBuilder {
         };
         const flow = (f: FlowTy): SemanticFlow =>
             f.tag === 'plain'
-                ? { tag: 'plain', value: type(f.value) }
+                ? {
+                      tag: 'plain',
+                      value: type(f.value),
+                      ...(solver.ownership(f) === 'shared' ? { mode: 'shared' as const } : {}),
+                  }
                 : {
                       tag: 'flow',
                       read: type(f.read),
                       write: type(f.write),
-                      ...(solver.replaceability(f) === 'fixed' ? { replaceable: false as const } : {}),
+                      ...(solver.replaceability(f) === 'fixed'
+                          ? { replaceable: false as const }
+                          : {}),
                   };
         const state = (s: RawState): PlaceState => ({ ...s, type: type(s.type) });
         const quantified = scheme.quantified.map(variable);

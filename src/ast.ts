@@ -75,8 +75,8 @@ export type Lens =
 
 export type Term = Linear | { type: 'lens'; lens: Lens };
 
-export type LinearCase = { pat: Pat; body: Linear };
-export type LensCase = { pat: Pat; body: Lens };
+export type LinearCase = { pat: Pat; body: Linear; mut?: boolean };
+export type LensCase = { pat: Pat; body: Lens; mut?: boolean };
 
 export type LinearOps =
     | { type: 'index'; index: Term }

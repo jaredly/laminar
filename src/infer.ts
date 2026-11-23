@@ -694,7 +694,10 @@ export class Inferencer {
             this.error('unknown-constructor', loc, `Unknown constructor ${name}`);
         this.solver.unify(
             this.instantiate(name, scheme, node, true),
-            fn(args.map(plain), plain(result)),
+            fn(
+                args.map((a) => plain(a)),
+                plain(result),
+            ),
             loc,
         );
     }
@@ -1167,14 +1170,23 @@ export class Inferencer {
                 // The read side is the constructor applied to the fields' read types. The
                 // write side is a second, independent instance applied to their write types.
                 const read = this.solver.fresh();
-                this.constructorType(n.name, views.map((v) => v.read), read, n.loc, n);
+                this.constructorType(
+                    n.name,
+                    views.map((v) => v.read),
+                    read,
+                    n.loc,
+                    n,
+                );
                 const scheme = this.constructors.get(n.name)!;
                 const writeFields = views.map(() => this.solver.fresh()),
                     write = this.solver.fresh();
                 // Recorded as a second instantiation of the same node: the write instance.
                 this.solver.unify(
                     this.instantiate(n.name, scheme, n, true),
-                    fn(writeFields.map(plain), plain(write)),
+                    fn(
+                        writeFields.map((a) => plain(a)),
+                        plain(write),
+                    ),
                     n.loc,
                 );
                 const targets = views.flatMap((v) => v.targets);
@@ -1424,7 +1436,11 @@ export class Inferencer {
             const start = this.builder.transitions.length;
             const view = this.lens(arm.body, sub);
             this.solver.unify(read, view.read, arm.body.loc);
-            this.solver.unifyReplaceable(replaceable, view.replaceable ?? REPLACEABLE, arm.body.loc);
+            this.solver.unifyReplaceable(
+                replaceable,
+                view.replaceable ?? REPLACEABLE,
+                arm.body.loc,
+            );
             const state = snapshot();
             record.arms.push({
                 node: this.builder.node(arm.body),

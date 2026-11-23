@@ -19,7 +19,6 @@ import { verifyTypedProgram } from './verify-ir.ts';
 import { pureMode, type Policy } from './mode.ts';
 import { isLinear } from './linear.ts';
 import { desugarPlain } from './desugar-plain.ts';
-import { pureMode, type Policy } from './mode.ts';
 
 export type CheckedExpression = Inference & { readonly ast: Linear };
 
