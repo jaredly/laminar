@@ -375,17 +375,22 @@ boxed variant, now has a scattered representation instead of the thin temporary:
   the frame returns `{.tag = Some, .v0 = &(*box).item0}` with no temporary and no callback.
   Any other arm (for example the empty-list arm, whose owner write-back must run) becomes a
   small closure whose struct points into the closure's copy of the union.
-- **Consumer:** a call result is read by building the union from the tag and the pointers
-  (`tag == Some ? Some(*v0) : None`), and restored by calling `restore` when set, otherwise
-  checking the tag and writing each field through its pointer.
+- **Consumer:** a call result's view carries a `scattered` mark. A `match` on it (the borrowed-match
+  expansion moves the "whole value" out first) dispatches on the struct's own tag and binds each
+  field to its pointer, so fields are read and written in place and the union is never built.
+  Only a consumer that needs the whole union (a refutable sub-pattern, for example) builds it,
+  from the tag and pointers (`tag == Some ? Some(*v0) : None` in C, a function literal in Go).
+  Restoration calls `restore` when set, otherwise checks the tag and writes each field through
+  its pointer.
 
 Generated C for `fn pick(~a) ~{Some(a)}` is
 `return (Fields_Option_Number){.tag=Option_Number_Some, .v0=a.read};`, and the recursive
 `find` returns `&(*v6).item0` or the recursive call's struct in its `cons` arm.
 
-Not done: the caller still builds the union from the struct and dispatches on its tag a
-second time instead of binding the field pointer directly; a constructor lens over a boxed
-variant is still unsupported (as before); a scattered lens cannot be a call argument.
+Not done: the arm still rebuilds `Some(final)` so that restoration can compare the tag and
+write the field back through the pointer, rather than writing `*v0 = 20` in the arm; a
+constructor lens over a boxed variant is still unsupported (as before); a scattered lens
+cannot be a call argument.
 
 ## Examples
 

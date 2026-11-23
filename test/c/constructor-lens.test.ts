@@ -6,7 +6,7 @@
  */
 import { expect, it } from 'bun:test';
 import { compileSource } from '../../src/compiler.ts';
-import { wasm32Emscripten } from '../../src/backend/target.ts';
+import { goTarget, wasm32Emscripten } from '../../src/backend/target.ts';
 import { backendAvailable, expectRun } from '../backend/backends.ts';
 
 const compile = (source: string) =>
@@ -152,4 +152,17 @@ execute('runs a multi-field scattered lens natively', async () => {
 });
 executeGo('runs a multi-field scattered lens in Go', async () => {
     await expectRun('go', choice, { expected: [12, 7] });
+});
+
+const matched = pick('    match ~pick(~x) {\n        Some(y) -> {\n            y := 5\n            ()\n        }\n        None -> ()\n    }');
+it('matches a scattered lens on its own tag without rebuilding the union (C)', () => {
+    const entry = body(compile(matched), 'entry');
+    expect(entry).toMatch(/switch \((\w+)\.tag\)/);
+    // The union is never built from the pointers: no conditional rebuild, no read of the payload.
+    expect(entry).not.toMatch(/\? \(Option_Number\)|\*\w+\.v0;/);
+});
+it('matches a scattered lens on its own tag without an IIFE (Go)', () => {
+    const { code } = compileSource(matched, { target: goTarget('test') });
+    expect(code).not.toMatch(/func\(\) Option_Number/);
+    expect(code).toMatch(/switch v\d+\.tag \{/);
 });

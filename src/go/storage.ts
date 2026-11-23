@@ -10,6 +10,8 @@ export type Leaf = {
     address?: Expr;
     /** `address` points into a heap box that data owns, so it outlives the frame. */
     heap?: boolean;
+    /** The union this leaf denotes is still a scattered lens (`lens`): match on its tag. */
+    scattered?: { lens: Expr; layout: string };
     constructed?: { name: string; payload: Data };
 } & ({ expression: Expr; key?: undefined } | { expression: Expression; key: string });
 export type Data = shared.Data<Leaf>;

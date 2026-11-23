@@ -261,6 +261,7 @@ export function lowerC(
             return storage.own({
                 expression: sumValue(expression, id),
                 layout: sumParts(id)!.union,
+                scattered: { lens: expression, layout: id },
             });
         const l = layout(id),
             f = l.fields.find((f) => f.name === 'read');
@@ -1025,6 +1026,32 @@ export function lowerC(
                 else if (p.kind === 'tuple')
                     p.items.forEach((p, i) => bind(p, storage.parts(data)[i]!, body));
                 else if (p.kind === 'constructor') {
+                    // The matched value is still a scattered lens: its fields are the pointers it
+                    // carries, so they are read and written in place and nothing is rebuilt.
+                    if (!Array.isArray(data) && data.scattered) {
+                        const { lens, layout: lensLayout } = data.scattered;
+                        const n = tagOf(data.layout, p.name);
+                        const pointers = sumParts(lensLayout)!
+                            .pointers.filter((q) => q.variant === n)
+                            .sort((a, b) => a.index - b.index);
+                        const leaf = (q: (typeof pointers)[number]): Data => ({
+                            expression: star(dot(lens, q.name)),
+                            layout: q.layout,
+                            address: dot(lens, q.name),
+                            heap: true,
+                        });
+                        const contents: Data = !pointers.length
+                            ? { expression: zero(variant(data.layout, n).layout), layout: variant(data.layout, n).layout }
+                            : pointers[0]!.name.includes('_')
+                              ? pointers.map(leaf)
+                              : leaf(pointers[0]!);
+                        if (p.items.length === 1) bind(p.items[0]!, contents, body);
+                        else
+                            p.items.forEach((item, k) =>
+                                bind(item, storage.parts(contents)[k]!, body),
+                            );
+                        return;
+                    }
                     // Borrowed matches moved their owner out first; reconstruction is explicit IR.
                     if (Array.isArray(data)) return unsupported('Constructor pattern over a tuple');
                     const n = tagOf(data.layout, p.name),
@@ -1640,6 +1667,19 @@ export function lowerC(
                     ' && ',
                 );
             };
+            /** The scattered lens a match's subject was moved out of, when it can be matched in place. */
+            const scatteredSubject = (i: {
+                value: string;
+                cases: { pattern: IRPattern }[];
+            }): Leaf | undefined => {
+                const d = movedFrom.get(i.value);
+                if (!d || Array.isArray(d) || !d.scattered) return undefined;
+                return i.cases.every(
+                    (c) => c.pattern.kind === 'constructor' && c.pattern.items.every(irrefutable),
+                )
+                    ? d
+                    : undefined;
+            };
             const irrefutable = (p: IRPattern): boolean =>
                 p.kind === 'bind' ||
                 p.kind === 'drop' ||
@@ -2175,7 +2215,7 @@ export function lowerC(
                                     const nested: Statement[] = [];
                                     bind(
                                         arm.pattern,
-                                        {
+                                        scatteredSubject(i) ?? {
                                             expression: value(i.value),
                                             layout: outputLayouts.get(i.value)!,
                                         },
@@ -2247,7 +2287,7 @@ export function lowerC(
                                 emitMatch(
                                     i.cases.map((arm) => arm.pattern),
                                     arms.map((arm) => arm.nested),
-                                    value(i.value),
+                                    scatteredSubject(i)?.scattered?.lens ?? value(i.value),
                                     outputLayouts.get(i.value)!,
                                     body,
                                 );
@@ -2298,7 +2338,7 @@ export function lowerC(
                                 const nested: Statement[] = [];
                                 bind(
                                     arm.pattern,
-                                    {
+                                    scatteredSubject(i) ?? {
                                         expression: value(i.value),
                                         layout: outputLayouts.get(i.value)!,
                                     },
@@ -2362,7 +2402,7 @@ export function lowerC(
                             emitMatch(
                                 i.cases.map((arm) => arm.pattern),
                                 arms.map((arm) => arm.nested),
-                                value(i.value),
+                                scatteredSubject(i)?.scattered?.lens ?? value(i.value),
                                 outputLayouts.get(i.value)!,
                                 body,
                             );

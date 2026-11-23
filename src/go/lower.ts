@@ -271,8 +271,12 @@ ${joinCode(
     const incoming = (expression: Expr, id: string): View => {
         if (sumParts(id))
             return storage.own({
-                expression: sumValue(expression, id),
+                // Built only if something reads the whole union: a match dispatches on the tag
+                // and binds the field pointers instead.
+                expression: () => sumValue(expression, id),
+                key: goText`scattered ${expression}`,
                 layout: sumParts(id)!.union,
+                scattered: { lens: expression, layout: id },
             });
         const l = layout(id);
         const f = l.fields.find((f) => f.name === 'read');
@@ -943,6 +947,33 @@ ${joinCode(
             } else if (p.kind === 'tuple') {
                 p.items.forEach((item, i) => bind(item, storage.parts(data)[i]!, body));
             } else if (p.kind === 'constructor') {
+                // The matched value is still a scattered lens: its fields are the pointers it
+                // carries, so they are read and written in place and nothing is rebuilt.
+                if (!Array.isArray(data) && data.scattered) {
+                    const { lens, layout: lensLayout } = data.scattered;
+                    const n = tagOf(data.layout, p.name);
+                    const pointers = sumParts(lensLayout)!
+                        .pointers.filter((q) => q.variant === n)
+                        .sort((a, b) => a.index - b.index);
+                    const leaf = (q: (typeof pointers)[number]): Data => ({
+                        expression: star(dot(lens, q.name)),
+                        layout: q.layout,
+                        address: dot(lens, q.name),
+                        heap: true,
+                    });
+                    const contents: Data = !pointers.length
+                        ? {
+                              expression: zero(variant(data.layout, n).layout),
+                              layout: variant(data.layout, n).layout,
+                          }
+                        : pointers[0]!.name.includes('_')
+                          ? pointers.map(leaf)
+                          : leaf(pointers[0]!);
+                    if (p.items.length === 1) bind(p.items[0]!, contents, body);
+                    else
+                        p.items.forEach((item, k) => bind(item, storage.parts(contents)[k]!, body));
+                    return;
+                }
                 // Borrowed matches moved their owner out first; reconstruction is explicit IR.
                 if (Array.isArray(data)) return unsupported('Constructor pattern over a tuple');
                 const n = tagOf(data.layout, p.name),
@@ -1157,7 +1188,11 @@ ${joinCode(
             );
             // Duplicate labels need ordered matching, which Go switches reject.
             if (tests.length && (strings || tags) && new Set(labels).size === labels.length) {
-                const selector = read(data, id);
+                // A scattered lens carries the same tag, so match on it without rebuilding the union.
+                const selector =
+                    tags && !Array.isArray(data) && data.scattered
+                        ? code(data.scattered.lens)
+                        : read(data, id);
                 const cases: { label?: Expr; body: Statement[] }[] = labels.map((label, n) => ({
                     label,
                     body: arms[n]!.nested,
@@ -1771,7 +1806,12 @@ ${joinCode(
                         const contents = storage.get(ref(i.slot));
                         movedFrom.set(i.out.id, contents);
                         rememberHome(ref(i.slot));
-                        const moved = snapshot(contents, id, body, name);
+                        // A scattered lens is read through its pointers when matched, so there is
+                        // no union to copy out now.
+                        const moved =
+                            !Array.isArray(contents) && contents.scattered
+                                ? contents
+                                : snapshot(contents, id, body, name);
                         storage.put(ref(i.slot), { expression: zero(unit.id), layout: unit.id });
                         dataValues.set(i.out.id, moved);
                         values.set(i.out.id, () => read(moved, id));
