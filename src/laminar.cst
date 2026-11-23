@@ -18,6 +18,10 @@ TypeDecl {
     [" " "type" ["" name:id ["(," ...args:id]] "=" alias:Type] -> ({type: "type-alias", name, args, alias, loc: node.loc})
     [" " "type" name:id ["{\n" ...items:TypeConstr]] -> ({type: "union", name, items, loc: node.loc})
     [" " "type" ["" name:id ["(," ...args:id]] ["{\n" ...items:TypeConstr]] -> ({type: "union", name, args, items, loc: node.loc})
+    [" " "type" "linear" name:id "=" alias:Type] -> ({type: "type-alias", name, alias, linear: true, loc: node.loc})
+    [" " "type" "linear" ["" name:id ["(," ...args:id]] "=" alias:Type] -> ({type: "type-alias", name, args, alias, linear: true, loc: node.loc})
+    [" " "type" "linear" name:id ["{\n" ...items:TypeConstr]] -> ({type: "union", name, items, linear: true, loc: node.loc})
+    [" " "type" "linear" ["" name:id ["(," ...args:id]] ["{\n" ...items:TypeConstr]] -> ({type: "union", name, args, items, linear: true, loc: node.loc})
 }
 
 TypeConstr {

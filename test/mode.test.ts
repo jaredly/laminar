@@ -40,12 +40,9 @@ it('never mixes languages: a pragma must agree with the requested mode', () => {
     expect([error.stage, error.code]).toEqual(['usage', 'mode-mismatch']);
 });
 
-it('reports dual mode as not implemented yet', () => {
-    for (const run of [
-        () => checkSource(program, { mode: 'dual' }),
-        () => checkSource(`// laminar: dual\n${program}`),
-    ])
-        expect(failure(run).code).toBe('unimplemented-mode');
+it('accepts dual mode, requested or declared', () => {
+    expect(checkSource(program, { mode: 'dual' }).units.length).toBe(2);
+    expect(checkSource(`// laminar: dual\n${program}`).units.length).toBe(2);
 });
 
 it('reserves mut and linear in every mode', () => {

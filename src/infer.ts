@@ -80,7 +80,7 @@ type View = {
 export type TypeEnvironment = ReadonlyMap<string, Scheme>;
 /** User-declared type names. Unions are nominal; aliases expand at each use. */
 export type TypeDefinition =
-    | { kind: 'union'; params: string[] }
+    | { kind: 'union'; params: string[]; linear?: boolean }
     | { kind: 'alias'; params: string[]; body: Type };
 export type TypeDefinitions = ReadonlyMap<string, TypeDefinition>;
 const builtinTypeArity: Record<string, number> = {
@@ -403,7 +403,11 @@ export class Inferencer {
                 constructors,
             };
         }
-        const definition: TypeDefinition = { kind: 'union', params: [...params.keys()] };
+        const definition: TypeDefinition = {
+            kind: 'union',
+            params: [...params.keys()],
+            ...(node.linear ? { linear: true } : {}),
+        };
         const result = plain(con(name, ...params.values()));
         // Unions are nominal, so constructors may refer to the union itself.
         const previous = this.typeDefinitions;

@@ -4,21 +4,22 @@
  * - `pure`: the paper's language. Every binding is consume-once and `dup` is explicit.
  * - `dual`: adds `mut`, `linear`, scalar copying and shared immutable values.
  *
- * The checker consults a {@link Policy} at the points where the languages differ. Later phases
- * add those decision methods; today `pure` is the only implemented policy, and it answers with
- * the paper's behavior.
+ * The checker consults a {@link Policy} at the points where the languages differ. `pure` answers
+ * every question with the paper's behavior.
  */
 export type Mode = 'pure' | 'dual';
 export const modes: readonly Mode[] = ['pure', 'dual'];
 
-export type Policy = { readonly mode: Mode };
+export type Policy = {
+    readonly mode: Mode;
+    /** Whether `type linear` and the linearity checks are available. */
+    readonly linearTypes: boolean;
+};
 
-export const pureMode: Policy = { mode: 'pure' };
+export const pureMode: Policy = { mode: 'pure', linearTypes: false };
+export const dualMode: Policy = { mode: 'dual', linearTypes: true };
 
-/** The policy for a mode, or undefined while that mode is not implemented. */
-export function policyFor(mode: Mode): Policy | undefined {
-    return mode === 'pure' ? pureMode : undefined;
-}
+export const policyFor = (mode: Mode): Policy => (mode === 'pure' ? pureMode : dualMode);
 
 /** `// laminar: dual` on the first line that is not blank selects the file's mode. */
 const pragma = /^\s*\/\/\s*laminar:\s*(\S*)\s*$/;

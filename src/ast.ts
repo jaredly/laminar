@@ -33,8 +33,8 @@ export type Type =
     | { type: 'fn'; args: Type[]; body: Type };
 
 export type TypeDecl =
-    | { type: 'type-alias'; name: Id; alias: Type; loc: Loc; args?: Id[] }
-    | { type: 'union'; name: Id; args?: Id[]; items: TypeConstr[]; loc: Loc };
+    | { type: 'type-alias'; name: Id; alias: Type; loc: Loc; args?: Id[]; linear?: boolean }
+    | { type: 'union'; name: Id; args?: Id[]; items: TypeConstr[]; loc: Loc; linear?: boolean };
 export type TypeConstr = { name: Id; loc: Loc; args?: Type[] };
 
 export type File = FileItem[];

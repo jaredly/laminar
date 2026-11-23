@@ -68,11 +68,7 @@ export function resolvePolicy(source: string, requested?: Mode): Policy {
             'mode-mismatch',
             `The file declares ${declared} mode but ${requested} mode was requested`,
         );
-    const mode = declared ?? requested ?? 'pure';
-    const policy = policyFor(mode);
-    if (!policy)
-        throw new CompileError('usage', 'unimplemented-mode', `${mode} mode is not implemented yet`);
-    return policy;
+    return policyFor(declared ?? requested ?? 'pure');
 }
 
 /** Parse and type check a source file, producing verified typed IR. */

@@ -96,17 +96,33 @@ work for every type, because `x` is plain, not because scalars copy. The only sc
 the implicit `dup()` when a plain scalar initializes or is assigned into a `mut` binding (phase 3).
 Phase numbers below are kept so existing references stay valid.
 
-## Phase 2: `type linear X`
+## Phase 2: `type linear`
 
-- Grammar: `src/laminar.cst` (type declaration rules near line 17) gains an optional `linear`
-  marker. The AST `TypeDecl` in `src/ast.ts` carries a `linear` flag.
-- `src/infer.ts` (type declaration handling around line 386) records linear types. Extend
-  `copyable` to answer "not copyable" for them, and add a `linear(ty)` predicate that looks
-  through constructor arguments, tuples and records.
-- New diagnostics: `dup-linear` (on `dup`/`!`) and `linear-not-mut` (later enforced in phase 3).
-- Tests: error cases in `test/basic.errors.fl`-style files.
+Status: done for unions (checker only). Dual mode is now selectable, and the checker consults
+`Policy.linearTypes`.
 
-Exit: `type linear Fd = ...` parses, and `dup` on it is a type error.
+- Grammar: `type linear X ...` in `src/laminar.cst` (union and alias forms), with a `linear` flag
+  on `TypeDecl` in `src/ast.ts` and on the union `TypeDefinition` in `src/infer.ts`.
+- `src/linear.ts` has `isLinear(type, isDeclaredLinear)`: a type is linear when declared so, or
+  when a type argument, tuple item or record field is.
+- Diagnostics (`src/check.ts`): `dual-only` (pure mode), `linear-alias` (an alias is transparent,
+  so it cannot carry its own linearity; declare a union), `linear-field` (a union holding a
+  linear value must itself be `type linear`), `dup-linear` (`dup` or `!` of a linear value) and
+  `linear-unconsumed` (a let-bound linear local that is not consumed by the end of its scope).
+- Tests: `test/linear.test.ts`.
+
+Not covered yet (each is a known gap, not a design change):
+
+- `dup` inside a generic function is only checked at concrete types, so `fn copy(x) {!x}` applied
+  to a linear value is not rejected. This needs a copy bound on type variables, or a check when
+  generics are specialized.
+- `_` patterns, unused function parameters and discarded expression statements can still drop a
+  linear value. Only let-bound locals are checked.
+- Closures that capture a linear value are not treated as linear.
+- No cleanup function can be declared yet, so no code runs when a linear value is consumed. That
+  belongs with the cleanup decision in phase 4.
+
+Exit: `type linear Fd { Fd(Number) }` parses, `dup` on it is a type error, and pure rejects it.
 
 ## Phase 3: `mut` bindings and plain shared bindings
 
@@ -159,7 +175,7 @@ immutable values.
 Status: done. `src/mode.ts` holds `Mode`, `Policy` (just `mode` for now), the pragma reader and
 `policyFor`, which returns nothing for dual, so dual reports `unimplemented-mode`. `Checker`
 takes the policy. `mut` and `linear` are reserved in the grammar, so using them as identifiers is
-a parse error. The "needs dual mode" checker error arrives with the dual syntax in phases 2 and 3.
+a parse error. The `dual-only` checker error arrived with `type linear` in phase 2; `mut` gets the same in phase 3.
 Tests are in `test/mode.test.ts`; the rest of the suite is unchanged.
 
 Add the compiler option, the pragma, the reserved keywords `mut` and `linear` with a
