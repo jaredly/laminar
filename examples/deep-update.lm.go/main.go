@@ -23,8 +23,9 @@ type Tuple_Number_List_Number struct {
 	item1 List_Number
 }
 
-type Lens_Option_Number struct {
-	read *Option_Number
+type Fields_Option_Number struct {
+	tag uint32
+	v0 *float64
 	restore Func_Option_Number_to_Unit_bdd0c6f556
 	context any
 }
@@ -53,82 +54,34 @@ type Backing_List_Number_946144c3f6 struct {
 	read0 List_Number
 }
 
-func find(needle float64, lst Lens_List_Number) Lens_Option_Number {
+func find(needle float64, lst Lens_List_Number) Fields_Option_Number {
 	v2 := *lst.read
-	v4 := 0
-	var v5 Option_Number
-	var v7 float64
-	var v8 List_Number
-	var v25 int
-	var v34 Lens_List_Number
-	var v33 Lens_Option_Number
+	v48 := Fields_Option_Number{}
 	switch v2.tag {
 	case List_Number_cons:
-		v6 := *v2.v1
-		v7 = v6.item0
-		v8 = v6.item1
-		v25 = 0
-		var v26 Option_Number
-		if v7 == needle {
-			v25 = 0
-			v26 = Option_Number{tag: Option_Number_Some, v0: v7}
+		v6 := v2.v1
+		one := ((*v6)).item0
+		v36 := Fields_Option_Number{}
+		if one == needle {
+			v36 = Fields_Option_Number{tag: Option_Number_Some, v0: &(*v6).item0}
 		} else {
-			back0 := new(Backing_List_Number_946144c3f6)
-			back0.read0 = v8
-			v34 = Lens_List_Number{read: &back0.read0}
-			v33 = find(needle, v34)
-			v25 = 1
-			v26 = *v33.read
+			v36 = find(needle, Lens_List_Number{read: &(*v6).item1})
 		}
-		v4 = 0
-		v5 = v26
+		v48 = v36
 	case List_Number_nil:
-		v4 = 1
-		v5 = Option_Number{tag: Option_Number_None, v1: Unit{}}
-	}
-	v41 := v5
-	v42 := Lens_Option_Number{read: &v41}
-	v42.restore = func(_ any, replacement Option_Number) Unit {
-		var v59 List_Number
-		if (v4 == 0) {
-			var v45 float64
-			var v46 List_Number
-			if (v25 == 0) {
-				if replacement.tag != Option_Number_Some {
-					panic("constructor lens tag mismatch")
-				}
-				v45 = replacement.v0
-				v46 = v8
-			} else if (v25 == 1) {
-				v43 := replacement
-				if v33.restore != nil {
-					v33.restore(v33.context, v43)
-				} else {
-					*v33.read = replacement
-				}
-				v44 := *v34.read
-				v45 = v7
-				v46 = v44
-			} else {
-				panic("unmatched case")
-			}
-			v48 := v45
-			v49 := v46
-			v60 := new(Tuple_Number_List_Number)
-			*v60 = Tuple_Number_List_Number{item0: v48, item1: v49}
-			v59 = List_Number{tag: List_Number_cons, v1: v60}
-		} else if (v4 == 1) {
+		v49 := Option_Number{tag: Option_Number_None, v1: Unit{}}
+		v50 := Fields_Option_Number{tag: v49.tag, v0: &v49.v0}
+		v50.restore = func(_ any, replacement Option_Number) Unit {
 			if replacement.tag != Option_Number_None {
 				panic("constructor lens tag mismatch")
 			}
-			v59 = List_Number{tag: List_Number_nil, v0: Unit{}}
-		} else {
-			panic("unmatched case")
+			v53 := List_Number{tag: List_Number_nil, v0: Unit{}}
+			*lst.read = v53
+			return Unit{}
 		}
-		*lst.read = v59
-		return Unit{}
+		v48 = v50
 	}
-	return v42
+	return v48
 }
 
 func replace(needle float64, repl float64, lst Lens_List_Number) Unit {
@@ -170,19 +123,20 @@ func entry() List_Number {
 	back3.read0 = back2.read0
 	v35 := Lens_List_Number{read: &back3.read0}
 	v34 := find(3.0, v35)
-	v37 := *v34.read
-	var v67 Option_Number
-	switch v37.tag {
+	switch v34.tag {
 	case Option_Number_Some:
-		v67 = Option_Number{tag: Option_Number_Some, v0: 3.0}
+		*v34.v0 = 3.0
 	case Option_Number_None:
-		v67 = Option_Number{tag: Option_Number_None, v1: Unit{}}
 	}
-	v68 := v67
 	if v34.restore != nil {
-		v34.restore(v34.context, v68)
-	} else {
-		*v34.read = v67
+		var v65 Option_Number
+		switch v34.tag {
+		case Option_Number_Some:
+			v65 = Option_Number{tag: Option_Number_Some, v0: *v34.v0}
+		case Option_Number_None:
+			v65 = Option_Number{tag: Option_Number_None, v1: Unit{}}
+		}
+		v34.restore(v34.context, v65)
 	}
 	return *v35.read
 }

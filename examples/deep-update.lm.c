@@ -7,8 +7,8 @@ typedef struct Unit Unit;
 typedef struct List_Number List_Number;
 typedef struct Callable_Value_196fc0868a Callable_Value_196fc0868a;
 typedef struct Option_Number Option_Number;
-typedef struct Lens_Option_Number Lens_Option_Number;
 typedef struct Tuple_Number_List_Number Tuple_Number_List_Number;
+typedef struct Fields_Option_Number Fields_Option_Number;
 typedef struct Lens_List_Number Lens_List_Number;
 typedef Unit (*Func_List_Number_to_Unit_42173f7df5)(void *, List_Number);
 typedef Unit (*Func_to_Unit_67b7c9ce73)(void *);
@@ -19,84 +19,61 @@ struct List_Number { uint32_t tag; union { Unit v0; Tuple_Number_List_Number *v1
 struct Callable_Value_196fc0868a { void *environment; Func_to_Unit_67b7c9ce73 dispose; };
 enum { Option_Number_Some = 0, Option_Number_None = 1 };
 struct Option_Number { uint32_t tag; union { double v0; Unit v1; } as; };
-struct Lens_Option_Number { Option_Number *read; Func_Option_Number_to_Unit_a35f29301c restore; void *context; };
 struct Tuple_Number_List_Number { double item0; List_Number item1; };
+struct Fields_Option_Number { uint32_t tag; double *v0; Func_Option_Number_to_Unit_a35f29301c restore; void *context; };
 struct Lens_List_Number { List_Number *read; Func_List_Number_to_Unit_42173f7df5 restore; void *context; };
+typedef struct { Lens_List_Number lst; Option_Number focus; } Restore0;
 typedef struct { List_Number read0; } Backing_List_Number;
-typedef struct { Lens_List_Number lst; int v4; Tuple_Number_List_Number v9; int v19; Backing_List_Number * back0; Lens_List_Number v26; Lens_Option_Number v25; Option_Number focus; } Restore1;
 static size_t live_contexts = 0;
 void *allocate_context(size_t size);
 void release_context(void *context);
-Lens_Option_Number find(void *environment, double needle, Lens_List_Number lst);
+Fields_Option_Number find(void *environment, double needle, Lens_List_Number lst);
 Unit replace(void *environment, double needle, double repl, Lens_List_Number lst);
 List_Number entry(void *environment);
-Unit restore1(void *opaque, Option_Number replacement);
+Unit restore0(void *opaque, Option_Number replacement);
 void print_number(double x);
 void print_List_Number(List_Number value);
 Unit drop_List_Number(List_Number value);
-Lens_Option_Number find(void *environment, double needle, Lens_List_Number lst) {
+Fields_Option_Number find(void *environment, double needle, Lens_List_Number lst) {
     (void)environment;
     List_Number v2 = *lst.read;
     int v4 = 0;
-    Option_Number v5 = {0};
-    Tuple_Number_List_Number v9 = {0};
-    int v19 = 0;
-    Backing_List_Number *back0 = NULL;
-    Lens_List_Number v26 = {0};
-    Lens_Option_Number v25 = {0};
+    (void)v4;
+    Fields_Option_Number v38 = (Fields_Option_Number){0};
     switch (v2.tag) {
         case List_Number_cons:
         {
-            Tuple_Number_List_Number v6 = *v2.as.v1;
-            release_context(v2.as.v1);
-            double v7 = v6.item0;
-            List_Number v8 = v6.item1;
-            v9 = (Tuple_Number_List_Number){v7, v8};
-            double one = v9.item0;
-            v19 = 0;
-            Option_Number v20 = {0};
+            Tuple_Number_List_Number *v6 = v2.as.v1;
+            double one = ((*v6)).item0;
+            int v19 = 0;
+            (void)v19;
+            Fields_Option_Number v28 = (Fields_Option_Number){0};
             if (one == needle) {
-                v19 = 0;
-                v20 = (Option_Number){.tag=Option_Number_Some, .as.v0=v9.item0};
+                v28 = (Fields_Option_Number){.tag=Option_Number_Some, .v0=&(*v6).item0};
             }
             else {
-                back0 = allocate_context(sizeof *back0);
-                if (!back0) {
-                    abort();
-                }
-                back0->read0 = v9.item1;
-                v26 = (Lens_List_Number){.read=&back0->read0};
-                v25 = find(NULL, needle, v26);
-                v19 = 1;
-                v20 = *v25.read;
+                Lens_List_Number v27 = (Lens_List_Number){.read=&(*v6).item1};
+                v28 = find(NULL, needle, v27);
             }
-            v4 = 0;
-            v5 = v20;
+            v38 = v28;
             break;
         }
         case List_Number_nil:
         {
-            v4 = 1;
-            v5 = (Option_Number){.tag=Option_Number_None, .as.v1=(Unit){0}};
+            Restore0 *ctx = allocate_context(sizeof *ctx);
+            if (!ctx) {
+                abort();
+            }
+            ctx->lst = lst;
+            ctx->focus = (Option_Number){.tag=Option_Number_None, .as.v1=(Unit){0}};
+            Fields_Option_Number v43 = (Fields_Option_Number){.tag=ctx->focus.tag, .v0=&ctx->focus.as.v0};
+            v43.restore = restore0;
+            v43.context = ctx;
+            v38 = v43;
             break;
         }
     }
-    Restore1 *ctx = allocate_context(sizeof *ctx);
-    if (!ctx) {
-        abort();
-    }
-    ctx->lst = lst;
-    ctx->v4 = v4;
-    ctx->v9 = v9;
-    ctx->v19 = v19;
-    ctx->back0 = back0;
-    ctx->v26 = v26;
-    ctx->v25 = v25;
-    ctx->focus = v5;
-    Lens_Option_Number v47 = (Lens_Option_Number){.read=&ctx->focus};
-    v47.restore = restore1;
-    v47.context = ctx;
-    return v47;
+    return v38;
 }
 Unit replace(void *environment, double needle, double repl, Lens_List_Number lst) {
     (void)environment;
@@ -149,106 +126,55 @@ List_Number entry(void *environment) {
     Tuple_Number_List_Number *v11 = allocate_context(sizeof *v11);
     *v11 = (Tuple_Number_List_Number){1, v9};
     List_Number x = (List_Number){.tag=List_Number_cons, .as.v1=v11};
-    Backing_List_Number back2 = {0};
-    back2.read0 = x;
-    Lens_List_Number v18 = (Lens_List_Number){.read=&back2.read0};
+    Backing_List_Number back1 = {0};
+    back1.read0 = x;
+    Lens_List_Number v18 = (Lens_List_Number){.read=&back1.read0};
     replace(NULL, 2, 5, v18);
-    Backing_List_Number *back3 = allocate_context(sizeof *back3);
-    if (!back3) {
+    Backing_List_Number *back2 = allocate_context(sizeof *back2);
+    if (!back2) {
         abort();
     }
-    back3->read0 = back2.read0;
-    Lens_List_Number v24 = (Lens_List_Number){.read=&back3->read0};
-    Lens_Option_Number v23 = find(NULL, 3, v24);
-    Option_Number v26 = *v23.read;
+    back2->read0 = back1.read0;
+    Lens_List_Number v24 = (Lens_List_Number){.read=&back2->read0};
+    Fields_Option_Number v23 = find(NULL, 3, v24);
     Unit v27 = {0};
-    Option_Number v49 = {0};
-    switch (v26.tag) {
+    switch (v23.tag) {
         case Option_Number_Some:
         {
+            double v32 = 3;
             Unit v35 = {0};
-            Option_Number v39 = (Option_Number){.tag=Option_Number_Some, .as.v0=3};
+            *v23.v0 = v32;
             v27 = v35;
-            v49 = v39;
             break;
         }
         case Option_Number_None:
         {
             Unit v44 = {0};
-            Option_Number v47 = (Option_Number){.tag=Option_Number_None, .as.v1=(Unit){0}};
             v27 = v44;
-            v49 = v47;
             break;
         }
     }
-    Option_Number v50 = v49;
     if (v23.restore) {
-        v23.restore(v23.context, v50);
+        v23.restore(v23.context, (v23.tag == Option_Number_Some ? (Option_Number){.tag=Option_Number_Some, .as.v0=*v23.v0} : (Option_Number){.tag=Option_Number_None, .as.v1=(Unit){0}}));
     }
-    else {
-        *v23.read = v49;
-    }
-    List_Number v51 = *v24.read;
-    release_context(back3);
+    List_Number v49 = *v24.read;
+    release_context(back2);
     Unit v25 = v27;
     (void)v25;
-    return v51;
+    return v49;
 }
-Unit restore1(void *opaque, Option_Number replacement) {
-    Restore1 *ctx = opaque;
+Unit restore0(void *opaque, Option_Number replacement) {
+    Restore0 *ctx = opaque;
     (void)replacement;
-    List_Number v46 = (List_Number){0};
-    if (ctx->v4 == 0) {
-        double v33 = (double){0};
-        List_Number v34 = (List_Number){0};
-        if (ctx->v19 == 0) {
-            if (replacement.tag != Option_Number_Some) {
-                abort();
-            }
-            v33 = replacement.as.v0;
-            v34 = ctx->v9.item1;
-        }
-        else if (ctx->v19 == 1) {
-            Option_Number v31 = replacement;
-            if (ctx->v25.restore) {
-                ctx->v25.restore(ctx->v25.context, v31);
-            }
-            else {
-                *ctx->v25.read = replacement;
-            }
-            List_Number v32 = *ctx->v26.read;
-            release_context(ctx->back0);
-            v33 = ctx->v9.item0;
-            v34 = v32;
-        }
-        else {
-            abort();
-        }
-        Tuple_Number_List_Number v35 = (Tuple_Number_List_Number){v33, v34};
-        double v37 = v35.item0;
-        List_Number v38 = v35.item1;
-        Tuple_Number_List_Number *v40 = allocate_context(sizeof *v40);
-        *v40 = (Tuple_Number_List_Number){v37, v38};
-        List_Number v39 = (List_Number){.tag=List_Number_cons, .as.v1=v40};
-        Unit v41 = (Unit){0};
-        (void)v41;
-        v46 = v39;
-    }
-    else if (ctx->v4 == 1) {
-        if (replacement.tag != Option_Number_None) {
-            abort();
-        }
-        Unit v42 = (Unit){0};
-        (void)v42;
-        List_Number v44 = (List_Number){.tag=List_Number_nil, .as.v0=(Unit){0}};
-        Unit v45 = (Unit){0};
-        (void)v45;
-        v46 = v44;
-    }
-    else {
+    if (replacement.tag != Option_Number_None) {
         abort();
     }
-    *ctx->lst.read = v46;
+    Unit v39 = (Unit){0};
+    (void)v39;
+    List_Number v41 = (List_Number){.tag=List_Number_nil, .as.v0=(Unit){0}};
+    Unit v42 = (Unit){0};
+    (void)v42;
+    *ctx->lst.read = v41;
     release_context(ctx);
     return (Unit){0};
 }
