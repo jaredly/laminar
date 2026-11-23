@@ -48,6 +48,11 @@ export function importScheme(definition: string, scheme: Scheme): IRScheme {
                 return { ...t, args: t.args.map(type) };
             case 'tuple':
                 return { ...t, items: t.items.map(type) };
+            case 'record':
+                return {
+                    tag: 'record',
+                    fields: t.fields.map((f) => ({ name: f.name, type: type(f.type) })),
+                };
             case 'fn':
                 return { tag: 'fn', args: t.args.map(flow), result: flow(t.result) };
         }
@@ -138,6 +143,15 @@ export function lowerTypedUnit(e: Elaboration): IRUnit {
                 return { kind: 'literal', type: t, value: p.text };
             case 'tuple':
                 return { kind: 'tuple', type: t, items: p.items.map(pattern) };
+            case 'record':
+                // Records are tuples of their name-sorted fields in the IR.
+                return {
+                    kind: 'tuple',
+                    type: t,
+                    items: [...p.fields]
+                        .sort((a, b) => (a.name < b.name ? -1 : 1))
+                        .map((f) => pattern(f.pat)),
+                };
             case 'constructor':
                 return {
                     kind: 'constructor',
@@ -223,6 +237,8 @@ export function lowerTypedUnit(e: Elaboration): IRUnit {
                     head: n.head,
                     parts: n.interp.map((p) => ({ value: linear(p.value, b).id, tail: p.tail })),
                 });
+            case 'field':
+                return emit(b, n, { op: 'move', slot: ref(binding(n)) });
             case 'tuple': {
                 if (n.items.length === 1) return linear(n.items[0], b);
                 return emit(
@@ -232,6 +248,14 @@ export function lowerTypedUnit(e: Elaboration): IRUnit {
                         ? { op: 'tuple', items: n.items.map((v) => linear(v, b).id) }
                         : { op: 'constant', value: null },
                 );
+            }
+            case 'record': {
+                // Evaluate in source order, then lay the values out in name order.
+                const values = new Map(n.fields.map((f) => [f.name, linear(f.value, b).id]));
+                return emit(b, n, {
+                    op: 'tuple',
+                    items: [...values.keys()].sort().map((name) => values.get(name)!),
+                });
             }
             case 'constructor':
                 return emit(b, n, {
@@ -386,6 +410,8 @@ export function lowerTypedUnit(e: Elaboration): IRUnit {
     const lens = (n: Lens, b: IRBlock): IRValue => {
         switch (n.type) {
             case 'id':
+                return emit(b, n, { op: 'acquire', slot: ref(binding(n)) });
+            case 'field':
                 return emit(b, n, { op: 'acquire', slot: ref(binding(n)) });
             case 'tuple':
                 return emit(b, n, { op: 'lens-tuple', items: n.items.map((v) => lens(v, b).id) });

@@ -1,7 +1,14 @@
 import { createHash } from 'node:crypto';
 import { freezeTree, type SemanticType } from './elaborated.ts';
 import { BackendDiagnostic, targetConfig, targetKey, type TargetConfig } from './backend/target.ts';
-import { mapSemantic, typeKey, type Instance, type IRUnit, type TypedProgram } from './typed-ir.ts';
+import {
+    eraseRecords,
+    mapSemantic,
+    typeKey,
+    type Instance,
+    type IRUnit,
+    type TypedProgram,
+} from './typed-ir.ts';
 import { verifyTypedProgram } from './verify-ir.ts';
 
 export type SpecializationRoot = { unit: string; arguments: SemanticType[] };
@@ -69,7 +76,7 @@ export function specializeProgram(
     roots: readonly SpecializationRoot[],
     options: { maxInstances?: number } = {},
 ): SpecializedProgram {
-    const generic = freezeTree(structuredClone(input));
+    const generic = freezeTree(eraseRecords(structuredClone(input)));
     verifyTypedProgram(generic);
     const config = targetConfig(target),
         targetIdentity = targetKey(config);

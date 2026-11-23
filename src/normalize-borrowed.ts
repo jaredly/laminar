@@ -21,7 +21,9 @@ export function normalizeBorrowed(source: Linear): Linear {
     };
     const copy = (id: Id): Id => ({ ...id });
     const hasConstructor = (p: Pat): boolean =>
-        p.type === 'constructor' || (p.type === 'tuple' && p.items.some(hasConstructor));
+        p.type === 'constructor' ||
+        (p.type === 'tuple' && p.items.some(hasConstructor)) ||
+        (p.type === 'record' && p.fields.some((f) => hasConstructor(f.pat)));
     const letNode = (pat: Pat, value: Term, body: Linear | Lens, loc: number): any => ({
         type: 'let',
         pat,
@@ -32,15 +34,26 @@ export function normalizeBorrowed(source: Linear): Linear {
     const prepare = (
         p: Pat,
     ): { owned: Pat; public: Pat; initial: Linear; final: Pat; restore: Linear } => {
-        if (p.type === 'constructor' || p.type === 'tuple') {
-            const children = (p.type === 'constructor' ? p.args : p.items).map((v) => prepare(v));
+        if (p.type === 'constructor' || p.type === 'tuple' || p.type === 'record') {
+            const children = (
+                p.type === 'constructor'
+                    ? p.args
+                    : p.type === 'record'
+                      ? p.fields.map((f) => f.pat)
+                      : p.items
+            ).map((v) => prepare(v));
             const singleton =
                 p.type === 'constructor' && children.length === 1 ? children[0] : undefined;
             return {
                 owned:
                     p.type === 'constructor'
                         ? { ...p, args: children.map((c) => c.owned) }
-                        : { ...p, items: children.map((c) => c.owned) },
+                        : p.type === 'record'
+                          ? {
+                                ...p,
+                                fields: p.fields.map((f, i) => ({ ...f, pat: children[i].owned })),
+                            }
+                          : { ...p, items: children.map((c) => c.owned) },
                 public: singleton?.public ?? {
                     type: 'tuple',
                     items: children.map((c) => c.public),
@@ -64,7 +77,17 @@ export function normalizeBorrowed(source: Linear): Linear {
                               args: children.map((c) => c.restore),
                               loc: p.loc,
                           }
-                        : { type: 'tuple', items: children.map((c) => c.restore), loc: p.loc },
+                        : p.type === 'record'
+                          ? {
+                                type: 'record',
+                                fields: p.fields.map((f, i) => ({
+                                    name: f.name,
+                                    value: children[i].restore,
+                                    loc: f.loc,
+                                })),
+                                loc: p.loc,
+                            }
+                          : { type: 'tuple', items: children.map((c) => c.restore), loc: p.loc },
             };
         }
         if (p.type === 'id' || p.type === 'drop') {

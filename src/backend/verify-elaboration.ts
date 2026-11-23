@@ -41,6 +41,11 @@ export function verifyElaboration(e: Elaboration): void {
             case 'tuple':
                 t.items.forEach(type);
                 return;
+            case 'record':
+                t.fields.forEach((f) => type(f.type));
+                if (t.fields.some((f, i) => i && t.fields[i - 1].name >= f.name))
+                    fail('Record fields must be unique and sorted');
+                return;
             case 'fn':
                 t.args.forEach(flow);
                 flow(t.result);

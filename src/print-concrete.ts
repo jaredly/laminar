@@ -76,6 +76,8 @@ export function lconcrete(program: ConcreteProgram, options: ConcretePrintOption
                 return t.args.length ? call(t.name, t.args.map(semantic)) : l.i(t.name);
             case 'tuple':
                 return tuple(t.items.map(semantic));
+            case 'record':
+                return tuple(t.fields.map((f) => typed(f.name, semantic(f.type))));
             case 'fn':
                 return words(
                     tuple(

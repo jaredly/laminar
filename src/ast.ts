@@ -9,6 +9,8 @@ export type Pat = (
     | { type: 'drop'; loc: Loc }
     | { type: 'tuple'; items: Pat[]; loc: Loc }
     | { type: 'constructor'; name: string; args: Pat[]; loc: Loc }
+    /** Exhaustive record pattern; field order is source order, never significant. */
+    | { type: 'record'; fields: { name: string; pat: Pat; loc: Loc }[]; loc: Loc }
     | { type: 'string'; text: string; loc: Loc }
     // | { type: 'list'; items: Pat[]; tail?: Pat; loc: Loc }
     | { type: 'lens'; inner: Pat; loc: Loc }
@@ -23,6 +25,7 @@ export type Type =
     | { type: 'lens'; left: Type; right?: Type }
     | { type: 'constr'; name: Id; args?: Type[]; loc: Loc }
     | { type: 'tuple'; items: Type[] }
+    | { type: 'record'; fields: { name: string; type: Type; loc: Loc }[]; loc: Loc }
     | { type: 'fn'; args: Type[]; body: Type };
 
 export type TypeDecl =
@@ -46,6 +49,8 @@ export type Lens =
       }
     | { type: 'let'; pat: Pat; value: Term; body: Lens; loc: Loc }
     | { type: 'apply'; fn: Linear; args: Term[]; loc: Loc }
+    /** Field `name` of the record focused by `target`. */
+    | { type: 'field'; target: Lens; name: string; loc: Loc }
     /** Element `index` of the vector focused by `target`. */
     | { type: 'index'; target: Lens; index: Term; loc: Loc }
     | { type: 'tuple'; items: Lens[]; loc: Loc }
@@ -58,8 +63,16 @@ export type LinearCase = { pat: Pat; body: Linear };
 export type LensCase = { pat: Pat; body: Lens };
 
 export type LinearOps =
-    // | { type: 'attr'; attr: string }
-    { type: 'index'; index: Term } | { type: 'apply'; args: Term[] };
+    | { type: 'index'; index: Term }
+    | { type: 'apply'; args: Term[] }
+    // `r.x` lexes as `r`, `.`, `x`; handleSuffixes pairs a dot with the name after it.
+    | { type: 'dot' }
+    | { type: 'name'; text: string };
+
+export type LensOp =
+    | { type: 'index'; index: Term }
+    | { type: 'dot' }
+    | { type: 'name'; text: string };
 
 export type Op = { type: 'op'; text: string; loc: Loc };
 export type FnArg = { pat: Pat; typ?: Type };
@@ -88,9 +101,12 @@ export type Linear =
           loc: Loc;
       }
     | { type: 'index'; target: Linear; index: Term; loc: Loc }
+    /** Move field `name` out of a variable's record: `r.x`, `r.a.b`. */
+    | { type: 'field'; target: Linear; name: string; loc: Loc }
     | { type: 'apply'; fn: Linear; args: Term[]; isLens?: boolean; loc: Loc }
     | { type: 'tuple'; items: Linear[]; loc: Loc }
     | { type: 'vector'; items: Linear[]; loc: Loc }
+    | { type: 'record'; fields: { name: string; value: Linear; loc: Loc }[]; loc: Loc }
     | { type: 'constructor'; name: string; args: Linear[]; loc: Loc }
     | { type: 'case'; value: Term; cases: { pat: Pat; body: Linear }[]; loc: Loc };
 
@@ -109,6 +125,8 @@ export const names = (pat: Pat): string[] => {
             return pat.items.flatMap(names);
         case 'constructor':
             return pat.args.flatMap(names);
+        case 'record':
+            return pat.fields.flatMap((f) => names(f.pat));
         case 'lens':
             return names(pat.inner);
     }
@@ -171,11 +189,15 @@ export const free = (expr: Term | Lens): string[] => {
         }
         case 'index':
             return free(expr.target).concat(free(expr.index));
+        case 'field':
+            return free(expr.target);
         case 'lens':
             return free(expr.lens);
         case 'constructor': {
             return expr.args.flatMap(free);
         }
+        case 'record':
+            return expr.fields.flatMap((f) => free(f.value));
         case 'assign': {
             return free(expr.value).concat(free(expr.lens));
         }
@@ -232,6 +254,9 @@ export const getFree = (
             getFree(bound, expr.target, ref, deref);
             getFree(bound, expr.index, ref, deref);
             return;
+        case 'field':
+            getFree(bound, expr.target, ref, deref);
+            return;
         // case "ifs":
         //     throw new Error("nop");
         case 'fn': {
@@ -257,6 +282,9 @@ export const getFree = (
             expr.args.forEach((item) => getFree(bound, item, ref, deref));
             return;
         }
+        case 'record':
+            expr.fields.forEach((f) => getFree(bound, f.value, ref, deref));
+            return;
         case 'assign': {
             getFree(bound, expr.value, ref, deref);
             getFree(bound, expr.lens, deref, new Set());
@@ -264,3 +292,7 @@ export const getFree = (
         }
     }
 };
+
+export type TypeField = { name: string; type: Type; loc: Loc };
+export type PatField = { name: string; pat: Pat; loc: Loc };
+export type RecordField = { name: string; value: Linear; loc: Loc };

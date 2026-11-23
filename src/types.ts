@@ -4,11 +4,17 @@ export type Ty =
     | { tag: 'rigid'; id: number }
     | { tag: 'con'; name: string; args: Ty[] }
     | { tag: 'tuple'; items: Ty[] }
+    /** Closed structural record. Fields are sorted by name, so a field's index is its path step. */
+    | { tag: 'record'; fields: { name: string; type: Ty }[] }
     | { tag: 'fn'; args: FlowTy[]; result: FlowTy };
 export type FlowTy = { tag: 'plain'; value: Ty } | { tag: 'flow'; read: Ty; write: Ty };
 export type Scheme = { quantified: number[]; body: Ty };
 export const con = (name: string, ...args: Ty[]): Ty => ({ tag: 'con', name, args });
 export const tuple = (...items: Ty[]): Ty => ({ tag: 'tuple', items });
+export const record = (fields: { name: string; type: Ty }[]): Ty => ({
+    tag: 'record',
+    fields: [...fields].sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0)),
+});
 export const plain = (value: Ty): FlowTy => ({ tag: 'plain', value });
 export const flow = (read: Ty, write: Ty): FlowTy => ({ tag: 'flow', read, write });
 export const fn = (args: FlowTy[], result: FlowTy): Ty => ({ tag: 'fn', args, result });
@@ -36,6 +42,8 @@ export function mapType(t: Ty, replace: (t: Ty) => Ty | undefined): Ty {
             return { ...t, args: t.args.map((a) => mapType(a, replace)) };
         case 'tuple':
             return tuple(...t.items.map((a) => mapType(a, replace)));
+        case 'record':
+            return record(t.fields.map((f) => ({ name: f.name, type: mapType(f.type, replace) })));
         case 'fn':
             return fn(
                 t.args.map((a) => mapFlow(a, (v) => mapType(v, replace))),
@@ -141,6 +149,15 @@ export class Solver {
             a.items.forEach((v, i) => this.unify(v, b.items[i], loc));
             return;
         }
+        if (
+            a.tag === 'record' &&
+            b.tag === 'record' &&
+            a.fields.length === b.fields.length &&
+            a.fields.every((f, i) => f.name === b.fields[i].name)
+        ) {
+            a.fields.forEach((f, i) => this.unify(f.type, b.fields[i].type, loc));
+            return;
+        }
         if (a.tag === 'fn' && b.tag === 'fn') {
             if (a.args.length !== b.args.length)
                 throw new TypeDiagnostic(
@@ -179,6 +196,8 @@ export function printType(t: Ty): string {
                 return t.name + (t.args.length ? `<${t.args.map(show).join(', ')}>` : '');
             case 'tuple':
                 return `(${t.items.map(show).join(', ')})`;
+            case 'record':
+                return `{${t.fields.map((f) => `${f.name}: ${show(f.type)}`).join(', ')}}`;
             case 'fn':
                 return `(${t.args.map(sf).join(', ')}) => ${sf(t.result)}`;
         }

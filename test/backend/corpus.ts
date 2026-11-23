@@ -2,6 +2,52 @@
 export const backendCorpus = [
     { name: 'scalar', phase: 4, source: '{let x = 1\n x + 2}', expected: 3 },
     { name: 'tuple', phase: 4, source: '(1, true, ())', expected: [1, true, null] },
+    { name: 'record', phase: 4, source: '{y: true, x: 1}', expected: [1, true] },
+    {
+        name: 'record-destructure',
+        phase: 4,
+        source: '{let {y, x} = {x: 1, y: 2}\n (y, x)}',
+        expected: [2, 1],
+    },
+    {
+        name: 'record-nested-case',
+        phase: 4,
+        source: '{match {a: Some(1), b: 5} {\n {a: Some(n), b} -> n + b\n {a: None, b} -> b\n }}',
+        expected: 6,
+    },
+    {
+        name: 'record-lens-update',
+        phase: 4,
+        source: 'fn inc(~c) {c := c + 1}\nfn bumpx(~{x, y}) {inc(~x)\n 2}\n{let r = {y: 10, x: 1}\n (bumpx(~r), r)}',
+        expected: [2, [2, 10]],
+    },
+    {
+        name: 'record-function',
+        phase: 4,
+        source: 'fn sum({a, b}) {a + b}\nfn mk(n) {{b: n, a: 1}}\nsum(mk(4))',
+        expected: 5,
+    },
+    {
+        name: 'record-field-move',
+        phase: 4,
+        legacy: false, // field access has no legacy decomposition
+        source: '{let r = {a: {b: 7}, c: 2}\n (r.c, r.a.b)}',
+        expected: [2, 7],
+    },
+    {
+        name: 'record-field-lens',
+        phase: 4,
+        legacy: false, // field access has no legacy decomposition
+        source: 'fn inc(~c) {c := c + 1}\n{let r = {y: 10, x: 1}\n inc(~r.x)\n r.x := r.x + 5\n r}',
+        expected: [7, 10],
+    },
+    {
+        name: 'record-field-alias',
+        phase: 4,
+        legacy: false, // field access has no legacy decomposition
+        source: 'fn inc(~c) {c := c + 1}\n{let r = {y: 10, x: 1}\n {let a = ~r.x\n inc(~a)}\n r}',
+        expected: [2, 10],
+    },
     {
         name: 'generic-calls',
         phase: 4,

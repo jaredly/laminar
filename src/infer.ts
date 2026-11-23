@@ -23,6 +23,7 @@ import {
     TypeDiagnostic,
     con,
     tuple,
+    record,
     fn,
     plain,
     flow,
@@ -137,6 +138,10 @@ export class Inferencer {
                 return { ...t, args: t.args.map((v) => this.replace(v, vars)) };
             case 'tuple':
                 return tuple(...t.items.map((v) => this.replace(v, vars)));
+            case 'record':
+                return record(
+                    t.fields.map((f) => ({ name: f.name, type: this.replace(f.type, vars) })),
+                );
             case 'fn':
                 return fn(
                     t.args.map((v) => mapFlow(v, (t) => this.replace(t, vars))),
@@ -275,13 +280,17 @@ export class Inferencer {
         let t = b.root.type;
         for (const i of b.path) {
             const p = this.solver.prune(t);
-            if (p.tag !== 'tuple')
-                return this.error(
-                    'alias-shape',
-                    loc,
-                    'Aliased tuple no longer has its original shape',
-                );
-            t = p.items[i] ?? this.error('alias-shape', loc, 'Aliased tuple component is missing');
+            const items =
+                p.tag === 'tuple'
+                    ? p.items
+                    : p.tag === 'record'
+                      ? p.fields.map((f) => f.type)
+                      : this.error(
+                            'alias-shape',
+                            loc,
+                            'Aliased tuple no longer has its original shape',
+                        );
+            t = items[i] ?? this.error('alias-shape', loc, 'Aliased tuple component is missing');
         }
         return t;
     }
@@ -293,6 +302,13 @@ export class Inferencer {
         const update = (t: Ty, path: number[]): Ty => {
             if (!path.length) return value;
             const p = this.solver.prune(t);
+            if (p.tag === 'record' && path[0] < p.fields.length)
+                return {
+                    tag: 'record',
+                    fields: p.fields.map((f, i) =>
+                        i === path[0] ? { ...f, type: update(f.type, path.slice(1)) } : f,
+                    ),
+                };
             if (p.tag !== 'tuple' || path[0] >= p.items.length)
                 return this.error('alias-shape', loc, 'Aliased tuple shape changed');
             return tuple(...p.items.map((v, i) => (i === path[0] ? update(v, path.slice(1)) : v)));
@@ -520,6 +536,15 @@ export class Inferencer {
             }
             case 'tuple':
                 return plain(tuple(...t.items.map((v) => this.valueAnnotation(v, vars, closed))));
+            case 'record':
+                return plain(
+                    record(
+                        this.uniqueFields(t.fields, t.loc).map((f) => ({
+                            name: f.name,
+                            type: this.valueAnnotation(f.type, vars, closed),
+                        })),
+                    ),
+                );
             case 'fn':
                 return plain(
                     fn(
@@ -538,6 +563,15 @@ export class Inferencer {
                 'Lens types are only allowed in function argument/result positions',
             );
         return a.value;
+    }
+    private uniqueFields<F extends { name: string; loc: number }>(fields: F[], loc: number): F[] {
+        const seen = new Set<string>();
+        for (const f of fields) {
+            if (seen.has(f.name))
+                this.error('duplicate-field', f.loc ?? loc, `Duplicate record field ${f.name}`);
+            seen.add(f.name);
+        }
+        return fields;
     }
     private components(type: Ty, count: number, loc: number): Ty[] {
         const items = Array.from({ length: count }, () => this.solver.fresh());
@@ -575,6 +609,31 @@ export class Inferencer {
                         v,
                         env,
                         source ? { ...source, path: [...source.path, i] } : undefined,
+                        seen,
+                    ),
+                );
+                return;
+            }
+            case 'record': {
+                // Patterns are exhaustive: every field is matched, `_` drops the ones not wanted.
+                const fields = this.uniqueFields(p.fields, p.loc).map((f) => ({
+                    ...f,
+                    type: this.solver.fresh(),
+                }));
+                this.solver.unify(
+                    type,
+                    record(fields.map((f) => ({ name: f.name, type: f.type }))),
+                    p.loc,
+                );
+                const order = [...fields].sort((a, b) => (a.name < b.name ? -1 : 1));
+                fields.forEach((f) =>
+                    this.pattern(
+                        f.pat,
+                        f.type,
+                        env,
+                        source
+                            ? { ...source, path: [...source.path, order.indexOf(f)] }
+                            : undefined,
                         seen,
                     ),
                 );
@@ -640,6 +699,13 @@ export class Inferencer {
                 return n.items.length === 1
                     ? this.linear(n.items[0], env)
                     : tuple(...n.items.map((v) => this.linear(v, env)));
+            case 'record': {
+                // Fields evaluate in source order; the type is order-independent.
+                this.uniqueFields(n.fields, n.loc);
+                return record(
+                    n.fields.map((f) => ({ name: f.name, type: this.linear(f.value, env) })),
+                );
+            }
             case 'constructor': {
                 const args = n.args.map((v) => this.linear(v, env)),
                     result = this.solver.fresh();
@@ -650,6 +716,11 @@ export class Inferencer {
                 const element = this.solver.fresh();
                 n.items.forEach((v) => this.solver.unify(element, this.linear(v, env), v.loc));
                 return con('Vector', element);
+            }
+            case 'field': {
+                const b = this.fieldPlace(n, env);
+                this.use(n, b, 'value');
+                return this.consume(b, n.loc);
             }
             case 'index':
                 return this.error(
@@ -665,6 +736,7 @@ export class Inferencer {
                 const value = this.linear(n.value, env);
                 if (
                     n.lens.type !== 'id' &&
+                    n.lens.type !== 'field' &&
                     n.lens.type !== 'tuple' &&
                     view.targets.some((b, i) => this.revision(b) !== states[i])
                 )
@@ -786,7 +858,48 @@ export class Inferencer {
         });
         return fn(args, result);
     }
+    /**
+     * Resolve `r.a.b` (a variable followed by field names) to a binding at the field's
+     * path. Fields are projected by position, so the record's type must already be known.
+     */
+    private fieldPlace(n: (Linear | Lens) & { type: 'field' }, env: Env): Binding {
+        const target = n.target;
+        const base =
+            target.type === 'field'
+                ? this.fieldPlace(target, env)
+                : target.type === 'id'
+                  ? this.lookup(env, target.text, target.loc)
+                  : this.error(
+                        'field-target',
+                        n.loc,
+                        'Fields can only be accessed on a variable or another field',
+                    );
+        if (base.scheme)
+            this.error(
+                'immutable-definition',
+                n.loc,
+                'Reusable definitions cannot be field-accessed',
+            );
+        const type = this.solver.prune(this.get(base, n.loc));
+        if (type.tag !== 'record')
+            return this.error(
+                'unknown-record',
+                n.loc,
+                `Cannot access field ${n.name} on a value whose record type is not yet known`,
+            );
+        const index = type.fields.findIndex((f) => f.name === n.name);
+        if (index < 0)
+            return this.error(
+                'unknown-field',
+                n.loc,
+                `Record has no field ${n.name} (it has ${type.fields.map((f) => f.name).join(', ')})`,
+            );
+        const place: Binding = { ...base, id: undefined, path: [...base.path, index] };
+        this.declare(place, n.name, n, 'projection');
+        return place;
+    }
     private alias(n: Lens, env: Env): Binding {
+        if (n.type === 'field') return this.fieldPlace(n, env);
         if (n.type !== 'id')
             return this.error(
                 'unsupported-alias',
@@ -808,7 +921,7 @@ export class Inferencer {
             n.pat.type === 'drop' && n.value.type === 'fn' && n.value.name
                 ? { type: 'id', text: n.value.name, loc: n.value.loc }
                 : n.pat;
-        if (n.value.type === 'lens' && n.value.lens.type !== 'id')
+        if (n.value.type === 'lens' && n.value.lens.type !== 'id' && n.value.lens.type !== 'field')
             return this.computedAlias(n, env, sub, p, isLens);
         if (n.value.type === 'lens') {
             const b = this.alias(n.value.lens, env);
@@ -960,6 +1073,7 @@ export class Inferencer {
     }
     private lensInner(n: Lens, env: Env): View {
         switch (n.type) {
+            case 'field':
             case 'id': {
                 const b = this.alias(n, env);
                 this.use(n, b, 'lens');
@@ -1035,6 +1149,7 @@ export class Inferencer {
             view &&
             last?.type === 'lens' &&
             last.lens.type !== 'id' &&
+            last.lens.type !== 'field' &&
             last.lens.type !== 'tuple' &&
             view.targets.some((b, i) => this.revision(b) !== states![i])
         )

@@ -67,6 +67,11 @@ export class LayoutTable {
         let storage: Layout['storage'];
         let dependencies: SemanticType[] = [];
         let indirect: boolean[] | undefined;
+        if (type.tag === 'record')
+            throw new BackendDiagnostic(
+                'unsupported-layout',
+                'Record types are erased to tuples before layout',
+            );
         if (type.tag === 'fn') storage = 'callable';
         else if (type.tag === 'tuple') {
             storage = type.items.length ? 'tuple' : 'unit';

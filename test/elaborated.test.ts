@@ -225,7 +225,7 @@ for (const sample of backendCorpus)
         }
     });
 
-for (const sample of backendCorpus)
+for (const sample of backendCorpus.filter((s) => (s as { legacy?: boolean }).legacy !== false))
     it(`acceptance reference result: ${sample.name}`, () => {
         const builtins: Ctx['builtins'] = {
             '+': (_: Ctx, a: number, b: number) => a + b,

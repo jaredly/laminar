@@ -55,7 +55,8 @@ for (const sample of backendCorpus)
     it(`executes typed IR: ${sample.name}`, () => {
         const ir = program(sample.source);
         expect(executeTypedProgram(ir) as unknown).toEqual(sample.expected);
-        expect(executeTypedProgram(ir) as unknown).toEqual(legacyReference(sample.source));
+        if ((sample as { legacy?: boolean }).legacy !== false)
+            expect(executeTypedProgram(ir) as unknown).toEqual(legacyReference(sample.source));
     });
 
 function allInstructions(p: TypedProgram): Instruction[] {

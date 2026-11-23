@@ -10,6 +10,7 @@ import {
 } from './infer.ts';
 import { builtinTypes, constructorTypes } from './builtins.ts';
 import { TypeDiagnostic, type Scheme } from './types.ts';
+import { desugarRecords } from './desugar-records.ts';
 import { verifyElaboration } from './backend/verify-elaboration.ts';
 import type { Elaboration } from './elaborated.ts';
 import { importScheme, lowerTypedProgram, lowerTypedUnit } from './lower-typed.ts';
@@ -124,7 +125,7 @@ export class Checker {
         );
         if (stored.ast.type === 'fn' && stored.ast.name)
             scope[stored.ast.name] = { type: 'builtin' };
-        return linearToExpr({ scope, counter: { current: 0 } }, stored.ast);
+        return linearToExpr({ scope, counter: { current: 0 } }, desugarRecords(stored.ast));
     }
     lowerTyped(expression: CheckedExpression): IRUnit {
         const stored = this.checked.get(expression);
@@ -173,7 +174,10 @@ export function checkFile(
     const { checker, expressions } = checkItems(file, environment, constructors, unitId);
     return {
         expressions,
-        ir: expressions.map((e) => checker.lower(e)),
+        // Lowered on demand: the legacy decomposition cannot express every checked program.
+        get ir() {
+            return expressions.map((e) => checker.lower(e));
+        },
         definitions: checker.definitions,
     };
 }
