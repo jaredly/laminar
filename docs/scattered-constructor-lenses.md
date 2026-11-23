@@ -18,9 +18,15 @@ wrong result.
   (fresh meta per lens-position call, resolved by the callee or a self-call's body),
   `lensCase` joins and function results. The constructor view derives read and write
   from two independent instances of the constructor scheme. Its flag is `FIXED` unless
-  the data type has exactly one constructor. `:=`, binding by name, tuple items and
-  constructor fields require `REPLACEABLE` (`not-replaceable`); lens arguments unify
-  the flag (`replaceable-mismatch`).
+  the data type has exactly one constructor. `:=`, tuple items and constructor fields
+  require `REPLACEABLE` (`not-replaceable`); lens arguments unify the flag
+  (`replaceable-mismatch`).
+- **Binding by name:** `let r = ~find(...)` is allowed. The binding carries the flag
+  (`Binding.replaceable`, copied by aliases of it, absent for ordinary bindings), so
+  `r := ...`, moving `r` out as a value and `dup(~r)` are rejected, and `match ~r {...}`
+  works. A binding is a place whose type is its current contents (updated by `put`), so
+  the flag is binding-level metadata rather than part of a stored lens type. The owner
+  alias that `normalizeBorrowed` generates for a match drops the flag.
 - **`find` types as** `(Number, List<Number>/List<Number>) => Option<Number>/=Option<Number>`,
   and the motivating `match ~find(2, ~x) { Some(y) -> ... }` type-checks to
   `List<Number>`.
@@ -31,7 +37,8 @@ wrong result.
 inference into `let $owner = ~e`, a `case` over the owner with owned patterns, and an
 `aslens` whose restoration is `$owner := <reconstructed pattern>`. For a
 non-replaceable `e` that expansion would trip the very checks above, so the two
-generated nodes carry flags: `let ... borrowedOwner` skips the bind-by-name check and
+generated nodes carry flags: `let ... borrowedOwner` leaves the generated owner alias
+unflagged (so the generated move-out of the owner is allowed) and
 `assign ... reconstruct` skips the whole-assign check. Users cannot write either
 (the owner names are `$borrowed<n>`). The reconstruction is sound because it rebuilds
 the arm's own constructor, so the tag never changes, and the type-level routing already

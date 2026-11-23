@@ -137,8 +137,37 @@ describe('what a constructor lens cannot do', () => {
             'not-replaceable',
         );
     });
-    it('cannot be bound by name', () => {
-        expect(code(using('    let r = ~find(1, ~x)'))).toBe('not-replaceable');
+    it('can be bound by name, but the binding keeps the restriction', () => {
+        const scoped = (inner: string) =>
+            using(`    {
+        let r = ~find(2, ~x)
+${inner}
+    }`);
+        expect(typeOf(scoped('        ()'))).toBe('List<Number>');
+        expect(code(scoped('        r := None'))).toBe('not-replaceable');
+        expect(code(scoped('        let y = r\n        ()'))).toBe('not-replaceable');
+        expect(code(scoped('        dup(~r)'))).toBe('replaceable-mismatch');
+        // An alias of the binding is restricted too.
+        expect(code(scoped('        let q = ~r\n        q := None'))).toBe('not-replaceable');
+    });
+    it('can be matched through a binding', () => {
+        expect(
+            typeOf(
+                using(`    {
+        let r = ~find(2, ~x)
+        match ~r {
+            Some(y) -> {
+                y := 20
+                ()
+            }
+            None -> ()
+        }
+    }`),
+            ),
+        ).toBe('List<Number>');
+    });
+    it('keeps the owner borrowed while the binding is live', () => {
+        expect(code(using('    let r = ~find(2, ~x)'))).toBe('use-while-borrowed');
     });
     it('cannot be passed where a stored lens is expected', () => {
         expect(code('fn pick(~a) ~{Some(a)}\n{\n    let x = 1\n    dup(~pick(~x))\n}')).toBe(

@@ -49,7 +49,20 @@ type Root = {
     borrows: Set<Borrow>;
     revisions: Map<string, number>;
 };
-type Binding = { id?: string; root: Root; path: number[]; scheme?: Scheme; permit?: Borrow };
+type Binding = {
+    id?: string;
+    root: Root;
+    path: number[];
+    scheme?: Scheme;
+    permit?: Borrow;
+    /**
+     * Set on a user-written alias of a non-replaceable lens (`let r = ~find(...)`): the whole
+     * value has no storage, so it cannot be assigned, moved out or passed as a stored lens.
+     * Absent means replaceable. Only the whole binding (empty path) is affected; aliases copy
+     * it, except the owner alias that `normalizeBorrowed` generates for a match.
+     */
+    replaceable?: Ty;
+};
 type Env = Map<string, Binding>;
 type View = {
     /** Stage final focus contents now; the returned action completes restoration. */
@@ -327,6 +340,7 @@ export class Inferencer {
         if (record) this.transition('write', b, before);
     }
     private consume(b: Binding, loc: number): Ty {
+        if (!b.path.length && b.replaceable) this.requireFlag(b.replaceable, loc, 'move it out');
         const type = this.get(b, loc);
         if (!this.available(b))
             this.error('use-after-move', loc, 'Value has already been consumed');
@@ -951,7 +965,11 @@ export class Inferencer {
             });
             b.root.borrows.add(borrow);
             this.transition('borrow-open', b, before);
-            const alias = { ...b, permit: borrow };
+            const alias = {
+                ...b,
+                permit: borrow,
+                replaceable: n.borrowedOwner ? undefined : b.replaceable,
+            };
             this.pattern(p, type, sub, alias);
             const close = () => {
                 // End the borrow before checking the owner's restored state.
@@ -1013,10 +1031,12 @@ export class Inferencer {
     ): Ty | View {
         if (n.value.type !== 'lens') throw new Error('Expected lens');
         const view = this.lens(n.value.lens, env);
-        // A match over a constructor lens names its scrutinee through a generated alias.
-        if (!n.borrowedOwner) this.requireReplaceable(view, n.loc, 'bind it by name');
         const read = view.read;
         const focus = this.freshBinding(read);
+        // A match over a constructor lens names its scrutinee through a generated alias,
+        // which is only matched and restored with the same constructor. A user-written
+        // alias keeps the flag, so every whole-value use of it is checked.
+        if (!n.borrowedOwner && view.replaceable) focus.replaceable = view.replaceable;
         focus.root.owners = view.provenance ?? view.targets;
         focus.root.protectedOwners = view.targets;
         focus.root.empty = view.empty?.map((p) => [...p]) ?? [];
@@ -1105,6 +1125,7 @@ export class Inferencer {
                     },
                     put: (t) => this.put(b, t, n.loc),
                     targets: [b],
+                    replaceable: b.path.length ? undefined : b.replaceable,
                 };
             }
             case 'tuple': {
@@ -1174,8 +1195,11 @@ export class Inferencer {
     }
     /** Operations on the whole value of a lens (`:=`, aliasing, nesting) need it replaceable. */
     private requireReplaceable(view: View, loc: number, what: string): void {
+        this.requireFlag(view.replaceable, loc, what);
+    }
+    private requireFlag(flag: Ty | undefined, loc: number, what: string): void {
         try {
-            this.solver.unify(view.replaceable ?? REPLACEABLE, REPLACEABLE, loc);
+            this.solver.unify(flag ?? REPLACEABLE, REPLACEABLE, loc);
         } catch (e) {
             if (e instanceof TypeDiagnostic && e.code === 'type-mismatch')
                 this.error(
