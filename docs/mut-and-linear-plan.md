@@ -220,8 +220,10 @@ owned data. Real sharing needs four pieces, in this order:
   checks: a `share` read yields a shared value; an aggregate holding a shared value is shared; a
   `swap` never writes a shared value into owned storage; a case never `retains` (so never reuses)
   a shared scrutinee's box. The checker rejects `x := shared` as `shared-into-mut`. Writes cannot
-  otherwise reach shared memory, since a plain binding cannot be lensed. Not covered: natives that
-  store a shared argument (vector push) are not tracked by type.
+  otherwise reach shared memory, since a plain binding cannot be lensed. Natives: `checkReads`
+  (`src/runtime-imports.ts`) rejects a `reads` parameter whose type variable also appears in the
+  result or an owned parameter, since that is the only way a native could keep a generic shared
+  argument. Natives with concrete parameter types (`charList`'s string) are trusted to copy.
 - **5c. Backends.** **Done.** Go aliases a `share` read (no copy; the GC reclaims it); a plain
   `dup` still deep-copies. C gives every allocation a reference count (a header ahead of the
   payload in `allocate_context`). A `share` read retains the root allocations (box, vector buffer,
