@@ -47,27 +47,28 @@ it('allows an explicit dup of a plain binding', () => {
     ]);
 });
 
-it('freezes a mut binding into a plain one only through an explicit dup', () => {
-    expect(code('{let mut m = (1, 2)\n let p = m\n (p, p)}')).toBe('mut-to-plain');
-    expect(code('{let mut n = 1\n let p = n\n p}')).toBe('mut-to-plain');
-    expect(code('{let mut m = (1, 2)\n let p = (m, 3)\n p}')).toBe('mut-to-plain');
-    expect(code('{let mut m = (1, 2)\n match m {\n p -> p\n }}')).toBe('mut-to-plain');
-    expect(run('{let mut m = (1, 2)\n let p = dup(~m)\n (p, p, m)}')).toEqual([
-        [1, 2],
+it('freezes a mut binding into a plain one by moving it', () => {
+    expect(run('{let mut m = (1, 2)\n let p = m\n (p, p)}')).toEqual([
         [1, 2],
         [1, 2],
     ]);
-    // Staying mut, borrowing, or discarding is not a freeze.
-    expect(run('{let mut m = (1, 2)\n let mut q = m\n q}')).toEqual([1, 2]);
-    expect(code('{let mut m = (1, 2)\n let _ = m\n 0}')).toBe('ok');
-    // A pattern over a mut value must be mut as a whole, never name by name.
-    expect(code('{let mut m = (1, 2)\n let (a, b) = m\n a}')).toBe('mut-to-plain');
-    expect(code('{let mut m = (1, 2)\n match m {\n (a, b) -> a\n }}')).toBe('mut-to-plain');
-    expect(run('{let mut m = (1, 2)\n let mut (a, b) = m\n (b, a)}')).toEqual([2, 1]);
+    expect(code('{let mut m = (1, 2)\n let p = m\n m}')).toBe('use-after-move');
+    // Taking one apart: plain parts by default, `mut` for the whole pattern keeps them owned.
+    expect(run('{let mut m = (1, 2)\n let (a, b) = m\n (a, a, b)}')).toEqual([1, 1, 2]);
     expect(run('{let mut m = (1, 2)\n match m {\n mut (a, b) -> (b, a)\n }}')).toEqual([2, 1]);
     expect(code('{let mut m = (1, 2)\n let mut (a, b) = m\n (a, a)}')).toBe('use-after-move');
-    expect(code('{let m = (1, 2)\n let (a, b) = m\n (a, a)}')).toBe('ok');
-    expect(code('{let mut n = 1\n let p = n + 1\n p}')).toBe('ok');
+    // Going the other way takes a real copy.
+    expect(run('{let p = (1, 2)\n let mut m = dup(~p)\n (m, p)}')).toEqual([
+        [1, 2],
+        [1, 2],
+    ]);
+});
+
+it('keeps a linear value out of plain bindings, however it got there', () => {
+    const fd = 'type linear Fd {\n    Fd(Number)\n}\n';
+    expect(code(`${fd}{let mut f = Fd(1)\n let p = f\n 0}`)).toBe('linear-plain');
+    expect(code(`${fd}{let mut f = Fd(1)\n match f {\n Fd(n) -> n\n }}`)).toBe('ok');
+    expect(code(`${fd}{let mut f = Fd(1)\n let mut g = dup(~f)\n g}`)).toBe('dup-linear');
 });
 
 it('copies a plain binding into a closure', () => {

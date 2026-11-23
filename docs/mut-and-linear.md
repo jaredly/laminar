@@ -29,9 +29,9 @@ Entries marked **accepted** change or extend the notes above and have the author
 - **Binding mode:** `mut` (exclusive, lensable, consume-once) or plain (shared, immutable, readable
   any number of times). `~x` parameters are implicitly `mut`.
 
-A value is linear if its type is linear **or** its provenance is (an `aslens` result, or an
-allocation with observable cleanup). Provenance is why a heap `Int` is linear while a bare `Int`
-is not.
+A value is linear only if its type is. A `lens` binding of a `Number` is a `mut Number`: it can
+be `dup`ed or dropped, as in the pure language. Linearity never comes from where a value was
+bound.
 
 ### Legality
 
@@ -39,7 +39,7 @@ is not.
 | ------------------------------- | -------------------------------------------- |
 | read a plain binding            | allowed repeatedly; yields shared immutable  |
 | read a `mut` binding            | consumes it (`:=` still yields `()`)         |
-| `mut` into plain                | needs `dup()` (a real copy); a move is an error |
+| move `mut` into plain           | consuming freeze; type error if linear       |
 | plain into `mut`                | needs `dup()`, implicit for a scalar         |
 | `dup()` of a linear value       | type error                                   |
 | linear value in a plain binding | type error                                   |

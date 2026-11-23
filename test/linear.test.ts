@@ -50,15 +50,14 @@ it('requires a linear local to be consumed', () => {
     expect(code(`${fd}{let mut f = Fd(1)\n match f {\n mut Fd(n) -> n\n }}`)).toBe('ok');
 });
 
-it('treats what `lens p <- v` binds as linear by provenance', () => {
+it('binds `lens p <- v` names as ordinary mut values of their own type', () => {
     const shifted = (cleanup: string) =>
         `fn shifted(~x) ~{lens v <- x + 2\n ${cleanup}}\n{let mut n = 1\n shifted(~n) := 5\n n}`;
     expect(code(shifted('x := v - 2'))).toBe('ok');
-    expect(code(shifted('x := 0'))).toBe('linear-unconsumed');
-    // A pure program may drop it.
-    expect(code(shifted('x := 0').replace('let mut', 'let'), 'pure')).toBe('ok');
-    const tail = (pattern: string) =>
-        `fn tail(~xs) ~{lens [${pattern}, ...t] <- xs\n xs := t}\n{let mut xs = [1]\n tail(~xs) := [2, 3]\n xs}`;
-    expect(code(tail('h'))).toBe('linear-unconsumed');
-    expect(code(tail('_'))).toBe('ok');
+    // A Number can be copied or dropped, as in the pure language.
+    expect(code(shifted('x := dup(~v) - 2'))).toBe('ok');
+    expect(code(shifted('x := 0'))).toBe('ok');
+    // A linear value bound this way is linear by its type.
+    const wrap = `${fd}fn open(~x) ~{lens Fd(n) <- Fd(x)\n LEAK}\n`;
+    expect(code(wrap.replace('LEAK', 'x := n'))).toBe('ok');
 });

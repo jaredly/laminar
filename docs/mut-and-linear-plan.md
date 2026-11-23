@@ -58,16 +58,16 @@ number of times).
 | --------------------------------- | --------------------------------------------- |
 | read a plain binding              | allowed repeatedly; yields shared immutable   |
 | read a `mut` binding              | consumes it (`:=` still yields `()`)          |
-| `mut` into plain                  | needs `dup()` (a real copy); a move is an error |
+| move `mut` into plain             | consuming freeze; type error if value linear  |
 | plain into `mut`                  | needs `dup()`; type error if value linear     |
 | `dup()` of a linear value         | type error                                    |
 | linear value into plain binding   | type error                                    |
 | write or lens a plain binding     | type error                                    |
 | `~x` parameter                    | implicitly `mut`                              |
 
-Linearity of a value comes from its type (`type linear X`, `linear T`) or its provenance (heap
-allocation with observable cleanup, `aslens`). It is not only a type declaration, because a heap
-`Int` is linear and a bare `Int` is not.
+Linearity of a value comes from its type alone (`type linear X`). What `lens p <- v` binds is an
+ordinary `mut` value of its own type, so a lens-bound `Number` can be `dup`ed or dropped, as in
+the pure language.
 
 ## Phase 0: settle the open design points (no code)
 
@@ -141,14 +141,12 @@ the pure language.
 - `~x`, `x := ...` and `match ~x` on a plain binding are a `plain-lens` error. The explicit
   `dup(~x)` / `!x` is allowed.
 - Reading a `mut` binding consumes it for every type, so `:=` is unchanged.
-- `mut` into plain needs an explicit `dup`, so crossing the boundary in either direction is a real
-  copy that appears in the source. Binding a moved `mut` value to plain names is a `mut-to-plain`
-  error: `let p = m`, `let (a, b) = m`, `let p = (m, 1)` and `match m { (a, b) -> ... }`. Write
-  `let p = dup(~m)`, or make the whole pattern `mut`: `let mut (a, b) = m`,
-  `match m { mut Fd(n) -> ... }`. `mut` applies to a whole pattern and never to single names, so
-  the parts of one pattern cannot differ. This is decided by binding modes alone, so it needs no
-  types, and `dup(~m)` of a linear value is already `dup-linear`. Not done: passing a `mut` value
-  to a plain parameter, because function types do not record a parameter's mode (see phase 5).
+- `mut` into plain is a move, a consuming freeze: `let p = m`, and `let (a, b) = m` binds plain
+  parts. The value must not be linear, which the existing `linear-plain` check already enforces
+  from the type. Plain into `mut` takes a real `dup`, because other readers may still hold the
+  value, so the cost of each direction shows in the source. `mut` on a whole pattern
+  (`let mut (a, b) = m`, `match m { mut Fd(n) -> ... }`) keeps its parts owned; it never applies
+  to single names. Passing a `mut` value to a plain parameter is such a move too.
 - A closure that reads a plain binding captures a copy (`let $plainN = dup(~x)`) and rebinds the
   name plain inside its body, so it can read it repeatedly.
 - A callee is never copied, so closures stay affine: a plain parameter holding a function can be
@@ -175,38 +173,42 @@ Known gaps:
   let-bound locals are checked for consumption.
 - A plain parameter holding a function can only be called once.
 
-## Phase 4: provenance-based linearity
+## Phase 4: linearity beyond declarations (settled: nothing more to build)
 
-Status: partly done. What `lens p <- v` binds is linear by provenance: in dual mode the body must
-consume every name its pattern binds, whatever the type, or it is `linear-unconsumed`. Use `_`
-to discard on purpose. Pure may still drop them. The check is in `Checker.checkLinear`
-(`src/check.ts`) and tested in `test/linear.test.ts`. Those names are `mut`, so they can only be
-moved, not copied.
+An earlier draft made what `lens p <- v` binds linear by provenance. That was wrong: a lens of a
+`Number` is a `Number`, and the pure language already lets you `dup(~p) + 1`. Linearity comes
+from the type alone, so the existing checks cover freezing, `dup` and plain parameters.
 
-Not done, and why:
-
-- **Freezing a provenance-linear value** is now covered: names bound by `lens` are `mut`, and
-  `mut` into plain needs `dup`.
 - **Heap values with observable cleanup** need no declaration. A linear value is cleaned up by the
   function that consumes it (a native `close` that takes it), so nothing is inserted implicitly.
 - **Lens-valued call results** keep the existing `escaping-lens` and `unrestored-lens` checks.
 
-## Phase 5: backends
+## Phase 5: sharing
 
-- Concrete IR (`src/concrete-ir.ts`, `src/lower-concrete.ts`, `src/verify-concrete.ts`): add a
-  shared-storage class. Mut-owned memory keeps the single-owner invariant and box reuse. Shared
-  memory is read-only and never `retains`/`reuses`.
-- `dup` from shared to `mut` deep-copies as today, so mut memory never aliases shared memory.
-- `dup` is always a real deep copy and never becomes cheap. Sharing lives only in plain reads,
-  which stop being the implicit `dup` they are today.
-- Function types need to record each parameter's mode (`mut` or plain), so a call can reject a
-  `mut` argument for a plain parameter and require `dup`. This rides with the shared/owned
-  distinction for plain into `mut`.
-- C (`src/c/lower.ts`, `src/c/storage.ts`) and Go (`src/go/lower.ts`, `src/go/storage.ts`)
-  implement it. Go can lean on the GC. C needs refcounts or an arena.
-- Add the concrete-verifier rule that no write reaches a shared allocation.
-- Tests: `test/box-reuse.test.ts` still passes for mut data; new tests share a tree between two
-  readers and check that neither write nor reuse touches it.
+Status: designed, not started. Open: whether a result's mode is inferred or written (5a).
+
+Today a plain read is rewritten to `dup(~x)`, so nothing is shared and the backends see only
+owned data. Real sharing needs four pieces, in this order:
+
+- **5a. `mut` in function types.** Shared is just plain: what a non-`mut` binding holds. A
+  function type records the mode of each parameter and of its result, written with the same
+  keyword: `(Number) -> mut Number`, `(mut Pair) -> Pair`. A plain result is shared, so it needs
+  `dup` before it enters `mut` storage. A `mut` result is owned and can go anywhere. A plain read
+  yields a shared handle with no copy, and the desugar emits a distinct read primitive in place
+  of `dup(~x)`. A plain argument for a
+  `mut` parameter needs `dup`; a `mut` argument for a plain parameter is a move. Until 5a lands, `dup` of a plain read stays.
+- **5b. Concrete IR** (`src/concrete-ir.ts`, `src/lower-concrete.ts`, `src/verify-concrete.ts`):
+  a shared-storage class. Owned memory keeps the single-owner invariant and box reuse. Shared
+  memory is read-only and never `retains`/`reuses`. The verifier rejects any write that reaches a
+  shared allocation.
+- **5c. Backends.** C (`src/c/lower.ts`) uses reference counts, valid because shared data is
+  acyclic. Go (`src/go/lower.ts`) shares the pointer and lets the GC reclaim it. `dup` out of
+  shared storage is a deep copy, so owned memory never aliases shared memory.
+- **5d. Tests.** `test/box-reuse.test.ts` still passes for owned data; new tests share a tree
+  between two readers and check that neither a write nor a reuse touches it, and that C refcounts
+  balance under the sanitizer build.
+
+`dup` is always a real deep copy and never becomes cheap. Sharing lives only in plain reads.
 
 ## Phase 6: documentation and examples
 
