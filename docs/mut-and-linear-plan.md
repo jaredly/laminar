@@ -230,13 +230,18 @@ owned data. Real sharing needs four pieces, in this order:
   Because writes happen in place, natives that mutate or store their argument (`[:push:]`,
   `array`) take owned arguments: a plain value needs `dup`. Pure programs gain only the
   allocator header and the extra uniqueness check in drops.
-- **5d. Tests.** `test/box-reuse.test.ts` still passes for owned data; new tests share a tree
-  between two readers and check that neither a write nor a reuse touches it, and that C refcounts
-  balance under the sanitizer build.
+- **5d. Tests.** **Done.** `test/box-reuse.test.ts` passes for owned data.
+  `test/shared-storage.test.ts` shares a tree between two readers, updates an owned `dup` in place
+  while the shared original is unchanged, and runs strings, vectors and returned shares on C
+  (sanitizer, so refcount imbalance is a leak or double free) and Go under `LAMINAR_EXEC=1`; the
+  verifier tests reject writes, retains and unshared aggregates.
 
 `dup` is always a real deep copy and never becomes cheap. Sharing lives only in plain reads.
 
 ## Phase 6: documentation and examples
+
+Status: docs updated (`mut-and-linear.md` summary, `mutable-boxes.md` ownership claim). Examples
+not yet added.
 
 - Update `mut-and-linear.md` with the settled rules, link this plan from the docs index, and fix
   the stale claims in `mutable-boxes.md` ("every heap allocation has exactly one owner").

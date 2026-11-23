@@ -1,18 +1,17 @@
 
-In order for this language to be really usable, we're going to want the ability to have shared immutable values.
-We'll also want scalars to be auto-cloning, semantically.
+This is the original design sketch; the settled rules below supersede it. Implementation status
+and phases are in [mut-and-linear-plan.md](mut-and-linear-plan.md).
 
-I'm thinking we have two new features added to the language:
-- `let mut x =` and `fn (mut x) {}`, where we can declare a variable as 'mutable'. this means it is both linear and lensable. `~x` in a parameter is implicitly mut.
-- `type linear X = y` declares a type to be 'linear only', or in other words, `NoCopy`. This is for types that cannot be `dup`d, such as file descriptors, or http connections, etc. It is invalid to put a linear value in a non-mut variable, or to dup() it.
+The language gains shared immutable values and scalars that copy implicitly, as a separate "dual"
+mode next to the paper's "pure" one:
 
-You can put a non-linear mut value in a non-mut variable, because a mut value is a single owner.
-To put a non-mut value in a mut variable, you need to dup() it.
-
-Note that anything on the heap is linear, as it has cleanup(). Anything created with aslens is also linear.
-I'm realizing that because of this, we can't have linearity only be a feature of the type declaration. You could have an int on the heap that is linear because it has cleanup, but an int in another context that is not required to be linear.
-
-I guess things like fdopen() would return a `linear FileDescriptor` with cleanup that closes it, but you could imagine a non-linear FileDescriptor (oh like stdout!) that needs no cleanup because it's open for the lifetime of the program.
+- `let mut x =` and `fn (mut x) {}` declare a binding exclusive and lensable (consume-once). `~x`
+  parameters are implicitly `mut`. Everything else is plain: shared, immutable, readable any number
+  of times.
+- `type linear X = y` declares a type that cannot be `dup`d or put in a plain binding (file
+  descriptors, connections). Linearity comes from the type alone, never from where a value was bound.
+- A `mut` value moved into a plain binding is frozen; a plain value needs `dup()` to become `mut`.
+  Function types mark `mut` positions, e.g. `(Number) -> mut Number`.
 
 ## Settled rules (draft, phase 0)
 

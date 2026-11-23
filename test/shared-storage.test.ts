@@ -146,3 +146,26 @@ for (const name of ['native', 'go'] as const)
         },
         60000,
     );
+
+const bump = `fn bump(~xs) {
+    match ~xs {
+        [] -> ()
+        [head, ...tail] -> {
+            head := head + 1
+            bump(~tail)
+        }
+    }
+}
+`;
+for (const name of ['native', 'go'] as const)
+    (process.env.LAMINAR_EXEC ? it : it.skip)(
+        `updates an owned copy in place without touching the shared original on ${name}`,
+        () => {
+            const out = execute(
+                `${bump}{let p = [1, 2, 3]\n let mut m = dup(~p)\n bump(~m)\n (p, m)}`,
+                name,
+            );
+            expect(out.trim()).toBe('[[1,2,3],[2,3,4]]');
+        },
+        60000,
+    );

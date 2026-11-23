@@ -24,9 +24,13 @@ Implemented as follows:
 
 ## Summary
 
-Every heap allocation a compiled program makes has exactly one owner. `dup` is the
-only operation that turns one value into two, and it must copy every allocation it
+Every *owned* heap allocation a compiled program makes has exactly one owner. `dup` is the
+only operation that turns one owned value into two, and it must copy every allocation it
 reaches. Given that invariant, an owner may write its own heap data in place.
+
+In dual mode, plain bindings may also be *shared*: a plain read adds a reference to the same
+allocations instead of copying. Shared memory is read-only, and the verifier rejects any write,
+box retain or reuse that reaches it. See [mut-and-linear-plan.md](mut-and-linear-plan.md), phase 5.
 
 Vectors already follow this rule: element lenses write into the buffer, and `dup`
 copies every buffer it reaches. This document proposes the same rule for boxed
