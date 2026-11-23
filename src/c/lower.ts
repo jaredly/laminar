@@ -999,6 +999,18 @@ export function lowerC(
             const retainedOwners = new Map<string, Data>();
             /** The storage each moved value came from. */
             const movedFrom = new Map<string, Data>();
+            /** The scattered lens each emptied view held before a match moved it out, by cell and path. */
+            const scatteredHomes = new Map<Cell, Map<string, Leaf>>();
+            const rememberScattered = (view: View) => {
+                if (Array.isArray(view)) return;
+                const leaf = storage.get(view);
+                if (Array.isArray(leaf) || !leaf.scattered) return;
+                const at = scatteredHomes.get(view.cell) ?? new Map<string, Leaf>();
+                at.set(JSON.stringify(view.path), leaf);
+                scatteredHomes.set(view.cell, at);
+            };
+            /** The constructor and field values of each `construct`, by its output. */
+            const constructedBy = new Map<string, { name: string; items: string[] }>();
             /** An lvalue for the storage behind an address. */
             const through = (leaf: Leaf): Expr => leaf.lvalue ?? star(leaf.address!);
             /** Store each payload field that no longer reads its own live storage. */
@@ -1584,6 +1596,24 @@ export function lowerC(
                 return {
                     view,
                     finish: (body) => {
+                        const current = storage.get(view);
+                        if (
+                            sumParts(id) &&
+                            !Array.isArray(current) &&
+                            current.scattered &&
+                            same(current.scattered.lens, name)
+                        ) {
+                            // Every write already went through the pointers; only the callback of
+                            // a lens that carries one still has to run, with the final value.
+                            body.push({
+                                head: cc`if (${dot(name, 'restore')})`,
+                                body: [
+                                    cc`${dot(name, 'restore')}(${dot(name, 'context')}, ${sumValue(name, id)});`,
+                                ],
+                            });
+                            after(body);
+                            return;
+                        }
                         const replacement = declare(
                             endpoint(id, 'replacement'),
                             read(storage.get(view), endpoint(id, 'replacement')),
@@ -1942,6 +1972,7 @@ export function lowerC(
                             break;
                         }
                         case 'construct': {
+                            constructedBy.set(i.out.id, { name: i.name, items: i.items });
                             const n = tagOf(id, i.name),
                                 v = variant(id, n);
                             let contents =
@@ -1966,6 +1997,8 @@ export function lowerC(
                                 contents = box;
                             }
                             expr = cc`(${type(id)}){.tag=${tagValue(id, n)}, .as.v${n}=${contents}}`;
+                            // A by-value union nothing reads builds no side effect.
+                            removable = !v.boxed;
                             break;
                         }
                         case 'tuple':
@@ -1976,6 +2009,7 @@ export function lowerC(
                             removable = true;
                             movedFrom.set(i.out.id, storage.get(ref(i.slot)));
                             rememberHome(ref(i.slot));
+                            rememberScattered(ref(i.slot));
                             expr = read(storage.get(ref(i.slot)), id);
                             storage.put(ref(i.slot), {
                                 expression: zero(unit.id),
@@ -2082,6 +2116,31 @@ export function lowerC(
                         case 'swap': {
                             const lens = lenses.get(i.lens)!;
                             const contents = storage.get(lens.view);
+                            // Putting a constructed value back into a scattered lens: its constructor
+                            // is the one that was matched, so write each field through its pointer
+                            // now and leave the lens as it was.
+                            const built = constructedBy.get(i.value);
+                            const scattered = Array.isArray(lens.view)
+                                ? undefined
+                                : scatteredHomes.get(lens.view.cell)?.get(JSON.stringify(lens.view.path));
+                            if (scattered && built) {
+                                const parts = sumParts(scattered.scattered!.layout)!;
+                                const pointers = parts.pointers
+                                    .filter((p) => p.variant === tagOf(parts.union, built.name))
+                                    .sort((a, b) => a.index - b.index);
+                                if (pointers.length === built.items.length) {
+                                    declare(id, read(contents, id), body, name, { pure: true });
+                                    pointers.forEach((p, k) =>
+                                        body.push(
+                                            cc`*${dot(scattered.scattered!.lens, p.name)} = ${value(built.items[k]!)};`,
+                                        ),
+                                    );
+                                    storage.put(lens.view, scattered);
+                                    lens.finish(body);
+                                    values.set(i.out.id, name);
+                                    continue;
+                                }
+                            }
                             expr = read(contents, id);
                             // The old value is only read here; an unused one is just dropped.
                             declare(id, expr, body, name, { pure: true });

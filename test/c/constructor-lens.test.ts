@@ -61,10 +61,11 @@ it('returns a constructor lens as a tag and field pointers', () => {
     const callee = body(code, 'pick');
     expect(callee).toMatch(/return \(Fields_Option_Number\)\{\.tag=Option_Number_Some, \.v0=a\.read\};/);
     expect(callee).not.toMatch(/allocate_context|restore/);
-    // The caller writes through the pointer unless the lens carries its own callback.
+    // The caller writes through the pointer in the arm; only a lens that carries its own
+    // callback has it called afterwards.
     const entry = body(code, 'entry');
-    expect(entry).toMatch(/if \(\w+\.restore\)/);
-    expect(entry).toMatch(/\*\w+\.v0 = \w+\.as\.v0;/);
+    expect(entry).toMatch(/\*\w+\.v0 = \w+;[\s\S]*if \(\w+\.restore\)/);
+    expect(entry).not.toMatch(/\.as\.v0;\s*\}\s*\}/);
 });
 it('compiles the recursive search to pointers into the list', () => {
     const code = compile(update('[1, 2, 3]', 2, 20));
@@ -158,11 +159,16 @@ const matched = pick('    match ~pick(~x) {\n        Some(y) -> {\n            y
 it('matches a scattered lens on its own tag without rebuilding the union (C)', () => {
     const entry = body(compile(matched), 'entry');
     expect(entry).toMatch(/switch \((\w+)\.tag\)/);
-    // The union is never built from the pointers: no conditional rebuild, no read of the payload.
-    expect(entry).not.toMatch(/\? \(Option_Number\)|\*\w+\.v0;/);
+    // The union is built from the pointers only as the argument of a lens's own callback.
+    expect(entry).not.toMatch(/(^|\s)Option_Number v\d+ = /);
+    expect(entry.match(/\? \(Option_Number\)/g) ?? []).toHaveLength(1);
+    expect(entry).toMatch(/\*\w+\.v0 = \w+;\s*v\d+ = /);
 });
 it('matches a scattered lens on its own tag without an IIFE (Go)', () => {
     const { code } = compileSource(matched, { target: goTarget('test') });
     expect(code).not.toMatch(/func\(\) Option_Number/);
     expect(code).toMatch(/switch v\d+\.tag \{/);
+    // The write goes through the pointer in the arm; the union is only built for the callback.
+    expect(code).toMatch(/\*v\d+\.v0 = 5\.0/);
+    expect(code).toMatch(/if v\d+\.restore != nil \{\s*var v\d+ Option_Number/);
 });

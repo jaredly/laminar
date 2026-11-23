@@ -1,7 +1,14 @@
 import { Declaration, typeDependencies } from '../backend/reachable.ts';
 import { unionTagNames } from '../backend/type-names.ts';
 import type { ConcreteProgram, ConcreteBlock } from '../concrete-ir.ts';
-import { Storage, expression as code, type Expression, type Data, type View } from './storage.ts';
+import {
+    Storage,
+    expression as code,
+    type Expression,
+    type Data,
+    type Leaf,
+    type View,
+} from './storage.ts';
 import { decodeNumber, type IRPattern, type SlotRef } from '../typed-ir.ts';
 import { verifyConcreteProgram } from '../verify-concrete.ts';
 import { BackendDiagnostic } from '../backend/target.ts';
@@ -917,6 +924,16 @@ ${joinCode(
         };
         const home = (view: View): Data | undefined =>
             Array.isArray(view) ? undefined : homes.get(view.cell)?.get(JSON.stringify(view.path));
+        /** The scattered lens each emptied view held before a match moved it out, by cell and path. */
+        const scatteredHomes = new Map<import('./storage.ts').Cell, Map<string, Leaf>>();
+        const rememberScattered = (view: View) => {
+            if (Array.isArray(view)) return;
+            const leaf = storage.get(view);
+            if (Array.isArray(leaf) || !leaf.scattered) return;
+            const at = scatteredHomes.get(view.cell) ?? new Map<string, Leaf>();
+            at.set(JSON.stringify(view.path), leaf);
+            scatteredHomes.set(view.cell, at);
+        };
         /** What a retained arm's owner held before the match moved it out, by reconstruction id. */
         const retainedOwners = new Map<string, Data>();
         /** The storage each moved value came from. */
@@ -1416,6 +1433,42 @@ ${joinCode(
             };
         };
 
+        /** The union a scattered lens denotes, built by statements into `into`; returns its name. */
+        const sumUnion = (expression: Expr, id: string, into: Statement[]): string => {
+            const parts = sumParts(id)!;
+            const name = fresh();
+            into.push(locals.declaration(name, type(parts.union)));
+            const cases = layout(parts.union).fields.map((_, k) => {
+                const v = variant(parts.union, k);
+                const pointers = parts.pointers
+                    .filter((p) => p.variant === k)
+                    .sort((a, b) => a.index - b.index);
+                const contents: Expr =
+                    pointers.length === 0
+                        ? zero(v.layout)
+                        : pointers[0]!.name.includes('_')
+                          ? go`${type(v.layout)}{${joinCode(
+                                pointers.map(
+                                    (p) =>
+                                        go`${field(`item${p.index}`)}: ${star(dot(expression, p.name))}`,
+                                ),
+                                ', ',
+                            )}}`
+                          : star(dot(expression, pointers[0]!.name));
+                return {
+                    label: tagValue(parts.union, k),
+                    body: [
+                        locals.assign(
+                            name,
+                            go`${type(parts.union)}{tag: ${tagValue(parts.union, k)}, v${k}: ${contents}}`,
+                        ),
+                    ] as Statement[],
+                };
+            });
+            locals.mutable(name);
+            into.push({ kind: 'switch', subject: dot(expression, 'tag'), cases });
+            return name;
+        };
         const runtimeLens = (
             name: string,
             id: string,
@@ -1425,6 +1478,32 @@ ${joinCode(
             return {
                 view,
                 finish: (body) => {
+                    const current = storage.get(view);
+                    if (
+                        sumParts(id) &&
+                        !Array.isArray(current) &&
+                        current.scattered &&
+                        same(current.scattered.lens, name)
+                    ) {
+                        // Every write already went through the pointers; only the callback of a
+                        // lens that carries one still has to run, with the final value.
+                        const final: Statement[] = [];
+                        const value = sumUnion(name, id, final);
+                        body.push({
+                            kind: 'if',
+                            arms: [
+                                {
+                                    condition: go`${dot(name, 'restore')} != nil`,
+                                    body: [
+                                        ...final,
+                                        go`${dot(name, 'restore')}(${dot(name, 'context')}, ${value})`,
+                                    ],
+                                },
+                            ],
+                        });
+                        after(body);
+                        return;
+                    }
                     const replacement = declare(
                         endpoint(id, 'replacement'),
                         read(storage.get(view), endpoint(id, 'replacement')),
@@ -1806,6 +1885,7 @@ ${joinCode(
                         const contents = storage.get(ref(i.slot));
                         movedFrom.set(i.out.id, contents);
                         rememberHome(ref(i.slot));
+                        rememberScattered(ref(i.slot));
                         // A scattered lens is read through its pointers when matched, so there is
                         // no union to copy out now.
                         const moved =
@@ -1924,6 +2004,39 @@ ${joinCode(
                         const lens = lenses.get(i.lens)!;
                         const contents = storage.get(lens.view);
                         const old = snapshot(contents, id, body, name);
+                        // Putting a constructed value back into a scattered lens: its constructor is
+                        // the one that was matched, so write each field through its pointer now
+                        // (after the old value's reserved read) and leave the lens as it was.
+                        const scattered = Array.isArray(lens.view)
+                            ? undefined
+                            : scatteredHomes
+                                  .get(lens.view.cell)
+                                  ?.get(JSON.stringify(lens.view.path));
+                        const built = datum(i.value);
+                        if (scattered && !Array.isArray(built) && built.constructed) {
+                            const parts = sumParts(scattered.scattered!.layout)!;
+                            const pointers = parts.pointers
+                                .filter((p) => p.variant === tagOf(parts.union, built.constructed!.name))
+                                .sort((a, b) => a.index - b.index);
+                            const payloadData = built.constructed.payload;
+                            const fields: Data[] = !pointers.length
+                                ? []
+                                : pointers[0]!.name.includes('_')
+                                  ? storage.parts(payloadData)
+                                  : [payloadData];
+                            if (fields.length === pointers.length) {
+                                pointers.forEach((p, k) =>
+                                    body.push(
+                                        go`${star(dot(scattered.scattered!.lens, p.name))} = ${read(fields[k]!, p.layout)}`,
+                                    ),
+                                );
+                                storage.put(lens.view, scattered);
+                                lens.finish(body);
+                                dataValues.set(i.out.id, old);
+                                values.set(i.out.id, () => read(old, id));
+                                continue;
+                            }
+                        }
                         const live =
                             Array.isArray(lens.view) || !inPlaceCells.has(lens.view.cell)
                                 ? undefined

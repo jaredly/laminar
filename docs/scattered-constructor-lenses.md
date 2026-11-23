@@ -387,10 +387,16 @@ Generated C for `fn pick(~a) ~{Some(a)}` is
 `return (Fields_Option_Number){.tag=Option_Number_Some, .v0=a.read};`, and the recursive
 `find` returns `&(*v6).item0` or the recursive call's struct in its `cons` arm.
 
-Not done: the arm still rebuilds `Some(final)` so that restoration can compare the tag and
-write the field back through the pointer, rather than writing `*v0 = 20` in the arm; a
-constructor lens over a boxed variant is still unsupported (as before); a scattered lens
-cannot be a call argument.
+Putting the constructed value back (`swap` on the matched lens) writes each field through its
+pointer in the arm (`*v13.v0 = 20;`), since its constructor is the one that was matched, and
+leaves the lens as it was, so the arms of the join agree and no union is merged. Restoring
+the lens afterwards only calls its `restore` callback if it carries one, passing the union read
+from the pointers (a statement `switch` in Go, a conditional expression in C). A write that
+is not a known constructor of the matched one still goes through the general path (rebuild the
+union, then check the tag and write each field through its pointer).
+
+Not done: a constructor lens over a boxed variant is still unsupported (as before); a scattered
+lens cannot be a call argument; some dead `Unit` temporaries remain in the generated arms.
 
 ## Examples
 
