@@ -38,9 +38,9 @@ is not.
 | Operation                       | Result                                       |
 | ------------------------------- | -------------------------------------------- |
 | read a plain binding            | allowed repeatedly; yields shared immutable  |
-| read a scalar (any mode)        | implicit `dup`                               |
+| read a `mut` binding            | consumes it (`:=` still yields `()`)         |
 | move `mut` into plain           | consuming freeze; type error if linear       |
-| plain into `mut`                | needs `dup()`; type error if linear          |
+| plain into `mut`                | needs `dup()`, implicit for a scalar         |
 | `dup()` of a linear value       | type error                                   |
 | linear value in a plain binding | type error                                   |
 | write or lens a plain binding   | type error                                   |
@@ -61,7 +61,10 @@ case. A getter-only lens may come later as a capability restriction, never as a 
 2. **Reclaiming shared memory (accepted).** Go relies on its GC. C uses reference counts. Frozen
    data is immutable and built bottom-up, so it cannot form cycles, and counts are enough. A write
    path never sees shared memory, because plain to `mut` goes through `dup()`, which deep-copies.
-3. **Scalars (accepted).** Number and Bool: stored inline, no allocation, implicitly copied. String
-   and every aggregate (tuple, record, union) are ordinary shareable immutable data, not scalars,
-   even when their fields are scalars.
+3. **Scalars (accepted).** Number and Bool: stored inline, no allocation. String and every
+   aggregate (tuple, record, union) are ordinary shareable immutable data, not scalars, even when
+   their fields are scalars. The only place scalars differ is plain to `mut`, where the `dup()` is
+   implied. Reads never copy: a plain binding is readable any number of times because it is
+   plain, and reading a `mut` binding consumes it for every type. Auto-copying on reads of `mut`
+   would leave the place full, so `x := x + 1` would return the old value instead of `()`.
 4. **Getter-only lenses:** out of scope for this work.

@@ -17,8 +17,8 @@ implemented.
   expression), not a linear type. Use `mustConsume`/`owned` in code for the new notion, or rename
   the AST type first.
 
-So the work is mostly **relaxing** the current rule, not adding a new one: scalars and
-non-`mut` bindings become readable more than once, and `mut`/`linear` keep today's behaviour.
+So the work is mostly **relaxing** the current rule, not adding a new one: non-`mut` bindings
+become readable more than once, and `mut`/`linear` keep today's behaviour.
 
 ## Two languages: pure and dual
 
@@ -57,7 +57,7 @@ number of times).
 | Operation                         | Result                                        |
 | --------------------------------- | --------------------------------------------- |
 | read a plain binding              | allowed repeatedly; yields shared immutable   |
-| read a scalar (any mode)          | implicit `dup`                                |
+| read a `mut` binding              | consumes it (`:=` still yields `()`)          |
 | move `mut` into plain             | consuming freeze; type error if value linear  |
 | plain into `mut`                  | needs `dup()`; type error if value linear     |
 | `dup()` of a linear value         | type error                                    |
@@ -87,20 +87,14 @@ Status: drafted in `mut-and-linear.md` ("Settled rules"). Decisions 1 to 3 are a
 
 Done when the table above is final and the three decisions are written down.
 
-## Phase 1: copyable scalars (no syntax)
+## Phase 1: dropped (scalar auto-copy on reads)
 
-- Add a `copyable(ty)` predicate next to the types in `src/types.ts`.
-- In `consume` (`src/infer.ts`), when the binding's type is copyable, record a copy instead of a
-  move and skip the empty-place transition. This needs the type to be resolved by then; if the
-  solver has not fixed it yet, defer the decision to the end of inference.
-- Typed IR: reuse the existing `dup` operation for scalars rather than adding an op.
-  `src/verify-ir.ts` already rejects uses of consumed temporaries; make sure a copy does not
-  count as consuming.
-- `src/eval.ts` and `src/eval-typed.ts` need no change if scalar `dup` is already the identity.
-- Tests: a scalar used twice compiles with no `!`; a non-scalar still gives `use-after-move`.
-  Add to `test/infer.test.ts`, `test/typed-ir.test.ts` and the C/Go backend tests.
-
-Exit: existing snapshots unchanged except for places where programs wrote `!n` on a scalar.
+The first version of this phase copied scalars on every read. It was built, then removed:
+reading a scalar `mut` binding would leave its place full, so `x := x + 1` would return the old
+value instead of `()`, which changes `:=`. Plain bindings (phase 3) already make `f(x) { x + x }`
+work for every type, because `x` is plain, not because scalars copy. The only scalar rule left is
+the implicit `dup()` when a plain scalar initializes or is assigned into a `mut` binding (phase 3).
+Phase numbers below are kept so existing references stay valid.
 
 ## Phase 2: `type linear X`
 
@@ -118,11 +112,12 @@ Exit: `type linear Fd = ...` parses, and `dup` on it is a type error.
 
 - Syntax: `let mut x =` and `fn (mut x) {}`; carry a `mut` flag through the parser and the
   `Binding` record in `src/infer.ts`. A `~x` parameter sets it implicitly.
-- Plain bindings: reading does not consume (extends phase 1 from scalars to all non-linear
-  types). Reject assignment, lens use and `~` on them.
+- Plain bindings: reading does not consume, for every non-linear type. Reject assignment, lens
+  use and `~` on them.
 - `mut` bindings: unchanged consume-once semantics.
-- Freeze (`mut` to plain) is a move. Plain to `mut` requires `dup()`. Both are checked in
-  `src/infer.ts`; the linear checks come from phase 2.
+- Freeze (`mut` to plain) is a move. Plain to `mut` requires `dup()`, which is implied when the
+  value is a scalar (Number or Bool), so `let mut n = x` works. Reads of `mut` bindings never
+  copy. Both are checked in `src/infer.ts`; the linear checks come from phase 2.
 - Typed IR and verification: add a "binding is shared" fact so `verify-ir.ts` allows repeated
   reads without a move, and rejects a write or lens on a shared place.
 - Closures (`lambda` in `src/infer.ts`) capture plain bindings by sharing and `mut` bindings by
@@ -158,7 +153,6 @@ immutable values.
 
 - Update `mut-and-linear.md` with the settled rules, link this plan from the docs index, and fix
   the stale claims in `mutable-boxes.md` ("every heap allocation has exactly one owner").
-- Update `examples/` that currently write `!x` on scalars.
 
 ## Phase 0.5: mode plumbing
 
@@ -172,11 +166,11 @@ Add the compiler option, the pragma, the reserved keywords `mut` and `linear` wi
 checker-level "needs dual mode" error in pure, and the policy object, with pure as the only
 implemented policy. Any existing test program or example that uses `mut` or `linear` as an
 identifier needs renaming. This lands first, changes no behaviour, and
-proves the existing snapshots are untouched. Phases 1 to 5 then add dual's answers to the policy.
+proves the existing snapshots are untouched. Phases 2 to 5 then add dual's answers to the policy.
 
 ## Ordering and risk
 
-Phases 1 to 3 are checker-only and can ship without touching a backend, as long as the reference
+Phases 2 to 3 are checker-only and can ship without touching a backend, as long as the reference
 evaluator shares values. Phase 5 is the largest risk, because it weakens an invariant the C and Go
 backends rely on, so land it after the checker rules are stable. Phase 0 is the real gate: the
 cleanup decision changes phases 2, 4 and 5.
