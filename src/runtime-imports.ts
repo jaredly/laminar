@@ -1,5 +1,5 @@
 import { BackendDiagnostic, type TargetConfig } from './backend/target.ts';
-import { Solver, con, fn, plain, flow, tuple, type FlowTy, type Ty } from './types.ts';
+import { Solver, con, fn, plain, reads, flow, tuple, type FlowTy, type Ty } from './types.ts';
 
 /** How a call boundary treats an argument or result: transferred data, or a lens capability. */
 export type ImportConvention = 'owned' | 'lens';
@@ -29,7 +29,7 @@ const number = con('Number'),
 const all = ['reference', 'c', 'go'] as const;
 const numeric = (name: string, result: Ty, semantics: string): RuntimeImport => ({
     name,
-    signature: () => fn([plain(number), plain(number)], plain(result)),
+    signature: () => fn([reads(number), reads(number)], plain(result)),
     arguments: ['owned', 'owned'],
     result: 'owned',
     backends: all,
@@ -46,7 +46,7 @@ export const runtimeImports: readonly RuntimeImport[] = [
     numeric('<=', bool, 'IEEE-754 ordered comparison'),
     {
         name: 'round',
-        signature: () => fn([plain(number)], plain(number)),
+        signature: () => fn([reads(number)], plain(number)),
         arguments: ['owned'],
         result: 'owned',
         backends: all,
@@ -89,7 +89,7 @@ export const runtimeImports: readonly RuntimeImport[] = [
         name: 'array',
         signature: (s) => {
             const a = s.fresh();
-            return fn([plain(number), plain(a)], plain(con('Vector', a)));
+            return fn([reads(number), reads(a)], plain(con('Vector', a)));
         },
         arguments: ['owned', 'owned'],
         result: 'owned',
@@ -113,7 +113,7 @@ export const runtimeImports: readonly RuntimeImport[] = [
         signature: (s) => {
             const a = s.fresh(),
                 v = con('Vector', a);
-            return fn([plain(number), flow(v, v)], flow(a, a));
+            return fn([reads(number), flow(v, v)], flow(a, a));
         },
         arguments: ['owned', 'lens'],
         result: 'lens',
@@ -134,7 +134,7 @@ export const runtimeImports: readonly RuntimeImport[] = [
         signature: (s) => {
             const a = s.fresh(),
                 v = con('Vector', a);
-            return fn([plain(v), plain(a)], plain(v));
+            return fn([reads(v), reads(a)], plain(v));
         },
         arguments: ['owned', 'owned'],
         result: 'owned',
@@ -143,7 +143,7 @@ export const runtimeImports: readonly RuntimeImport[] = [
     },
     {
         name: 'charList',
-        signature: () => fn([plain(string)], plain(con('List', string))),
+        signature: () => fn([reads(string)], plain(con('List', string))),
         arguments: ['owned'],
         result: 'owned',
         backends: all,
@@ -151,7 +151,7 @@ export const runtimeImports: readonly RuntimeImport[] = [
     },
     {
         name: 'getInput',
-        signature: () => fn([plain(string)], plain(string)),
+        signature: () => fn([reads(string)], plain(string)),
         arguments: ['owned'],
         result: 'owned',
         capability: 'stdin',
@@ -161,7 +161,7 @@ export const runtimeImports: readonly RuntimeImport[] = [
     },
     {
         name: 'print',
-        signature: () => fn([plain(string)], plain(tuple())),
+        signature: () => fn([reads(string)], plain(tuple())),
         arguments: ['owned'],
         result: 'owned',
         capability: 'stdout',

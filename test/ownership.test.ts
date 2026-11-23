@@ -1,5 +1,5 @@
 import { expect, it } from 'bun:test';
-import { checkSource } from '../src/compiler.ts';
+import { CompileError, checkSource } from '../src/compiler.ts';
 
 /** `mut` marks an owned position, `shared` a plain one. */
 const modes = (source: string, name: string, mode: 'pure' | 'dual' = 'dual') => {
@@ -37,4 +37,35 @@ it('leaves an explicit dup owned', () => {
 
 it('keeps every position owned in pure mode', () => {
     expect(modes('fn f(x) {x}', 'f', 'pure')).toBe('(mut) -> mut');
+});
+
+const errorCode = (source: string): string => {
+    try {
+        checkSource(source, { mode: 'dual' });
+    } catch (error) {
+        if (error instanceof CompileError) return error.code;
+        throw error;
+    }
+    return 'ok';
+};
+
+it('needs a dup to pass a plain value to a mut parameter', () => {
+    const own = 'fn own(mut x) {x}\n';
+    expect(errorCode(`${own}{let p = (1, 2)\n own(p)}`)).toBe('shared-into-mut');
+    expect(errorCode(`${own}{let p = (1, 2)\n own(dup(~p))}`)).toBe('ok');
+    expect(errorCode(`${own}{let mut m = (1, 2)\n own(m)}`)).toBe('ok');
+    expect(errorCode(`${own}own((1, 2))`)).toBe('ok');
+});
+
+it('lets owned and shared values into plain parameters', () => {
+    const read = 'fn read(x) {x}\n';
+    expect(errorCode(`${read}{let p = (1, 2)\n read(p)}`)).toBe('ok');
+    expect(errorCode(`${read}{let mut m = (1, 2)\n read(m)}`)).toBe('ok');
+});
+
+it('needs a dup to initialize a mut binding from a plain value', () => {
+    expect(errorCode('{let p = (1, 2)\n let mut m = p\n m}')).toBe('shared-into-mut');
+    expect(errorCode('{let p = (1, 2)\n let mut m = dup(~p)\n m}')).toBe('ok');
+    expect(errorCode('{let mut a = (1, 2)\n let mut m = a\n m}')).toBe('ok');
+    expect(errorCode('{let mut m = (1, 2)\n m}')).toBe('ok');
 });

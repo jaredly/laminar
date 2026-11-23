@@ -1,4 +1,4 @@
-import { Solver, con, fn, plain, type Scheme } from './types.ts';
+import { Solver, con, fn, plain, reads, type Scheme } from './types.ts';
 import { checkConventions, runtimeImports } from './runtime-imports.ts';
 
 /** Source signatures, derived from the runtime import registry. */
@@ -21,8 +21,8 @@ export function constructorTypes(): Map<string, Scheme> {
         option = con('Option', b);
     return new Map([
         ['nil', s.generalize(fn([], plain(list)), [])],
-        ['cons', s.generalize(fn([plain(a), plain(list)], plain(list)), [])],
-        ['Some', s.generalize(fn([plain(b)], plain(option)), [])],
+        ['cons', s.generalize(fn([reads(a), reads(list)], plain(list)), [])],
+        ['Some', s.generalize(fn([reads(b)], plain(option)), [])],
         ['None', s.generalize(fn([], plain(option)), [])],
     ]);
 }

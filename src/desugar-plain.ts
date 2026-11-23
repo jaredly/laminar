@@ -139,9 +139,8 @@ export function desugarPlain(source: Linear): PlainResult {
             case 'fn':
                 return closure(n, scope);
             case 'let': {
-                const { mut: _, ...rest } = n;
                 return {
-                    ...rest,
+                    ...n,
                     value: term(n.value, scope),
                     body: linear(n.body, letScope(n, scope)),
                 };
@@ -172,9 +171,10 @@ export function desugarPlain(source: Linear): PlainResult {
         const bound = new Set(n.args.flatMap((a) => names(a.pat)));
         const { values } = captureUses(n.body, bound);
         const captured = [...values].filter((name) => scope.get(name) === 'plain');
-        const args = n.args.map(({ mut: _, ...a }, i) =>
-            argMode(n.args[i]) === 'plain' ? { ...a, shared: true } : a,
-        );
+        const args = n.args.map(({ mut: _, ...a }, i) => ({
+            ...a,
+            shared: argMode(n.args[i]) === 'plain',
+        }));
         let body = term(n.body, inner);
         const loc = n.loc;
         const temporaries = captured.map((name) => `$plain${fresh++}`);
@@ -226,9 +226,8 @@ export function desugarPlain(source: Linear): PlainResult {
                     body: linear(n.body, bind(scope, n.pat, 'mut')),
                 };
             case 'let': {
-                const { mut: _, ...rest } = n;
                 return {
-                    ...rest,
+                    ...n,
                     value: term(n.value, scope),
                     body: lens(n.body, letScope(n, scope)),
                 };

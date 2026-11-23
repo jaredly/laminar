@@ -33,6 +33,7 @@ import {
     OWNED,
     REPLACEABLE,
     SHARED,
+    reads,
     mapType,
     type Ty,
     type FlowTy,
@@ -427,7 +428,7 @@ export class Inferencer {
                         `Constructor ${constructor} already exists`,
                     );
                 const args = (item.args ?? []).map((t) =>
-                    plain(this.valueAnnotation(t, params, true)),
+                    reads(this.valueAnnotation(t, params, true)),
                 );
                 constructors.set(constructor, this.solver.generalize(fn(args, result), []));
             }
@@ -700,7 +701,7 @@ export class Inferencer {
         this.solver.unify(
             this.instantiate(name, scheme, node, true),
             fn(
-                args.map((a) => plain(a)),
+                args.map((a) => plain(a, this.solver.freshMode())),
                 plain(result),
             ),
             loc,
@@ -870,7 +871,10 @@ export class Inferencer {
                 type = flow(read, write);
             } else {
                 this.pattern(a.pat, read, sub, undefined, seen);
-                type = plain(read, a.shared ? SHARED : OWNED);
+                type = plain(
+                    read,
+                    a.shared === undefined ? this.solver.freshMode() : a.shared ? SHARED : OWNED,
+                );
             }
             parameters.push(names(a.pat).map((name) => sub.get(name)!.id!));
             parameterPlaces.push(
@@ -1041,6 +1045,12 @@ export class Inferencer {
             return result;
         }
         const type = this.linear(n.value, env);
+        if (n.mut && this.solver.modeOf(this.modeOf(n.value)) === 'shared')
+            this.error(
+                'shared-into-mut',
+                n.value.loc,
+                'A plain (shared) value cannot initialize a `mut` binding; `dup` it first',
+            );
         this.pattern(p, type, sub);
         // First-class functions are affine monotypes; only top-level definitions are reusable schemes.
         const close = () =>
@@ -1219,7 +1229,7 @@ export class Inferencer {
                 this.solver.unify(
                     this.instantiate(n.name, scheme, n, true),
                     fn(
-                        writeFields.map((a) => plain(a)),
+                        writeFields.map((a) => plain(a, this.solver.freshMode())),
                         plain(write),
                     ),
                     n.loc,
@@ -1325,6 +1335,19 @@ export class Inferencer {
             n.loc,
         );
         this.resultModes.set(n, (n as { share?: boolean }).share ? SHARED : resultMode);
+        n.args.forEach((a, i) => {
+            const param = args[i];
+            if (a.type === 'lens' || param.tag !== 'plain') return;
+            if (
+                this.solver.modeOf(this.modeOf(a)) === 'shared' &&
+                this.solver.ownership(param) === 'owned'
+            )
+                this.error(
+                    'shared-into-mut',
+                    a.loc,
+                    'A plain (shared) value cannot go where a `mut` one is expected; `dup` it first',
+                );
+        });
         if (!lensResult) {
             view?.put(replacement);
             return { read, put: () => {}, targets: [] };

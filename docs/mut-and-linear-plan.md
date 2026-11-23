@@ -206,8 +206,12 @@ owned data. Real sharing needs four pieces, in this order:
     modes. Modes are invariant inside function types, which is strict for higher-order code; a
     coercion can come later. `share` is still a `dup` in every backend. Not done: printing modes
     in types, and the native `share` primitive 5b and 5c will need.
-  - Stage 3 (next): the errors. A shared value for a `mut` parameter or `let mut` is
-    `shared-into-mut`; natives' parameters must be shared first, so owned data flows into them.
+  - Stage 3 (done): the errors. A shared value for a `mut` parameter or a `let mut` is
+    `shared-into-mut`. Natives' and constructors' parameters only read, so they accept either mode
+    (`reads`, and fresh modes at constructor sites). A pure lambda's parameter mode is left open so
+    natives still unify with it. A `mut` argument for a plain parameter is a move and needs
+    nothing. Not checked yet: a shared result flowing into `mut` storage by other routes (`:=`,
+    returned from a `mut` result position), and modes printed in types.
 - **5b. Concrete IR** (`src/concrete-ir.ts`, `src/lower-concrete.ts`, `src/verify-concrete.ts`):
   a shared-storage class. Owned memory keeps the single-owner invariant and box reuse. Shared
   memory is read-only and never `retains`/`reuses`. The verifier rejects any write that reaches a

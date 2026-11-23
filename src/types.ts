@@ -29,6 +29,8 @@ export const record = (fields: { name: string; type: Ty }[]): Ty => ({
     fields: [...fields].sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0)),
 });
 export const plain = (value: Ty, mode: Ty = OWNED): FlowTy => ({ tag: 'plain', value, mode });
+/** A parameter that only reads its argument, so it accepts shared and owned values alike. */
+export const reads = (value: Ty): FlowTy => plain(value, SHARED);
 /** The names start with `$` so they cannot collide with a user-declared type. */
 const REPLACEABLE_NAME = '$replaceable';
 const FIXED_NAME = '$fixed';
