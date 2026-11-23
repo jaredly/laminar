@@ -11,9 +11,9 @@ memchr memcmp memcpy memmove memset strcat strchr strcmp strcpy strlen strncmp s
 acos asin atan atan2 cbrt ceil copysign cos cosh exp exp2 expm1 fabs floor fma fmax fmin fmod frexp hypot ldexp lgamma log log10 log1p log2 lrint lround modf nan nearbyint pow remainder rint round scalbn signbit sin sinh sqrt tan tanh tgamma trunc isfinite isinf isnan isnormal fpclassify HUGE_VAL INFINITY NAN
 `;
 // The C runtime's own symbols and the hidden parameter names of generated bodies.
-const runtime = `main live_contexts allocate_context release_context print_number print_string encode String string_builder environment opaque ctx replacement focus write result value cell handle`;
+const runtime = `main live_contexts allocate_context release_context retain_context unique_context print_number print_string encode String string_builder environment opaque ctx replacement focus write result value cell handle`;
 const generated =
-    /^(?:L\d+|A\d+|fn\d+|v\d+|i\d+|arg\d+|back\d+|read\d+|write\d+|value\d+|result\d+|native\d+|dispose\d+|focus[A-Za-z_0-9]*|restore[A-Za-z_0-9]*|Restore\d+|LensResult[A-Za-z_0-9]*|Backing_[A-Za-z_0-9]*|result_adapter\d+|(?:drop|dup|print|char_list|round|host_print|host_input|vector_[a-z]+)_[A-Za-z_0-9]+|(?:laminar|string|builder)_[A-Za-z_0-9]*)$/;
+    /^(?:L\d+|A\d+|fn\d+|v\d+|i\d+|arg\d+|back\d+|read\d+|write\d+|value\d+|result\d+|native\d+|dispose\d+|focus[A-Za-z_0-9]*|restore[A-Za-z_0-9]*|Restore\d+|LensResult[A-Za-z_0-9]*|Backing_[A-Za-z_0-9]*|result_adapter\d+|(?:drop|dup|share|print|char_list|round|host_print|host_input|vector_[a-z]+)_[A-Za-z_0-9]+|(?:laminar|string|builder)_[A-Za-z_0-9]*)$/;
 
 export const cNameRules = {
     reserved: [keywords, library, runtime].flatMap((s) => s.split(/\s+/).filter(Boolean)),

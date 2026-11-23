@@ -392,6 +392,8 @@ export function lowerC(
         new Declaration('live_contexts', 'static size_t live_contexts = 0;'),
         new Declaration('allocate_context', 'void *allocate_context(size_t size);'),
         new Declaration('release_context', 'void release_context(void *context);'),
+        new Declaration('retain_context', 'void retain_context(void *context);'),
+        new Declaration('unique_context', '_Bool unique_context(void *context);'),
         ...(runtime?.functions.map((f) => new Declaration(f.name, f.signature + ';')) ?? []),
     );
     program.code.forEach((c) =>
@@ -406,7 +408,15 @@ export function lowerC(
     // Union operations are recursive C functions, generated once per layout on first use.
     const unionHelpers = new Map<string, string>();
     const unionHelper = (
-        kind: 'drop' | 'dup' | 'print' | 'char_list' | 'round' | 'host_print' | 'host_input',
+        kind:
+            | 'drop'
+            | 'dup'
+            | 'share'
+            | 'print'
+            | 'char_list'
+            | 'round'
+            | 'host_print'
+            | 'host_input',
         id: string,
         result: string,
         generate: (body: Statement[]) => void,
@@ -584,6 +594,55 @@ export function lowerC(
             )}}`;
         return expr;
     };
+    /**
+     * A shared read: one more reference to the same allocations, which nothing writes. A boxed
+     * payload, vector buffer or string is retained, not copied; the holders' drops balance it.
+     */
+    const reaches = (id: string): boolean => {
+        const l = layout(id);
+        if (l.kind === 'union' || l.kind === 'string' || l.kind === 'vector') return true;
+        return (
+            l.kind === 'record' &&
+            !l.fields.some((f) => f.name === 'dispose') &&
+            l.fields.some((f) => f.kind === 'value' && reaches(f.layout))
+        );
+    };
+    const shareValue = (expr: Expr, id: string): Expr => {
+        const l = layout(id);
+        if (!reaches(id)) return expr;
+        if (l.kind === 'union')
+            return cc`${unionHelper('share', id, type(id), (body) => {
+                l.fields.forEach((_, n) => {
+                    const v = variant(id, n);
+                    const arm: Statement[] = v.boxed
+                        ? [cc`${use('retain_context')}(value.as.v${n});`]
+                        : reaches(v.layout)
+                          ? [cc`value.as.v${n} = ${shareValue(payload('value', id, n), v.layout)};`]
+                          : [];
+                    if (arm.length)
+                        body.push({
+                            head: cc`${body.length > 1 ? 'else if' : 'if'} (value.tag == ${tagValue(id, n)})`,
+                            body: arm,
+                        });
+                });
+                body.push('return value;');
+            })}(${expr})`;
+        if (l.kind === 'string') return cc`${use('string_share')}(${expr})`;
+        if (l.kind === 'vector')
+            return cc`${vectorHelper('share', id, type(id), cText`${type(id)} value`, (body) =>
+                body.push(
+                    {
+                        head: 'if (value.elements)',
+                        body: [cc`${use('retain_context')}(value.elements);`],
+                    },
+                    'return value;',
+                ),
+            )}(${expr})`;
+        return cc`(${type(id)}){${joinCode(
+            l.fields.map((f, n) => shareValue(field(expr, n), (f as { layout: string }).layout)),
+            ', ',
+        )}}`;
+    };
     const drop = (data: Data, body: Statement[]): void => {
         if (Array.isArray(data)) return data.forEach((d) => drop(d, body));
         const l = layout(data.layout);
@@ -593,7 +652,15 @@ export function lowerC(
                 l.fields.forEach((_, n) => {
                     const v = variant(id, n);
                     const arm: Statement[] = [];
-                    drop({ expression: payload('value', id, n), layout: v.layout }, arm);
+                    const inner: Statement[] = [];
+                    drop({ expression: payload('value', id, n), layout: v.layout }, inner);
+                    // A box that other holders still reference is only released, not emptied.
+                    if (v.boxed && inner.length)
+                        arm.push({
+                            head: cc`if (${use('unique_context')}(value.as.v${n}))`,
+                            body: inner,
+                        });
+                    else arm.push(...inner);
                     if (v.boxed) arm.push(cc`${use('release_context')}(value.as.v${n});`);
                     if (arm.length)
                         body.push({
@@ -612,7 +679,10 @@ export function lowerC(
                 const each: Statement[] = [];
                 drop({ expression: 'value.elements[i]', layout: element(id) }, each);
                 if (each.length)
-                    body.push({ head: 'for (size_t i = 0; i < value.length; i++)', body: each });
+                    body.push({
+                        head: cc`if (value.elements && ${use('unique_context')}(value.elements))`,
+                        body: [{ head: 'for (size_t i = 0; i < value.length; i++)', body: each }],
+                    });
                 body.push({
                     head: 'if (value.elements)',
                     body: [cc`${use('release_context')}(value.elements);`],
@@ -1033,10 +1103,14 @@ export function lowerC(
                 data: Data,
                 body: Statement[] = setup,
                 retains?: string,
+                /** The value may be shared, so a box is emptied only if nothing else holds it. */
+                dynamic = false,
             ) => {
                 if (p.kind === 'bind') places.set(p.slot.place, storage.own(data));
                 else if (p.kind === 'tuple')
-                    p.items.forEach((p, i) => bind(p, storage.parts(data)[i]!, body));
+                    p.items.forEach((p, i) =>
+                        bind(p, storage.parts(data)[i]!, body, undefined, dynamic),
+                    );
                 else if (p.kind === 'constructor') {
                     // The matched value is still a scattered lens: its fields are the pointers it
                     // carries, so they are read and written in place and nothing is rebuilt.
@@ -1053,7 +1127,10 @@ export function lowerC(
                             heap: true,
                         });
                         const contents: Data = !pointers.length
-                            ? { expression: zero(variant(data.layout, n).layout), layout: variant(data.layout, n).layout }
+                            ? {
+                                  expression: zero(variant(data.layout, n).layout),
+                                  layout: variant(data.layout, n).layout,
+                              }
                             : pointers[0]!.name.includes('_')
                               ? pointers.map(leaf)
                               : leaf(pointers[0]!);
@@ -1089,8 +1166,12 @@ export function lowerC(
                             heap: true,
                         };
                     } else if (v.boxed) {
+                        const taken =
+                            dynamic && reaches(v.layout)
+                                ? cc`(${use('unique_context')}(${variantField(data.expression, n)}) ? ${contents.expression} : ${shareValue(contents.expression, v.layout)})`
+                                : contents.expression;
                         contents = {
-                            expression: declare(v.layout, contents.expression, body),
+                            expression: declare(v.layout, taken, body),
                             layout: v.layout,
                         };
                         if (retains !== undefined) {
@@ -1109,9 +1190,11 @@ export function lowerC(
                                 cc`${use('release_context')}(${variantField(data.expression, n)});`,
                             );
                     }
-                    if (p.items.length === 1) bind(p.items[0]!, contents, body);
+                    if (p.items.length === 1) bind(p.items[0]!, contents, body, undefined, dynamic);
                     else
-                        p.items.forEach((item, k) => bind(item, storage.parts(contents)[k]!, body));
+                        p.items.forEach((item, k) =>
+                            bind(item, storage.parts(contents)[k]!, body, undefined, dynamic),
+                        );
                 } else if (p.kind === 'drop' || p.kind === 'literal') drop(data, body);
             };
             const parameters: { expression: string; layout: string; view: View }[] = [];
@@ -1127,7 +1210,14 @@ export function lowerC(
                         layout: p.layout,
                         data: storage.get(view),
                     });
-                } else bind(p.pattern, { expression: sources[i]!, layout: p.layout });
+                } else
+                    bind(
+                        p.pattern,
+                        { expression: sources[i]!, layout: p.layout },
+                        undefined,
+                        undefined,
+                        true,
+                    );
             });
             const flushParameters = (body: Statement[]) =>
                 parameters.forEach((p) => flush(p.expression, p.layout, storage.get(p.view), body));
@@ -1337,9 +1427,7 @@ export function lowerC(
                     mark = variables.length;
                 const l = layout(id),
                     input = l.fields.find((f) => f.name === 'read');
-                let quiet: boolean,
-                    afterEnclosing: Map<Cell, Data>,
-                    afterFlush: Map<Cell, Data>;
+                let quiet: boolean, afterEnclosing: Map<Cell, Data>, afterFlush: Map<Cell, Data>;
                 try {
                     const trial: Statement[] = [];
                     (lens.forwarded ? lens.forwarded.rest : lens.finish)(trial);
@@ -1812,6 +1900,8 @@ export function lowerC(
                                 layout: outputLayouts.get(i.value)!,
                             },
                             body,
+                            undefined,
+                            sharedValues.has(i.value),
                         );
                         continue;
                     }
@@ -2069,7 +2159,9 @@ export function lowerC(
                                 if (pointers.length > 1 && leaves.length === 1)
                                     leaves = storage.parts(leaves[0]!);
                                 const live = leaves.map((d) =>
-                                    !Array.isArray(d) && d.address && d.heap ? d.address : undefined,
+                                    !Array.isArray(d) && d.address && d.heap
+                                        ? d.address
+                                        : undefined,
                                 );
                                 if (
                                     leaves.length === pointers.length &&
@@ -2106,7 +2198,8 @@ export function lowerC(
                                         expression: payload(replacement.expression, union, n),
                                         layout: v.layout,
                                     };
-                                    const parts = fields.length === 1 ? [inner] : storage.parts(inner);
+                                    const parts =
+                                        fields.length === 1 ? [inner] : storage.parts(inner);
                                     fields.forEach((f, k) => storage.put(f.view, parts[k]!));
                                     fields.forEach((f) => f.finish(output));
                                 },
@@ -2122,7 +2215,9 @@ export function lowerC(
                             const built = constructedBy.get(i.value);
                             const scattered = Array.isArray(lens.view)
                                 ? undefined
-                                : scatteredHomes.get(lens.view.cell)?.get(JSON.stringify(lens.view.path));
+                                : scatteredHomes
+                                      .get(lens.view.cell)
+                                      ?.get(JSON.stringify(lens.view.path));
                             if (scattered && built) {
                                 const parts = sumParts(scattered.scattered!.layout)!;
                                 const pointers = parts.pointers
@@ -2280,6 +2375,7 @@ export function lowerC(
                                         },
                                         nested,
                                         arm.retains,
+                                        sharedValues.has(i.value),
                                     );
                                     if (arm.retains && movedFrom.has(i.value))
                                         retainedOwners.set(arm.retains, movedFrom.get(i.value)!);
@@ -2287,7 +2383,11 @@ export function lowerC(
                                     normalize(arm.setup, nested);
                                     const lens = lenses.get(arm.body.result)!;
                                     const forward = returned.has(i.out.id)
-                                        ? forwardable(lens, arm, outputLayouts.get(arm.body.result)!)
+                                        ? forwardable(
+                                              lens,
+                                              arm,
+                                              outputLayouts.get(arm.body.result)!,
+                                          )
                                         : undefined;
                                     // Setup storage used by deferred cleanup is declared in the arm;
                                     // declaration placement lifts it out of the conditional.
@@ -2307,7 +2407,9 @@ export function lowerC(
                                     // is whichever one ran, with no selector and no copied contents.
                                     forwardedJoin = fresh();
                                     variables.push({ name: forwardedJoin, type: type(id) });
-                                    body.push(locals.declaration(forwardedJoin, type(id), zero(id)));
+                                    body.push(
+                                        locals.declaration(forwardedJoin, type(id), zero(id)),
+                                    );
                                     const enclosing = [...enclosingFinishes];
                                     arms.forEach((a) => {
                                         const plan = a.forward!;
@@ -2403,6 +2505,7 @@ export function lowerC(
                                     },
                                     nested,
                                     arm.retains,
+                                    sharedValues.has(i.value),
                                 );
                                 if (arm.retains && movedFrom.has(i.value))
                                     retainedOwners.set(arm.retains, movedFrom.get(i.value)!);
@@ -2489,7 +2592,8 @@ export function lowerC(
                             let args: Expr[] = [];
                             if (w?.kind === 'native' && w.definition === 'native/dup') {
                                 const lens = lenses.get(i.args[0]!)!;
-                                expr = duplicate(read(storage.get(lens.view), id), id);
+                                const source = read(storage.get(lens.view), id);
+                                expr = i.share ? shareValue(source, id) : duplicate(source, id);
                                 adapters.push({ finish: lens.finish });
                             } else if (w?.kind === 'native' && w.definition === 'native/size') {
                                 const lens = lenses.get(i.args[0]!)!,
@@ -2585,8 +2689,7 @@ export function lowerC(
                                     ...runtimeLens(name, id, rest),
                                     forwarded: { expression: name, rest },
                                 });
-                            }
-                            else adapters.forEach((a) => a.finish(body));
+                            } else adapters.forEach((a) => a.finish(body));
                             continue;
                         }
                         default:
@@ -2628,9 +2731,13 @@ export function lowerC(
                 return value(b.result);
             };
             const outputLayouts = new Map<string, string>();
+            /** Values whose type is shared: other holders may reference their allocations. */
+            const sharedValues = new Set<string>();
             const index = (b: ConcreteBlock) =>
                 b.instructions.forEach((i) => {
                     if ('out' in i) outputLayouts.set(i.out.id, i.out.layout);
+                    if ('out' in i && i.out.type.tag === 'plain' && i.out.type.mode === 'shared')
+                        sharedValues.add(i.out.id);
                     if (i.op === 'scope') index(i.body);
                     if (i.op === 'aslens') {
                         if (i.inPlace) inPlaceIds.add(i.inPlace);
@@ -2716,22 +2823,37 @@ export function lowerC(
         ...helpers,
         ...(runtime?.functions ?? []),
         {
+            // Every allocation carries a reference count ahead of its payload. Owned data has
+            // exactly one reference; a shared read adds one and each holder's drop removes one.
             name: 'allocate_context',
             signature: 'void *allocate_context(size_t size)',
             body: [
-                'void *context = malloc(size);',
+                'size_t *context = malloc(size + 2 * sizeof *context);',
                 { head: 'if (!context)', body: ['abort();'] },
                 '++live_contexts;',
-                'return context;',
+                '*context = 1;',
+                'return context + 2;',
             ],
+        },
+        {
+            name: 'retain_context',
+            signature: 'void retain_context(void *context)',
+            body: ['++((size_t *)context)[-2];'],
+        },
+        {
+            name: 'unique_context',
+            signature: '_Bool unique_context(void *context)',
+            body: ['return ((size_t *)context)[-2] == 1;'],
         },
         {
             name: 'release_context',
             signature: 'void release_context(void *context)',
             body: [
                 { head: 'if (!context || live_contexts == 0)', body: ['abort();'] },
+                'size_t *refs = (size_t *)context - 2;',
+                { head: 'if (--*refs)', body: ['return;'] },
                 '--live_contexts;',
-                'free(context);',
+                'free(refs);',
             ],
         },
     );

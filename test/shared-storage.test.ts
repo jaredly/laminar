@@ -1,5 +1,10 @@
 import { expect, it } from 'bun:test';
-import { CompileError, checkSource } from '../src/compiler.ts';
+import { spawnSync } from 'node:child_process';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { CompileError, buildCompiled, checkSource, compileSource } from '../src/compiler.ts';
+import { detectTarget } from '../src/backend/host.ts';
 import { compileConcreteProgram } from '../src/lower-concrete.ts';
 import { wasm32Emscripten } from '../src/backend/target.ts';
 import { verifyConcreteProgram } from '../src/verify-concrete.ts';
@@ -78,3 +83,66 @@ it('rejects assigning a shared value into mut storage in the checker', () => {
     expect(code('{let p = 1\n let mut x = 0\n x := p\n x}')).toBe('shared-into-mut');
     expect(code('{let p = (1, 2)\n let mut x = (0, 0)\n x := dup(~p)\n x}')).toBe('ok');
 });
+
+// Building needs the toolchains; opt in with LAMINAR_EXEC=1.
+const execute = (source: string, name: 'native' | 'go'): string => {
+    const target = detectTarget(name);
+    const compiled = compileSource(source, { target, mode: 'dual' });
+    const directory = mkdtempSync(join(tmpdir(), 'laminar-shared-'));
+    try {
+        const { command, args } = buildCompiled(compiled, target, {
+            directory,
+            sanitize: name === 'native',
+        });
+        const run = spawnSync(command, args, { encoding: 'utf8' });
+        if (run.status !== 0) throw new Error(run.stderr);
+        return run.stdout;
+    } finally {
+        rmSync(directory, { recursive: true });
+    }
+};
+const tree = `type Tree {
+    Leaf(Number)
+    Node(Tree, Tree)
+}
+fn sum(t) {
+    match t {
+        Leaf(n) -> n
+        Node(l, r) -> sum(l) + sum(r)
+    }
+}
+`;
+for (const name of ['native', 'go'] as const)
+    (process.env.LAMINAR_EXEC ? it : it.skip)(
+        `shares a tree between two readers on ${name}`,
+        () => {
+            const out = execute(
+                `${tree}{let t = Node(Node(Leaf(1), Leaf(2)), Leaf(3))\n sum(t) + sum(t)}`,
+                name,
+            );
+            expect(out.trim()).toBe('12');
+            const copy = execute(
+                `${tree}{let t = Node(Leaf(1), Leaf(2))\n let mut m = dup(~t)\n (sum(m), sum(t))}`,
+                name,
+            );
+            expect(copy.trim()).toBe('[3,3]');
+        },
+        60000,
+    );
+
+for (const name of ['native', 'go'] as const)
+    (process.env.LAMINAR_EXEC ? it : it.skip)(
+        `balances shared strings, vectors and returned shares on ${name}`,
+        () => {
+            expect(execute('{let s = "ab"\n let v = [:1, 2:]\n (s, s, v, v)}', name).trim()).toBe(
+                '["ab","ab",[1,2],[1,2]]',
+            );
+            expect(
+                execute(
+                    `${tree}fn id(x) {x}\n{let t = Node(Leaf(4), Leaf(5))\n sum(id(t)) + sum(id(Node(Leaf(1), Leaf(2))))}`,
+                    name,
+                ).trim(),
+            ).toBe('12');
+        },
+        60000,
+    );

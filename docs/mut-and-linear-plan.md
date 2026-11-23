@@ -221,9 +221,15 @@ owned data. Real sharing needs four pieces, in this order:
   a shared scrutinee's box. The checker rejects `x := shared` as `shared-into-mut`. Writes cannot
   otherwise reach shared memory, since a plain binding cannot be lensed. Not covered: natives that
   store a shared argument (vector push) are not tracked by type.
-- **5c. Backends.** C (`src/c/lower.ts`) uses reference counts, valid because shared data is
-  acyclic. Go (`src/go/lower.ts`) shares the pointer and lets the GC reclaim it. `dup` out of
-  shared storage is a deep copy, so owned memory never aliases shared memory.
+- **5c. Backends.** **Done.** Go aliases a `share` read (no copy; the GC reclaims it); a plain
+  `dup` still deep-copies. C gives every allocation a reference count (a header ahead of the
+  payload in `allocate_context`). A `share` read retains the root allocations (box, vector buffer,
+  string); drops empty a box or buffer only when it is `unique_context`, else just release.
+  Destructuring a boxed payload of a possibly shared value (a shared-typed scrutinee, or any
+  parameter pattern) moves the payload out only if the box is unique, else shares it first.
+  Because writes happen in place, natives that mutate or store their argument (`[:push:]`,
+  `array`) take owned arguments: a plain value needs `dup`. Pure programs gain only the
+  allocator header and the extra uniqueness check in drops.
 - **5d. Tests.** `test/box-reuse.test.ts` still passes for owned data; new tests share a tree
   between two readers and check that neither a write nor a reuse touches it, and that C refcounts
   balance under the sanitizer build.

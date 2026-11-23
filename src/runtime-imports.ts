@@ -89,7 +89,7 @@ export const runtimeImports: readonly RuntimeImport[] = [
         name: 'array',
         signature: (s) => {
             const a = s.fresh();
-            return fn([reads(number), reads(a)], plain(con('Vector', a)));
+            return fn([reads(number), plain(a)], plain(con('Vector', a)));
         },
         arguments: ['owned', 'owned'],
         result: 'owned',
@@ -134,7 +134,7 @@ export const runtimeImports: readonly RuntimeImport[] = [
         signature: (s) => {
             const a = s.fresh(),
                 v = con('Vector', a);
-            return fn([reads(v), reads(a)], plain(v));
+            return fn([plain(v), plain(a)], plain(v));
         },
         arguments: ['owned', 'owned'],
         result: 'owned',

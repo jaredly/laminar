@@ -225,20 +225,26 @@ export function lowerGo(program: ConcreteProgram): GoFile {
                     : pointers[0]!.name.includes('_')
                       ? go`${type(v.layout)}{${joinCode(
                             pointers.map(
-                                (p) => go`${field(`item${p.index}`)}: ${star(dot(expression, p.name))}`,
+                                (p) =>
+                                    go`${field(`item${p.index}`)}: ${star(dot(expression, p.name))}`,
                             ),
                             ', ',
                         )}}`
                       : star(dot(expression, pointers[0]!.name));
-            return { k, value: go`${type(parts.union)}{tag: ${tagValue(parts.union, k)}, v${k}: ${contents}}` };
+            return {
+                k,
+                value: go`${type(parts.union)}{tag: ${tagValue(parts.union, k)}, v${k}: ${contents}}`,
+            };
         });
         if (arms.length === 1) return arms[0]!.value;
         return go`func() ${type(parts.union)} {
 \tswitch ${dot(expression, 'tag')} {
 ${joinCode(
-            arms.slice(0, -1).map((a) => go`\tcase ${tagValue(parts.union, a.k)}:\n\t\treturn ${a.value}\n`),
-            '',
-        )}\t}
+    arms
+        .slice(0, -1)
+        .map((a) => go`\tcase ${tagValue(parts.union, a.k)}:\n\t\treturn ${a.value}\n`),
+    '',
+)}\t}
 \treturn ${arms[arms.length - 1]!.value}
 }()`;
     };
@@ -1592,7 +1598,11 @@ ${joinCode(
                 const scattered = sumParts(id);
                 if (scattered) {
                     // The focus is a union copy; each field pointer addresses the matching member.
-                    const focus = declare(scattered.union, read(storage.get(view), scattered.union), body);
+                    const focus = declare(
+                        scattered.union,
+                        read(storage.get(view), scattered.union),
+                        body,
+                    );
                     locals.mutable(focus);
                     return go`${type(id)}{tag: ${dot(focus, 'tag')}, ${joinCode(
                         scattered.pointers.map((p) => {
@@ -1658,7 +1668,11 @@ ${joinCode(
         ): ForwardPlan | undefined => {
             if (arm.restored?.length) return undefined;
             // An incoming lens that changes type has no live form to restore it to.
-            if (parameters.some((p) => layout(p.layout).fields.some((f) => f.name === 'replacement')))
+            if (
+                parameters.some((p) =>
+                    layout(p.layout).fields.some((f) => f.name === 'replacement'),
+                )
+            )
                 return undefined;
             const saved = storage.snapshot();
             const l = layout(id),
@@ -1956,7 +1970,10 @@ ${joinCode(
                             const live = leaves.map((d) =>
                                 !Array.isArray(d) && d.address && d.heap ? d.address : undefined,
                             );
-                            if (leaves.length === pointers.length && live.every((a) => a !== undefined)) {
+                            if (
+                                leaves.length === pointers.length &&
+                                live.every((a) => a !== undefined)
+                            ) {
                                 // Unused when the arm needs a callback instead, so prunable.
                                 direct = fresh();
                                 body.push(
@@ -1964,7 +1981,9 @@ ${joinCode(
                                         direct,
                                         type(id),
                                         go`${type(id)}{tag: ${tagValue(union, n)}${joinCode(
-                                            pointers.map((p, k) => go`, ${field(p.name)}: ${live[k]!}`),
+                                            pointers.map(
+                                                (p, k) => go`, ${field(p.name)}: ${live[k]!}`,
+                                            ),
                                             '',
                                         )}}`,
                                         { pure: true },
@@ -1973,7 +1992,9 @@ ${joinCode(
                             }
                         }
                         lenses.set(i.out.id, {
-                            ...(direct ? { forwarded: { expression: direct, rest: noFinish } } : {}),
+                            ...(direct
+                                ? { forwarded: { expression: direct, rest: noFinish } }
+                                : {}),
                             view,
                             finish: (output) => {
                                 const replacement = storage.get(view);
@@ -2016,7 +2037,10 @@ ${joinCode(
                         if (scattered && !Array.isArray(built) && built.constructed) {
                             const parts = sumParts(scattered.scattered!.layout)!;
                             const pointers = parts.pointers
-                                .filter((p) => p.variant === tagOf(parts.union, built.constructed!.name))
+                                .filter(
+                                    (p) =>
+                                        p.variant === tagOf(parts.union, built.constructed!.name),
+                                )
                                 .sort((a, b) => a.index - b.index);
                             const payloadData = built.constructed.payload;
                             const fields: Data[] = !pointers.length
@@ -2161,6 +2185,7 @@ ${joinCode(
                         if (
                             w?.kind === 'native' &&
                             w.definition === 'native/dup' &&
+                            !i.share &&
                             reachesHeap(id)
                         ) {
                             // Each leaf that reaches heap data is copied lazily, so a field the
@@ -2188,6 +2213,8 @@ ${joinCode(
                             expr = () => read(duplicate!, id);
                             adapters.push({ finish: lens.finish });
                         } else if (w?.kind === 'native' && w.definition === 'native/dup') {
+                            // A shared read aliases the data (it is never written, and the GC
+                            // reclaims it); a scalar dup has nothing to copy.
                             const lens = lenses.get(i.args[0]!)!;
                             duplicate = snapshot(storage.get(lens.view), id, body, name);
                             expr = () => read(duplicate!, id);

@@ -63,6 +63,13 @@ export function stringRuntime(): {
             body: [{ head: 'if (s)', body: ['release_context(s);'] }],
         },
         {
+            // A shared read of a string: one more reference to the same bytes.
+            name: 'string_share',
+            uses: ['retain_context'],
+            signature: `${stringType} *string_share(${stringType} *s)`,
+            body: [{ head: 'if (s)', body: ['retain_context(s);'] }, 'return s;'],
+        },
+        {
             name: 'string_dup',
             uses: ['string_new'],
             signature: `${stringType} *string_dup(${stringType} *s)`,
