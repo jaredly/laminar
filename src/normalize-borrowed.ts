@@ -24,12 +24,19 @@ export function normalizeBorrowed(source: Linear): Linear {
         p.type === 'constructor' ||
         (p.type === 'tuple' && p.items.some(hasConstructor)) ||
         (p.type === 'record' && p.fields.some((f) => hasConstructor(f.pat)));
-    const letNode = (pat: Pat, value: Term, body: Linear | Lens, loc: number): any => ({
+    const letNode = (
+        pat: Pat,
+        value: Term,
+        body: Linear | Lens,
+        loc: number,
+        borrowedOwner = false,
+    ): any => ({
         type: 'let',
         pat,
         value,
         body,
         loc,
+        ...(borrowedOwner ? { borrowedOwner } : {}),
     });
     const prepare = (
         p: Pat,
@@ -128,7 +135,7 @@ export function normalizeBorrowed(source: Linear): Linear {
             type: 'aslens',
             value: parts.initial,
             pat: parts.final,
-            body: { type: 'assign', lens: target, value: parts.restore, loc },
+            body: { type: 'assign', lens: target, value: parts.restore, loc, reconstruct: true },
             reconstructionPattern: parts.owned,
             loc,
         };
@@ -174,6 +181,7 @@ export function normalizeBorrowed(source: Linear): Linear {
                     loc: c.loc,
                 },
                 c.loc,
+                true,
             );
         }
         if (c.type === 'case' && c.value.type === 'lens') {
@@ -182,7 +190,7 @@ export function normalizeBorrowed(source: Linear): Linear {
                 const expanded = wrap(arm.pat, arm.body, owner, arm.body.loc);
                 return { pat: expanded.pattern, body: expanded.body };
             });
-            return letNode(owner, c.value, { ...c, value: copy(owner), cases }, c.loc);
+            return letNode(owner, c.value, { ...c, value: copy(owner), cases }, c.loc, true);
         }
         return c;
     };

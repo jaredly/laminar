@@ -29,6 +29,8 @@ import {
     flow,
     mono,
     mapFlow,
+    FIXED,
+    REPLACEABLE,
     mapType,
     type Ty,
     type FlowTy,
@@ -56,6 +58,11 @@ type View = {
     read: Ty;
     put: (type: Ty) => void;
     targets: Binding[];
+    /**
+     * Whether the whole value can be replaced; absent means `REPLACEABLE`. Only a
+     * constructor of lenses over a multi-constructor type is `FIXED`.
+     */
+    replaceable?: Ty;
 };
 export type TypeEnvironment = ReadonlyMap<string, Scheme>;
 /** User-declared type names. Unions are nominal; aliases expand at each use. */
@@ -529,7 +536,11 @@ export class Inferencer {
             }
             case 'lens': {
                 const a = this.valueAnnotation(t.left, vars, closed);
-                return flow(a, t.right ? this.valueAnnotation(t.right, vars, closed) : a);
+                return flow(
+                    a,
+                    t.right ? this.valueAnnotation(t.right, vars, closed) : a,
+                    t.replaceable === false ? FIXED : REPLACEABLE,
+                );
             }
             case 'constr': {
                 return this.constr(t.name, t.args ?? [], vars, closed);
@@ -732,6 +743,8 @@ export class Inferencer {
                 return this.call(n, env, false).read;
             case 'assign': {
                 const view = this.lens(n.lens, env);
+                // The generated reconstruction of a matched constructor keeps its tag.
+                if (!n.reconstruct) this.requireReplaceable(view, n.loc, 'assign to it');
                 const states = view.targets.map((b) => this.revision(b));
                 const value = this.linear(n.value, env);
                 if (
@@ -840,7 +853,7 @@ export class Inferencer {
                 this.error('escaping-lens', n.loc, 'Returned lens must refer to a lens parameter');
             const read = view.read;
             view.put(write);
-            result = flow(read, write);
+            result = flow(read, write, view.replaceable);
         } else result = plain(this.linear(n.body, sub));
         exits.forEach((v) => {
             this.restored(v.root, n.loc);
@@ -1000,6 +1013,8 @@ export class Inferencer {
     ): Ty | View {
         if (n.value.type !== 'lens') throw new Error('Expected lens');
         const view = this.lens(n.value.lens, env);
+        // A match over a constructor lens names its scrutinee through a generated alias.
+        if (!n.borrowedOwner) this.requireReplaceable(view, n.loc, 'bind it by name');
         const read = view.read;
         const focus = this.freshBinding(read);
         focus.root.owners = view.provenance ?? view.targets;
@@ -1054,18 +1069,19 @@ export class Inferencer {
         const v = this.lensInner(n, env);
         // A lens occurrence has its own replacement metavariable for tooling.
         const write = this.solver.fresh();
-        this.record(n, flow(v.read, write));
+        this.record(n, flow(v.read, write, v.replaceable));
         return {
             get read() {
                 return v.read;
             },
+            replaceable: v.replaceable,
             get empty() {
                 return v.empty;
             },
             targets: v.targets,
             provenance: v.provenance,
             put: (t) => {
-                this.record(n, flow(v.read, write));
+                this.record(n, flow(v.read, write, v.replaceable));
                 this.solver.unify(write, t, n.loc);
                 v.put(t);
             },
@@ -1093,6 +1109,9 @@ export class Inferencer {
             }
             case 'tuple': {
                 const views = n.items.map((v) => this.lens(v, env));
+                views.forEach((v, i) =>
+                    this.requireReplaceable(v, n.items[i].loc, 'use it as a tuple item'),
+                );
                 const targets = views.flatMap((v) => v.targets);
                 this.disjoint(targets, n.loc);
                 return {
@@ -1116,9 +1135,69 @@ export class Inferencer {
                 return this.letBody(n, env, true) as View;
             case 'case':
                 return this.lensCase(n, env);
+            case 'constructor': {
+                const views = n.args.map((v) => this.lens(v, env));
+                views.forEach((v, i) =>
+                    this.requireReplaceable(v, n.args[i].loc, 'nest it in a constructor'),
+                );
+                // The read side is the constructor applied to the fields' read types. The
+                // write side is a second, independent instance applied to their write types.
+                const read = this.solver.fresh();
+                this.constructorType(n.name, views.map((v) => v.read), read, n.loc, n);
+                const scheme = this.constructors.get(n.name)!;
+                const writeFields = views.map(() => this.solver.fresh()),
+                    write = this.solver.fresh();
+                this.solver.unify(
+                    this.solver.instantiate(scheme),
+                    fn(writeFields.map(plain), plain(write)),
+                    n.loc,
+                );
+                const targets = views.flatMap((v) => v.targets);
+                this.disjoint(targets, n.loc);
+                return {
+                    read,
+                    get empty() {
+                        return views.flatMap((v, i) => (v.empty ?? []).map((p) => [i, ...p]));
+                    },
+                    targets,
+                    provenance: views.flatMap((v) => v.provenance ?? v.targets),
+                    replaceable: this.constructorCount(n.name) === 1 ? REPLACEABLE : FIXED,
+                    put: (t) => {
+                        this.solver.unify(t, write, n.loc);
+                        views.forEach((v, i) => v.put(writeFields[i]));
+                    },
+                };
+            }
             case 'aslens':
                 return this.aslens(n, env);
         }
+    }
+    /** Operations on the whole value of a lens (`:=`, aliasing, nesting) need it replaceable. */
+    private requireReplaceable(view: View, loc: number, what: string): void {
+        try {
+            this.solver.unify(view.replaceable ?? REPLACEABLE, REPLACEABLE, loc);
+        } catch (e) {
+            if (e instanceof TypeDiagnostic && e.code === 'type-mismatch')
+                this.error(
+                    'not-replaceable',
+                    loc,
+                    `Cannot ${what}: this lens is built from a constructor of borrowed fields and has no storage for the whole value; match on it instead`,
+                );
+            throw e;
+        }
+    }
+    /** How many constructors the data type of `name` has (1 means no tag to change). */
+    private constructorCount(name: string): number {
+        const resultName = (s: Scheme): string | undefined => {
+            const body = this.solver.resolve(s.body);
+            if (body.tag !== 'fn' || body.result.tag !== 'plain') return undefined;
+            const r = body.result.value;
+            return r.tag === 'con' ? r.name : undefined;
+        };
+        const target = resultName(this.constructors.get(name)!);
+        let count = 0;
+        for (const s of this.constructors.values()) if (resultName(s) === target) count++;
+        return count;
     }
     private disjoint(targets: Binding[], loc: number): void {
         targets.forEach((a, i) =>
@@ -1143,7 +1222,9 @@ export class Inferencer {
         const callee = this.linear(n.fn, env);
         const replacement = this.solver.fresh();
         const args = n.args.map((a) =>
-            a.type === 'lens' ? flow(view!.read, replacement) : plain(this.linear(a, env)),
+            a.type === 'lens'
+                ? flow(view!.read, replacement, view!.replaceable)
+                : plain(this.linear(a, env)),
         );
         if (
             view &&
@@ -1159,8 +1240,14 @@ export class Inferencer {
                 'Arguments change the owner of an active computed lens',
             );
         const read = this.solver.fresh(),
-            write = this.solver.fresh();
-        this.solver.unify(callee, fn(args, lensResult ? flow(read, write) : plain(read)), n.loc);
+            write = this.solver.fresh(),
+            // Unknown until the callee's result is known (a self-call resolves it from the body).
+            replaceable = this.solver.fresh();
+        this.solver.unify(
+            callee,
+            fn(args, lensResult ? flow(read, write, replaceable) : plain(read)),
+            n.loc,
+        );
         if (!lensResult) {
             view?.put(replacement);
             return { read, put: () => {}, targets: [] };
@@ -1169,6 +1256,7 @@ export class Inferencer {
             read,
             targets: view?.targets ?? [],
             provenance: view?.provenance,
+            replaceable,
             put: (t) => {
                 this.solver.unify(write, t, n.loc);
                 view?.put(replacement);
@@ -1300,6 +1388,7 @@ export class Inferencer {
             arms: [],
             output: [],
         };
+        const replaceable = this.solver.fresh();
         const arms = n.cases.map((arm) => {
             restore(initial);
             const sub = new Map(env);
@@ -1307,6 +1396,7 @@ export class Inferencer {
             const start = this.builder.transitions.length;
             const view = this.lens(arm.body, sub);
             this.solver.unify(read, view.read, arm.body.loc);
+            this.solver.unifyReplaceable(replaceable, view.replaceable ?? REPLACEABLE, arm.body.loc);
             const state = snapshot();
             record.arms.push({
                 node: this.builder.node(arm.body),
@@ -1344,6 +1434,7 @@ export class Inferencer {
             );
         return {
             read,
+            replaceable,
             targets,
             empty: arms.flatMap((a) => a.empty),
             provenance: arms.flatMap((a) => a.view.provenance ?? a.view.targets),

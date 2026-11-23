@@ -380,6 +380,15 @@ grammar.add('Type', [
     ),
     // Type:3
     option(
+        list('', lit('='), b('left', 'Type')),
+        ({ left, node }: { left: Type; node: Node }): Type => ({
+            type: 'lens',
+            left,
+            replaceable: false,
+        }),
+    ),
+    // Type:4
+    option(
         list('', b('left', 'Type'), lit('/'), b('right', 'Type')),
         ({ left, right, node }: { left: Type; right: Type; node: Node }): Type => ({
             type: 'lens',
@@ -387,7 +396,17 @@ grammar.add('Type', [
             right,
         }),
     ),
-    // Type:4
+    // Type:5
+    option(
+        list('', b('left', 'Type'), lit('/='), b('right', 'Type')),
+        ({ left, right, node }: { left: Type; right: Type; node: Node }): Type => ({
+            type: 'lens',
+            left,
+            right,
+            replaceable: false,
+        }),
+    ),
+    // Type:6
     option(
         list('', b('name', 'id'), wrapper('(', list(',', many('args', 'Type')))),
         ({ name, args, node }: { name: Id; args: Type[]; node: Node }): Type => ({
@@ -397,12 +416,12 @@ grammar.add('Type', [
             loc: node.loc,
         }),
     ),
-    // Type:5
+    // Type:7
     option(
         wrapper('(', list(',', many('items', 'Type'))),
         ({ items, node }: { items: Type[]; node: Node }): Type => ({ type: 'tuple', items }),
     ),
-    // Type:6
+    // Type:8
     option(
         wrapper('{', list(',', many('fields', 'TypeField'))),
         ({ fields, node }: { fields: TypeField[]; node: Node }): Type => ({
@@ -411,7 +430,7 @@ grammar.add('Type', [
             loc: node.loc,
         }),
     ),
-    // Type:7
+    // Type:9
     option(
         wrapper('{', b('one', 'TypeField')),
         ({ one, node }: { one: TypeField; node: Node }): Type => ({
@@ -420,9 +439,9 @@ grammar.add('Type', [
             loc: node.loc,
         }),
     ),
-    // Type:8
+    // Type:10
     option(wrapper('(', null), ({ node }: { node: Node }): Type => ({ type: 'tuple', items: [] })),
-    // Type:9
+    // Type:11
     option(
         list(' ', wrapper('(', list(',', many('args', 'Type'))), lit('=>'), b('body', 'Type')),
         ({ args, body, node }: { args: Type[]; body: Type; node: Node }): Type => ({
@@ -455,16 +474,33 @@ grammar.add('Term', [
 
 grammar.add('Lens', [
     // Lens:1
+    option(b('text', /^[A-Z]/), ({ text, node }: { text: Id; node: Node }): Lens => ({
+        type: 'constructor',
+        name: text.text,
+        args: [],
+        loc: text.loc,
+    })),
+    // Lens:2
     option(b('text', 'id'), ({ text, node }: { text: Id; node: Node }): Lens => ({
         type: 'id',
         text: text.text,
         loc: node.loc,
     })),
-    // Lens:2
-    option(list('', b('one', 'Lens')), ({ one, node }: { one: Lens; node: Node }): Lens => one),
     // Lens:3
-    option(list(' ', b('one', 'Lens')), ({ one, node }: { one: Lens; node: Node }): Lens => one),
+    option(list('', b('one', 'Lens')), ({ one, node }: { one: Lens; node: Node }): Lens => one),
     // Lens:4
+    option(list(' ', b('one', 'Lens')), ({ one, node }: { one: Lens; node: Node }): Lens => one),
+    // Lens:5
+    option(
+        list('', b('fn', /^[A-Z]/), wrapper('(', list(',', many('args', 'Lens')))),
+        ({ fn, args, node }: { fn: Id; args: Lens[]; node: Node }): Lens => ({
+            type: 'constructor',
+            name: fn.text,
+            args,
+            loc: fn.loc,
+        }),
+    ),
+    // Lens:6
     option(
         list('', b('fn', 'Linear'), wrapper('(', list(',', many('args', 'Term')))),
         ({ fn, args, node }: { fn: Linear; args: Term[]; node: Node }): Lens => ({
@@ -474,26 +510,18 @@ grammar.add('Lens', [
             loc: node.loc,
         }),
     ),
-    // Lens:5
+    // Lens:7
     option(
         list('', b('target', 'Lens'), rest('ops', 'LensOp', true)),
         ({ target, ops, node }: { target: Lens; ops: LensOp[]; node: Node }): Lens =>
             handleLensOps(target, ops, node.loc),
     ),
-    // Lens:6
+    // Lens:8
     option(
         wrapper('(', list(',', many('items', 'Lens'))),
         ({ items, node }: { items: Lens[]; node: Node }): Lens =>
             items.length === 1 ? items[0] : { type: 'tuple', items, loc: node.loc },
     ),
-    // Lens:7
-    option(wrapper('(', null), ({ node }: { node: Node }): Lens => ({
-        type: 'tuple',
-        items: [],
-        loc: node.loc,
-    })),
-    // Lens:8
-    option(wrapper('{', b('one', 'Lens')), ({ one, node }: { one: Lens; node: Node }): Lens => one),
     // Lens:9
     option(wrapper('(', null), ({ node }: { node: Node }): Lens => ({
         type: 'tuple',
@@ -501,6 +529,14 @@ grammar.add('Lens', [
         loc: node.loc,
     })),
     // Lens:10
+    option(wrapper('{', b('one', 'Lens')), ({ one, node }: { one: Lens; node: Node }): Lens => one),
+    // Lens:11
+    option(wrapper('(', null), ({ node }: { node: Node }): Lens => ({
+        type: 'tuple',
+        items: [],
+        loc: node.loc,
+    })),
+    // Lens:12
     option(
         wrapper(
             '{',
@@ -518,7 +554,7 @@ grammar.add('Lens', [
             loc: node.loc,
         }),
     ),
-    // Lens:11
+    // Lens:13
     option(
         wrapper(
             '{',
@@ -540,14 +576,14 @@ grammar.add('Lens', [
             node: Node;
         }): Lens => ({ type: 'aslens', pat, value, body, loc: node.loc }),
     ),
-    // Lens:12
+    // Lens:14
     option(
         wrapper('{', list('\n', b('one', 'Lens'))),
         ({ one, node }: { one: Lens; node: Node }): Lens => one,
     ),
-    // Lens:13
+    // Lens:15
     option(list('\n', b('one', 'Lens')), ({ one, node }: { one: Lens; node: Node }): Lens => one),
-    // Lens:14
+    // Lens:16
     option(
         wrapper('{', list('\n', b('value', 'Term'), rest('body', 'Lens', false))),
         ({ value, body, node }: { value: Term; body: Lens; node: Node }): Lens => ({
@@ -558,7 +594,7 @@ grammar.add('Lens', [
             loc: node.loc,
         }),
     ),
-    // Lens:15
+    // Lens:17
     option(
         list(
             ' ',
@@ -573,7 +609,7 @@ grammar.add('Lens', [
             loc: node.loc,
         }),
     ),
-    // Lens:16
+    // Lens:18
     option(
         list(
             ' ',

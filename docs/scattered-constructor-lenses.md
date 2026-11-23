@@ -4,6 +4,61 @@ Status: design sketch (2026-11-22). Nothing here is implemented. Statements abou
 checker come from reading `src/infer.ts`, `src/types.ts` and `src/laminar.cst`; items
 not settled by that reading are in "Open questions".
 
+## Status (steps 1-3 done, 2026-11-22)
+
+Implemented and tested at the type level (`test/constructor-lens*.test.ts`,
+`test/replaceable-flag.test.ts`); lowering and execution are step 4. A program using a
+constructor lens currently stops with `typed-lowering: Unchecked lens form`, not with a
+wrong result.
+
+- **Grammar/AST:** constructor in `Lens`; `=A` and `A/=B` in `Type`.
+- **Types:** `flow(read, write, replaceable)` with `REPLACEABLE | FIXED | meta`;
+  `unifyReplaceable` reports `replaceable-mismatch`.
+- **Checker (`infer.ts`):** `View.replaceable` propagated through `lens()`, calls
+  (fresh meta per lens-position call, resolved by the callee or a self-call's body),
+  `lensCase` joins and function results. The constructor view derives read and write
+  from two independent instances of the constructor scheme. Its flag is `FIXED` unless
+  the data type has exactly one constructor. `:=`, binding by name, tuple items and
+  constructor fields require `REPLACEABLE` (`not-replaceable`); lens arguments unify
+  the flag (`replaceable-mismatch`).
+- **`find` types as** `(Number, List<Number>/List<Number>) => Option<Number>/=Option<Number>`,
+  and the motivating `match ~find(2, ~x) { Some(y) -> ... }` type-checks to
+  `List<Number>`.
+
+### Finding: how matching works today
+
+`match ~e { ... }` is not typed directly. `normalizeBorrowed` rewrites it before
+inference into `let $owner = ~e`, a `case` over the owner with owned patterns, and an
+`aslens` whose restoration is `$owner := <reconstructed pattern>`. For a
+non-replaceable `e` that expansion would trip the very checks above, so the two
+generated nodes carry flags: `let ... borrowedOwner` skips the bind-by-name check and
+`assign ... reconstruct` skips the whole-assign check. Users cannot write either
+(the owner names are `$borrowed<n>`). The reconstruction is sound because it rebuilds
+the arm's own constructor, so the tag never changes, and the type-level routing already
+works: the call view's `put` unifies the write type and restores the argument lens.
+
+Consequence for step 4: the backend must treat `case` over such an alias as tag
+dispatch with component lenses, and the reconstruct-assign as per-field restoration,
+not as materializing the whole value. That is the `case-focus`-over-constructor-`Cap`
+question below, now with a concrete shape to lower.
+
+### Observations
+
+- Joining `Some(a)` with `None` yields `(Bool, a/a) => Option<a>/=Option<a>`: the
+  `None` arm leaves `a` untouched, so its write type must equal its read type. This is
+  open question 4 below, confirmed for this shape.
+- Constructor args in lens position parse only as lenses (`Pair(x, 5)` does not).
+- Annotations: `r :: (a/b) => c/=d` works through `decl`. In an inline result
+  annotation, `fn r(~a): =T ~{ ... }` (and the existing `~T` form) failed to parse in
+  my attempts, and a `decl` containing `Maybe(Number)/...` also failed; I did not
+  investigate either. Parameters annotated as non-replaceable are rejected with
+  `replaceable-mismatch`, because parameter lens bindings are always replaceable
+  (open question 2).
+- `Option` is a builtin constructor pair with no declared type name, so it cannot be
+  named in annotations; use a user union.
+- There is no `if`; the language branches with `match cond { true -> ... false -> ... }`
+  (the examples above use `if` as sketch syntax).
+
 ## Motivation
 
 A borrowed search should return a position in the data without moving the data out:
@@ -262,12 +317,11 @@ Rejected by `infer.ts`:
 2. **Parameters of non-replaceable lens type.** Returning one is enough for `find`;
    accepting one needs variant specialization (the syntax is above).
 3. **`case-focus` over a constructor `Cap`.** Second owner form or a new instruction.
-4. **Type-changing fields.** `[A→B]` in `Some` should be forced to `A = B` by the
-   unfocused remainder (the rest of the list), as `case-focus` requires. Not verified.
-5. **Surface syntax for the scrutinee.** The motivating example writes
-   `match find(10, ~lst)`; today lens-valued scrutinees go through `~` and the
-   `aslens` expansion in `normalize-borrowed.ts`, and `lensCase` rejects `match ~e`
-   directly ("Matching a lens requires scoped restoration checking").
+4. **Type-changing fields.** Confirmed for the joined `Some(a)` / `None` shape (see
+   Status). Whether `find` over a list can ever change the element type is not tested.
+5. **Surface syntax for the scrutinee.** Resolved: `match ~find(...) { ... }` works
+   through the `normalizeBorrowed` expansion (see Status). `match find(...)` without
+   `~` is not supported.
 6. **`provenance`/`empty` for constructor views.** Not traced; expected to be the union
    over fields as for `tuple`.
 7. **Unifiable booleans in the solver.** `Solver` unifies `Ty`; the flag needs either a

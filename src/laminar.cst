@@ -81,7 +81,9 @@ RecordField {
 Type {
     text:id -> ({type: "id", text: text.text, loc: node.loc})
     ["" "~" left:Type] -> ({type: "lens", left})
+    ["" "=" left:Type] -> ({type: "lens", left, replaceable: false})
     ["" left:Type "/" right:Type] -> ({type: "lens", left, right})
+    ["" left:Type "/=" right:Type] -> ({type: "lens", left, right, replaceable: false})
     ["" name:id ["(," ...args:Type]] -> ({type: "constr", name, args, loc: node.loc})
     ["(," ...items:Type] -> ({type: "tuple", items})
     ["{," ...fields:TypeField] -> ({type: "record", fields, loc: node.loc})
@@ -98,9 +100,11 @@ Term {
 }
 
 Lens {
+    text:re"^[A-Z]" -> ({type: "constructor", name: text.text, args: [], loc: text.loc})
     text:id -> ({type: "id", text: text.text, loc: node.loc})
     ["" one:Lens] -> one
     [" " one:Lens] -> one
+    ["" fn:re"^[A-Z]" ["(," ...args:Lens]] -> ({type: "constructor", name: fn.text, args, loc: fn.loc})
     ["" fn:Linear ["(," ...args:Term]] -> ({type: "apply", fn, args, loc: node.loc})
     ["" target:Lens ...ops:**LensOp] -> handleLensOps(target, ops, node.loc)
     ["(," ...items:Lens] -> items.length === 1 ? items[0] : ({type: "tuple", items, loc: node.loc})

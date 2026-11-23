@@ -7,7 +7,16 @@ export type Ty =
     /** Closed structural record. Fields are sorted by name, so a field's index is its path step. */
     | { tag: 'record'; fields: { name: string; type: Ty }[] }
     | { tag: 'fn'; args: FlowTy[]; result: FlowTy };
-export type FlowTy = { tag: 'plain'; value: Ty } | { tag: 'flow'; read: Ty; write: Ty };
+/**
+ * `replaceable` says whether the whole value of the lens can be replaced (`:=`, move-out,
+ * a stored-lens argument). It is a `Ty` so that it unifies, generalizes and instantiates
+ * with the existing machinery: `REPLACEABLE`, `FIXED` or a meta (see
+ * docs/scattered-constructor-lenses.md). Every lens built before constructor lenses
+ * exist is `REPLACEABLE`.
+ */
+export type FlowTy =
+    | { tag: 'plain'; value: Ty }
+    | { tag: 'flow'; read: Ty; write: Ty; replaceable: Ty };
 export type Scheme = { quantified: number[]; body: Ty };
 export const con = (name: string, ...args: Ty[]): Ty => ({ tag: 'con', name, args });
 export const tuple = (...items: Ty[]): Ty => ({ tag: 'tuple', items });
@@ -16,7 +25,17 @@ export const record = (fields: { name: string; type: Ty }[]): Ty => ({
     fields: [...fields].sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0)),
 });
 export const plain = (value: Ty): FlowTy => ({ tag: 'plain', value });
-export const flow = (read: Ty, write: Ty): FlowTy => ({ tag: 'flow', read, write });
+/** The names start with `$` so they cannot collide with a user-declared type. */
+const REPLACEABLE_NAME = '$replaceable';
+const FIXED_NAME = '$fixed';
+export const REPLACEABLE: Ty = con(REPLACEABLE_NAME);
+export const FIXED: Ty = con(FIXED_NAME);
+export const flow = (read: Ty, write: Ty, replaceable: Ty = REPLACEABLE): FlowTy => ({
+    tag: 'flow',
+    read,
+    write,
+    replaceable,
+});
 export const fn = (args: FlowTy[], result: FlowTy): Ty => ({ tag: 'fn', args, result });
 export const mono = (body: Ty): Scheme => ({ quantified: [], body });
 
@@ -52,7 +71,9 @@ export function mapType(t: Ty, replace: (t: Ty) => Ty | undefined): Ty {
     }
 }
 export function mapFlow(t: FlowTy, f: (t: Ty) => Ty): FlowTy {
-    return t.tag === 'plain' ? plain(f(t.value)) : flow(f(t.read), f(t.write));
+    return t.tag === 'plain'
+        ? plain(f(t.value))
+        : flow(f(t.read), f(t.write), f(t.replaceable));
 }
 
 export class Solver {
@@ -109,11 +130,34 @@ export class Solver {
             quantified: [...this.free(t)].filter((id) => !excluded.has(id)),
         };
     }
+    /** `unknown` while the flag is still a meta; callers decide how to treat it. */
+    replaceability(t: FlowTy & { tag: 'flow' }): 'replaceable' | 'fixed' | 'unknown' {
+        const r = this.prune(t.replaceable);
+        return r.tag === 'con' && r.name === FIXED_NAME
+            ? 'fixed'
+            : r.tag === 'con' && r.name === REPLACEABLE_NAME
+              ? 'replaceable'
+              : 'unknown';
+    }
+    unifyReplaceable(a: Ty, b: Ty, loc: number): void {
+        try {
+            this.unify(a, b, loc);
+        } catch (e) {
+            if (e instanceof TypeDiagnostic && e.code === 'type-mismatch')
+                throw new TypeDiagnostic(
+                    'replaceable-mismatch',
+                    loc,
+                    'A lens whose whole value can be replaced does not match one built from a constructor of borrowed fields',
+                );
+            throw e;
+        }
+    }
     unifyFlow(a: FlowTy, b: FlowTy, loc: number): void {
         if (a.tag === 'plain' && b.tag === 'plain') return this.unify(a.value, b.value, loc);
         if (a.tag === 'flow' && b.tag === 'flow') {
             this.unify(a.read, b.read, loc);
             this.unify(a.write, b.write, loc);
+            this.unifyReplaceable(a.replaceable, b.replaceable, loc);
             return;
         }
         throw new TypeDiagnostic('mode-mismatch', loc, 'Expected matching value/lens modes');
@@ -203,6 +247,8 @@ export function printType(t: Ty): string {
         }
     };
     const sf = (t: FlowTy): string =>
-        t.tag === 'plain' ? show(t.value) : `${show(t.read)}/${show(t.write)}`;
+        t.tag === 'plain'
+            ? show(t.value)
+            : `${show(t.read)}/${t.replaceable.tag === 'con' && t.replaceable.name === FIXED_NAME ? '=' : ''}${show(t.write)}`;
     return show(t);
 }

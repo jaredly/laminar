@@ -435,6 +435,7 @@ export const lensAsRef = (ctx: Ctx, lens: Lens): Ref => {
         case 'apply':
         case 'index':
         case 'field':
+        case 'constructor':
         case 'case':
             throw new Error(`complex lens`);
     }
