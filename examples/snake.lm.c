@@ -6,60 +6,54 @@
 typedef struct Callable_Value_196fc0868a Callable_Value_196fc0868a;
 typedef struct Lens_Vector_Number Lens_Vector_Number;
 typedef struct Unit Unit;
+typedef struct Tuple_Number_Number Tuple_Number_Number;
 typedef struct Vector_Number Vector_Number;
-typedef struct Tuple_Vector_Number_Vector_Number Tuple_Vector_Number_Vector_Number;
+typedef struct Tuple_Vector_Number_Vector_Number_Tuple_Number_Number Tuple_Vector_Number_Vector_Number_Tuple_Number_Number;
 typedef Unit (*Func_Vector_Number_to_Unit_3a319c4be1)(void *, Vector_Number);
 typedef Unit (*Func_to_Unit_67b7c9ce73)(void *);
 struct Callable_Value_196fc0868a { void *environment; Func_to_Unit_67b7c9ce73 dispose; };
 struct Lens_Vector_Number { Vector_Number *read; Func_Vector_Number_to_Unit_3a319c4be1 restore; void *context; };
 struct Unit { unsigned char inhabitant; };
+struct Tuple_Number_Number { double item0; double item1; };
 struct Vector_Number { double *elements; size_t length; size_t capacity; };
-struct Tuple_Vector_Number_Vector_Number { Vector_Number item0; Vector_Number item1; };
+struct Tuple_Vector_Number_Vector_Number_Tuple_Number_Number { Vector_Number item0; Vector_Number item1; Tuple_Number_Number item2; };
+typedef struct { Vector_Number read0; } Backing_Vector_Number;
 static size_t live_contexts = 0;
 void *allocate_context(size_t size);
 void release_context(void *context);
 Unit fillRange(void *environment, double n, double end, Lens_Vector_Number arr);
 Vector_Number range(void *environment, double n);
-Tuple_Vector_Number_Vector_Number entry(void *environment);
-double * vector_at_Vector_Number(Vector_Number value, double index);
+Tuple_Vector_Number_Vector_Number_Tuple_Number_Number entry(void *environment);
+double *vector_at_Vector_Number(Vector_Number value, double index);
 Vector_Number vector_array_Vector_Number(double length, double init);
-typedef struct { Vector_Number read0; } Backing0;
 Vector_Number vector_push_Vector_Number(Vector_Number value, double item);
 void print_number(double x);
 void vector_drop_Vector_Number(Vector_Number value);
 Unit fillRange(void *environment, double n, double end, Lens_Vector_Number arr) {
     (void)environment;
-    bool v5 = (n >= end);
     Unit v6 = {0};
-    if (v5 == 1) {
+    if (n >= end) {
         v6 = (Unit){0};
     }
-    else if (v5 == 0) {
-        double * v13 = vector_at_Vector_Number(*(arr).read, n);
-        double v16 = (*v13);
-        (void)v16;
-        *v13 = n;
-        Lens_Vector_Number v24 = (Lens_Vector_Number){.read=(arr).read};
-        v6 = fillRange(((Callable_Value_196fc0868a){0}).environment, (n + 1), end, v24);
-    }
     else {
-        abort();
+        double *v13 = vector_at_Vector_Number(*arr.read, n);
+        *v13 = n;
+        v6 = fillRange(NULL, n + 1, end, arr);
     }
     return v6;
 }
 Vector_Number range(void *environment, double n) {
     (void)environment;
     Vector_Number arr = vector_array_Vector_Number(n, 0);
-    Backing0 back0 = {0};
+    Backing_Vector_Number back0 = {0};
     back0.read0 = arr;
     Lens_Vector_Number v9 = (Lens_Vector_Number){.read=&back0.read0};
-    Unit v8 = fillRange(((Callable_Value_196fc0868a){0}).environment, 0, n, v9);
-    (void)v8;
-    return *(v9).read;
+    fillRange(NULL, 0, n, v9);
+    return back0.read0;
 }
-Tuple_Vector_Number_Vector_Number entry(void *environment) {
+Tuple_Vector_Number_Vector_Number_Tuple_Number_Number entry(void *environment) {
     (void)environment;
-    Vector_Number v2 = range(((Callable_Value_196fc0868a){0}).environment, 10);
+    Vector_Number v2 = range(NULL, 10);
     Vector_Number v14 = {0};
     Vector_Number v16 = vector_push_Vector_Number(v14, 0);
     Vector_Number v18 = vector_push_Vector_Number(v16, 1);
@@ -71,9 +65,10 @@ Tuple_Vector_Number_Vector_Number entry(void *environment) {
     Vector_Number v30 = vector_push_Vector_Number(v28, 7);
     Vector_Number v32 = vector_push_Vector_Number(v30, 8);
     Vector_Number v34 = vector_push_Vector_Number(v32, 9);
-    return (Tuple_Vector_Number_Vector_Number){v2, v34};
+    Tuple_Number_Number v37 = (Tuple_Number_Number){10, 123};
+    return (Tuple_Vector_Number_Vector_Number_Tuple_Number_Number){v2, v34, v37};
 }
-double * vector_at_Vector_Number(Vector_Number value, double index) {
+double *vector_at_Vector_Number(Vector_Number value, double index) {
     if (!(index >= 0) || index != floor(index) || index >= (double)value.length) {
         abort();
     }
@@ -141,30 +136,36 @@ void print_number(double x) {
     }
 }
 int main(void) {
-    Tuple_Vector_Number_Vector_Number result0 = entry(NULL);
+    Tuple_Vector_Number_Vector_Number_Tuple_Number_Number result0 = entry(NULL);
     (void)result0;
-    putchar(91);
-    putchar(91);
-    for (size_t i0 = 0; i0 < ((result0).item0).length; i0++) {
+    putchar('[');
+    putchar('[');
+    for (size_t i0 = 0; i0 < result0.item0.length; i0++) {
         if (i0) {
-            putchar(44);
+            putchar(',');
         }
-        print_number(((result0).item0).elements[i0]);
+        print_number(result0.item0.elements[i0]);
     }
-    putchar(93);
-    putchar(44);
-    putchar(91);
-    for (size_t i1 = 0; i1 < ((result0).item1).length; i1++) {
+    putchar(']');
+    putchar(',');
+    putchar('[');
+    for (size_t i1 = 0; i1 < result0.item1.length; i1++) {
         if (i1) {
-            putchar(44);
+            putchar(',');
         }
-        print_number(((result0).item1).elements[i1]);
+        print_number(result0.item1.elements[i1]);
     }
-    putchar(93);
-    putchar(93);
-    putchar(10);
-    vector_drop_Vector_Number((result0).item0);
-    vector_drop_Vector_Number((result0).item1);
+    putchar(']');
+    putchar(',');
+    putchar('[');
+    print_number(result0.item2.item0);
+    putchar(',');
+    print_number(result0.item2.item1);
+    putchar(']');
+    putchar(']');
+    putchar('\n');
+    vector_drop_Vector_Number(result0.item0);
+    vector_drop_Vector_Number(result0.item1);
     if (live_contexts != 0) {
         abort();
     }

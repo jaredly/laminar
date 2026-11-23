@@ -21,45 +21,29 @@ fn replace(needle, repl, ~lst) {
     }
 }
 
-fn find_(needle, ~lst) ~{
-    match ~lst {
-        [one, ...rest] -> {
-            match (dup(~one) == dup(~needle)) {
-                true -> {
-                    one
-                }
-                false -> {
-                    find_(needle, ~rest)
-                }
-            }
-        }
-    }
-}
-
 fn find(needle, ~lst) ~{
     match ~lst {
         [one, ...rest] -> {
             match (dup(~one) == dup(~needle)) {
-                true -> {
-                    lens res <- true
-                    one := res
-                    ()
-                }
+                true -> Some(one)
                 false -> {
                     find(needle, ~rest)
                 }
             }
         }
-        [] -> {
-            lens res <- false
-            ()
-        }
+        [] -> None
     }
 }
 
 {
     let x = [1,2,3,4]
     replace(2, 5, ~x)
-    find(3, ~x) := 10
+    match ~find(3, ~x) {
+        Some(one) -> {
+            one := 3
+            ()
+        }
+        None -> ()
+    }
     x
 }

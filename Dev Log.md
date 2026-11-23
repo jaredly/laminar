@@ -1,4 +1,19 @@
 
+let's get if/else going
+
+
+I want mut not-mut.
+lenses can only be done to mut vbls.
+not-mut vbls are immutable and can be used any number of times
+linear values must always be mut
+
+a not-linear mut value can be passed to a not-mut.
+a not-mut value can be dup()ed to be a mut.
+
+a scalar can be passed anywhere.
+
+---
+
 Thinking about scattered constructors, which we currently don't support.
 
 Like `~Some(x)`
@@ -29,11 +44,13 @@ fn find(needle, ~lst) ~{
 That would be super cool.
 But it would be invalid if someone did
 ```lm
-match (find(what, []) := None) {`
-    Some(one) -> OH NO DOUBLE USE
+match (find(1, ~x) := None) {`
+    Some(one) -> invalid double use of the value
     None -> ()
 }
 ```
+So we would ... need to be able to, like, in the type system, represent that this lens can only be used scattered.
+But that feels like it would introduce unreasonable complexity to the type system?
 
 
 

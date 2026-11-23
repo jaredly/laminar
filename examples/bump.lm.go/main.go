@@ -36,15 +36,15 @@ type Backing_List_Number_946144c3f6 struct {
 }
 
 func bump(xs Lens_List_Number) Unit {
-	v2 := *(xs).read
-	switch (v2).tag {
+	v2 := *xs.read
+	switch v2.tag {
 	case List_Number_nil:
 		v13 := List_Number{tag: List_Number_nil, v0: Unit{}}
-		*(xs).read = v13
+		*xs.read = v13
 	case List_Number_cons:
-		v16 := (v2).v1
+		v16 := v2.v1
 		head := ((*v16)).item0
-		(*v16).item0 = (head + 1.0)
+		(*v16).item0 = head + 1.0
 		bump(Lens_List_Number{read: &(*v16).item1})
 	}
 	return Unit{}

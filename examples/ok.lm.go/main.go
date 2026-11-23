@@ -71,15 +71,15 @@ func handleResponse(response string, state Scattered_Lens_float64_Lens_float64_L
 	case "higher":
 		v4 := Direction{tag: Direction_Higher, v0: Unit{}}
 		next := nextGuess(v4, state)
-		last := *((state).item2).read
+		last := *state.item2.read
 		v1 = false
-		*((state).item0).read, *((state).item1).read, *((state).item2).read = last, *((state).item1).read, next
+		*state.item0.read, *state.item1.read, *state.item2.read = last, *state.item1.read, next
 	case "lower":
 		v21 := Direction{tag: Direction_Lower, v1: Unit{}}
 		next_2 := nextGuess(v21, state)
-		last_2 := *((state).item2).read
+		last_2 := *state.item2.read
 		v1 = false
-		*((state).item0).read, *((state).item1).read, *((state).item2).read = *((state).item0).read, last_2, next_2
+		*state.item0.read, *state.item1.read, *state.item2.read = *state.item0.read, last_2, next_2
 	case "match":
 		v1 = true
 	default:
@@ -90,29 +90,29 @@ func handleResponse(response string, state Scattered_Lens_float64_Lens_float64_L
 }
 
 func step(steps float64, min_max_lastGuess Scattered_Lens_float64_Lens_float64_Lens_float64) float64 {
-	lastGuess := *((min_max_lastGuess).item2).read
+	lastGuess := *min_max_lastGuess.item2.read
 	input := hostInput("My guess is " + formatNumber(lastGuess) + " (higher/lower/match): ")
 	next := handleResponse(input, min_max_lastGuess)
 	var v20 float64
 	if next {
 		v20 = steps
 	} else {
-		v20 = step((steps + 1.0), min_max_lastGuess)
+		v20 = step(steps + 1.0, min_max_lastGuess)
 	}
 	return v20
 }
 
 func nextGuess(direction Direction, min_max_lastGuess Scattered_Lens_float64_Lens_float64_Lens_float64) float64 {
 	var v2 float64
-	switch (direction).tag {
+	switch direction.tag {
 	case Direction_Higher:
-		max := *((min_max_lastGuess).item1).read
-		lastGuess := *((min_max_lastGuess).item2).read
-		v2 = ((max + lastGuess) / 2.0)
+		max := *min_max_lastGuess.item1.read
+		lastGuess := *min_max_lastGuess.item2.read
+		v2 = (max + lastGuess) / 2.0
 	case Direction_Lower:
-		lastGuess_2 := *((min_max_lastGuess).item2).read
-		min := *((min_max_lastGuess).item0).read
-		v2 = ((lastGuess_2 + min) / 2.0)
+		lastGuess_2 := *min_max_lastGuess.item2.read
+		min := *min_max_lastGuess.item0.read
+		v2 = (lastGuess_2 + min) / 2.0
 	}
 	return laminarRound(v2)
 }
@@ -222,14 +222,14 @@ func main() {
 	fmt.Print("\x1e")
 	fmt.Print("[")
 	fmt.Print("[")
-	printNumber(((result0).item0).item0)
+	printNumber(result0.item0.item0)
 	fmt.Print(",")
-	printNumber(((result0).item0).item1)
+	printNumber(result0.item0.item1)
 	fmt.Print(",")
-	printNumber(((result0).item0).item2)
+	printNumber(result0.item0.item2)
 	fmt.Print("]")
 	fmt.Print(",")
-	printNumber((result0).item1)
+	printNumber(result0.item1)
 	fmt.Print("]")
 	fmt.Println()
 }
