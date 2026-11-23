@@ -30,7 +30,9 @@ import {
     mono,
     mapFlow,
     FIXED,
+    OWNED,
     REPLACEABLE,
+    SHARED,
     mapType,
     type Ty,
     type FlowTy,
@@ -106,6 +108,9 @@ export type Inference = {
 export class Inferencer {
     readonly solver = new Solver();
     private types = new Map<object, FlowTy>();
+    /** The ownership of each expression: shared if it is a plain read or holds one. */
+    private modes = new Map<object, Ty>();
+    private resultModes = new Map<object, Ty>();
     private bindings = new Map<object, Binding>();
     private builder: ElaborationBuilder;
     private current?: object;
@@ -701,12 +706,39 @@ export class Inferencer {
             loc,
         );
     }
+    private modeOf(n: object): Ty {
+        return this.modes.get(n) ?? OWNED;
+    }
+    /** A value is shared when it is a plain read, or an aggregate or branch that holds one. */
+    private expressionMode(n: Linear): Ty {
+        const join = (parts: object[]): Ty =>
+            parts.some((p) => this.solver.modeOf(this.modeOf(p)) === 'shared') ? SHARED : OWNED;
+        switch (n.type) {
+            case 'apply':
+                return this.resultModes.get(n) ?? OWNED;
+            case 'tuple':
+            case 'vector':
+                return join(n.items);
+            case 'constructor':
+                return join(n.args);
+            case 'record':
+                return join(n.fields.map((f) => f.value));
+            case 'let':
+                return this.modeOf(n.body);
+            case 'case':
+                return join(n.cases.map((c) => c.body));
+            default:
+                return OWNED;
+        }
+    }
     private linear(n: Linear, env: Env): Ty {
         const previous = this.current;
         this.current = n;
         try {
             const t = this.linearInner(n, env);
-            this.record(n, plain(t));
+            const mode = this.expressionMode(n);
+            this.modes.set(n, mode);
+            this.record(n, plain(t, mode));
             return t;
         } finally {
             this.current = previous;
@@ -838,7 +870,7 @@ export class Inferencer {
                 type = flow(read, write);
             } else {
                 this.pattern(a.pat, read, sub, undefined, seen);
-                type = plain(read);
+                type = plain(read, a.shared ? SHARED : OWNED);
             }
             parameters.push(names(a.pat).map((name) => sub.get(name)!.id!));
             parameterPlaces.push(
@@ -846,7 +878,7 @@ export class Inferencer {
                     ? [exits[exits.length - 1].root.root.place!]
                     : [...new Set(names(a.pat).map((name) => sub.get(name)!.root.place!))],
             );
-            if (a.typ) this.solver.unifyFlow(type, this.annotation(a.typ, vars), a.pat.loc);
+            if (a.typ) this.solver.unifyFlow(type, this.annotation(a.typ, vars), a.pat.loc, false);
             return type;
         });
         const parameterIds = new Set(parameters.flat());
@@ -874,12 +906,15 @@ export class Inferencer {
             const read = view.read;
             view.put(write);
             result = flow(read, write, view.replaceable);
-        } else result = plain(this.linear(n.body, sub));
+        } else {
+            const value = this.linear(n.body, sub);
+            result = plain(value, this.modeOf(n.body));
+        }
         exits.forEach((v) => {
             this.restored(v.root, n.loc);
             this.solver.unify(v.write, this.get(v.root, n.loc), n.loc);
         });
-        if (n.ann) this.solver.unifyFlow(result, this.annotation(n.ann, vars), n.loc);
+        if (n.ann) this.solver.unifyFlow(result, this.annotation(n.ann, vars), n.loc, false);
         this.builder.functions.push({
             node: this.builder.node(n),
             parameters,
@@ -1264,7 +1299,7 @@ export class Inferencer {
         const args = n.args.map((a) =>
             a.type === 'lens'
                 ? flow(view!.read, replacement, view!.replaceable)
-                : plain(this.linear(a, env)),
+                : plain(this.linear(a, env), this.solver.freshMode()),
         );
         if (
             view &&
@@ -1282,12 +1317,14 @@ export class Inferencer {
         const read = this.solver.fresh(),
             write = this.solver.fresh(),
             // Unknown until the callee's result is known (a self-call resolves it from the body).
-            replaceable = this.solver.fresh();
+            replaceable = this.solver.fresh(),
+            resultMode = this.solver.freshMode();
         this.solver.unify(
             callee,
-            fn(args, lensResult ? flow(read, write, replaceable) : plain(read)),
+            fn(args, lensResult ? flow(read, write, replaceable) : plain(read, resultMode)),
             n.loc,
         );
+        this.resultModes.set(n, (n as { share?: boolean }).share ? SHARED : resultMode);
         if (!lensResult) {
             view?.put(replacement);
             return { read, put: () => {}, targets: [] };

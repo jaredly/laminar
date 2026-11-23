@@ -59,6 +59,7 @@ export function desugarPlain(source: Linear): PlainResult {
         type: 'apply',
         fn: { type: 'id', text: 'dup', loc },
         args: [{ type: 'lens', lens: place }],
+        share: true,
         loc,
     });
     const isDup = (n: { type: string; fn?: Linear; args?: Term[] }, scope: Scope) =>
@@ -171,7 +172,9 @@ export function desugarPlain(source: Linear): PlainResult {
         const bound = new Set(n.args.flatMap((a) => names(a.pat)));
         const { values } = captureUses(n.body, bound);
         const captured = [...values].filter((name) => scope.get(name) === 'plain');
-        const args = n.args.map(({ mut: _, ...a }) => a);
+        const args = n.args.map(({ mut: _, ...a }, i) =>
+            argMode(n.args[i]) === 'plain' ? { ...a, shared: true } : a,
+        );
         let body = term(n.body, inner);
         const loc = n.loc;
         const temporaries = captured.map((name) => `$plain${fresh++}`);

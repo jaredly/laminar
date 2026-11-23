@@ -87,6 +87,7 @@ export function mapFlow(t: FlowTy, f: (t: Ty) => Ty): FlowTy {
 export class Solver {
     private next = 0;
     private substitutions = new Map<number, Ty>();
+    private modeMetas = new Set<number>();
     fresh(): Ty {
         return { tag: 'meta', id: this.next++ };
     }
@@ -133,6 +134,9 @@ export class Solver {
                 [...this.free(s.body)].filter((id) => !s.quantified.includes(id)),
             ),
         );
+        // A mode nothing decided is owned, and it is not a type parameter.
+        for (const id of this.free(t))
+            if (this.modeMetas.has(id) && !excluded.has(id)) this.substitutions.set(id, OWNED);
         return {
             body: this.resolve(t),
             quantified: [...this.free(t)].filter((id) => !excluded.has(id)),
@@ -147,9 +151,18 @@ export class Solver {
               ? 'replaceable'
               : 'unknown';
     }
+    /** A mode that no constraint has decided yet; generalization makes it owned. */
+    freshMode(): Ty {
+        const mode = this.fresh();
+        this.modeMetas.add((mode as Ty & { tag: 'meta' }).id);
+        return mode;
+    }
     /** `unknown` while the mode is still a meta. */
     ownership(t: FlowTy & { tag: 'plain' }): 'owned' | 'shared' | 'unknown' {
-        const r = this.prune(t.mode);
+        return this.modeOf(t.mode);
+    }
+    modeOf(mode: Ty): 'owned' | 'shared' | 'unknown' {
+        const r = this.prune(mode);
         return r.tag === 'con' && r.name === SHARED_NAME
             ? 'shared'
             : r.tag === 'con' && r.name === OWNED_NAME
@@ -182,10 +195,11 @@ export class Solver {
             throw e;
         }
     }
-    unifyFlow(a: FlowTy, b: FlowTy, loc: number): void {
+    /** Unify two positions. An annotation says nothing about ownership, so it skips the modes. */
+    unifyFlow(a: FlowTy, b: FlowTy, loc: number, modes = true): void {
         if (a.tag === 'plain' && b.tag === 'plain') {
             this.unify(a.value, b.value, loc);
-            this.unifyMode(a.mode, b.mode, loc);
+            if (modes) this.unifyMode(a.mode, b.mode, loc);
             return;
         }
         if (a.tag === 'flow' && b.tag === 'flow') {

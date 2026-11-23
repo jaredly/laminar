@@ -60,7 +60,7 @@ export type Lens =
           borrowedOwner?: boolean;
           mut?: boolean;
       }
-    | { type: 'apply'; fn: Linear; args: Term[]; loc: Loc }
+    | { type: 'apply'; fn: Linear; args: Term[]; share?: boolean; loc: Loc }
     /** Field `name` of the record focused by `target`. */
     | { type: 'field'; target: Lens; name: string; loc: Loc }
     /** Element `index` of the vector focused by `target`. */
@@ -92,7 +92,11 @@ export type LensOp =
 
 export type Op = { type: 'op'; text: string; loc: Loc };
 /** `mut` (dual mode) makes the parameter exclusive and lensable; otherwise it is plain. */
-export type FnArg = { pat: Pat; typ?: Type; mut?: boolean };
+/**
+ * `shared` is set by the dual-mode desugar on a plain parameter, whose value is shared and
+ * immutable. A pure parameter is never shared.
+ */
+export type FnArg = { pat: Pat; typ?: Type; mut?: boolean; shared?: boolean };
 export type LinearInterp = { value: Linear; tail: string };
 
 export type Linear =
@@ -129,7 +133,7 @@ export type Linear =
     | { type: 'index'; target: Linear; index: Term; loc: Loc }
     /** Move field `name` out of a variable's record: `r.x`, `r.a.b`. */
     | { type: 'field'; target: Linear; name: string; loc: Loc }
-    | { type: 'apply'; fn: Linear; args: Term[]; isLens?: boolean; loc: Loc }
+    | { type: 'apply'; fn: Linear; args: Term[]; isLens?: boolean; share?: boolean; loc: Loc }
     | { type: 'tuple'; items: Linear[]; loc: Loc }
     | { type: 'vector'; items: Linear[]; loc: Loc }
     | { type: 'record'; fields: { name: string; value: Linear; loc: Loc }[]; loc: Loc }

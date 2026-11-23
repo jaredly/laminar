@@ -190,16 +190,24 @@ Status: designed, not started. Open: whether a result's mode is inferred or writ
 Today a plain read is rewritten to `dup(~x)`, so nothing is shared and the backends see only
 owned data. Real sharing needs four pieces, in this order:
 
-- **5a. `mut` in function types.** Stage 1 is done: `FlowTy.plain` carries a `mode` (`$owned` or
-  `$shared`, a `Ty` that unifies like `replaceable`) and `SemanticFlow.plain` an optional
-  `mode: 'shared'`. Every position is owned for now, so behavior is unchanged. Next: stage 2,
-  expression modes and a `share` read primitive; stage 3, the errors. Shared is just plain: what a non-`mut` binding holds. A
+- **5a. `mut` in function types.** Shared is just plain: what a non-`mut` binding holds. A
   function type records the mode of each parameter and of its result, written with the same
   keyword: `(Number) -> mut Number`, `(mut Pair) -> Pair`. A plain result is shared, so it needs
-  `dup` before it enters `mut` storage. A `mut` result is owned and can go anywhere. A plain read
-  yields a shared handle with no copy, and the desugar emits a distinct read primitive in place
-  of `dup(~x)`. A plain argument for a
-  `mut` parameter needs `dup`; a `mut` argument for a plain parameter is a move. Until 5a lands, `dup` of a plain read stays.
+  `dup` before it enters `mut` storage. A `mut` result is owned and can go anywhere. A plain
+  argument for a `mut` parameter needs `dup`; a `mut` argument for a plain parameter is a move.
+  - Stage 1 (done): `FlowTy.plain` carries a `mode` (`$owned` or `$shared`, a `Ty` that unifies
+    like `replaceable`), and `SemanticFlow.plain` an optional `mode: 'shared'`.
+  - Stage 2 (done): the dual desugar marks plain parameters `shared` and flags the plain-read
+    `dup(~x)` it inserts with `share`. Inference gives each expression a mode (a `share` read is
+    shared; an aggregate, `let` or `case` is shared if a part is; a call takes its callee's
+    result mode; anything else is owned), so a function's result mode comes from its body and the
+    node types carry it. A call leaves each argument and result mode open, and a mode nothing
+    decided defaults to owned when a definition is generalized. Annotations say nothing about
+    modes. Modes are invariant inside function types, which is strict for higher-order code; a
+    coercion can come later. `share` is still a `dup` in every backend. Not done: printing modes
+    in types, and the native `share` primitive 5b and 5c will need.
+  - Stage 3 (next): the errors. A shared value for a `mut` parameter or `let mut` is
+    `shared-into-mut`; natives' parameters must be shared first, so owned data flows into them.
 - **5b. Concrete IR** (`src/concrete-ir.ts`, `src/lower-concrete.ts`, `src/verify-concrete.ts`):
   a shared-storage class. Owned memory keeps the single-owner invariant and box reuse. Shared
   memory is read-only and never `retains`/`reuses`. The verifier rejects any write that reaches a
