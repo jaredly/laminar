@@ -1,5 +1,5 @@
 import { BackendDiagnostic, type TargetConfig } from './backend/target.ts';
-import { Solver, con, fn, plain, reads, flow, tuple, type FlowTy, type Ty } from './types.ts';
+import { Solver, SHARED, con, fn, plain, reads, flow, tuple, type FlowTy, type Ty } from './types.ts';
 
 /** How a call boundary treats an argument or result: transferred data, or a lens capability. */
 export type ImportConvention = 'owned' | 'lens';
@@ -219,6 +219,55 @@ export function requireImport(
 /** Whether any of the given import definitions performs host I/O. */
 export const usesHost = (definitions: Iterable<string>): boolean =>
     [...definitions].some((d) => !!byName.get(importName(d))?.capability);
+
+const variables = (t: Ty | FlowTy, into = new Set<number>()): Set<number> => {
+    switch (t.tag) {
+        case 'meta':
+        case 'rigid':
+            into.add(t.id);
+            break;
+        case 'con':
+            t.args.forEach((a) => variables(a, into));
+            break;
+        case 'tuple':
+            t.items.forEach((a) => variables(a, into));
+            break;
+        case 'record':
+            t.fields.forEach((f) => variables(f.type, into));
+            break;
+        case 'fn':
+            t.args.forEach((a) => variables(a, into));
+            variables(t.result, into);
+            break;
+        case 'plain':
+            variables(t.value, into);
+            break;
+        case 'flow':
+            variables(t.read, into);
+            variables(t.write, into);
+            break;
+    }
+    return into;
+};
+
+/**
+ * A `reads` parameter promises the native does not keep its argument. A native can only keep a
+ * value of a generic type by putting it in its result or another owned argument, so a type
+ * variable of a `reads` parameter may not appear in either; use an owned parameter instead.
+ */
+export function checkReads(entry: RuntimeImport, type: Ty): void {
+    if (type.tag !== 'fn') return;
+    const kept = new Set<number>();
+    variables(type.result, kept);
+    type.args.forEach((a) => a.tag === 'plain' && a.mode !== SHARED && variables(a, kept));
+    type.args.forEach((a) => {
+        if (a.tag === 'plain' && a.mode === SHARED && [...variables(a)].some((v) => kept.has(v)))
+            throw new BackendDiagnostic(
+                'invalid-import',
+                `Runtime import ${entry.name} reads a generic argument it may keep; make that parameter owned`,
+            );
+    });
+}
 
 /** Conventions must restate the signature: plain is owned, flow is lens. */
 export function checkConventions(entry: RuntimeImport, type: Ty): void {

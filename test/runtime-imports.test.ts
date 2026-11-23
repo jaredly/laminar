@@ -7,12 +7,13 @@ import { emitGo } from '../src/go/emit.ts';
 import { builtinTypes } from '../src/builtins.ts';
 import {
     checkConventions,
+    checkReads,
     requireImport,
     runtimeImports,
     type RuntimeImport,
 } from '../src/runtime-imports.ts';
 import { referenceRun } from './backend/reference-run.ts';
-import { Solver, fn, plain, con } from '../src/types.ts';
+import { Solver, fn, plain, reads, con } from '../src/types.ts';
 
 const compile = (source: string, target = wasm32Emscripten('test')) => {
     const p = typedProgram(source);
@@ -58,6 +59,21 @@ it('rejects conventions that disagree with the signature', () => {
             fn([plain(con('Number')), plain(con('Number'))], plain(con('Number'))),
         ),
     ).toThrow('conventions disagree');
+});
+
+it('rejects a reads parameter whose generic type a native could keep', () => {
+    const keeps = (s: Solver) => {
+        const a = s.fresh();
+        return fn([reads(a)], plain(con('Vector', a)));
+    };
+    const entry: RuntimeImport = { ...runtimeImports[0]!, signature: keeps };
+    expect(() => checkReads(entry, keeps(new Solver()))).toThrow('may keep');
+    const owned = (s: Solver) => {
+        const a = s.fresh();
+        return fn([plain(a)], plain(con('Vector', a)));
+    };
+    expect(() => checkReads(entry, owned(new Solver()))).not.toThrow();
+    runtimeImports.forEach((i) => checkReads(i, i.signature(new Solver())));
 });
 
 for (const entry of runtimeImports)

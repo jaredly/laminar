@@ -710,6 +710,15 @@ export class Inferencer {
     private modeOf(n: object): Ty {
         return this.modes.get(n) ?? OWNED;
     }
+    /**
+     * `value` goes into owned storage: an undecided mode (a call whose callee is not known yet)
+     * must turn out owned, and a shared one is an error.
+     */
+    private requireOwned(value: object, loc: number, message: string): void {
+        const mode = this.modeOf(value);
+        if (this.solver.modeOf(mode) === 'unknown') this.solver.unifyMode(mode, OWNED, loc);
+        if (this.solver.modeOf(mode) === 'shared') this.error('shared-into-mut', loc, message);
+    }
     /** A value is shared when it is a plain read, or an aggregate or branch that holds one. */
     private expressionMode(n: Linear): Ty {
         const join = (parts: object[]): Ty =>
@@ -800,12 +809,11 @@ export class Inferencer {
                 this.requireReplaceable(view, n.loc, 'assign to it');
                 const states = view.targets.map((b) => this.revision(b));
                 const value = this.linear(n.value, env);
-                if (this.solver.modeOf(this.modeOf(n.value)) === 'shared')
-                    this.error(
-                        'shared-into-mut',
-                        n.value.loc,
-                        'A plain (shared) value cannot be assigned into `mut` storage; `dup` it first',
-                    );
+                this.requireOwned(
+                    n.value,
+                    n.value.loc,
+                    'A plain (shared) value cannot be assigned into `mut` storage; `dup` it first',
+                );
                 if (
                     n.lens.type !== 'id' &&
                     n.lens.type !== 'field' &&
@@ -1051,9 +1059,9 @@ export class Inferencer {
             return result;
         }
         const type = this.linear(n.value, env);
-        if (n.mut && this.solver.modeOf(this.modeOf(n.value)) === 'shared')
-            this.error(
-                'shared-into-mut',
+        if (n.mut)
+            this.requireOwned(
+                n.value,
                 n.value.loc,
                 'A plain (shared) value cannot initialize a `mut` binding; `dup` it first',
             );
@@ -1344,12 +1352,13 @@ export class Inferencer {
         n.args.forEach((a, i) => {
             const param = args[i];
             if (a.type === 'lens' || param.tag !== 'plain') return;
-            if (
-                this.solver.modeOf(this.modeOf(a)) === 'shared' &&
-                this.solver.ownership(param) === 'owned'
-            )
-                this.error(
-                    'shared-into-mut',
+            const argument = this.solver.modeOf(this.modeOf(a));
+            if (argument === 'shared' && this.solver.ownership(param) === 'unknown')
+                // A shared argument can only go to a position that reads: settle an open one.
+                this.solver.unifyMode(param.mode, SHARED, a.loc);
+            if (this.solver.ownership(param) === 'owned')
+                this.requireOwned(
+                    a,
                     a.loc,
                     'A plain (shared) value cannot go where a `mut` one is expected; `dup` it first',
                 );

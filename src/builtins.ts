@@ -1,5 +1,5 @@
 import { Solver, con, fn, plain, reads, type Scheme } from './types.ts';
-import { checkConventions, runtimeImports } from './runtime-imports.ts';
+import { checkConventions, checkReads, runtimeImports } from './runtime-imports.ts';
 
 /** Source signatures, derived from the runtime import registry. */
 export function builtinTypes(): Map<string, Scheme> {
@@ -8,6 +8,7 @@ export function builtinTypes(): Map<string, Scheme> {
     for (const entry of runtimeImports) {
         const type = entry.signature(s);
         checkConventions(entry, type);
+        checkReads(entry, type);
         result.set(entry.name, s.generalize(type, []));
     }
     return result;

@@ -204,14 +204,15 @@ owned data. Real sharing needs four pieces, in this order:
     node types carry it. A call leaves each argument and result mode open, and a mode nothing
     decided defaults to owned when a definition is generalized. Annotations say nothing about
     modes. Modes are invariant inside function types, which is strict for higher-order code; a
-    coercion can come later. `share` is still a `dup` in every backend. Not done: printing modes
-    in types, and the native `share` primitive 5b and 5c will need.
+    coercion can come later. `share` is still a `dup` in every backend. Shared positions print as
+    `&T` in function types (`printType`).
   - Stage 3 (done): the errors. A shared value for a `mut` parameter or a `let mut` is
     `shared-into-mut`. Natives' and constructors' parameters only read, so they accept either mode
     (`reads`, and fresh modes at constructor sites). A pure lambda's parameter mode is left open so
     natives still unify with it. A `mut` argument for a plain parameter is a move and needs
-    nothing. Not checked yet: a shared result flowing into `mut` storage by other routes (`:=`,
-    returned from a `mut` result position), and modes printed in types.
+    nothing. A call's result mode can still be open when it reaches `mut` storage (an unknown
+    callee), so an owned position fixes an open mode to owned, and a shared argument fixes an open
+    parameter mode to shared (`requireOwned`).
 - **5b. Concrete IR** (`src/concrete-ir.ts`, `src/lower-concrete.ts`, `src/verify-concrete.ts`):
   **done.** The storage class is the value's mode, which already survives into the typed and
   concrete IR (`out.type.mode: 'shared'`). A plain read is a `call`/`invoke` flagged `share: true`,

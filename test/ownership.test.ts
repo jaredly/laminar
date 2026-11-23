@@ -69,3 +69,21 @@ it('needs a dup to initialize a mut binding from a plain value', () => {
     expect(errorCode('{let mut a = (1, 2)\n let mut m = a\n m}')).toBe('ok');
     expect(errorCode('{let mut m = (1, 2)\n m}')).toBe('ok');
 });
+
+it('settles an open parameter mode from a shared argument', () => {
+    const own = 'fn own(mut x) {x}\nfn app(f, v) {f(v)}\n';
+    expect(errorCode(`${own}{let p = (1, 2)\n app(own, p)}`)).toBe('mode-mismatch');
+    expect(modes('fn app(f, v) {f(v)}', 'app')).toContain('shared');
+});
+
+it('makes a call whose callee is not known yet owned when it goes into mut storage', () => {
+    const run = 'fn run(f, mut v) {let mut x = f(v)\n x}\n';
+    expect(errorCode(`${run}fn g(mut p) {p}\n{run(g, (1, 2))}`)).toBe('ok');
+    expect(errorCode(`${run}fn g(p) {p}\n{run(g, (1, 2))}`)).toBe('mode-mismatch');
+});
+
+it('prints shared positions with & in function types', () => {
+    expect(() => checkSource('fn f(x) {x + 1}\n{f(f)}', { mode: 'dual' })).toThrow(
+        '(&Number) => Number',
+    );
+});

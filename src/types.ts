@@ -298,7 +298,7 @@ export function printType(t: Ty): string {
     };
     const sf = (t: FlowTy): string =>
         t.tag === 'plain'
-            ? show(t.value)
+            ? (t.mode.tag === 'con' && t.mode.name === SHARED_NAME ? '&' : '') + show(t.value)
             : `${show(t.read)}/${t.replaceable.tag === 'con' && t.replaceable.name === FIXED_NAME ? '=' : ''}${show(t.write)}`;
     return show(t);
 }
