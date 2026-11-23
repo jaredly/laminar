@@ -1,0 +1,22 @@
+// laminar: dual
+fn sum(xs) {
+    match xs {
+        [] -> 0
+        [head, ...tail] -> head + sum(tail)
+    }
+}
+fn bump(~xs) {
+    match ~xs {
+        [] -> ()
+        [head, ...tail] -> {
+            head := head + 1
+            bump(~tail)
+        }
+    }
+}
+{
+    let xs = [1, 2, 3]
+    let mut copy = dup(~xs)
+    bump(~copy)
+    (sum(xs), sum(copy), sum(xs))
+}

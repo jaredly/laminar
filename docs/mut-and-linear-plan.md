@@ -240,8 +240,7 @@ owned data. Real sharing needs four pieces, in this order:
 
 ## Phase 6: documentation and examples
 
-Status: docs updated (`mut-and-linear.md` summary, `mutable-boxes.md` ownership claim). Examples
-not yet added.
+Status: done. Docs updated; `examples/dual-share.lm` shows shared reads, `dup` and in-place updates.
 
 - Update `mut-and-linear.md` with the settled rules, link this plan from the docs index, and fix
   the stale claims in `mutable-boxes.md` ("every heap allocation has exactly one owner").
