@@ -9,7 +9,8 @@ not settled by that reading are in "Open questions".
 Implemented and tested through the reference evaluator (`test/constructor-lens*.test.ts`,
 `test/replaceable-flag.test.ts`). The concrete backends (representations, C, Go, Wasm)
 do not support constructor lenses: representation inference stops with "Constructor
-lenses have no concrete representation yet".
+lenses have no concrete representation yet". See "Representation and backend" for the
+investigation and plan.
 
 - **Grammar/AST:** constructor in `Lens`; `=A` and `A/=B` in `Type`.
 - **Types:** `flow(read, write, replaceable)` with `REPLACEABLE | FIXED | meta`;
@@ -289,20 +290,67 @@ tag and binds the component lenses directly. Whether that is a second owner form
 
 ## Representation and backend
 
-Representation follows from the type structurally. `RepresentationTable` gains one
-shape:
+Status: not implemented. Investigation (step 5, 2026-11-22) found the following.
+
+### How returned lenses work in the concrete backends today
+
+- A returned lens is one runtime struct: a read pointer, a replacement pointer, a
+  `restore(context, replacement)` callback and a context
+  (`Lens_bool_to_double` in `examples/deep-update.lm.c`). Its read pointer points at a
+  temporary backing, and the callback runs the callee's deferred restoration.
+- Representation inference gives every returned lens a canonical *thin* shape
+  (`variant.result` starts as `reps.thin(read, write)`), and a `case` or dynamic dispatch
+  with lens results also normalizes to thin (`infer-representations.ts`).
+- The C `case` with `lensJoin: { kind: 'selected' }` handles arms with different lens
+  shapes: each arm reads its lens's contents into one joined thin temporary and records
+  the selected arm, and the restoration dispatches on that selector and writes the
+  replacement back through the selected arm's own lens (`src/c/lower.ts`). Scattered
+  (tuple) arms already go through this path.
+- Lenses in `src/c/lower.ts` are compile-time *views* (`lenses` map: a reference or an
+  array of views) over a storage model, not runtime pointers until they cross a call
+  boundary.
+
+### Rejected: lower `Some(x)` to an `aslens` before inference
+
+A constructor lens is the same thing as the hand-written workaround in
+`examples/deep-update.lm`, `lens Some(v) <- Some(x) { x := v }`, and rewriting it that
+way in `normalizeBorrowed` makes every backend work unchanged for a single
+constructor lens (`fn pick(~a) ~{Some(a)}` and its caller type-check and run). It fails
+for the motivating `find`: the `aslens` consumes `x` when the lens is built, but the
+other arms of the join (the recursive call, `None`) do not. The affine join then marks
+`x` unavailable in every arm and the other arms drop its contents, so the checker
+reports `unrestored-lens` or `use-after-move`. The hand-written workaround avoids this
+only because it never moves `x`. A constructor lens must read its fields lazily (when
+the caller matches), which is what the reference evaluator's runtime lens does.
+
+### Plan: a scattered `constructor` shape, normalized to thin at joins and returns
+
+Keep `lens-construct` in the IR and give it a scattered shape in the representation
+layer, parallel to `tuple`:
 
 ```
-sum(arms)        arms: ctor ↦ shape[]        (tag slot plus field shapes)
+constructor(name, items)    items: LensRepId[]   (tag is the constructor name)
 ```
 
-Arms are exclusive and may overlay. Only built constructors get meaningful field
-shapes; an unbuilt constructor's arm is empty and never selected. Two builds of the
-same field with different representations (a thin lens and a scattered tuple of the
-same type) fail in the representation join with `unsupported-representation-join`,
-exactly as thin vs scattered tuples do today. That failure is pre-existing behavior,
-not something this design adds. Native and wasm32 share the abstract shape
-([c-codegen-plan.md](c-codegen-plan.md)).
+- It is never a call ABI. At a function result and at a `lensJoin: selected` it is
+  normalized to the thin shape of its read/replacement types, exactly as a scattered
+  tuple arm is today: the joined temporary receives `Some(<contents of the item
+  lenses>)` (or `None`), the selector records the arm, and restoration for that arm
+  checks the tag and routes each field of the replacement back to its item lens.
+- Inference: `lens-construct` produces the shape; `case` arms may be `constructor`
+  shapes with a thin result; a function whose body is directly a constructor lens
+  needs the same normalization at its return (which is where `pick` would need it).
+- Concrete IR and verifier: no new instruction beyond `lens-construct`; representation
+  verification checks tag, item count and item shapes.
+- C (and Go): a new view kind for a constructor lens whose `storage.get` builds the
+  tagged value from the item views and whose `storage.put` matches the tag and puts each
+  field. Everything else (calls, restore callbacks, selected joins) is existing machinery.
+- Fields whose shape is not thin (a scattered tuple field) would need the same adapters
+  that thin-to-scattered conversion needs today; report them as unsupported.
+
+Risk: the C lowerer's storage model is the part least covered by what I read. The first
+check is whether `storage.get`/`storage.put` over a view array can be extended with a
+tag-checking constructor view without disturbing `lensJoin` bookkeeping.
 
 ## Examples
 
