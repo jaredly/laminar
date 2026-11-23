@@ -16,7 +16,8 @@ Implemented as follows:
   same constructor and layout, retained exactly once).
 - `src/c/lower.ts` keeps the box in a local and writes `*box = payload`. The
   same-layout `bump` above has no `allocate_context` or `release_context`.
-- Lens-valued cases (`lensJoin`) fall back to free and allocate.
+- Lens-valued cases (`lensJoin`) retain and reuse the box in C and Go, and a returned lens
+  points into it ([direct field lenses](direct-field-lenses.md), "Lens-valued cases").
 - `src/go/lower.ts` does the same: the bind keeps the owner's box in a local and the
   construct writes `*box = payload`. A value constructed in place has no box, so its
   reconstruction allocates.

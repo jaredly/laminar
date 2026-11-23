@@ -38,12 +38,15 @@ it('Go writes the retained box in place instead of allocating a new one', () => 
     expect(body).not.toContain('new(');
 });
 
-it('a lens-valued match keeps allocating its box', () => {
+it('a lens-valued match retains its box and rebuilds in place', () => {
     const concrete = compile(
         'fn first(~xs) ~{match ~xs {[h, ...t] -> h}}\n{let x = [1, 2]\n first(~x) := 5\n x}',
     );
     verifyConcreteProgram(JSON.parse(JSON.stringify(concrete)));
-    expect(printConcreteProgram(concrete)).not.toMatch(/retains/);
+    const text = printConcreteProgram(concrete);
+    expect(text).toMatch(/retains/);
+    expect(text).toMatch(/aslens in-place/);
+    expect(text).toMatch(/reuses/);
 });
 
 it('the verifier rejects a retained box that nothing reuses', () => {

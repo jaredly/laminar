@@ -8,6 +8,8 @@ export const expression = (value: Expression): Expr =>
 export type Leaf = {
     layout: string;
     address?: Expr;
+    /** `address` points into a heap box that data owns, so it outlives the frame. */
+    heap?: boolean;
     constructed?: { name: string; payload: Data };
 } & ({ expression: Expr; key?: undefined } | { expression: Expression; key: string });
 export type Data = shared.Data<Leaf>;

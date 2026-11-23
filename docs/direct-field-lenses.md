@@ -292,9 +292,40 @@ route, but it needs the `verify-ir.ts` work up front.
 
 ### Lens-valued cases
 
-`lensJoin` joins per-arm lens storage. Whether projection shapes can be joined, or a
-lens-valued focus must always use `rebuild`, is unresolved. The first version uses
-`rebuild` there.
+Implemented in C and Go (2026-11-22).
+
+`lensJoin` used to normalize every arm's lens into one joined temporary and restore
+through a selector, and a borrowed match under it kept the free-and-allocate form. In
+C and Go the pieces are now:
+
+- **Retention.** `markBoxReuse` and `verify-concrete.ts` no longer exclude arms of a
+  lens-valued case, and the C `lensJoin` lowering passes `retains` to `bind`. The box is
+  the list's own, so it outlives the arm. Leaves that point into such a box (and
+  incoming lens parameters) are marked `heap`, meaning the address outlives the frame, so
+  an escaping call may be passed `&box->item1` instead of a heap `Backing`.
+- **Forwarding join.** When a lens-valued case's result is the function's returned lens
+  and the rest of the function (enclosing cleanup and the incoming lenses' write-back)
+  emits nothing, the result is whichever arm ran, as a runtime lens struct, with no
+  selector and no copied contents. An arm is one of: a call result (its struct is
+  forwarded as is), a same-layout pointer into a `heap` leaf (`(Lens){.read=&box->item0}`),
+  or any other lens, whose own restoration, the enclosing cleanup and the write-back
+  become the callback of a struct built in the arm (`closureLens`). Enclosing blocks'
+  cleanup is then marked consumed so it does not run a second time.
+- **Result.** `find_` (returns the matching element's lens) compiles to a function whose
+  `cons` arm allocates nothing: it returns `&box->item0` or the recursive call's lens, with
+  no restore closure; only the empty-list arm builds a small closure. The recursive
+  `find` that returns `Some(x)` / `None` keeps one small closure per hit and per empty
+  list, and passes the recursive result through.
+
+Go uses the same pieces (its `flush` primitive stands in for C's dry run of
+`flushParameters`, whose deferred write-backs a dry run must not register). The Go output
+for the `Some`/`None` search is a short function: the `cons` arm either builds one small
+closure that writes the field back, or returns `find(needle, Lens_List_Number{read:
+&(*v6).item1})`, and the empty-list arm builds one small closure.
+
+Not done: a join of arms whose lens results have different shapes keeps the old
+selector path; an incoming lens that changes type is never forwarded; and a dead phi
+variable for fields a closure restores is still emitted in C.
 
 ## Migration
 

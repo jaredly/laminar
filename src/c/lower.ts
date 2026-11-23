@@ -1,6 +1,6 @@
 import { Declaration, References, reachableNames, typeDependencies } from '../backend/reachable.ts';
 import type { ConcreteProgram, ConcreteBlock } from '../concrete-ir.ts';
-import { Storage, type Cell, type Data, type View } from './storage.ts';
+import { Storage, type Cell, type Data, type Leaf, type View } from './storage.ts';
 import { decodeNumber, type IRPattern, type SlotRef } from '../typed-ir.ts';
 import { verifyConcreteProgram } from '../verify-concrete.ts';
 import { BackendDiagnostic } from '../backend/target.ts';
@@ -16,7 +16,16 @@ import { layoutNames, unionTagNames } from '../backend/type-names.ts';
 import { CNames, cScalars } from './names.ts';
 
 type Completion = (body: Statement[]) => void;
-type Lens = { view: View; finish: Completion };
+/**
+ * `forwarded`: the lens is an existing runtime lens struct whose restoration is entirely its
+ * own callback or direct write. `rest` is what must still run after it (argument backing,
+ * block cleanup); a function may return the struct as is when `rest` emits nothing.
+ */
+type Lens = {
+    view: View;
+    finish: Completion;
+    forwarded?: { expression: string; rest: Completion };
+};
 type Variable = { name: string; type: string };
 const unsupported = (message: string): never => {
     throw new BackendDiagnostic('unsupported-c', message);
@@ -123,7 +132,13 @@ export function lowerC(
             return {
                 expression: field(s.expression, i),
                 layout: f.layout,
-                ...(s.address ? { address: cc`&(*${s.address}).item${i}` } : {}),
+                ...(s.address
+                    ? {
+                          address: cc`&(*${s.address}).item${i}`,
+                          lvalue: field(star(s.address), i),
+                          ...(s.heap ? { heap: true } : {}),
+                      }
+                    : {}),
             };
         }),
     );
@@ -170,6 +185,7 @@ export function lowerC(
                 expression: star(dot(expression, 'read')),
                 layout: f.layout,
                 address: dot(expression, 'read'),
+                heap: true,
             });
         return l.fields
             .filter((f) => f.name.startsWith('item'))
@@ -899,17 +915,14 @@ export function lowerC(
             /** The storage each moved value came from. */
             const movedFrom = new Map<string, Data>();
             /** An lvalue for the storage behind an address. */
-            const through = (address: Expr): Expr => {
-                const text = String(address);
-                return text.startsWith('&') ? text.slice(1) : cc`*${address}`;
-            };
+            const through = (leaf: Leaf): Expr => leaf.lvalue ?? star(leaf.address!);
             /** Store each payload field that no longer reads its own live storage. */
             const writeBack = (before: Data, after: Data, id: string, body: Statement[]) => {
                 if (Array.isArray(before) || !before.address) return;
                 if (!Array.isArray(after) && same(after.address, before.address)) return;
                 const items = layout(id).fields.filter((f) => f.name.startsWith('item'));
                 if (layout(id).kind !== 'record' || !items.length) {
-                    body.push(cc`${through(before.address)} = ${read(after, id)};`);
+                    body.push(cc`${through(before)} = ${read(after, id)};`);
                     return;
                 }
                 const from = storage.parts(before),
@@ -946,7 +959,12 @@ export function lowerC(
                             body,
                         );
                         retainedBoxes.set(retains, box);
-                        contents = { expression: cc`(*${box})`, layout: v.layout, address: box };
+                        contents = {
+                            expression: cc`(*${box})`,
+                            layout: v.layout,
+                            address: box,
+                            heap: true,
+                        };
                     } else if (v.boxed) {
                         contents = {
                             expression: declare(v.layout, contents.expression, body),
@@ -1020,6 +1038,222 @@ export function lowerC(
                     left.length === right.length && left.every((d, n) => sameStorage(d, right[n]!))
                 );
             };
+            /**
+             * A lens as a heap-allocated runtime lens struct: a context holding the frame locals
+             * its restoration reads, and a function that runs `lens.finish` (and, for the
+             * function's own result, the incoming lenses' write-back).
+             */
+            const closureLens = (
+                lens: Lens,
+                layoutId: string,
+                body: Statement[],
+                flush: boolean,
+            ): string => {
+                const h = helperCounter++,
+                    context = `Restore${h}`,
+                    restore = `restore${h}`;
+                // This body hands out the restoration function and its context.
+                use(context);
+                use(restore);
+                const candidates = [...variables];
+                const contextFields: string[] = [];
+                const initial: Statement[] = [];
+                const build = (view: View, id: string, path: string): Expr => {
+                    const l = layout(id),
+                        input = l.fields.find((f) => f.name === 'read');
+                    if (input?.kind === 'pointer' && input.layout) {
+                        const r = `focus${path}`,
+                            output = l.fields.find((f) => f.name === 'replacement');
+                        contextFields.push(cText`${type(input.layout)} ${r};`);
+                        initial.push(cc`ctx->${r} = ${read(storage.get(view), input.layout)};`);
+                        if (output?.kind === 'pointer' && output.layout)
+                            contextFields.push(cText`${type(output.layout)} ${r}out;`);
+                        return cc`(${type(id)}){.read=&ctx->${r}${output ? cc`, .replacement=&ctx->${r}out` : ''}}`;
+                    }
+                    return cc`(${type(id)}){${
+                        joinCode(
+                            l.fields
+                                .filter((f) => f.name.startsWith('item'))
+                                .map(
+                                    (f, i) =>
+                                        cc`.${member(f.name)}=${build(storage.project(view, [i]), (f as { layout: string }).layout, path + '_' + i)}`,
+                                ),
+                            ', ',
+                        ) || '0'
+                    }}`;
+                };
+                const resultExpression = build(lens.view, layoutId, '');
+                const replacement = endpoint(layoutId, 'replacement');
+                const saved = storage.snapshot();
+                storage.put(lens.view, { expression: 'replacement', layout: replacement });
+                const cleanup: Statement[] = [];
+                lens.finish(cleanup);
+                if (flush) flushParameters(cleanup);
+                storage.reset(saved);
+                // Only frame locals referenced by cleanup survive in the heap context.
+                // Cleanup's own declarations were created after the candidate snapshot.
+                const references = locals.reads(cleanup);
+                visit(cleanup, (s) => {
+                    if (isLocal(s) && s.kind === 'set') references.add(s.name);
+                });
+                const captured = candidates.filter((v) => references.has(v.name));
+                contextFields.unshift(...captured.map((v) => `${v.type} ${v.name};`));
+                const replacements = new Map(
+                    captured.map((v) => [
+                        v.name,
+                        locals.access('ctx', '->', locals.literal(v.name)),
+                    ]),
+                );
+                const rewrite = (value: Expr) => locals.rewriteReferences(value, replacements);
+                const rewriteBody = (body: Statement[]): Statement[] =>
+                    body.map((s): Statement => {
+                        if (Array.isArray(s)) return rewriteBody(s);
+                        if (isExpr(s)) return rewrite(s);
+                        if (isLocal(s)) {
+                            if (s.kind === 'set' && replacements.has(s.name))
+                                return cc`${replacements.get(s.name)} = ${rewrite(s.value)};`;
+                            return {
+                                ...s,
+                                ...(s.value === undefined ? {} : { value: rewrite(s.value) }),
+                            };
+                        }
+                        return mapScope(s, rewrite, rewriteBody);
+                    });
+                auxTypes.push(
+                    new Declaration(
+                        context,
+                        cText`typedef struct { ${contextFields.join(' ') || 'unsigned char inhabitant;'} } ${context};`,
+                    ),
+                );
+                declarations.push(
+                    new Declaration(
+                        restore,
+                        cText`${type(unit.id)} ${restore}(void *opaque, ${type(replacement)} replacement);`,
+                    ),
+                );
+                // What the cleanup mentions was recorded against this function, which is
+                // the only function that can reach the restoration function.
+                refs.within(restore, () => {
+                    use(context);
+                    helpers.push({
+                        name: restore,
+                        signature: cText`${type(unit.id)} ${restore}(void *opaque, ${type(replacement)} replacement)`,
+                        body: [
+                            cc`${context} *ctx = opaque;`,
+                            '(void)replacement;',
+                            ...rewriteBody(suppressUnused(locals, cleanup, [])),
+                            cc`${use('release_context')}(ctx);`,
+                            cc`return ${zero(unit.id)};`,
+                        ],
+                    });
+                });
+                body.push(`${context} *ctx = ${use('allocate_context')}(sizeof *ctx);`, {
+                    kind: 'if',
+                    arms: [{ condition: '!ctx', body: ['abort();'] }],
+                });
+                captured.forEach((v) => body.push(cc`ctx->${locals.literal(v.name)} = ${v.name};`));
+                body.push(...initial);
+                const out = fresh();
+                body.push(
+                    cc`${type(layoutId)} ${out} = ${resultExpression};`,
+                    cc`${out}.restore = ${restore};`,
+                    cc`${out}.context = ctx;`,
+                );
+                return out;
+            };
+            /** Cleanup of the blocks being lowered whose result is the function's returned lens. */
+            const enclosingFinishes: ((body: Statement[]) => void)[] = [];
+            /** Enclosing cleanup a forwarding join already ran inside each arm's restoration. */
+            const consumed = new Set<(body: Statement[]) => void>();
+            const count = (s: Statement[]): number =>
+                s.reduce<number>((n, x) => n + (Array.isArray(x) ? count(x) : 1), 0);
+            /**
+             * How a lens-valued case can return its arm's lens as a runtime lens struct, so the
+             * function returns whichever arm ran with no selector and no copied contents:
+             * `struct` when the arm already is one (a call result, or a pointer into storage
+             * that outlives the frame) and nothing else has to run, or `closure` when the arm's
+             * own restoration becomes its struct's callback. Either needs the rest of the
+             * function (enclosing cleanup and the incoming lenses' write-back) to emit nothing.
+             * `after` is the storage state once the arm's restoration has run, which is the
+             * state the join then continues from.
+             */
+            type ForwardPlan = {
+                kind: 'struct' | 'closure';
+                expression?: Expr;
+                after: Map<Cell, Data>;
+            };
+            const forwardable = (
+                lens: Lens,
+                arm: { restored?: unknown[] },
+                id: string,
+            ): ForwardPlan | undefined => {
+                if (arm.restored?.length) return undefined;
+                // An incoming lens that changes type has no live form to restore it to.
+                if (
+                    parameters.some((p) =>
+                        layout(p.layout).fields.some((f) => f.name === 'replacement'),
+                    )
+                )
+                    return undefined;
+                const saved = storage.snapshot(),
+                    mark = variables.length;
+                const l = layout(id),
+                    input = l.fields.find((f) => f.name === 'read');
+                let quiet: boolean,
+                    afterEnclosing: Map<Cell, Data>,
+                    afterFlush: Map<Cell, Data>;
+                try {
+                    const trial: Statement[] = [];
+                    (lens.forwarded ? lens.forwarded.rest : lens.finish)(trial);
+                    const enclosing: Statement[] = [];
+                    for (let k = enclosingFinishes.length - 1; k >= 0; k--)
+                        enclosingFinishes[k]!(enclosing);
+                    afterEnclosing = storage.snapshot();
+                    const flushed: Statement[] = [];
+                    flushParameters(flushed);
+                    quiet = count(trial) === 0 && count(enclosing) === 0 && count(flushed) === 0;
+                    // Writing the incoming lenses back is part of the arm's own restoration when
+                    // it runs from a callback; the model then sees them as live again.
+                    parameters.forEach((p) =>
+                        storage.put(p.view, storage.get(incoming(p.expression, p.layout))),
+                    );
+                    afterFlush = storage.snapshot();
+                } catch (error) {
+                    // Storage this early in the function may not be restorable yet.
+                    if (error instanceof BackendDiagnostic) return undefined;
+                    throw error;
+                } finally {
+                    storage.reset(saved);
+                    variables.length = mark;
+                }
+                const d = lens.forwarded ? undefined : storage.get(lens.view);
+                if (quiet) {
+                    if (lens.forwarded)
+                        return {
+                            kind: 'struct',
+                            expression: lens.forwarded.expression,
+                            after: afterEnclosing,
+                        };
+                    if (
+                        !l.fields.some((f) => f.name === 'replacement') &&
+                        input?.kind === 'pointer' &&
+                        input.layout &&
+                        d &&
+                        !Array.isArray(d) &&
+                        d.address &&
+                        d.heap &&
+                        d.layout === input.layout
+                    )
+                        return {
+                            kind: 'struct',
+                            expression: cc`(${type(id)}){.read=${d.address}}`,
+                            after: afterEnclosing,
+                        };
+                }
+                // Otherwise the arm's own restoration, the enclosing cleanup and the incoming
+                // lenses' write-back all run from the callback of a struct built here.
+                return { kind: 'closure', after: afterFlush };
+            };
             // Adapt input/output backing at calls. Escaping calls use heap backing, so
             // a returned continuation never retains a pointer into the caller frame.
             const adapt = (
@@ -1043,13 +1277,18 @@ export function lowerC(
                 const l = layout(id),
                     input = l.fields.find((f) => f.name === 'read');
                 if (
-                    !escapes &&
                     input?.kind === 'pointer' &&
                     input.layout &&
                     !l.fields.some((f) => f.name === 'replacement')
                 ) {
                     const d = storage.get(lens.view);
-                    if (!Array.isArray(d) && d.address && d.layout === input.layout) {
+                    // An escaping call may keep the pointer, so only storage a heap box owns qualifies.
+                    if (
+                        !Array.isArray(d) &&
+                        d.address &&
+                        d.layout === input.layout &&
+                        (!escapes || d.heap)
+                    ) {
                         const live = d;
                         return {
                             expression: declare(id, cc`(${type(id)}){.read=${live.address}}`, body),
@@ -1379,6 +1618,21 @@ export function lowerC(
                 });
             };
             const block = (b: ConcreteBlock, body: Statement[]): Expr => {
+                const finish = (body: Statement[]) =>
+                    b.cleanup.forEach((c) => {
+                        if (c.kind === 'release') {
+                            const lens = loans.get(c.loan);
+                            if (lens) lens.finish(body);
+                        } else if (c.kind === 'drop-place') {
+                            drop(storage.get(ref(c.slot)), body);
+                            storage.put(ref(c.slot), {
+                                expression: zero(unit.id),
+                                layout: unit.id,
+                            });
+                        }
+                    });
+                const tracked = returned.has(b.result);
+                if (tracked) enclosingFinishes.push(finish);
                 for (const i of b.instructions) {
                     if (i.op === 'bind') {
                         bind(
@@ -1432,6 +1686,7 @@ export function lowerC(
                                     expression: cc`(*${box})`,
                                     layout: payload,
                                     address: box,
+                                    heap: true,
                                 });
                                 const live = storage.get(view);
                                 if (!Array.isArray(view)) inPlaceCells.add(view.cell);
@@ -1668,7 +1923,7 @@ export function lowerC(
                             ) {
                                 // The box is the storage and nothing else can observe it, so the
                                 // store happens here and the field goes back to reading the box.
-                                body.push(cc`${through(live.address)} = ${value(i.value)};`);
+                                body.push(cc`${through(live)} = ${value(i.value)};`);
                                 storage.put(lens.view, live);
                             } else
                                 storage.put(lens.view, {
@@ -1727,7 +1982,9 @@ export function lowerC(
                                             ) &&
                                             (arms.length > 1 ||
                                                 JSON.stringify(data[0]) ===
-                                                    JSON.stringify(previous))
+                                                    JSON.stringify(previous) ||
+                                                // Live storage that outlives the frame needs no copy out of the arm.
+                                                (!Array.isArray(data[0]) && data[0]!.heap))
                                         )
                                             return data[0]!;
                                         const first = data[0]!;
@@ -1787,14 +2044,16 @@ export function lowerC(
                                             layout: outputLayouts.get(i.value)!,
                                         },
                                         nested,
+                                        arm.retains,
                                     );
+                                    if (arm.retains && movedFrom.has(i.value))
+                                        retainedOwners.set(arm.retains, movedFrom.get(i.value)!);
                                     block(arm.body, nested);
                                     normalize(arm.setup, nested);
                                     const lens = lenses.get(arm.body.result)!;
-                                    nested.push(
-                                        locals.assign(selected, String(n)),
-                                        locals.assign(focus, read(storage.get(lens.view), input)),
-                                    );
+                                    const forward = returned.has(i.out.id)
+                                        ? forwardable(lens, arm, outputLayouts.get(arm.body.result)!)
+                                        : undefined;
                                     // Setup storage used by deferred cleanup is declared in the arm;
                                     // declaration placement lifts it out of the conditional.
                                     return {
@@ -1803,8 +2062,50 @@ export function lowerC(
                                         lens,
                                         arm,
                                         index: n,
+                                        forward,
                                     };
                                 });
+                                const forwarding = arms.every((a) => a.forward !== undefined);
+                                let forwardedJoin: string | undefined;
+                                if (forwarding) {
+                                    // Every arm is a runtime lens that restores itself: the result
+                                    // is whichever one ran, with no selector and no copied contents.
+                                    forwardedJoin = fresh();
+                                    variables.push({ name: forwardedJoin, type: type(id) });
+                                    body.push(locals.declaration(forwardedJoin, type(id), zero(id)));
+                                    const enclosing = [...enclosingFinishes];
+                                    arms.forEach((a) => {
+                                        const plan = a.forward!;
+                                        // The arm's lens, as a struct that restores itself.
+                                        let struct: Expr;
+                                        if (plan.kind === 'struct') struct = plan.expression!;
+                                        else {
+                                            storage.reset(a.state);
+                                            const whole: Lens = {
+                                                view: a.lens.view,
+                                                finish: (output) => {
+                                                    a.lens.finish(output);
+                                                    for (let k = enclosing.length - 1; k >= 0; k--)
+                                                        enclosing[k]!(output);
+                                                },
+                                            };
+                                            struct = closureLens(whole, id, a.nested, true);
+                                        }
+                                        a.state = plan.after;
+                                        a.nested.push(locals.assign(forwardedJoin!, struct));
+                                    });
+                                    enclosing.forEach((f) => consumed.add(f));
+                                } else
+                                    arms.forEach((a) => {
+                                        storage.reset(a.state);
+                                        a.nested.push(
+                                            locals.assign(selected, String(a.index)),
+                                            locals.assign(
+                                                focus,
+                                                read(storage.get(a.lens.view), input),
+                                            ),
+                                        );
+                                    });
                                 storage.reset(before);
                                 merge(arms, body);
                                 emitMatch(
@@ -1814,6 +2115,13 @@ export function lowerC(
                                     outputLayouts.get(i.value)!,
                                     body,
                                 );
+                                if (forwardedJoin) {
+                                    lenses.set(i.out.id, {
+                                        ...runtimeLens(forwardedJoin, id, noFinish),
+                                        forwarded: { expression: forwardedJoin, rest: noFinish },
+                                    });
+                                    continue;
+                                }
                                 lenses.set(i.out.id, {
                                     view: joined,
                                     finish: (output) => {
@@ -2035,13 +2343,14 @@ export function lowerC(
                                 effect: effect || !!(i.field !== undefined || w?.kind !== 'native'),
                             });
                             values.set(i.out.id, name);
-                            if (isLens)
-                                lenses.set(
-                                    i.out.id,
-                                    runtimeLens(name, id, (body) =>
-                                        adapters.forEach((a) => a.finish(body)),
-                                    ),
-                                );
+                            if (isLens) {
+                                const rest = (body: Statement[]) =>
+                                    adapters.forEach((a) => a.finish(body));
+                                lenses.set(i.out.id, {
+                                    ...runtimeLens(name, id, rest),
+                                    forwarded: { expression: name, rest },
+                                });
+                            }
                             else adapters.forEach((a) => a.finish(body));
                             continue;
                         }
@@ -2053,27 +2362,30 @@ export function lowerC(
                     declare(id, expr, body, name, { pure: pure || removable });
                     values.set(i.out.id, name);
                 }
-                const finish = (body: Statement[]) =>
-                    b.cleanup.forEach((c) => {
-                        if (c.kind === 'release') {
-                            const lens = loans.get(c.loan);
-                            if (lens) lens.finish(body);
-                        } else if (c.kind === 'drop-place') {
-                            drop(storage.get(ref(c.slot)), body);
-                            storage.put(ref(c.slot), {
-                                expression: zero(unit.id),
-                                layout: unit.id,
-                            });
-                        }
-                    });
+                if (tracked) enclosingFinishes.pop();
                 if (lenses.has(b.result)) {
                     const lens = lenses.get(b.result)!;
+                    // A forwarding join inside already ran this block's cleanup in its arms.
+                    const cleanup = (body: Statement[]) => {
+                        if (!consumed.has(finish)) finish(body);
+                    };
                     lenses.set(b.result, {
                         view: lens.view,
                         finish: (body) => {
                             lens.finish(body);
-                            finish(body);
+                            cleanup(body);
                         },
+                        ...(lens.forwarded
+                            ? {
+                                  forwarded: {
+                                      expression: lens.forwarded.expression,
+                                      rest: (body: Statement[]) => {
+                                          lens.forwarded!.rest(body);
+                                          cleanup(body);
+                                      },
+                                  },
+                              }
+                            : {}),
                     });
                     return '';
                 }
@@ -2092,6 +2404,16 @@ export function lowerC(
                     if (i.op === 'case') i.cases.forEach((a) => index(a.body));
                 });
             index(c.body);
+            /** Lens-valued instructions whose result is the function's returned lens. */
+            const returned = new Set<string>();
+            const markReturned = (b: ConcreteBlock, id: string): void => {
+                returned.add(id);
+                const found = b.instructions.find((s) => 'out' in s && s.out.id === id);
+                if (found?.op === 'scope') markReturned(found.body, found.body.result);
+                else if (found?.op === 'case')
+                    found.cases.forEach((a) => markReturned(a.body, a.body.result));
+            };
+            markReturned(c.body, c.body.result);
             const body: Statement[] = [...setup];
             c.captures.forEach((capture, i) => {
                 const base = bindingName({ place: capture.place, path: [] });
@@ -2111,119 +2433,31 @@ export function lowerC(
             if (c.captures.length && !erasedEnvironment(c.captures))
                 body.push(cc`${use('release_context')}(environment);`);
             const result = block(c.body, body);
-            if (lenses.has(c.body.result)) {
-                const lens = lenses.get(c.body.result)!;
-                const h = helperCounter++,
-                    context = `Restore${h}`,
-                    restore = `restore${h}`;
-                // This body hands out the restoration function and its context.
-                use(context);
-                use(restore);
-                const candidates = [...variables];
-                const contextFields: string[] = [];
-                const initial: Statement[] = [];
-                const build = (view: View, id: string, path: string): Expr => {
-                    const l = layout(id),
-                        input = l.fields.find((f) => f.name === 'read');
-                    if (input?.kind === 'pointer' && input.layout) {
-                        const r = `focus${path}`,
-                            output = l.fields.find((f) => f.name === 'replacement');
-                        contextFields.push(cText`${type(input.layout)} ${r};`);
-                        initial.push(cc`ctx->${r} = ${read(storage.get(view), input.layout)};`);
-                        if (output?.kind === 'pointer' && output.layout)
-                            contextFields.push(cText`${type(output.layout)} ${r}out;`);
-                        return cc`(${type(id)}){.read=&ctx->${r}${output ? cc`, .replacement=&ctx->${r}out` : ''}}`;
+            const forwardedResult = lenses.get(c.body.result)?.forwarded;
+            const returnsForwarded =
+                forwardedResult &&
+                (() => {
+                    // Nothing is left to restore: the struct already restores itself.
+                    const saved = storage.snapshot(),
+                        mark = variables.length;
+                    const trial: Statement[] = [];
+                    try {
+                        forwardedResult.rest(trial);
+                        flushParameters(trial);
+                    } catch (error) {
+                        if (error instanceof BackendDiagnostic) return false;
+                        throw error;
+                    } finally {
+                        storage.reset(saved);
+                        variables.length = mark;
                     }
-                    return cc`(${type(id)}){${
-                        joinCode(
-                            l.fields
-                                .filter((f) => f.name.startsWith('item'))
-                                .map(
-                                    (f, i) =>
-                                        cc`.${member(f.name)}=${build(storage.project(view, [i]), (f as { layout: string }).layout, path + '_' + i)}`,
-                                ),
-                            ', ',
-                        ) || '0'
-                    }}`;
-                };
-                const resultExpression = build(lens.view, c.body.layout, '');
-                const replacement = endpoint(c.body.layout, 'replacement');
-                const saved = storage.snapshot();
-                storage.put(lens.view, { expression: 'replacement', layout: replacement });
-                const cleanup: Statement[] = [];
-                lens.finish(cleanup);
-                flushParameters(cleanup);
-                storage.reset(saved);
-                // Only frame locals referenced by cleanup survive in the heap context.
-                // Cleanup's own declarations were created after the candidate snapshot.
-                const references = locals.reads(cleanup);
-                visit(cleanup, (s) => {
-                    if (isLocal(s) && s.kind === 'set') references.add(s.name);
-                });
-                const captured = candidates.filter((v) => references.has(v.name));
-                contextFields.unshift(...captured.map((v) => `${v.type} ${v.name};`));
-                const replacements = new Map(
-                    captured.map((v) => [
-                        v.name,
-                        locals.access('ctx', '->', locals.literal(v.name)),
-                    ]),
-                );
-                const rewrite = (value: Expr) => locals.rewriteReferences(value, replacements);
-                const rewriteBody = (body: Statement[]): Statement[] =>
-                    body.map((s): Statement => {
-                        if (Array.isArray(s)) return rewriteBody(s);
-                        if (isExpr(s)) return rewrite(s);
-                        if (isLocal(s)) {
-                            if (s.kind === 'set' && replacements.has(s.name))
-                                return cc`${replacements.get(s.name)} = ${rewrite(s.value)};`;
-                            return {
-                                ...s,
-                                ...(s.value === undefined ? {} : { value: rewrite(s.value) }),
-                            };
-                        }
-                        return mapScope(s, rewrite, rewriteBody);
-                    });
-                auxTypes.push(
-                    new Declaration(
-                        context,
-                        cText`typedef struct { ${contextFields.join(' ') || 'unsigned char inhabitant;'} } ${context};`,
-                    ),
-                );
-                declarations.push(
-                    new Declaration(
-                        restore,
-                        cText`${type(unit.id)} ${restore}(void *opaque, ${type(replacement)} replacement);`,
-                    ),
-                );
-                // What the cleanup mentions was recorded against this function, which is
-                // the only function that can reach the restoration function.
-                refs.within(restore, () => {
-                    use(context);
-                    helpers.push({
-                        name: restore,
-                        signature: cText`${type(unit.id)} ${restore}(void *opaque, ${type(replacement)} replacement)`,
-                        body: [
-                            cc`${context} *ctx = opaque;`,
-                            '(void)replacement;',
-                            ...rewriteBody(suppressUnused(locals, cleanup, [])),
-                            cc`${use('release_context')}(ctx);`,
-                            cc`return ${zero(unit.id)};`,
-                        ],
-                    });
-                });
-                body.push(`${context} *ctx = ${use('allocate_context')}(sizeof *ctx);`, {
-                    kind: 'if',
-                    arms: [{ condition: '!ctx', body: ['abort();'] }],
-                });
-                captured.forEach((v) => body.push(cc`ctx->${locals.literal(v.name)} = ${v.name};`));
-                body.push(...initial);
-                const out = fresh();
-                body.push(
-                    cc`${type(c.body.layout)} ${out} = ${resultExpression};`,
-                    cc`${out}.restore = ${restore};`,
-                    cc`${out}.context = ctx;`,
-                    cc`return ${out};`,
-                );
+                    return count(trial) === 0;
+                })();
+            if (returnsForwarded) {
+                body.push(locals.returnValue(forwardedResult!.expression));
+            } else if (lenses.has(c.body.result)) {
+                const out = closureLens(lenses.get(c.body.result)!, c.body.layout, body, true);
+                body.push(cc`return ${out};`);
             } else {
                 flushParameters(body);
                 body.push(locals.returnValue(result));

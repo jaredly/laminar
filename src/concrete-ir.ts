@@ -116,7 +116,8 @@ export type ConcreteInstruction =
               /**
                * The arm's root constructor pattern keeps its payload box instead of
                * releasing it; exactly one `construct` reuses it (see `reuses`).
-               * Only a plain-valued case may retain, so the box never outlives the arm.
+               * A lens-valued case may retain too: the box is the owner's own, so a lens
+               * returned from the arm may point into it after the arm ends.
                */
               retains?: string;
           }[];

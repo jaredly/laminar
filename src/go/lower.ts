@@ -29,7 +29,16 @@ import {
 } from './writeback.ts';
 
 type Completion = (body: Statement[]) => void;
-type Lens = { view: View; finish: Completion };
+/**
+ * `forwarded`: the lens is an existing runtime lens whose restoration is entirely its own
+ * callback or direct write. `rest` is what must still run after it (argument backing, block
+ * cleanup); a function may return it as is when `rest` emits nothing.
+ */
+type Lens = {
+    view: View;
+    finish: Completion;
+    forwarded?: { expression: Expr; rest: Completion };
+};
 const noFinish = (_body: Statement[]) => {};
 
 const unsupported = (message: string): never => {
@@ -117,7 +126,12 @@ export function lowerGo(program: ConcreteProgram): GoFile {
                 expression: () => dot(code(s.expression), f.name),
                 key: goText`${s.key ?? s.expression}.${f.name}`,
                 layout: f.layout,
-                ...(s.address ? { address: go`&(*${s.address}).${field(f.name)}` } : {}),
+                ...(s.address
+                    ? {
+                          address: go`&(*${s.address}).${field(f.name)}`,
+                          ...(s.heap ? { heap: true } : {}),
+                      }
+                    : {}),
             };
         }),
     );
@@ -167,6 +181,7 @@ export function lowerGo(program: ConcreteProgram): GoFile {
                 expression: star(dot(expression, 'read')),
                 layout: f.layout,
                 address: dot(expression, 'read'),
+                heap: true,
             });
         return l.fields
             .filter((f) => f.name.startsWith('item'))
@@ -850,6 +865,7 @@ export function lowerGo(program: ConcreteProgram): GoFile {
                             expression: go`(*${box})`,
                             layout: v.layout,
                             address: box,
+                            heap: true,
                         };
                         if (p.items.length === 1) bind(p.items[0]!, live, body);
                         else
@@ -1140,12 +1156,13 @@ export function lowerGo(program: ConcreteProgram): GoFile {
                         storage.project(lens.view, path ? path.split('.').map(Number) : []),
                     );
                     if (
-                        !escapes &&
                         lens.finish === noFinish &&
                         !output &&
                         !Array.isArray(d) &&
                         d.layout === input.layout &&
-                        d.address
+                        d.address &&
+                        // An escaping call may keep the pointer, so only a heap box's storage qualifies.
+                        (!escapes || d.heap)
                     ) {
                         live.set(path, d);
                         return go`${type(id)}{read: ${d.address}}`;
@@ -1328,7 +1345,162 @@ export function lowerGo(program: ConcreteProgram): GoFile {
         index(c.body);
         const lensSlots = new Map<string, SlotRef>();
 
+        /** Lens-valued instructions whose result is the function's returned lens. */
+        const returned = new Set<string>();
+        const markReturned = (b: ConcreteBlock, id: string): void => {
+            returned.add(id);
+            const found = b.instructions.find((s) => 'out' in s && s.out.id === id);
+            if (found?.op === 'scope') markReturned(found.body, found.body.result);
+            else if (found?.op === 'case')
+                found.cases.forEach((a) => markReturned(a.body, a.body.result));
+        };
+        markReturned(c.body, c.body.result);
+        /** Cleanup of the blocks being lowered whose result is the function's returned lens. */
+        const enclosingFinishes: Completion[] = [];
+        /** Enclosing cleanup a forwarding join already ran inside each arm's restoration. */
+        const consumed = new Set<Completion>();
+        const count = (s: Statement[]): number =>
+            s.reduce<number>((n, x) => n + (Array.isArray(x) ? count(x) : 1), 0);
+        /**
+         * A lens as a runtime lens: its restoration becomes the `restore` function of a
+         * struct built here (for the function's own result, with the incoming lenses'
+         * write-back).
+         */
+        const closureLens = (
+            lens: Lens,
+            layoutId: string,
+            body: Statement[],
+            flushIncoming: boolean,
+        ): string => {
+            const build = (view: View, id: string): Expr => {
+                const l = layout(id),
+                    input = l.fields.find((f) => f.name === 'read');
+                if (input?.kind === 'pointer' && input.layout) {
+                    const name = declare(input.layout, read(storage.get(view), input.layout), body);
+                    const output = l.fields.find((f) => f.name === 'replacement');
+                    const write =
+                        output?.kind === 'pointer' && output.layout
+                            ? declare(output.layout, zero(output.layout), body)
+                            : undefined;
+                    return go`${type(id)}{read: ${locals.address(name)}${write ? go`, replacement: ${locals.address(write)}` : ''}}`;
+                }
+                return go`${type(id)}{${joinCode(
+                    l.fields
+                        .filter((f) => f.name.startsWith('item'))
+                        .map(
+                            (f, n) =>
+                                go`${field(f.name)}: ${build(storage.project(view, [n]), (f as { layout: string }).layout)}`,
+                        ),
+                    ', ',
+                )}}`;
+            };
+            const out = declare(layoutId, build(lens.view, layoutId), body);
+            locals.mutable(out);
+            const replacement = endpoint(layoutId, 'replacement');
+            const saved = storage.snapshot();
+            storage.put(lens.view, { expression: 'replacement', layout: replacement });
+            const cleanup: Statement[] = [];
+            lens.finish(cleanup);
+            if (flushIncoming) flushParameters(cleanup);
+            storage.reset(saved);
+            body.push({
+                head: go`${out}.restore = func(_ any, replacement ${type(replacement)}) ${type(unit.id)}`,
+                body: [...cleanup, go`return ${zero(unit.id)}`],
+            });
+            return out;
+        };
+        /**
+         * How a lens-valued case can return its arm's lens as a runtime lens, so the function
+         * returns whichever arm ran with no selector and no copied contents: `struct` when the
+         * arm already is one (a call result, or a pointer into storage that outlives the frame)
+         * and nothing else has to run, or `closure` when the arm's own restoration, the
+         * enclosing cleanup and the incoming lenses' write-back become its callback. `after` is
+         * the storage state once the arm's restoration has run.
+         */
+        type ForwardPlan = {
+            kind: 'struct' | 'closure';
+            expression?: Expr;
+            after: Map<import('./storage.ts').Cell, Data>;
+        };
+        const forwardable = (
+            lens: Lens,
+            arm: { restored?: unknown[] },
+            id: string,
+        ): ForwardPlan | undefined => {
+            if (arm.restored?.length) return undefined;
+            // An incoming lens that changes type has no live form to restore it to.
+            if (parameters.some((p) => layout(p.layout).fields.some((f) => f.name === 'replacement')))
+                return undefined;
+            const saved = storage.snapshot();
+            const l = layout(id),
+                input = l.fields.find((f) => f.name === 'read');
+            let quiet: boolean,
+                afterEnclosing: Map<import('./storage.ts').Cell, Data>,
+                afterFlush: Map<import('./storage.ts').Cell, Data>;
+            try {
+                const trial: Statement[] = [];
+                (lens.forwarded ? lens.forwarded.rest : lens.finish)(trial);
+                const enclosing: Statement[] = [];
+                for (let k = enclosingFinishes.length - 1; k >= 0; k--)
+                    enclosingFinishes[k]!(enclosing);
+                afterEnclosing = storage.snapshot();
+                const flushed: Statement[] = [];
+                parameters.forEach((p) =>
+                    flush(p.expression, p.layout, storage.get(p.view), flushed),
+                );
+                quiet = count(trial) === 0 && count(enclosing) === 0 && count(flushed) === 0;
+                // The write-back is part of the arm's own restoration when it runs from a
+                // callback; the model then sees the incoming lenses as live again.
+                parameters.forEach((p) =>
+                    storage.put(p.view, storage.get(incoming(p.expression, p.layout))),
+                );
+                afterFlush = storage.snapshot();
+            } catch (error) {
+                // Storage this early in the function may not be restorable yet.
+                if (error instanceof BackendDiagnostic) return undefined;
+                throw error;
+            } finally {
+                storage.reset(saved);
+            }
+            const d = lens.forwarded ? undefined : storage.get(lens.view);
+            if (quiet) {
+                if (lens.forwarded)
+                    return {
+                        kind: 'struct',
+                        expression: lens.forwarded.expression,
+                        after: afterEnclosing,
+                    };
+                if (
+                    !l.fields.some((f) => f.name === 'replacement') &&
+                    input?.kind === 'pointer' &&
+                    input.layout &&
+                    d &&
+                    !Array.isArray(d) &&
+                    d.address &&
+                    d.heap &&
+                    d.layout === input.layout
+                )
+                    return {
+                        kind: 'struct',
+                        expression: go`${type(id)}{read: ${d.address}}`,
+                        after: afterEnclosing,
+                    };
+            }
+            return { kind: 'closure', after: afterFlush };
+        };
+
         const block = (b: ConcreteBlock, output: Statement[]): Expression => {
+            const finish = (body: Statement[]) =>
+                b.cleanup.forEach((cl) => {
+                    if (cl.kind === 'release') {
+                        const lens = loans.get(cl.loan);
+                        if (lens) lens.finish(body);
+                    } else if (cl.kind === 'drop-place') {
+                        storage.put(ref(cl.slot), { expression: zero(unit.id), layout: unit.id });
+                    }
+                });
+            const tracked = returned.has(b.result);
+            if (tracked) enclosingFinishes.push(finish);
             for (const i of b.instructions) {
                 const body: Statement[] = [];
                 output.push(body);
@@ -1843,12 +2015,12 @@ export function lowerGo(program: ConcreteProgram): GoFile {
                             );
                         }
                         if (isLens) {
-                            lenses.set(
-                                i.out.id,
-                                runtimeLens(name, id, (body) =>
-                                    adapters.forEach((a) => a.finish(body)),
-                                ),
-                            );
+                            const rest = (body: Statement[]) =>
+                                adapters.forEach((a) => a.finish(body));
+                            lenses.set(i.out.id, {
+                                ...runtimeLens(name, id, rest),
+                                forwarded: { expression: name, rest },
+                            });
                         } else {
                             adapters.forEach((a) => a.finish(body));
                         }
@@ -1867,6 +2039,7 @@ export function lowerGo(program: ConcreteProgram): GoFile {
                                 expression: go`(*${box})`,
                                 layout: payload,
                                 address: box,
+                                heap: true,
                             });
                             const live = storage.get(view);
                             if (!Array.isArray(view)) inPlaceCells.add(view.cell);
@@ -1894,7 +2067,6 @@ export function lowerGo(program: ConcreteProgram): GoFile {
                         if (i.lensJoin) {
                             const before = storage.snapshot();
                             const selected = fresh();
-                            body.push(locals.declaration(selected, 'int', '0'));
                             const input = endpoint(id, 'read');
                             const focusInputs: { data: Data; body: Statement[] }[] = [];
                             const joined = storage.own(phi(input, focusInputs, body));
@@ -1971,19 +2143,63 @@ export function lowerGo(program: ConcreteProgram): GoFile {
                             const arms = i.cases.map((arm, n) => {
                                 storage.reset(before);
                                 const nested: Statement[] = [];
-                                bind(arm.pattern, datum(i.value), nested);
+                                bind(arm.pattern, datum(i.value), nested, arm.retains);
+                                if (arm.retains && movedFrom.has(i.value))
+                                    retainedOwners.set(arm.retains, movedFrom.get(i.value)!);
                                 block(arm.body, nested);
                                 normalize(arm.setup, nested);
                                 const lens = lenses.get(arm.body.result)!;
-                                nested.push(locals.assign(selected, String(n)));
-                                focusInputs.push({ data: storage.get(lens.view), body: nested });
+                                const forward = returned.has(i.out.id)
+                                    ? forwardable(lens, arm, outputLayouts.get(arm.body.result)!)
+                                    : undefined;
                                 return {
                                     nested,
                                     state: storage.snapshot(),
                                     lens,
                                     arm,
+                                    index: n,
+                                    forward,
                                 };
                             });
+                            let forwardedJoin: string | undefined;
+                            if (arms.every((a) => a.forward !== undefined)) {
+                                // Every arm is a runtime lens that restores itself: the result is
+                                // whichever one ran, with no selector and no copied contents.
+                                forwardedJoin = fresh();
+                                body.push(locals.declaration(forwardedJoin, type(id), zero(id)));
+                                locals.mutable(forwardedJoin);
+                                const enclosing = [...enclosingFinishes];
+                                arms.forEach((a) => {
+                                    const plan = a.forward!;
+                                    let struct: Expr;
+                                    if (plan.kind === 'struct') struct = plan.expression!;
+                                    else {
+                                        storage.reset(a.state);
+                                        const whole: Lens = {
+                                            view: a.lens.view,
+                                            finish: (output) => {
+                                                a.lens.finish(output);
+                                                for (let k = enclosing.length - 1; k >= 0; k--)
+                                                    enclosing[k]!(output);
+                                            },
+                                        };
+                                        struct = closureLens(whole, id, a.nested, true);
+                                    }
+                                    a.state = plan.after;
+                                    a.nested.push(locals.assign(forwardedJoin!, struct));
+                                });
+                                enclosing.forEach((f) => consumed.add(f));
+                            } else {
+                                body.push(locals.declaration(selected, 'int', '0'));
+                                arms.forEach((a) => {
+                                    a.nested.push(locals.assign(selected, String(a.index)));
+                                    storage.reset(a.state);
+                                    focusInputs.push({
+                                        data: storage.get(a.lens.view),
+                                        body: a.nested,
+                                    });
+                                });
+                            }
                             storage.reset(before);
                             merge(arms, body);
                             emitMatch(
@@ -1993,6 +2209,13 @@ export function lowerGo(program: ConcreteProgram): GoFile {
                                 arms,
                                 body,
                             );
+                            if (forwardedJoin) {
+                                lenses.set(i.out.id, {
+                                    ...runtimeLens(forwardedJoin, id, noFinish),
+                                    forwarded: { expression: forwardedJoin, rest: noFinish },
+                                });
+                                continue;
+                            }
                             lenses.set(i.out.id, {
                                 view: joined,
                                 finish: (output) => {
@@ -2128,24 +2351,31 @@ export function lowerGo(program: ConcreteProgram): GoFile {
             }
 
             const body = output;
-            const finish = (body: Statement[]) =>
-                b.cleanup.forEach((cl) => {
-                    if (cl.kind === 'release') {
-                        const lens = loans.get(cl.loan);
-                        if (lens) lens.finish(body);
-                    } else if (cl.kind === 'drop-place') {
-                        storage.put(ref(cl.slot), { expression: zero(unit.id), layout: unit.id });
-                    }
-                });
+            if (tracked) enclosingFinishes.pop();
 
             if (lenses.has(b.result)) {
                 const lens = lenses.get(b.result)!;
+                // A forwarding join inside already ran this block's cleanup in its arms.
+                const cleanup = (body: Statement[]) => {
+                    if (!consumed.has(finish)) finish(body);
+                };
                 lenses.set(b.result, {
                     view: lens.view,
                     finish: (body) => {
                         lens.finish(body);
-                        finish(body);
+                        cleanup(body);
                     },
+                    ...(lens.forwarded
+                        ? {
+                              forwarded: {
+                                  expression: lens.forwarded.expression,
+                                  rest: (body: Statement[]) => {
+                                      lens.forwarded!.rest(body);
+                                      cleanup(body);
+                                  },
+                              },
+                          }
+                        : {}),
                 });
                 return '';
             }
@@ -2171,44 +2401,31 @@ export function lowerGo(program: ConcreteProgram): GoFile {
             );
         });
         const result = block(c.body, body);
-        if (lenses.has(c.body.result)) {
-            const lens = lenses.get(c.body.result)!;
-            const build = (view: View, id: string): Expr => {
-                const l = layout(id),
-                    input = l.fields.find((f) => f.name === 'read');
-                if (input?.kind === 'pointer' && input.layout) {
-                    const name = declare(input.layout, read(storage.get(view), input.layout), body);
-                    const output = l.fields.find((f) => f.name === 'replacement');
-                    const write =
-                        output?.kind === 'pointer' && output.layout
-                            ? declare(output.layout, zero(output.layout), body)
-                            : undefined;
-                    return go`${type(id)}{read: ${locals.address(name)}${write ? go`, replacement: ${locals.address(write)}` : ''}}`;
+        const forwardedResult = lenses.get(c.body.result)?.forwarded;
+        const returnsForwarded =
+            forwardedResult &&
+            (() => {
+                // Nothing is left to restore: the lens already restores itself.
+                const saved = storage.snapshot();
+                const trial: Statement[] = [];
+                try {
+                    forwardedResult.rest(trial);
+                    parameters.forEach((p) =>
+                        flush(p.expression, p.layout, storage.get(p.view), trial),
+                    );
+                } catch (error) {
+                    if (error instanceof BackendDiagnostic) return false;
+                    throw error;
+                } finally {
+                    storage.reset(saved);
                 }
-                return go`${type(id)}{${joinCode(
-                    l.fields
-                        .filter((f) => f.name.startsWith('item'))
-                        .map(
-                            (f, n) =>
-                                go`${field(f.name)}: ${build(storage.project(view, [n]), (f as { layout: string }).layout)}`,
-                        ),
-                    ', ',
-                )}}`;
-            };
-            const out = declare(c.body.layout, build(lens.view, c.body.layout), body);
-            locals.mutable(out);
-            const replacement = endpoint(c.body.layout, 'replacement');
-            storage.put(lens.view, { expression: 'replacement', layout: replacement });
-            const cleanup: Statement[] = [];
-            lens.finish(cleanup);
-            flushParameters(cleanup);
-            body.push(
-                {
-                    head: go`${out}.restore = func(_ any, replacement ${type(replacement)}) ${type(unit.id)}`,
-                    body: [...cleanup, go`return ${zero(unit.id)}`],
-                },
-                locals.returnValue(out),
-            );
+                return count(trial) === 0;
+            })();
+        if (returnsForwarded) {
+            body.push(locals.returnValue(code(forwardedResult!.expression)));
+        } else if (lenses.has(c.body.result)) {
+            const out = closureLens(lenses.get(c.body.result)!, c.body.layout, body, true);
+            body.push(locals.returnValue(out));
         } else {
             flushParameters(body);
             body.push(locals.returnValue(code(result)));

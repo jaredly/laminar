@@ -666,7 +666,6 @@ function markBoxReuse(bodies: ConcreteBlock[], layouts: Map<string, ConcreteLayo
                     const layout = valueLayouts.get(i.value);
                     const p = arm.pattern;
                     if (
-                        !i.lensJoin &&
                         layout &&
                         p.kind === 'constructor' &&
                         p.reconstructionId &&

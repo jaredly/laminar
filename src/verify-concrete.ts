@@ -678,7 +678,6 @@ export function verifyConcreteProgram(p: ConcreteProgram): void {
                                 pattern = c.pattern;
                             const name = pattern.kind === 'constructor' ? pattern.name : '';
                             if (
-                                join ||
                                 pattern.kind !== 'constructor' ||
                                 pattern.reconstructionId !== retains ||
                                 retained.has(retains) ||
