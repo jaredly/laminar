@@ -135,7 +135,7 @@ export function normalizeBorrowed(source: Linear): Linear {
             type: 'aslens',
             value: parts.initial,
             pat: parts.final,
-            body: { type: 'assign', lens: target, value: parts.restore, loc, reconstruct: true },
+            body: { type: 'assign', lens: target, value: parts.restore, loc },
             reconstructionPattern: parts.owned,
             loc,
         };

@@ -62,6 +62,19 @@ export type Instruction =
     | (Output & { op: 'move'; slot: SlotRef })
     | (Output & { op: 'acquire'; slot: SlotRef })
     | (Output & { op: 'lens-tuple'; items: ValueId[] })
+    /**
+     * A constructor of lenses: a tag plus one lens per field, with no storage of its own.
+     * `instance` is the constructor at the fields' read types and `writeInstance` at their
+     * write types; `out` is a lens from the first result type to the second. Over a
+     * multi-constructor type `out` is not replaceable.
+     */
+    | (Output & {
+          op: 'lens-construct';
+          name: string;
+          items: ValueId[];
+          instance: Instance;
+          writeInstance: Instance;
+      })
     | (Output & {
           op: 'aslens';
           initial: ValueId;
@@ -147,6 +160,7 @@ export function mapSemanticFlow(
               tag: 'flow',
               read: mapSemantic(type.read, variable),
               write: mapSemantic(type.write, variable),
+              ...(type.replaceable === false ? { replaceable: false as const } : {}),
           };
 }
 /** Types are structural; property insertion order and solver-local identities do not participate. */
@@ -167,7 +181,7 @@ export function typeKey(type: SemanticType): string {
 export const flowKey = (type: SemanticFlow): string =>
     type.tag === 'plain'
         ? `value:${typeKey(type.value)}`
-        : `lens:${typeKey(type.read)}:${typeKey(type.write)}`;
+        : `lens${type.replaceable === false ? '!' : ''}:${typeKey(type.read)}:${typeKey(type.write)}`;
 
 /**
  * Backends never see record types: a record is stored as the tuple of its

@@ -108,7 +108,14 @@ export function executeTypedProgram(
         (!(v && typeof v === 'object' && !Array.isArray(v) && v.kind === 'variant') ||
             v.items.every(full));
     const owned = (v: Data): Data => (full(v) ? v : error('Read from an empty place'));
-    const logical = (v: Data): Data => (v === EMPTY ? null : Array.isArray(v) ? v.map(logical) : v);
+    const logical = (v: Data): Data =>
+        v === EMPTY
+            ? null
+            : Array.isArray(v)
+              ? v.map(logical)
+              : v && typeof v === 'object' && v.kind === 'variant'
+                ? { ...v, items: v.items.map(logical) }
+                : v;
     const take = (f: Frame, id: string): Argument => {
         if (!f.values.has(id)) return error(`Temporary ${id} is unavailable`);
         const v = f.values.get(id)!;
@@ -205,6 +212,32 @@ export function executeTypedProgram(
                 return items.map((v, i) =>
                     v.replace(value === EMPTY ? EMPTY : (value as Data[])[i]),
                 );
+            },
+            () => items.forEach((v) => v.finish()),
+        );
+    const construct = (name: string, args: Data[]): Data =>
+        name === 'nil'
+            ? []
+            : name === 'cons' && Array.isArray(args[1])
+              ? [args[0], ...args[1]]
+              : { kind: 'variant', name, items: args };
+    const constructorParts = (name: string, v: Data): Data[] => {
+        if (name === 'nil' && Array.isArray(v) && !v.length) return [];
+        if (name === 'cons' && Array.isArray(v) && v.length) return [v[0], v.slice(1)];
+        if (v && typeof v === 'object' && !Array.isArray(v) && v.kind === 'variant' && v.name === name)
+            return v.items;
+        return error('Constructor lens tag mismatch');
+    };
+    /** A tag plus one lens per field. It has no storage of its own: reading builds the value
+     * from the fields, and replacing routes each field of a value with the same tag back. */
+    const constructorLens = (name: string, items: Lens[]): Lens =>
+        view(
+            () => construct(name, items.map((v) => v.peek())),
+            (value) => {
+                if (value === EMPTY) return construct(name, items.map((v) => v.replace(EMPTY)));
+                const parts = constructorParts(name, value);
+                if (parts.length !== items.length) error('Constructor lens arity mismatch');
+                return construct(name, items.map((v, i) => v.replace(parts[i])));
             },
             () => items.forEach((v) => v.finish()),
         );
@@ -489,16 +522,12 @@ export function executeTypedProgram(
                 case 'tuple':
                     result = i.items.map((id) => owned(data(take(f, id))));
                     break;
-                case 'construct': {
-                    const args = i.items.map((id) => owned(data(take(f, id))));
-                    result =
-                        i.name === 'nil'
-                            ? []
-                            : i.name === 'cons' && Array.isArray(args[1])
-                              ? [args[0], ...args[1]]
-                              : { kind: 'variant', name: i.name, items: args };
+                case 'construct':
+                    result = construct(
+                        i.name,
+                        i.items.map((id) => owned(data(take(f, id)))),
+                    );
                     break;
-                }
                 case 'global':
                     if (
                         i.instance.definition.startsWith('native/') &&
@@ -525,6 +554,12 @@ export function executeTypedProgram(
                     break;
                 case 'lens-tuple':
                     result = tupleLens(i.items.map((id) => lens(take(f, id))));
+                    break;
+                case 'lens-construct':
+                    result = constructorLens(
+                        i.name,
+                        i.items.map((id) => lens(take(f, id))),
+                    );
                     break;
                 case 'swap': {
                     const target = lens(take(f, i.lens)),

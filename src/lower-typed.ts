@@ -415,6 +415,22 @@ export function lowerTypedUnit(e: Elaboration): IRUnit {
                 return emit(b, n, { op: 'acquire', slot: ref(binding(n)) });
             case 'tuple':
                 return emit(b, n, { op: 'lens-tuple', items: n.items.map((v) => lens(v, b).id) });
+            case 'constructor': {
+                const [read, write] = e.instantiations.filter((i) => i.node === id(n));
+                if (!read || !write) return fail('Missing constructor lens instantiations', n);
+                const generic = (i: typeof read): Instance => ({
+                    definition: i.definition,
+                    arguments: i.arguments,
+                    type: i.type,
+                });
+                return emit(b, n, {
+                    op: 'lens-construct',
+                    name: n.name,
+                    items: n.args.map((v) => lens(v, b).id),
+                    instance: generic(read),
+                    writeInstance: generic(write),
+                });
+            }
             case 'apply':
                 return call(n, b);
             case 'let':

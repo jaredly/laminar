@@ -402,6 +402,8 @@ export function lconcrete(program: ConcreteProgram, options: ConcretePrintOption
                     );
                     break;
                 }
+                case 'lens-construct':
+                    throw new Error('Constructor lenses have no concrete form yet');
                 default: {
                     const unknown: never = i;
                     throw new Error(`Unknown concrete operation: ${JSON.stringify(unknown)}`);

@@ -492,6 +492,10 @@ export function inferRepresentations(
                         shape: reps.tuple(i.items.map((id) => shape(get(s, id)))),
                     };
                     break;
+                case 'lens-construct':
+                    return fail(
+                        'Constructor lenses have no concrete representation yet (see docs/scattered-constructor-lenses.md)',
+                    );
                 case 'global':
                 case 'closure': {
                     if (i.out.type.tag !== 'plain') return fail('Callable produced a lens');

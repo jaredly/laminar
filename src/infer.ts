@@ -757,8 +757,7 @@ export class Inferencer {
                 return this.call(n, env, false).read;
             case 'assign': {
                 const view = this.lens(n.lens, env);
-                // The generated reconstruction of a matched constructor keeps its tag.
-                if (!n.reconstruct) this.requireReplaceable(view, n.loc, 'assign to it');
+                this.requireReplaceable(view, n.loc, 'assign to it');
                 const states = view.targets.map((b) => this.revision(b));
                 const value = this.linear(n.value, env);
                 if (
@@ -1168,8 +1167,9 @@ export class Inferencer {
                 const scheme = this.constructors.get(n.name)!;
                 const writeFields = views.map(() => this.solver.fresh()),
                     write = this.solver.fresh();
+                // Recorded as a second instantiation of the same node: the write instance.
                 this.solver.unify(
-                    this.solver.instantiate(scheme),
+                    this.instantiate(n.name, scheme, n, true),
                     fn(writeFields.map(plain), plain(write)),
                     n.loc,
                 );

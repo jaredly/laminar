@@ -23,6 +23,14 @@ type Slot = { type: SemanticType; empty: number[][]; version: Revisions };
 type Cap =
     | { kind: 'place'; slot: SlotRef }
     | { kind: 'tuple'; items: Cap[] }
+    /** A tag plus field lenses with no storage of its own; `fields` are the write field types. */
+    | {
+          kind: 'constructor';
+          read: SemanticType;
+          write: SemanticType;
+          fields: SemanticType[];
+          items: Cap[];
+      }
     | {
           kind: 'call';
           read: SemanticType;
@@ -520,7 +528,7 @@ export function verifyTypedProgram(program: TypedProgram): void {
                   ? c.refs
                   : c.kind === 'place'
                     ? [c.slot]
-                    : c.kind === 'tuple'
+                    : c.kind === 'tuple' || c.kind === 'constructor'
                       ? c.items.flatMap(targets)
                       : c.kind === 'scope'
                         ? targets(c.inner)
@@ -544,6 +552,7 @@ export function verifyTypedProgram(program: TypedProgram): void {
                         .empty.filter((p) => overlap(p, c.slot.path))
                         .map((p) => p.slice(c.slot.path.length));
                 case 'tuple':
+                case 'constructor':
                     return c.items.flatMap((v, i) => empty(s, v).map((p) => [i, ...p]));
                 case 'aslens':
                     return empty(s, { kind: 'place', slot: c.backing });
@@ -581,7 +590,7 @@ export function verifyTypedProgram(program: TypedProgram): void {
                 return targets(c).flatMap((slot) =>
                     externalTargets(outer, branch, { kind: 'place', slot }),
                 );
-            if (c.kind === 'tuple')
+            if (c.kind === 'tuple' || c.kind === 'constructor')
                 return c.items.flatMap((v) => externalTargets(outer, branch, v));
             if (c.kind === 'call')
                 return c.effects.flatMap((e) => externalTargets(outer, branch, e.cap));
@@ -657,6 +666,10 @@ export function verifyTypedProgram(program: TypedProgram): void {
                     c.items.forEach((v, i) =>
                         apply(s, v, (type as SemanticType & { tag: 'tuple' }).items[i]),
                     );
+                    return;
+                case 'constructor':
+                    eq(type, c.write);
+                    c.items.forEach((v, i) => apply(s, v, c.fields[i]));
                     return;
                 case 'call':
                     eq(type, c.write);
@@ -900,6 +913,8 @@ export function verifyTypedProgram(program: TypedProgram): void {
                         if (items.some((v) => v.type.tag !== 'flow') || i.out.type.tag !== 'flow')
                             fail('Invalid tuple lens modes');
                         const inputs = items.map((v) => v.type as SemanticFlow & { tag: 'flow' });
+                        if (inputs.some((v) => v.replaceable === false))
+                            fail('A non-replaceable lens cannot be a tuple lens item');
                         feq(i.out.type, {
                             tag: 'flow',
                             read: { tag: 'tuple', items: inputs.map((v) => v.read) },
@@ -915,11 +930,54 @@ export function verifyTypedProgram(program: TypedProgram): void {
                         );
                         break;
                     }
+                    case 'lens-construct': {
+                        if (
+                            i.instance.definition !== `constructor/${i.name}` ||
+                            i.writeInstance.definition !== i.instance.definition
+                        )
+                            fail('Constructor lens tag/signature mismatch');
+                        const items = i.items.map((id) => take(s, id));
+                        if (items.some((v) => v.type.tag !== 'flow') || i.out.type.tag !== 'flow')
+                            fail('Invalid constructor lens modes');
+                        const inputs = items.map((v) => v.type as SemanticFlow & { tag: 'flow' });
+                        if (inputs.some((v) => v.replaceable === false))
+                            fail('A non-replaceable lens cannot be a constructor lens field');
+                        const readSig = functionType(instantiate(i.instance)),
+                            writeSig = functionType(instantiate(i.writeInstance));
+                        if (readSig.args.length !== items.length || writeSig.args.length !== items.length)
+                            fail('Constructor lens arity mismatch');
+                        inputs.forEach((v, n) => {
+                            eq(v.read, valueType(readSig.args[n]));
+                            eq(v.write, valueType(writeSig.args[n]));
+                        });
+                        const read = valueType(readSig.result),
+                            write = valueType(writeSig.result);
+                        const out = i.out.type as SemanticFlow & { tag: 'flow' };
+                        eq(out.read, read);
+                        eq(out.write, write);
+                        result.cap = {
+                            kind: 'constructor',
+                            read,
+                            write,
+                            fields: writeSig.args.map(valueType),
+                            items: items.map(cap),
+                        };
+                        const refs = targets(result.cap);
+                        refs.forEach((a, n) =>
+                            refs.slice(n + 1).forEach((b) => {
+                                if (a.place === b.place && overlap(a.path, b.path))
+                                    fail('Overlapping constructor lens fields');
+                            }),
+                        );
+                        break;
+                    }
                     case 'swap': {
                         const target = take(s, i.lens),
                             replacement = plain(take(s, i.value)),
                             c = cap(target);
                         const t = target.type as SemanticFlow & { tag: 'flow' };
+                        if (t.replaceable === false)
+                            fail('Whole-value replacement of a non-replaceable lens', i.origin);
                         eq(read(s, c), t.read);
                         eq(replacement, t.write);
                         feq(i.out.type, irPlain(t.read));
@@ -1220,7 +1278,8 @@ export function verifyTypedProgram(program: TypedProgram): void {
                         return c.reconstructionOwner
                             ? escapes(state, { kind: 'place', slot: c.reconstructionOwner })
                             : false;
-                    if (c.kind === 'tuple') return c.items.some((v) => escapes(state, v));
+                    if (c.kind === 'tuple' || c.kind === 'constructor')
+                        return c.items.some((v) => escapes(state, v));
                     if (c.kind === 'call') return c.effects.some((e) => escapes(state, e.cap));
                     const loan = [...state.loans.entries()].find(
                         ([id]) => loans.get(id)!.owners && loans.get(id)!.place === c.slot.place,

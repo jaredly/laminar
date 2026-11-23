@@ -4,12 +4,12 @@ Status: design sketch (2026-11-22). Nothing here is implemented. Statements abou
 checker come from reading `src/infer.ts`, `src/types.ts` and `src/laminar.cst`; items
 not settled by that reading are in "Open questions".
 
-## Status (steps 1-3 done, 2026-11-22)
+## Status (steps 1-4 done, 2026-11-22)
 
-Implemented and tested at the type level (`test/constructor-lens*.test.ts`,
-`test/replaceable-flag.test.ts`); lowering and execution are step 4. A program using a
-constructor lens currently stops with `typed-lowering: Unchecked lens form`, not with a
-wrong result.
+Implemented and tested through the reference evaluator (`test/constructor-lens*.test.ts`,
+`test/replaceable-flag.test.ts`). The concrete backends (representations, C, Go, Wasm)
+do not support constructor lenses: representation inference stops with "Constructor
+lenses have no concrete representation yet".
 
 - **Grammar/AST:** constructor in `Lens`; `=A` and `A/=B` in `Type`.
 - **Types:** `flow(read, write, replaceable)` with `REPLACEABLE | FIXED | meta`;
@@ -31,23 +31,42 @@ wrong result.
   and the motivating `match ~find(2, ~x) { Some(y) -> ... }` type-checks to
   `List<Number>`.
 
+- **Typed IR (step 4):** `lens-construct { name, items, instance, writeInstance }`
+  lowers a constructor lens. `instance` and `writeInstance` are two recorded
+  instantiations of the same AST node (the read and write sides). `SemanticFlow`'s lens
+  form gains `replaceable?: false`, included in `flowKey`, so passing a non-replaceable
+  lens to a stored-lens parameter is also a verifier type mismatch.
+- **Evaluator:** a constructor lens is a runtime lens over the field lenses: `peek`
+  builds the value, `replace` checks the tag and routes each field back. The motivating
+  program runs: `find(2, x)` on `[1, 2, 3]` with `y := 20` gives `[1, 20, 3]`, and a
+  miss leaves the list unchanged.
+- **Verifier:** a `constructor` `Cap` (targets, read, empty, apply, escape handling as for
+  `tuple`), checks of the constructor signature, arity and field types at both
+  instances, and rejection of a whole-value `swap` on a non-replaceable lens and of a
+  non-replaceable lens as a tuple item or constructor field. It does not check that a
+  user-written move-out of a non-replaceable alias is absent; that is the checker's job
+  (`Cannot move it out`).
+
 ### Finding: how matching works today
 
 `match ~e { ... }` is not typed directly. `normalizeBorrowed` rewrites it before
 inference into `let $owner = ~e`, a `case` over the owner with owned patterns, and an
 `aslens` whose restoration is `$owner := <reconstructed pattern>`. For a
 non-replaceable `e` that expansion would trip the very checks above, so the two
-generated nodes carry flags: `let ... borrowedOwner` leaves the generated owner alias
-unflagged (so the generated move-out of the owner is allowed) and
-`assign ... reconstruct` skips the whole-assign check. Users cannot write either
+generated `let` carries `borrowedOwner`, which leaves the generated owner alias
+unflagged, so the generated move-out of the owner and the reconstruct-assign onto it
+are ordinary operations on an ordinary binding. (An earlier `reconstruct` flag on the
+generated assign turned out to be unnecessary and was removed.) Users cannot write either
 (the owner names are `$borrowed<n>`). The reconstruction is sound because it rebuilds
 the arm's own constructor, so the tag never changes, and the type-level routing already
 works: the call view's `put` unifies the write type and restores the argument lens.
 
-Consequence for step 4: the backend must treat `case` over such an alias as tag
-dispatch with component lenses, and the reconstruct-assign as per-field restoration,
-not as materializing the whole value. That is the `case-focus`-over-constructor-`Cap`
-question below, now with a concrete shape to lower.
+In the reference evaluator this works by materializing: moving the whole value out of
+a constructor lens builds it from the fields, and the reconstruct-assign routes the
+fields back after checking the tag. A concrete backend should instead lower the `case`
+over such an alias as tag dispatch with component lenses and the reconstruct-assign as
+per-field restoration, without building the whole value. That is the
+`case-focus`-over-constructor-`Cap` question below.
 
 ### Observations
 
@@ -311,8 +330,8 @@ Rejected by `infer.ts`:
 3. `infer.ts`: constructor view (sharing code with `tuple`), flag propagation, join,
    `match` over a non-replaceable view with derived field types, checks at `:=`,
    lens arguments and aliases, return typing, boolean meta at lens-position calls.
-4. Typed IR and `lower-typed.ts`: lower the constructor lens and the match.
-5. `verify-ir.ts`: constructor `Cap`, independent rules, corruption tests.
+4. Typed IR and `lower-typed.ts`: lower the constructor lens and the match (done).
+5. `verify-ir.ts`: constructor `Cap`, independent rules, corruption tests (done).
 6. Representations, concrete IR and the C backend: `sum` shape, tag dispatch,
    restoration of each component. Native and wasm32 execution tests.
 
