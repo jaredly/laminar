@@ -357,6 +357,36 @@ Not covered: a constructor lens over a boxed variant (for example a lens constru
 recursive tree type), and a field that is itself a scattered tuple lens with
 restoration of its own (the generic fallback path was not exercised).
 
+### Scattered results (2026-11-22)
+
+A lens that is not replaceable and whose read and write layouts match, over a union with no
+boxed variant, now has a scattered representation instead of the thin temporary:
+
+- **Shape:** `RepresentationTable.sum`, canonical for the data type. Inference gives it to
+  `lens-construct` results, function results, lens-valued `case` joins and dispatch results
+  whose flow is `replaceable: false`; anything else stays thin. Re-acquiring the place of
+  such a lens as an empty or refilled slot (read `()`) is thin.
+- **Layout:** a record with a `tag` field (new concrete field kind, the union's own tag), one
+  pointer per payload field of every constructor (`v<k>` for a single field, `v<k>_<i>` for
+  a tuple payload) and the usual `restore` and `context`. Concrete lowering and its
+  independent verifier both derive it from `sumLensFields`. The C and Go types are named
+  `Fields_<Union>`.
+- **Producer:** `lens-construct` whose field lenses are addresses into storage that outlives
+  the frame returns `{.tag = Some, .v0 = &(*box).item0}` with no temporary and no callback.
+  Any other arm (for example the empty-list arm, whose owner write-back must run) becomes a
+  small closure whose struct points into the closure's copy of the union.
+- **Consumer:** a call result is read by building the union from the tag and the pointers
+  (`tag == Some ? Some(*v0) : None`), and restored by calling `restore` when set, otherwise
+  checking the tag and writing each field through its pointer.
+
+Generated C for `fn pick(~a) ~{Some(a)}` is
+`return (Fields_Option_Number){.tag=Option_Number_Some, .v0=a.read};`, and the recursive
+`find` returns `&(*v6).item0` or the recursive call's struct in its `cons` arm.
+
+Not done: the caller still builds the union from the struct and dispatches on its tag a
+second time instead of binding the field pointer directly; a constructor lens over a boxed
+variant is still unsupported (as before); a scattered lens cannot be a call argument.
+
 ## Examples
 
 Accepted:

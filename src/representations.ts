@@ -1,4 +1,5 @@
 import { freezeTree, type SemanticType } from './elaborated.ts';
+import { scatterVariants } from './layout-definitions.ts';
 import { BackendDiagnostic } from './backend/target.ts';
 import { LayoutTable, type LayoutId } from './layouts.ts';
 
@@ -13,6 +14,12 @@ export type Backing = {
 export type LensRep = { id: LensRepId; read: LayoutId; replacement: LayoutId } & (
     | { kind: 'thin'; backing: BackingId }
     | { kind: 'tuple'; items: LensRepId[] }
+    /**
+     * A constructor of lenses over a union with no boxed variant: a tag plus one pointer
+     * per payload field of the selected constructor, canonical for the data type. Read and
+     * replacement endpoints share a layout, so a field pointer can be written through.
+     */
+    | { kind: 'sum' }
 );
 
 /** Contains concrete shapes only; generic parameters belong to constraint inference. */
@@ -60,6 +67,33 @@ export class RepresentationTable {
             items: [...items],
             read,
             replacement,
+        });
+    }
+
+    /** Whether a lens over `read`/`write` can be scattered into a tag and field pointers. */
+    scatterable(readType: SemanticType, writeType: SemanticType): boolean {
+        try {
+            return (
+                this.layouts.intern(readType) === this.layouts.intern(writeType) &&
+                !!scatterVariants(this.layouts.definitions, readType)
+            );
+        } catch {
+            return false;
+        }
+    }
+
+    sum(readType: SemanticType, writeType: SemanticType): LensRepId {
+        if (!this.scatterable(readType, writeType))
+            throw new BackendDiagnostic(
+                'invalid-representation',
+                'A scattered lens needs a union whose read and write layouts match',
+            );
+        const layout = this.layouts.intern(readType);
+        return this.add({
+            id: JSON.stringify(['lens-sum', layout]),
+            kind: 'sum',
+            read: layout,
+            replacement: layout,
         });
     }
 

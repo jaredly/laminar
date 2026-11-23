@@ -5,7 +5,7 @@ import {
 } from './layout-definitions.ts';
 import { mapSemantic } from './typed-ir.ts';
 import { BackendDiagnostic, targetKey } from './backend/target.ts';
-import { concreteName } from './concrete-layouts.ts';
+import { concreteName, sumLensFields } from './concrete-layouts.ts';
 import { memberKey, representationKey } from './representation-key.ts';
 import { verifyRepresentations } from './verify-representations.ts';
 import { typeKey, type IRBlock } from './typed-ir.ts';
@@ -92,7 +92,9 @@ export function verifyConcreteProgram(p: ConcreteProgram): void {
             else if (f.kind === 'pointer') {
                 if (f.layout) layout(f.layout);
             } else if (f.kind === 'code') abi(f.abi);
-            else fail('Unknown concrete field kind');
+            else if (f.kind === 'tag') {
+                if (layout(f.layout).kind !== 'union') fail('Tag of a non-union layout');
+            } else fail('Unknown concrete field kind');
         }
     }
     const active = new Set<string>(),
@@ -216,7 +218,13 @@ export function verifyConcreteProgram(p: ConcreteProgram): void {
             restore = aid([replacement], unitLayout);
         abi(restore);
         const fields: ConcreteField[] =
-            s.kind === 'thin'
+            s.kind === 'sum'
+                ? sumLensFields(
+                      semanticLayouts.get(s.read)!.type,
+                      nominalSchemas,
+                      (type) => data(type),
+                  )
+                : s.kind === 'thin'
                 ? [
                       {
                           name: 'read',

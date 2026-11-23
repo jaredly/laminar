@@ -8,6 +8,36 @@ export type NominalLayoutDefinition = {
     kind: 'record' | 'union' | 'vector';
     fields: { name: string; type: SemanticType; indirect?: boolean }[];
 };
+export type ScatterVariant = { name: string; tuple: boolean; fields: SemanticType[] };
+/**
+ * Each constructor of a union with its payload field types (a tuple payload's items, one field
+ * for any other payload, none for unit), or undefined unless `type` is a union whose variants
+ * are all stored by value. A scattered lens points at each field of the selected constructor.
+ */
+export function scatterVariants(
+    definitions: readonly NominalLayoutDefinition[],
+    type: SemanticType,
+): ScatterVariant[] | undefined {
+    if (type.tag !== 'con') return undefined;
+    const definition = definitions.find((d) => d.name === type.name);
+    if (
+        !definition ||
+        definition.kind !== 'union' ||
+        definition.parameters.length !== type.args.length ||
+        definition.fields.some((f) => f.indirect)
+    )
+        return undefined;
+    const substitution = new Map(definition.parameters.map((p, i) => [p, type.args[i]!]));
+    return definition.fields.map((f) => {
+        const payload = mapSemantic(f.type, (p) => substitution.get(p));
+        return payload.tag === 'tuple'
+            ? { name: f.name, tuple: true, fields: payload.items }
+            : { name: f.name, tuple: false, fields: [payload] };
+    });
+}
+/** Field name of a scattered lens's pointer to field `i` of variant `k`. */
+export const scatterFieldName = (k: number, tuple: boolean, i: number): string =>
+    tuple ? `v${k}_${i}` : `v${k}`;
 /** The builtin `Vector<a>`: an owned, heap-allocated, runtime-length element array. */
 export const vectorLayoutDefinition: NominalLayoutDefinition = {
     name: 'Vector',

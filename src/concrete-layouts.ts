@@ -10,8 +10,38 @@ export type { NominalLayoutDefinition } from './layout-definitions.ts';
 import {
     layoutDefinitionsKey,
     layoutSchemaKey,
+    scatterFieldName,
+    scatterVariants,
     type NominalLayoutDefinition,
 } from './layout-definitions.ts';
+
+/**
+ * The fields of a scattered constructor lens over `readType` (a union stored by value): the
+ * tag, a pointer to each payload field of every constructor, then the restoration callback.
+ * `layout` maps a semantic type to its physical layout. Concrete lowering and its independent
+ * verifier both derive the record from this, so they cannot disagree.
+ */
+export function sumLensFields(
+    readType: SemanticType,
+    definitions: readonly NominalLayoutDefinition[],
+    layout: (type: SemanticType) => string,
+): ConcreteField[] {
+    const variants = scatterVariants(definitions, readType);
+    if (!variants)
+        throw new BackendDiagnostic('invalid-layout', 'A scattered lens needs a by-value union');
+    return [
+        { name: 'tag', kind: 'tag', layout: layout(readType) },
+        ...variants.flatMap((variant, k) =>
+            variant.fields.map(
+                (type, i): ConcreteField => ({
+                    name: scatterFieldName(k, variant.tuple, i),
+                    kind: 'pointer',
+                    layout: layout(type),
+                }),
+            ),
+        ),
+    ];
+}
 
 /** C storage descriptions. Pointer/code edges are distinct from by-value dependencies. */
 export class ConcreteLayoutTable {

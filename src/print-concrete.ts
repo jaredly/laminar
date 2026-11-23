@@ -66,7 +66,9 @@ export function lconcrete(program: ConcreteProgram, options: ConcretePrintOption
                 ? name(f.layout)
                 : f.kind === 'pointer'
                   ? ptr(f.layout)
-                  : codePtr(f.abi),
+                  : f.kind === 'tag'
+                    ? l.l('', ['tag', l.w('<', l.i(name(f.layout)))])
+                    : codePtr(f.abi),
         );
     const semantic = (t: SemanticType): Node => {
         switch (t.tag) {
@@ -374,7 +376,9 @@ export function lconcrete(program: ConcreteProgram, options: ConcretePrintOption
                         const shape = program.analysis.shapes.find((s) => s.id === id)!;
                         return shape.kind === 'thin'
                             ? l.i('thin')
-                            : call('tuple', shape.items.map(topology));
+                            : shape.kind === 'sum'
+                              ? l.i('sum')
+                              : call('tuple', shape.items.map(topology));
                     };
                     expression = words(
                         'match',

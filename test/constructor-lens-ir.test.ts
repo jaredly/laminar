@@ -184,7 +184,7 @@ describe('verifying constructor lenses independently', () => {
 });
 
 describe('backends', () => {
-    it('give a constructor lens a thin shape backed by a temporary', () => {
+    it('give a non-replaceable lens result a scattered shape', () => {
         const p = typedProgram(updateFirst('[1, 2, 3]', 2, 20));
         const specialized = specializeProgram(p, wasm32Emscripten('test'), [
             { unit: p.units.at(-1)!.id, arguments: [] },
@@ -196,6 +196,6 @@ describe('backends', () => {
         const shape = analysis.shapes.find(
             (r) => found.result.kind === 'lens' && r.id === found.result.shape,
         )!;
-        expect(shape.kind).toBe('thin');
+        expect(shape.kind).toBe('sum');
     });
 });

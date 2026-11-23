@@ -43,6 +43,8 @@ export function layoutNames(
             const write = l.fields.find((f) => f.name === 'replacement');
             return `Lens_${label(read.layout, next)}${write?.kind === 'pointer' && write.layout ? `_to_${label(write.layout, next)}` : ''}`;
         }
+        const tag = l.fields.find((f) => f.kind === 'tag');
+        if (tag?.kind === 'tag') return `Fields_${label(tag.layout, next)}`;
         const items = l.fields.filter((f) => f.name.startsWith('item'));
         return `Scattered_${items.map((f) => label((f as { layout: string }).layout, next)).join('_')}`;
     };

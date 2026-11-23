@@ -11,6 +11,8 @@ export type ConcreteField = { name: string } & (
     | { kind: 'value'; layout: string }
     | { kind: 'pointer'; layout?: string }
     | { kind: 'code'; abi: string }
+    /** The constructor tag of a union layout, as that union's own tag type. */
+    | { kind: 'tag'; layout: string }
 );
 export type ConcreteLayout = {
     id: string;

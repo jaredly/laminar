@@ -1,4 +1,4 @@
-import { layoutSchemaKey } from './layout-definitions.ts';
+import { layoutSchemaKey, scatterVariants } from './layout-definitions.ts';
 import { mapSemantic, type Instance } from './typed-ir.ts';
 import { createHash } from 'node:crypto';
 import type { SemanticType, SemanticFlow } from './elaborated.ts';
@@ -116,6 +116,13 @@ export function verifyRepresentations(
     };
     const layout = (id: string): Layout => layouts.get(id) ?? fail('Missing or foreign layout');
     const shape = (id: string): LensRep => shapes.get(id) ?? fail('Missing or foreign lens shape');
+    /** The shape a lens result must have: scattered when not replaceable and scatterable. */
+    const resultKind = (f: SemanticFlow & { tag: 'flow' }): 'thin' | 'sum' =>
+        f.replaceable === false &&
+        layoutId(f.read) === layoutId(f.write) &&
+        scatterVariants(analysis.layoutDefinitions, f.read)
+            ? 'sum'
+            : 'thin';
     const layoutId = (t: SemanticType): string =>
         JSON.stringify([
             'layout',
@@ -227,6 +234,13 @@ export function verifyRepresentations(
                 b.replacement !== s.replacement
             )
                 fail('Thin lens backing mismatch');
+        } else if (s.kind === 'sum') {
+            if (
+                s.id !== JSON.stringify(['lens-sum', s.read]) ||
+                s.read !== s.replacement ||
+                !scatterVariants(analysis.layoutDefinitions, read)
+            )
+                fail('Noncanonical or unscatterable sum lens shape');
         } else if (s.kind === 'tuple') {
             if (!Array.isArray(s.items)) fail('Missing tuple shape items');
             if (s.id !== JSON.stringify(['lens-tuple', s.items]))
@@ -257,6 +271,7 @@ export function verifyRepresentations(
         if (v.kind !== 'lens') return v;
         const topology = (id: string): ReturnType<typeof canonicalLensTopology> => {
             const r = shape(id);
+            if (r.kind === 'sum') return fail('A constructor lens cannot be a call argument');
             return r.kind === 'thin'
                 ? { kind: 'thin' }
                 : { kind: 'tuple', items: r.items.map(topology) };
@@ -471,7 +486,12 @@ export function verifyRepresentations(
                     case 'acquire': {
                         s.knownPlaces.delete(i.slot.place);
                         const base = s.lenses.get(i.slot.place);
-                        if (base) topology(projectedShape(base, i.slot.path), lens(v));
+                        if (base) {
+                            const projected = projectedShape(base, i.slot.path);
+                            // A scattered lens's place can be acquired as an empty or refilled thin slot.
+                            if (!(projected.kind === 'sum' && lens(v).kind === 'thin'))
+                                topology(projected, lens(v));
+                        }
                         else if (lens(v).kind !== 'thin')
                             fail('Owned local must expose a thin lens');
                         break;
@@ -483,8 +503,8 @@ export function verifyRepresentations(
                         break;
                     case 'lens-construct':
                         s.knownPlaces.clear();
-                        if (lens(v).kind !== 'thin')
-                            fail('Constructor lens must have temporary storage');
+                        if (i.out.type.tag !== 'flow' || lens(v).kind !== resultKind(i.out.type))
+                            fail('Constructor lens must have its canonical scattered or thin shape');
                         i.items.forEach((id) => lens(get(s, id)));
                         break;
                     case 'lens-tuple': {
@@ -516,8 +536,10 @@ export function verifyRepresentations(
                             return block(arm.body, clone(s));
                         });
                         if (i.out.type.tag === 'flow') {
-                            if (lens(v).kind !== 'thin')
-                                fail('Selected-branch adapter must expose a thin focus');
+                            if (lens(v).kind !== resultKind(i.out.type))
+                                fail(
+                                    `Selected-branch adapter must expose a ${resultKind(i.out.type) === 'thin' ? 'thin' : 'scattered'} focus`,
+                                );
                         } else
                             results.forEach((r) =>
                                 requireEqual(v, r, 'Branch needs a representation adapter'),
@@ -650,6 +672,8 @@ export function verifyRepresentations(
                                                     layoutId(write),
                                                 ]),
                                             ]);
+                                        if (r.kind === 'sum')
+                                            return fail('A constructor lens has no projection');
                                         if (read.tag !== 'tuple' || write.tag !== 'tuple')
                                             return fail('Invalid native fst topology');
                                         return JSON.stringify([
@@ -690,8 +714,10 @@ export function verifyRepresentations(
                             i.out.type.tag === 'flow' &&
                             (!results.length || results.some((r) => !same(r, results[0])))
                         ) {
-                            if (lens(v).kind !== 'thin')
-                                fail('Dynamic lens adapter must expose a thin focus');
+                            if (lens(v).kind !== resultKind(i.out.type))
+                                fail(
+                                    `Dynamic lens adapter must expose a ${resultKind(i.out.type) === 'thin' ? 'thin' : 'scattered'} focus`,
+                                );
                         } else
                             results.forEach((r) =>
                                 requireEqual(v, r, 'Call result representation changed'),

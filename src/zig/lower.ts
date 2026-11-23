@@ -173,6 +173,7 @@ export function lowerZig(program: ConcreteProgram): ZigFile {
             if (f.kind === 'value') return `${n}: ${type(f.layout)},`;
             if (f.kind === 'pointer')
                 return f.layout ? `${n}: *${type(f.layout)},` : `${n}: ?*anyopaque = null,`;
+            if (f.kind === 'tag') return `${n}: u32,`;
             return `${n}: ?${abiNames.get(f.abi)} = null,`;
         });
         declarations.push({

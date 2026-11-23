@@ -254,9 +254,17 @@ export function inferRepresentations(
             'Plain value representations of one semantic type differ',
         );
     };
+    /** A lens result is a scattered tag-and-pointers lens when it is not replaceable. */
+    const resultShape = (f: SemanticFlow & { tag: 'flow' }): LensRepId =>
+        f.replaceable === false && reps.scatterable(f.read, f.write)
+            ? reps.sum(f.read, f.write)
+            : reps.thin(f.read, f.write);
     const retype = (id: LensRepId, read: SemanticType, write: SemanticType): LensRepId => {
         const r = reps.get(id);
         if (r.kind === 'thin') return reps.thin(read, write);
+        // An empty or refilled place (read `()`) is no longer a scattered value: it is thin.
+        if (r.kind === 'sum')
+            return reps.scatterable(read, write) ? reps.sum(read, write) : reps.thin(read, write);
         if (
             read.tag !== 'tuple' ||
             write.tag !== 'tuple' ||
@@ -278,6 +286,7 @@ export function inferRepresentations(
         if (v.kind !== 'lens') return v;
         const topology = (id: LensRepId): LensTopology => {
             const r = reps.get(id);
+            if (r.kind === 'sum') return fail('A constructor lens cannot be a call argument');
             return r.kind === 'thin'
                 ? { kind: 'thin' }
                 : { kind: 'tuple', items: r.items.map(topology) };
@@ -364,7 +373,7 @@ export function inferRepresentations(
                 (results.every((r) => r.kind === 'lens') &&
                     results.some((r) => !equal(r, results[0]!)))
             )
-                result = { kind: 'lens', shape: reps.thin(resultType.read, resultType.write) };
+                result = { kind: 'lens', shape: resultShape(resultType) };
             else result = join(results, true);
             const targets = calls.map((call) => call.target);
             return { target: JSON.stringify(['dispatch', targets]), targets, result };
@@ -405,10 +414,7 @@ export function inferRepresentations(
         variant.result =
             fn.type.result.tag === 'plain'
                 ? typeRep(fn.type.result.value)
-                : {
-                      kind: 'lens',
-                      shape: reps.thin(fn.type.result.read, fn.type.result.write),
-                  };
+                : { kind: 'lens', shape: resultShape(fn.type.result) };
         variants.set(variantKey, variant);
         tasks.set(variantKey, () => {
             const state = fresh();
@@ -499,10 +505,7 @@ export function inferRepresentations(
                     s.knownPlaces.clear();
                     if (i.out.type.tag !== 'flow') return fail('Constructor lens produced data');
                     i.items.forEach((id) => shape(get(s, id)));
-                    out = {
-                        kind: 'lens',
-                        shape: reps.thin(i.out.type.read, i.out.type.write),
-                    };
+                    out = { kind: 'lens', shape: resultShape(i.out.type) };
                     break;
                 case 'global':
                 case 'closure': {
@@ -590,7 +593,7 @@ export function inferRepresentations(
                     );
                     out =
                         i.out.type.tag === 'flow'
-                            ? { kind: 'lens', shape: reps.thin(i.out.type.read, i.out.type.write) }
+                            ? { kind: 'lens', shape: resultShape(i.out.type) }
                             : join(branches, true);
                     break;
                 }

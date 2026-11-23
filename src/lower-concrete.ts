@@ -9,7 +9,7 @@ import {
 } from './infer-representations.ts';
 import { verifyRepresentations } from './verify-representations.ts';
 import { memberKey, representationKey } from './representation-key.ts';
-import { ConcreteLayoutTable, concreteName } from './concrete-layouts.ts';
+import { ConcreteLayoutTable, concreteName, sumLensFields } from './concrete-layouts.ts';
 import {
     specializeProgram,
     type SpecializedProgram,
@@ -214,7 +214,13 @@ export function lowerConcreteProgram(
         const replacement = table.data(dataLayouts.get(s.replacement)!.type);
         const restore = table.abi([replacement], unitLayout);
         const fields: ConcreteField[] =
-            s.kind === 'thin'
+            s.kind === 'sum'
+                ? sumLensFields(
+                      dataLayouts.get(s.read)!.type,
+                      analysis.layoutDefinitions,
+                      (type) => table.data(type),
+                  )
+                : s.kind === 'thin'
                 ? [
                       {
                           name: 'read',

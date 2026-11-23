@@ -152,7 +152,38 @@ export function lowerGo(program: ConcreteProgram): GoFile {
         return activeLocals ? activeLocals.aggregate(value, items) : value;
     };
 
+    /** A scattered constructor lens: a tag plus a pointer to each payload field. */
+    const sumParts = (
+        id: string,
+    ):
+        | {
+              union: string;
+              pointers: { name: string; variant: number; index: number; layout: string }[];
+          }
+        | undefined => {
+        const l = layout(id);
+        const tag = l.fields.find((f) => f.kind === 'tag');
+        if (tag?.kind !== 'tag') return undefined;
+        return {
+            union: tag.layout,
+            pointers: l.fields.flatMap((f) => {
+                const m = /^v(\d+)(?:_(\d+))?$/.exec(f.name);
+                return f.kind === 'pointer' && f.layout && m
+                    ? [
+                          {
+                              name: f.name,
+                              variant: Number(m[1]),
+                              index: m[2] === undefined ? 0 : Number(m[2]),
+                              layout: f.layout,
+                          },
+                      ]
+                    : [];
+            }),
+        };
+    };
     const endpoint = (id: string, which: 'read' | 'replacement'): string => {
+        const scattered = sumParts(id);
+        if (scattered) return scattered.union;
         const l = layout(id);
         const f = l.fields.find((f) => f.name === which) ?? l.fields.find((f) => f.name === 'read');
         if (f?.kind === 'pointer' && f.layout) return f.layout;
@@ -173,7 +204,76 @@ export function lowerGo(program: ConcreteProgram): GoFile {
         );
     };
 
+    /** The union value a scattered lens currently denotes, read through its field pointers. */
+    const sumValue = (expression: Expr, id: string): Expr => {
+        const parts = sumParts(id)!;
+        const arms = layout(parts.union).fields.map((_, k) => {
+            const v = variant(parts.union, k);
+            const pointers = parts.pointers
+                .filter((p) => p.variant === k)
+                .sort((a, b) => a.index - b.index);
+            const contents: Expr =
+                pointers.length === 0
+                    ? zero(v.layout)
+                    : pointers[0]!.name.includes('_')
+                      ? go`${type(v.layout)}{${joinCode(
+                            pointers.map(
+                                (p) => go`${field(`item${p.index}`)}: ${star(dot(expression, p.name))}`,
+                            ),
+                            ', ',
+                        )}}`
+                      : star(dot(expression, pointers[0]!.name));
+            return { k, value: go`${type(parts.union)}{tag: ${tagValue(parts.union, k)}, v${k}: ${contents}}` };
+        });
+        if (arms.length === 1) return arms[0]!.value;
+        return go`func() ${type(parts.union)} {
+\tswitch ${dot(expression, 'tag')} {
+${joinCode(
+            arms.slice(0, -1).map((a) => go`\tcase ${tagValue(parts.union, a.k)}:\n\t\treturn ${a.value}\n`),
+            '',
+        )}\t}
+\treturn ${arms[arms.length - 1]!.value}
+}()`;
+    };
+    /** Write a replacement union back through a scattered lens's field pointers. */
+    const sumWriteBack = (expression: Expr, id: string, replacement: Expr, body: Statement[]) => {
+        const parts = sumParts(id)!;
+        body.push({
+            kind: 'if',
+            arms: [
+                {
+                    condition: go`${dot(replacement, 'tag')} != ${dot(expression, 'tag')}`,
+                    body: ['panic("constructor lens tag mismatch")'],
+                },
+            ],
+        });
+        layout(parts.union).fields.forEach((_, k) => {
+            const pointers = parts.pointers
+                .filter((p) => p.variant === k)
+                .sort((a, b) => a.index - b.index);
+            if (!pointers.length) return;
+            const payloadOf = payload(replacement, parts.union, k);
+            body.push({
+                kind: 'if',
+                arms: [
+                    {
+                        condition: go`${dot(replacement, 'tag')} == ${tagValue(parts.union, k)}`,
+                        body: pointers.map((p) =>
+                            pointers[0]!.name.includes('_')
+                                ? go`${star(dot(expression, p.name))} = ${dot(payloadOf, `item${p.index}`)}`
+                                : go`${star(dot(expression, p.name))} = ${payloadOf}`,
+                        ),
+                    },
+                ],
+            });
+        });
+    };
     const incoming = (expression: Expr, id: string): View => {
+        if (sumParts(id))
+            return storage.own({
+                expression: sumValue(expression, id),
+                layout: sumParts(id)!.union,
+            });
         const l = layout(id);
         const f = l.fields.find((f) => f.name === 'read');
         if (f?.kind === 'pointer' && f.layout)
@@ -232,6 +332,7 @@ export function lowerGo(program: ConcreteProgram): GoFile {
                 if (f.kind === 'value') return go`\t${field(f.name)} ${type(f.layout)}`;
                 if (f.kind === 'pointer')
                     return go`\t${field(f.name)} ${f.layout ? '*' + type(f.layout) : 'any'}`;
+                if (f.kind === 'tag') return go`\t${field(f.name)} uint32`;
                 return go`\t${field(f.name)} ${abiNames.get(f.abi)}`;
             });
             declarePackage(
@@ -1295,7 +1396,8 @@ export function lowerGo(program: ConcreteProgram): GoFile {
                         body,
                     );
                     const fallback: Statement[] = [];
-                    flush(name, id, storage.get(view), fallback);
+                    if (sumParts(id)) sumWriteBack(name, id, replacement, fallback);
+                    else flush(name, id, storage.get(view), fallback);
                     body.push({
                         kind: 'if',
                         arms: [
@@ -1373,6 +1475,19 @@ export function lowerGo(program: ConcreteProgram): GoFile {
             flushIncoming: boolean,
         ): string => {
             const build = (view: View, id: string): Expr => {
+                const scattered = sumParts(id);
+                if (scattered) {
+                    // The focus is a union copy; each field pointer addresses the matching member.
+                    const focus = declare(scattered.union, read(storage.get(view), scattered.union), body);
+                    locals.mutable(focus);
+                    return go`${type(id)}{tag: ${dot(focus, 'tag')}, ${joinCode(
+                        scattered.pointers.map((p) => {
+                            const member = dot(focus, `v${p.variant}`);
+                            return go`${field(p.name)}: &${p.name.includes('_') ? dot(member, `item${p.index}`) : member}`;
+                        }),
+                        ', ',
+                    )}}`;
+                }
                 const l = layout(id),
                     input = l.fields.find((f) => f.name === 'read');
                 if (input?.kind === 'pointer' && input.layout) {
@@ -1706,7 +1821,39 @@ export function lowerGo(program: ConcreteProgram): GoFile {
                             expression: go`${type(union)}{tag: ${tagValue(union, n)}, v${n}: ${contents}}`,
                             layout: union,
                         });
+                        // Over a scattered layout, field lenses that are addresses into storage that
+                        // outlives the frame need no temporary: the lens is the tag and those
+                        // addresses, and whoever restores it writes through them.
+                        const scattered = sumParts(id);
+                        let direct: string | undefined;
+                        if (scattered) {
+                            const pointers = scattered.pointers
+                                .filter((p) => p.variant === n)
+                                .sort((a, b) => a.index - b.index);
+                            let leaves: Data[] = fields.map((f) => storage.get(f.view));
+                            if (pointers.length > 1 && leaves.length === 1)
+                                leaves = storage.parts(leaves[0]!);
+                            const live = leaves.map((d) =>
+                                !Array.isArray(d) && d.address && d.heap ? d.address : undefined,
+                            );
+                            if (leaves.length === pointers.length && live.every((a) => a !== undefined)) {
+                                // Unused when the arm needs a callback instead, so prunable.
+                                direct = fresh();
+                                body.push(
+                                    locals.declaration(
+                                        direct,
+                                        type(id),
+                                        go`${type(id)}{tag: ${tagValue(union, n)}${joinCode(
+                                            pointers.map((p, k) => go`, ${field(p.name)}: ${live[k]!}`),
+                                            '',
+                                        )}}`,
+                                        { pure: true },
+                                    ),
+                                );
+                            }
+                        }
                         lenses.set(i.out.id, {
+                            ...(direct ? { forwarded: { expression: direct, rest: noFinish } } : {}),
                             view,
                             finish: (output) => {
                                 const replacement = storage.get(view);

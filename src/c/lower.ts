@@ -156,7 +156,38 @@ export function lowerC(
             ) || '0'
         }}`;
     };
+    /** A scattered constructor lens: a tag plus a pointer to each payload field. */
+    const sumParts = (
+        id: string,
+    ):
+        | {
+              union: string;
+              pointers: { name: string; variant: number; index: number; layout: string }[];
+          }
+        | undefined => {
+        const l = layout(id);
+        const tag = l.fields.find((f) => f.kind === 'tag');
+        if (tag?.kind !== 'tag') return undefined;
+        return {
+            union: tag.layout,
+            pointers: l.fields.flatMap((f) => {
+                const m = /^v(\d+)(?:_(\d+))?$/.exec(f.name);
+                return f.kind === 'pointer' && f.layout && m
+                    ? [
+                          {
+                              name: f.name,
+                              variant: Number(m[1]),
+                              index: m[2] === undefined ? 0 : Number(m[2]),
+                              layout: f.layout,
+                          },
+                      ]
+                    : [];
+            }),
+        };
+    };
     const endpoint = (id: string, which: 'read' | 'replacement'): string => {
+        const scattered = sumParts(id);
+        if (scattered) return scattered.union;
         const l = layout(id),
             f = l.fields.find((f) => f.name === which) ?? l.fields.find((f) => f.name === 'read');
         if (f?.kind === 'pointer' && f.layout) return f.layout;
@@ -177,7 +208,60 @@ export function lowerC(
         );
     };
     const noFinish = (_body: Statement[]) => {};
+    /** The union value a scattered lens currently denotes, read through its field pointers. */
+    const sumValue = (expression: Expr, id: string): Expr => {
+        const parts = sumParts(id)!;
+        const arms = layout(parts.union).fields.map((_, k) => {
+            const v = variant(parts.union, k);
+            const pointers = parts.pointers
+                .filter((p) => p.variant === k)
+                .sort((a, b) => a.index - b.index);
+            const contents: Expr =
+                pointers.length === 0
+                    ? zero(v.layout)
+                    : pointers[0]!.name.includes('_')
+                      ? cc`(${type(v.layout)}){${joinCode(
+                            pointers.map((p) => star(dot(expression, p.name))),
+                            ', ',
+                        )}}`
+                      : star(dot(expression, pointers[0]!.name));
+            return cc`(${type(parts.union)}){.tag=${tagValue(parts.union, k)}, .as.v${k}=${contents}}`;
+        });
+        return arms.reduceRight((rest, arm, k) =>
+            k === arms.length - 1
+                ? arm
+                : cc`(${dot(expression, 'tag')} == ${tagValue(parts.union, k)} ? ${arm} : ${rest})`,
+        );
+    };
+    /** Write a replacement union back through a scattered lens's field pointers. */
+    const sumWriteBack = (expression: Expr, id: string, replacement: Expr, body: Statement[]) => {
+        const parts = sumParts(id)!;
+        body.push({
+            head: cc`if (${dot(replacement, 'tag')} != ${dot(expression, 'tag')})`,
+            body: ['abort();'],
+        });
+        layout(parts.union).fields.forEach((_, k) => {
+            const pointers = parts.pointers
+                .filter((p) => p.variant === k)
+                .sort((a, b) => a.index - b.index);
+            if (!pointers.length) return;
+            const payloadOf = payload(replacement, parts.union, k);
+            body.push({
+                head: cc`if (${dot(replacement, 'tag')} == ${tagValue(parts.union, k)})`,
+                body: pointers.map((p) =>
+                    pointers[0]!.name.includes('_')
+                        ? cc`*${dot(expression, p.name)} = ${dot(payloadOf, `item${p.index}`)};`
+                        : cc`*${dot(expression, p.name)} = ${payloadOf};`,
+                ),
+            });
+        });
+    };
     const incoming = (expression: Expr, id: string): View => {
+        if (sumParts(id))
+            return storage.own({
+                expression: sumValue(expression, id),
+                layout: sumParts(id)!.union,
+            });
         const l = layout(id),
             f = l.fields.find((f) => f.name === 'read');
         if (f?.kind === 'pointer' && f.layout)
@@ -293,7 +377,7 @@ export function lowerC(
         } else if (!['f64', 'bool', 'string'].includes(l.kind)) {
             declareType(
                 type(l.id),
-                cText`struct ${type(l.id)} { ${l.fields.map((f) => (f.kind === 'value' ? cc`${type(f.layout)} ${member(f.name)};` : f.kind === 'pointer' ? cc`${f.layout ? type(f.layout) : 'void'} *${member(f.name)};` : cc`${abiNames.get(f.abi)} ${member(f.name)};`)).join(' ') || 'unsigned char inhabitant;'} };`,
+                cText`struct ${type(l.id)} { ${l.fields.map((f) => (f.kind === 'value' ? cc`${type(f.layout)} ${member(f.name)};` : f.kind === 'pointer' ? cc`${f.layout ? type(f.layout) : 'void'} *${member(f.name)};` : f.kind === 'tag' ? cc`uint32_t ${member(f.name)};` : cc`${abiNames.get(f.abi)} ${member(f.name)};`)).join(' ') || 'unsigned char inhabitant;'} };`,
             );
         }
     // Everything below is retained executable code or its auxiliary declarations.
@@ -1059,6 +1143,21 @@ export function lowerC(
                 const contextFields: string[] = [];
                 const initial: Statement[] = [];
                 const build = (view: View, id: string, path: string): Expr => {
+                    const scattered = sumParts(id);
+                    if (scattered) {
+                        // The focus is a union copy in the context; each field pointer addresses
+                        // the matching member of that copy (valid whichever constructor it holds).
+                        const r = `focus${path}`;
+                        contextFields.push(cText`${type(scattered.union)} ${r};`);
+                        initial.push(cc`ctx->${r} = ${read(storage.get(view), scattered.union)};`);
+                        return cc`(${type(id)}){.tag=ctx->${r}.tag, ${joinCode(
+                            scattered.pointers.map(
+                                (p) =>
+                                    cc`.${member(p.name)}=&ctx->${r}.as.v${p.variant}${p.name.includes('_') ? cc`.item${p.index}` : ''}`,
+                            ),
+                            ', ',
+                        )}}`;
+                    }
                     const l = layout(id),
                         input = l.fields.find((f) => f.name === 'read');
                     if (input?.kind === 'pointer' && input.layout) {
@@ -1474,7 +1573,8 @@ export function lowerC(
                                 head: 'else',
                                 body: (() => {
                                     const b: Statement[] = [];
-                                    flush(name, id, storage.get(view), b);
+                                    if (sumParts(id)) sumWriteBack(name, id, replacement, b);
+                                    else flush(name, id, storage.get(view), b);
                                     return b;
                                 })(),
                             },
@@ -1882,7 +1982,43 @@ export function lowerC(
                                 expression: cc`(${type(union)}){.tag=${tagValue(union, n)}, .as.v${n}=${contents()}}`,
                                 layout: union,
                             });
+                            // Over a scattered layout, field lenses that are addresses into storage
+                            // that outlives the frame need no temporary: the lens is the tag and
+                            // those addresses, and whoever restores it writes through them.
+                            const scattered = sumParts(id);
+                            let direct: string | undefined;
+                            if (scattered) {
+                                const pointers = scattered.pointers
+                                    .filter((p) => p.variant === n)
+                                    .sort((a, b) => a.index - b.index);
+                                let leaves: Data[] = fields.map((f) => storage.get(f.view));
+                                if (pointers.length > 1 && leaves.length === 1)
+                                    leaves = storage.parts(leaves[0]!);
+                                const live = leaves.map((d) =>
+                                    !Array.isArray(d) && d.address && d.heap ? d.address : undefined,
+                                );
+                                if (
+                                    leaves.length === pointers.length &&
+                                    live.every((a) => a !== undefined)
+                                )
+                                    direct = declare(
+                                        id,
+                                        cc`(${type(id)}){.tag=${tagValue(union, n)}${joinCode(
+                                            pointers.map(
+                                                (p, k) => cc`, .${member(p.name)}=${live[k]!}`,
+                                            ),
+                                            '',
+                                        )}}`,
+                                        body,
+                                        fresh(),
+                                        // Unused when the arm needs a callback instead, so prunable.
+                                        { pure: true },
+                                    );
+                            }
                             lenses.set(i.out.id, {
+                                ...(direct
+                                    ? { forwarded: { expression: direct, rest: noFinish } }
+                                    : {}),
                                 view,
                                 finish: (output) => {
                                     const replacement = storage.get(view);
