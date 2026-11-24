@@ -77,12 +77,12 @@ func takeTurn(player float64, board Lens_Vector_Number) Unit {
 		takeTurn(player, board)
 	} else {
 		v60 := at(square, board)
-		if v60 == 0.0 {
-			v78 := vector_at_Vector_Number(*board.read, square)
-			*v78 = player
-		} else {
+		if v60 != 0.0 {
 			hostPrint_Unit("That square is taken.")
 			takeTurn(player, board)
+		} else {
+			v95 := vector_at_Vector_Number(*board.read, square)
+			*v95 = player
 		}
 	}
 	return Unit{}
@@ -94,13 +94,7 @@ func at(i float64, board Lens_Vector_Number) float64 {
 }
 
 func other(player float64) float64 {
-	var v5 float64
-	if player == 1.0 {
-		v5 = 4.0
-	} else {
-		v5 = 1.0
-	}
-	return v5
+	return 5.0 - player
 }
 
 func game() string {

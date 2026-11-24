@@ -48,12 +48,15 @@ the backends do not change. The `shared-into-mut` message gains "use `dup(x)`".
    word in both modes and negates the whole infix expression after it: `not a == b` is
    `not (a == b)`. It is the `not` runtime import (`!` in C and Go). The corpus function
    `fn not` in `test/flow.test.lm` was renamed `negate`.
-3. **Syntax sugar** (wishlist 4). Parser-level desugarings, no new semantics:
-   `if c then a else b` to `match c { true -> a  false -> b }`; `a && b` and `a || b` to nested
-   matches (short-circuiting); negative literals as unary minus on a literal (`-1` is `0 - 1`).
-   Decided: land these in both modes. They are pure sugar over constructs both modes already
-   have (`match`, `true`/`false`, subtraction), so the grammar and desugaring are shared and pure
-   programs gain syntax without any change to their typing or lowering.
+3. **Syntax sugar** (wishlist 4). **Done**, in both modes (pure sugar over `match` on `Bool`,
+   so typing and lowering are untouched). `if c then a else b`, with `else if` chaining; each
+   part may be an infix expression, and a nested `if` elsewhere needs braces. `a && b` and
+   `a || b` short-circuit (`match a { true -> b  false -> false }` and the mirror); `||` binds
+   looser than `&&`, which binds looser than the comparisons. `not` negates up to the next `&&` or
+   `||` and may follow them (`a && not b`). `-1` and `-x` are unary minus: a literal negates in
+   place, anything else is `-1 * x`, so `-0` stays right. `if`, `then` and `else` are reserved.
+   The tokens are parsed flat (`IfPart` in `src/laminar.cst`, `infixOf` and `ifExpr` in
+   `src/laminar-helpers.ts`). `tic-tac-toe.lm` uses `if` and `5 - player`.
 4. **Reads from a shared vector** (wishlist 3). `v[i]` on a plain binding yields a *shared*
    element instead of `index-value`.
    - New native `get(reads number, reads Vector<a>) -> shared a`, which traps like `[]` when out

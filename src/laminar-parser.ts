@@ -27,6 +27,7 @@ import {
     Lens,
     LensOp,
     Linear,
+    IfPart,
     LinearOps,
     FnArg,
     LinearCase,
@@ -41,6 +42,9 @@ export const grammar = new Grammar({
         'mut',
         'linear',
         'not',
+        'if',
+        'then',
+        'else',
         '~',
         '<-',
         '=',
@@ -783,7 +787,7 @@ function handleLensOps(target: Lens, ops: LensOp[], loc: number): Lens {
     return target;
 }
 
-import { partition } from './laminar-helpers.ts';
+import { partition, ifExpr, infixOf, negate } from './laminar-helpers.ts';
 
 grammar.add('Linear', [
     // Linear:1
@@ -854,13 +858,8 @@ grammar.add('Linear', [
     ),
     // Linear:10
     option(
-        list('', b('fn', /^[+-]$/), rest('arg', 'Linear', false)),
-        ({ fn, arg, node }: { fn: Id; arg: Linear; node: Node }): Linear => ({
-            type: 'apply',
-            fn,
-            args: [arg],
-            loc: node.loc,
-        }),
+        list('', lit('-'), rest('arg', 'Linear', false)),
+        ({ arg, node }: { arg: Linear; node: Node }): Linear => negate(arg, node.loc),
     ),
     // Linear:11
     option(
@@ -1104,38 +1103,32 @@ grammar.add('Linear', [
     ),
     // Linear:29
     option(
-        list(
-            ' ',
-            lit('not'),
-            b('left', 'Linear'),
-            manyItems('right', [b('op', 'op'), b('right', 'Linear')]),
-        ),
-        ({
-            left,
-            right,
-            node,
-        }: {
-            left: Linear;
-            right: { op: Op; right: Linear }[];
-            node: Node;
-        }): Linear => ({
-            type: 'apply',
-            fn: { type: 'id', text: 'not', loc: node.loc },
-            args: [partition(left, right)],
-            loc: node.loc,
-        }),
+        list(' ', lit('not'), rest('parts', 'IfPart', true)),
+        ({ parts, node }: { parts: IfPart[]; node: Node }): Linear =>
+            infixOf([{ kind: 'not' }, ...parts], node.loc),
     ),
     // Linear:30
+    option(
+        list(' ', b('left', 'Linear'), rest('parts', 'IfPart', true)),
+        ({ left, parts, node }: { left: Linear; parts: IfPart[]; node: Node }): Linear =>
+            infixOf([{ kind: 'value', value: left }, ...parts], node.loc),
+    ),
+    // Linear:31
+    option(
+        list(' ', lit('if'), rest('parts', 'IfPart', true)),
+        ({ parts, node }: { parts: IfPart[]; node: Node }): Linear => ifExpr(parts, node.loc),
+    ),
+    // Linear:32
     option(
         list(' ', b('one', 'Linear')),
         ({ one, node }: { one: Linear; node: Node }): Linear => one,
     ),
-    // Linear:31
+    // Linear:33
     option(
         list('\n', b('one', 'Linear')),
         ({ one, node }: { one: Linear; node: Node }): Linear => one,
     ),
-    // Linear:32
+    // Linear:34
     option(
         wrapper(
             '{',
@@ -1157,7 +1150,7 @@ grammar.add('Linear', [
             node: Node;
         }): Linear => ({ type: 'let', pat, value, body, loc: node.loc }),
     ),
-    // Linear:33
+    // Linear:35
     option(
         list(
             '\n',
@@ -1176,7 +1169,7 @@ grammar.add('Linear', [
             node: Node;
         }): Linear => ({ type: 'let', pat, value, body, loc: node.loc }),
     ),
-    // Linear:34
+    // Linear:36
     option(
         wrapper(
             '{',
@@ -1212,7 +1205,7 @@ grammar.add('Linear', [
             loc: node.loc,
         }),
     ),
-    // Linear:35
+    // Linear:37
     option(
         list(
             '\n',
@@ -1245,17 +1238,17 @@ grammar.add('Linear', [
             loc: node.loc,
         }),
     ),
-    // Linear:36
+    // Linear:38
     option(
         wrapper('{', b('one', 'Linear')),
         ({ one, node }: { one: Linear; node: Node }): Linear => one,
     ),
-    // Linear:37
+    // Linear:39
     option(
         wrapper('{', list('\n', b('one', 'Linear'))),
         ({ one, node }: { one: Linear; node: Node }): Linear => one,
     ),
-    // Linear:38
+    // Linear:40
     option(
         wrapper('{', list('\n', b('value', 'Linear'), rest('body', 'Linear', false))),
         ({ value, body, node }: { value: Linear; body: Linear; node: Node }): Linear => ({
@@ -1266,7 +1259,7 @@ grammar.add('Linear', [
             loc: node.loc,
         }),
     ),
-    // Linear:39
+    // Linear:41
     option(
         list('\n', b('value', 'Linear'), rest('body', 'Linear', false)),
         ({ value, body, node }: { value: Linear; body: Linear; node: Node }): Linear => ({
@@ -1277,6 +1270,27 @@ grammar.add('Linear', [
             loc: node.loc,
         }),
     ),
+]);
+
+grammar.add('IfPart', [
+    // IfPart:1
+    option(list('', lit('not')), ({ node }: { node: Node }): IfPart => ({ kind: 'not' })),
+    // IfPart:2
+    option(list('', lit('if')), ({ node }: { node: Node }): IfPart => ({ kind: 'if' })),
+    // IfPart:3
+    option(list('', lit('then')), ({ node }: { node: Node }): IfPart => ({ kind: 'then' })),
+    // IfPart:4
+    option(list('', lit('else')), ({ node }: { node: Node }): IfPart => ({ kind: 'else' })),
+    // IfPart:5
+    option(list('', b('op', 'op')), ({ op, node }: { op: Op; node: Node }): IfPart => ({
+        kind: 'op',
+        op,
+    })),
+    // IfPart:6
+    option(list('', b('one', 'Linear')), ({ one, node }: { one: Linear; node: Node }): IfPart => ({
+        kind: 'value',
+        value: one,
+    })),
 ]);
 
 grammar.add('LinearOps', [

@@ -326,3 +326,10 @@ export const getFree = (
 export type TypeField = { name: string; type: Type; loc: Loc };
 export type PatField = { name: string; pat: Pat; loc: Loc };
 export type RecordField = { name: string; value: Linear; loc: Loc };
+
+/** A token of `if c then a else b`: the keywords, operators and operands in source order. */
+export type IfPart =
+    | { kind: 'then' | 'else' | 'not' | 'if' }
+    | { kind: 'op'; op: Op }
+    | { kind: 'value'; value: Linear };
+

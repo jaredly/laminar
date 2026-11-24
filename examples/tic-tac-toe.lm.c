@@ -141,14 +141,7 @@ String symbol(void *environment, double cell_2) {
 }
 double other(void *environment, double player) {
     (void)environment;
-    double v2 = 0;
-    if (player == 1) {
-        v2 = 4;
-    }
-    else {
-        v2 = 1;
-    }
-    return v2;
+    return 5 - player;
 }
 String game(void *environment) {
     (void)environment;
@@ -219,15 +212,15 @@ Unit takeTurn(void *environment, double player, Lens_Vector_Number board) {
     else {
         double v32 = at(NULL, square, board);
         Unit v35 = {0};
-        if (v32 == 0) {
-            double *v41 = vector_at_Vector_Number(*board.read, square);
-            *v41 = player;
-            v35 = (Unit){0};
+        if (v32 != 0) {
+            String v37 = string_new("That square is taken.", 21);
+            host_print_Unit(v37);
+            v35 = takeTurn(NULL, player, board);
         }
         else {
-            String v48 = string_new("That square is taken.", 21);
-            host_print_Unit(v48);
-            v35 = takeTurn(NULL, player, board);
+            double *v50 = vector_at_Vector_Number(*board.read, square);
+            *v50 = player;
+            v35 = (Unit){0};
         }
         v17 = v35;
     }

@@ -63,34 +63,24 @@ fn parseSquare(input) {
     }
 }
 
+// X is 1 and O is 4, so the other player is 5 minus this one
 fn other(player) {
-    match player {
-        1 -> 4
-        _ -> 1
-    }
+    5 - player
 }
 
 // asks until the player names an empty square, then claims it
 fn takeTurn(player, ~board) {
     let input = getInput("${symbol(player)}, pick a square (1-9): ")
     let square = parseSquare(input)
-    match (square == 9) {
-        true -> {
-            print("Please pick a number from 1 to 9.")
-            takeTurn(player, ~board)
-        }
-        false -> {
-            match (at(square, ~board) == 0) {
-                true -> {
-                    board[square] := dup(player)
-                    ()
-                }
-                false -> {
-                    print("That square is taken.")
-                    takeTurn(player, ~board)
-                }
-            }
-        }
+    if square == 9 then {
+        print("Please pick a number from 1 to 9.")
+        takeTurn(player, ~board)
+    } else if at(square, ~board) != 0 then {
+        print("That square is taken.")
+        takeTurn(player, ~board)
+    } else {
+        board[square] := dup(player)
+        ()
     }
 }
 
@@ -99,12 +89,9 @@ fn play(player, turns, ~board) {
     render(~board)
     match winner(~board) {
         0 -> {
-            match (turns == 9) {
-                true -> "draw"
-                false -> {
-                    takeTurn(player, ~board)
-                    play(other(player), turns + 1, ~board)
-                }
+            if turns == 9 then "draw" else {
+                takeTurn(player, ~board)
+                play(other(player), turns + 1, ~board)
             }
         }
         owner -> symbol(owner)
