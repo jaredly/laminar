@@ -15,7 +15,7 @@ import {
 /** How a call boundary treats an argument or result: transferred data, or a lens capability. */
 export type ImportConvention = 'owned' | 'lens';
 /** Host services an import needs beyond the backend's own allocation and traps. */
-export type HostCapability = 'stdout' | 'stdin';
+export type HostCapability = 'stdout' | 'stdin' | 'files';
 export type ImportBackend = 'reference' | 'c' | 'go';
 
 /**
@@ -221,6 +221,17 @@ export const runtimeImports: readonly RuntimeImport[] = [
         semantics: 'Writes the consumed string to stdout with no newline, then flushes stdout',
     },
     {
+        name: 'writeFile',
+        signature: () =>
+            fn([reads(string), plain(con('Vector', number))], plain(tuple())),
+        arguments: ['owned', 'owned'],
+        result: 'owned',
+        capability: 'files',
+        backends: all,
+        semantics:
+            'Consumes a path and a vector of byte values and writes the bytes to that file, replacing it. Every element must be an integer in [0, 255] and the file must be writable, else trap',
+    },
+    {
         name: 'waitKey',
         signature: () => fn([reads(number)], plain(string)),
         arguments: ['owned'],
@@ -259,9 +270,9 @@ const byName = new Map(runtimeImports.map((i) => [i.name, i]));
 
 /** Host capabilities each runtime profile provides. */
 export const runtimeCapabilities: Record<TargetConfig['runtime'], readonly HostCapability[]> = {
-    native: ['stdout', 'stdin'],
-    go: ['stdout', 'stdin'],
-    'emscripten-node': ['stdout', 'stdin'],
+    native: ['stdout', 'stdin', 'files'],
+    go: ['stdout', 'stdin', 'files'],
+    'emscripten-node': ['stdout', 'stdin', 'files'],
     // Browser builds have console output but no synchronous line input.
     'emscripten-browser': ['stdout'],
 };

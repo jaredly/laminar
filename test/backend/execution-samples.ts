@@ -32,6 +32,8 @@ export type ExecutionSample = {
     expected: unknown;
     stdin?: string;
     output?: string;
+    /** A file the program writes, checked on every backend. */
+    file?: { path: string; bytes: number[] };
 };
 export const samples: ExecutionSample[] = [
     ...enabledMigrationSamples,

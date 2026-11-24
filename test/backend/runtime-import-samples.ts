@@ -104,5 +104,17 @@ export const runtimeImportSamples = [
         source: '(random(10), random(10), random(10))',
         expected: [3, 5, 7],
     },
+    {
+        name: 'writeFile writes every byte',
+        source: '{writeFile("/tmp/laminar-write-file.bin", [:0, 66, 255, 10:])\n 1}',
+        expected: 1,
+        file: { path: '/tmp/laminar-write-file.bin', bytes: [0, 66, 255, 10] },
+    },
+    {
+        name: 'writeFile of an empty vector',
+        source: '{writeFile("/tmp/laminar-write-file-empty.bin", [::])\n 1}',
+        expected: 1,
+        file: { path: '/tmp/laminar-write-file-empty.bin', bytes: [] },
+    },
     { name: 'random of one', source: '(random(1), random(1))', expected: [0, 0] },
 ];

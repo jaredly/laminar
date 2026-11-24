@@ -702,6 +702,34 @@ ${joinCode(
                 signature: goText`func hostWrite_${type(result)}(value string) ${type(result)}`,
                 body: ['fmt.Print(value)', go`return ${zero(result)}`],
             });
+        if (op === 'writeFile') {
+            hostImports.add('os');
+            if (!hostHelpers.has('hostWriteFile')) {
+                hostHelpers.set('hostWriteFile', 'hostWriteFile');
+                helpers.push({
+                    signature: goText`func hostWriteFile(path string, bytes ${type(parameters[1]!)}) ${type(result)}`,
+                    body: [
+                        'out := make([]byte, len(bytes))',
+                        {
+                            head: 'for i, b := range bytes',
+                            body: [
+                                {
+                                    head: 'if !(b >= 0 && b < 256 && b == math.Floor(b))',
+                                    body: ['panic("writeFile bytes must be integers in [0, 255]")'],
+                                },
+                                'out[i] = byte(b)',
+                            ],
+                        },
+                        {
+                            head: 'if err := os.WriteFile(path, out, 0o644); err != nil',
+                            body: ['panic(err)'],
+                        },
+                        go`return ${zero(result)}`,
+                    ],
+                });
+            }
+            return go`hostWriteFile(${args[0]}, ${args[1]})`;
+        }
         if (op === 'random') {
             hostImports.add('os').add('time');
             declareOnce('hostRandomState', 'var hostRandomState uint32');

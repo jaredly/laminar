@@ -47,6 +47,7 @@ const probes: Record<string, string> = {
     getInput: 'getInput("> ")',
     print: 'print("x")',
     write: 'write("x")',
+    writeFile: 'writeFile("/tmp/laminar-probe.bin", [:0:])',
     waitKey: 'waitKey(0)',
     random: 'random(2)',
 };

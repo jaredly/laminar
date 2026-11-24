@@ -1,0 +1,91 @@
+// laminar: dual
+// renders the Mandelbrot set to mandelbrot.bmp: 24 bits per pixel, uncompressed.
+// run it with `bun cli/laminar.ts run examples/mandelbrot.lm --target native`.
+// examples/mandelbrot-comparison.c writes the same file by hand, for comparing performance.
+fn width() { 150 }
+fn height() { 120 }
+// how many steps a point gets before we call it part of the set
+fn limit() { 60 }
+
+fn headerBytes() { 54 }
+
+// a bmp row is padded out to a multiple of four bytes
+fn rowBytes() { (width() * 3) + ((4 - ((width() * 3) % 4)) % 4) }
+
+fn pixelBytes() { rowBytes() * height() }
+
+// stores n as `count` little-endian bytes, starting at `at`
+fn putLE(at, n, count, ~bytes) {
+    if count == 0 then () else {
+        bytes[at] := (n % 256)
+        putLE(at + 1, (n - (n % 256)) / 256, count - 1, ~bytes)
+    }
+}
+
+fn header(~bytes) {
+    bytes[0] := 66
+    bytes[1] := 77
+    putLE(2, headerBytes() + pixelBytes(), 4, ~bytes)
+    putLE(10, headerBytes(), 4, ~bytes)
+    putLE(14, 40, 4, ~bytes)
+    putLE(18, width(), 4, ~bytes)
+    putLE(22, height(), 4, ~bytes)
+    putLE(26, 1, 2, ~bytes)
+    putLE(28, 24, 2, ~bytes)
+    putLE(34, pixelBytes(), 4, ~bytes)
+    putLE(38, 2835, 4, ~bytes)
+    putLE(42, 2835, 4, ~bytes)
+}
+
+// how many steps z -> z*z + c takes to leave the circle of radius 2
+fn escape(cr, ci, zr, zi, n) {
+    if n >= limit() || zr * zr + zi * zi > 4 then n else {
+        escape(cr, ci, zr * zr - zi * zi + cr, 2 * zr * zi + ci, n + 1)
+    }
+}
+
+// (blue, green, red): points that never escape are black
+fn shade(n) {
+    if n >= limit() then (0, 0, 0) else {
+        let t = n / limit()
+        let u = 1 - t
+        (round(8.5 * u * u * u * t * 255), round(15 * u * u * t * t * 255), round(9 * u * t * t * t * 255))
+    }
+}
+
+fn paint(x, y, ~bytes) {
+    let cr = x * (3 / width()) - 2.1
+    let ci = 1.2 - y * (2.4 / height())
+    let (blue, green, red) = shade(escape(cr, ci, 0, 0, 0))
+    // bmp rows run bottom to top
+    let at = headerBytes() + (height() - 1 - y) * rowBytes() + x * 3
+    bytes[at] := dup(blue)
+    bytes[at + 1] := dup(green)
+    bytes[at + 2] := dup(red)
+}
+
+fn paintRow(x, y, ~bytes) {
+    if x >= width() then () else {
+        paint(x, y, ~bytes)
+        paintRow(x + 1, y, ~bytes)
+    }
+}
+
+fn paintRows(y, ~bytes) {
+    if y >= height() then () else {
+        paintRow(0, y, ~bytes)
+        paintRows(y + 1, ~bytes)
+    }
+}
+
+fn render() {
+    let mut bytes = array(headerBytes() + pixelBytes(), 0)
+    header(~bytes)
+    paintRows(0, ~bytes)
+    writeFile("mandelbrot.bmp", bytes)
+    print("wrote mandelbrot.bmp, ${width()} x ${height()}")
+}
+
+{
+    render()
+}

@@ -30,6 +30,7 @@ const runtime = new Set([
     'laminarRound',
     'hostInput',
     'hostRandom',
+    'hostWriteFile',
     'hostRandomState',
     'hostKey',
     'hostKeys',

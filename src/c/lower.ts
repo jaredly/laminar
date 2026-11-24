@@ -913,6 +913,48 @@ export function lowerC(
                     ),
                 type(parameters[0]!),
             )}(${args[0]})`;
+        if (op === 'writeFile') {
+            const bytes = parameters[1]!;
+            return cc`${vectorHelper(
+                'writefile',
+                bytes,
+                type(result),
+                cText`${type(parameters[0]!)} path, ${type(bytes)} value`,
+                (body) => {
+                    body.push(
+                        'char name[4096];',
+                        {
+                            head: 'if (!path || path->length >= sizeof name)',
+                            body: ['abort();'],
+                        },
+                        'memcpy(name, path->bytes, path->length);',
+                        'name[path->length] = 0;',
+                        // Check and pack every byte first, so a bad value leaves the file alone.
+                        'unsigned char *packed = malloc(value.length ? value.length : 1);',
+                        { head: 'if (!packed)', body: ['abort();'] },
+                        {
+                            head: 'for (size_t i = 0; i < value.length; i++)',
+                            body: [
+                                'double byte = value.elements[i];',
+                                {
+                                    head: 'if (!(byte >= 0 && byte < 256 && byte == floor(byte)))',
+                                    body: ['abort();'],
+                                },
+                                'packed[i] = (unsigned char)byte;',
+                            ],
+                        },
+                        'FILE *file = fopen(name, "wb");',
+                        { head: 'if (!file)', body: ['abort();'] },
+                        'size_t written = fwrite(packed, 1, value.length, file);',
+                        { head: 'if (fclose(file) != 0 || written != value.length)', body: ['abort();'] },
+                        'free(packed);',
+                        cc`${use('string_drop')}(path);`,
+                    );
+                    drop({ expression: 'value', layout: bytes }, body);
+                    body.push(cc`return ${zero(result)};`);
+                },
+            )}(${args[0]}, ${args[1]})`;
+        }
         if (op === 'random')
             return cc`${unionHelper(
                 'host_random',

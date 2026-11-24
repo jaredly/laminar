@@ -14,7 +14,7 @@ import type {
 } from './typed-ir.ts';
 import { verifyTypedProgram } from './verify-ir.ts';
 import createPrompt from 'prompt-sync';
-import { readSync } from 'node:fs';
+import { readSync, writeFileSync } from 'node:fs';
 import { requireImport } from './runtime-imports.ts';
 
 const EMPTY = Symbol('empty-place');
@@ -482,6 +482,16 @@ export function executeTypedProgram(
                     (options.stdout ?? ((text) => process.stdout.write(text)))(
                         data(args[0]) as string,
                     );
+                    return null;
+                }
+                case 'writeFile': {
+                    const bytes = vector(owned(data(args[1]))).items.map((item) => {
+                        const b = item;
+                        return typeof b === 'number' && Number.isInteger(b) && b >= 0 && b < 256
+                            ? b
+                            : error('writeFile bytes must be integers in [0, 255]');
+                    });
+                    writeFileSync(data(args[0]) as string, Uint8Array.from(bytes));
                     return null;
                 }
                 case 'waitKey':

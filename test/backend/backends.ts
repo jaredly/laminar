@@ -1,5 +1,5 @@
 import { spawnSync } from 'node:child_process';
-import { rm } from 'node:fs/promises';
+import { readFile, rm } from 'node:fs/promises';
 import { compileSource } from '../../src/compiler.ts';
 import { detectTarget } from '../../src/backend/host.ts';
 import { goTarget, type TargetConfig } from '../../src/backend/target.ts';
@@ -66,13 +66,33 @@ const targetFor = (name: 'native' | 'go') => {
     return target;
 };
 
-export type Expectation = { expected: unknown; stdin?: string; output?: string };
+/** A file the program must leave behind: removed before the run, compared byte for byte after. */
+export type ExpectedFile = { path: string; bytes: number[] };
+export type Expectation = {
+    expected: unknown;
+    stdin?: string;
+    output?: string;
+    file?: ExpectedFile;
+};
+
+async function expectFile(file: ExpectedFile | undefined, name: string): Promise<void> {
+    if (!file) return;
+    const actual = [...(await readFile(file.path))];
+    if (JSON.stringify(actual) !== JSON.stringify(file.bytes))
+        throw Error(`${name} wrote ${JSON.stringify(actual)}, expected ${JSON.stringify(file.bytes)}`);
+}
 
 /**
  * Run one program on a backend and check its result and host output. Native builds
  * twice: at -O0 under ASan/UBSan, and at -O2.
  */
 export async function expectRun(name: BackendName, source: string, e: Expectation): Promise<void> {
+    await expectRunOutput(name, source, e);
+    await expectFile(e.file, name);
+}
+
+async function expectRunOutput(name: BackendName, source: string, e: Expectation): Promise<void> {
+    if (e.file) await rm(e.file.path, { force: true });
     const output = e.output ?? '';
     if (name === 'reference') {
         const run = referenceRun(checkSource(source), e.stdin);

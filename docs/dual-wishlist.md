@@ -70,3 +70,47 @@ Still wanted:
 - **Scripted keys in `ir->` fixtures.** `setInput` and `logs()` cover line input; there is no
   equivalent for `waitKey`, so `test/examples.test.ts` drives the reference evaluator directly.
 
+## 6. What writing a bmp needed (mandelbrot)
+
+`examples/mandelbrot.lm` added one runtime import:
+
+- `writeFile(path, bytes)` consumes a path and a `Vector` of numbers and writes them as bytes,
+  replacing the file. Each element must be an integer in `[0, 255]`, and a failed write traps. Native
+  and Go write identical files; the shared samples check the bytes on every backend.
+
+Still wanted:
+
+- **`%` binds looser than `-`.** `n - n % 256` parses as `(n - n) % 256`, and `7 % 4 * 2` is
+  `7 % (4 * 2)`. Everything touching `%` in the example is parenthesised; the first version indexed
+  out of bounds without saying why. `%` should sit with `*` and `/`.
+- **Integer division and bit operations.** Splitting a number into little-endian bytes is
+  `(n - (n % 256)) / 256`; `floor`, `div`, `>>` and `&` would say what is meant.
+- **Building a byte vector.** There is no source-level append, so the example sizes the vector with
+  `array(n, 0)` and fills it by index. Writing a computed value into an element works, but a plain
+  variable needs `dup(...)` first.
+- **A byte type.** Bytes are doubles in `[0, 255]`, checked at the host edge, so a 21.6 MB image is
+  a 173 MB vector. After the backend fixes below, the stores into that vector are what is left:
+  over half of the Go profile at 3000 x 2400, and most of the gap to hand-written C.
+- **`readFile`.** Nothing reads a file back, so tests check the bytes from outside the program.
+- **Slow reference evaluator.** The full 150 x 120 image exceeds the reference step limit, so the
+  test shrinks it with a source substitution.
+
+### Performance, measured
+
+`examples/mandelbrot-comparison.c` is a hand-written C version that writes the same bytes
+(checked at 150 x 120, 1500 x 1200 and 3000 x 2400). CPU seconds, best of 7, `clang -O2`:
+
+| size | hand-written C | Laminar C | Laminar Go |
+|---|---|---|---|
+| 1500 x 1200 | 0.05 | 0.07 | 0.14 |
+| 3000 x 2400 | 0.21 | 0.31 | 0.31 |
+
+Fixed along the way: C `writeFile` called `fputc` per byte (now one `fwrite`: 0.15s to 0.07s at
+1500 x 1200); Go made a real call for every self tail call (now a `for` loop, `src/go/tail-calls.ts`:
+0.32s to 0.14s); and Go's `math.Mod` is a software loop, which `rowBytes()` paid for on every pixel
+(whole numbers now take an integer path: 0.57s to 0.31s at 3000 x 2400).
+
+Measured and left alone: bounds checks on vector access (about 3% of the Go profile) and filling
+the vector in `array` (about 6%). Compute is at parity with hand-written C; what remains is the
+8-byte element and, in C, the fixed cost of an extra copy into a byte buffer in `writeFile`.
+
