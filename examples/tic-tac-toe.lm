@@ -1,0 +1,132 @@
+// laminar: dual
+// two players take turns at the keyboard. cells hold 0 (empty), 1 (X) or 4 (O),
+// so a line adds up to 3 when X owns it and 12 when O does.
+fn symbol(cell) {
+    match cell {
+        1 -> "X"
+        4 -> "O"
+        _ -> "."
+    }
+}
+
+fn at(i, ~board) {
+    dup(~board[i])
+}
+
+fn row(a, ~board) {
+    "${symbol(at(a, ~board))} ${symbol(at(a + 1, ~board))} ${symbol(at(a + 2, ~board))}"
+}
+
+fn render(~board) {
+    print(row(0, ~board))
+    print(row(3, ~board))
+    print(row(6, ~board))
+}
+
+fn lineOwner(a, b, c, ~board) {
+    match (at(a, ~board) + at(b, ~board) + at(c, ~board)) {
+        3 -> 1
+        12 -> 4
+        _ -> 0
+    }
+}
+
+fn winnerIn(lines, ~board) {
+    match lines {
+        [] -> 0
+        [(a, b, c), ...rest] -> {
+            match lineOwner(a, b, c, ~board) {
+                0 -> winnerIn(rest, ~board)
+                owner -> owner
+            }
+        }
+    }
+}
+
+fn winner(~board) {
+    winnerIn([(0, 1, 2), (3, 4, 5), (6, 7, 8), (0, 3, 6), (1, 4, 7), (2, 5, 8), (0, 4, 8), (2, 4, 6)], ~board)
+}
+
+// the square a player typed, or 9 for something that isn't one
+fn parseSquare(input) {
+    match input {
+        "1" -> 0
+        "2" -> 1
+        "3" -> 2
+        "4" -> 3
+        "5" -> 4
+        "6" -> 5
+        "7" -> 6
+        "8" -> 7
+        "9" -> 8
+        _ -> 9
+    }
+}
+
+fn other(player) {
+    match player {
+        1 -> 4
+        _ -> 1
+    }
+}
+
+// a plain value can't be stored in the board directly, so rebuild it as a fresh one
+fn claim(player) {
+    match player {
+        1 -> 1
+        _ -> 4
+    }
+}
+
+// asks until the player names an empty square, then claims it
+fn takeTurn(player, ~board) {
+    let input = getInput("${symbol(player)}, pick a square (1-9): ")
+    let square = parseSquare(input)
+    match (square == 9) {
+        true -> {
+            print("Please pick a number from 1 to 9.")
+            takeTurn(player, ~board)
+        }
+        false -> {
+            match (at(square, ~board) == 0) {
+                true -> {
+                    let mut mark = claim(player)
+                    board[square] := mark
+                    ()
+                }
+                false -> {
+                    print("That square is taken.")
+                    takeTurn(player, ~board)
+                }
+            }
+        }
+    }
+}
+
+// plays until someone wins (their symbol) or the board fills up ("draw")
+fn play(player, turns, ~board) {
+    render(~board)
+    match winner(~board) {
+        0 -> {
+            match (turns == 9) {
+                true -> "draw"
+                false -> {
+                    takeTurn(player, ~board)
+                    play(other(player), turns + 1, ~board)
+                }
+            }
+        }
+        owner -> symbol(owner)
+    }
+}
+
+fn game() {
+    let mut board = array(9, 0)
+    play(1, 0, ~board)
+}
+
+{
+    game()
+}
+
+// ir-> block{let _ = setInput(["1", "x", "1", "4", "2", "5", "3"])}{(game(), logs())}{}
