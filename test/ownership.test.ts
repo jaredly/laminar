@@ -28,11 +28,11 @@ it('makes a result shared when it is a plain read or holds one', () => {
 it('makes a fresh result owned, and a call yield its callee result mode', () => {
     expect(modes('fn f(x) {x + 1}', 'f')).toBe('(shared) -> mut');
     expect(modes('fn f(x) {x}\nfn g(y) {f(y)}', 'g')).toBe('(shared) -> shared');
-    expect(modes('fn f(mut x) {x}\nfn g(y) {f(dup(~y))}', 'g')).toBe('(shared) -> mut');
+    expect(modes('fn f(mut x) {x}\nfn g(y) {f(dup(y))}', 'g')).toBe('(shared) -> mut');
 });
 
 it('leaves an explicit dup owned', () => {
-    expect(modes('fn f(x) {!x}', 'f')).toBe('(shared) -> mut');
+    expect(modes('fn f(x) {dup(x)}', 'f')).toBe('(shared) -> mut');
 });
 
 it('keeps every position owned in pure mode', () => {
@@ -52,7 +52,7 @@ const errorCode = (source: string): string => {
 it('needs a dup to pass a plain value to a mut parameter', () => {
     const own = 'fn own(mut x) {x}\n';
     expect(errorCode(`${own}{let p = (1, 2)\n own(p)}`)).toBe('shared-into-mut');
-    expect(errorCode(`${own}{let p = (1, 2)\n own(dup(~p))}`)).toBe('ok');
+    expect(errorCode(`${own}{let p = (1, 2)\n own(dup(p))}`)).toBe('ok');
     expect(errorCode(`${own}{let mut m = (1, 2)\n own(m)}`)).toBe('ok');
     expect(errorCode(`${own}own((1, 2))`)).toBe('ok');
 });
@@ -65,7 +65,7 @@ it('lets owned and shared values into plain parameters', () => {
 
 it('needs a dup to initialize a mut binding from a plain value', () => {
     expect(errorCode('{let p = (1, 2)\n let mut m = p\n m}')).toBe('shared-into-mut');
-    expect(errorCode('{let p = (1, 2)\n let mut m = dup(~p)\n m}')).toBe('ok');
+    expect(errorCode('{let p = (1, 2)\n let mut m = dup(p)\n m}')).toBe('ok');
     expect(errorCode('{let mut a = (1, 2)\n let mut m = a\n m}')).toBe('ok');
     expect(errorCode('{let mut m = (1, 2)\n m}')).toBe('ok');
 });
@@ -86,4 +86,22 @@ it('prints shared positions with & in function types', () => {
     expect(() => checkSource('fn f(x) {x + 1}\n{f(f)}', { mode: 'dual' })).toThrow(
         '(&Number) => Number',
     );
+});
+
+it('copies a plain value into an owned one with dup(value)', () => {
+    expect(errorCode('{let p = (1, 2)\n let mut m = dup(p)\n m}')).toBe('ok');
+    expect(errorCode('{let p = 1\n let mut v = [:3, 4:]\n v[0] := dup(p)\n v}')).toBe('ok');
+    expect(errorCode('{let p = 1\n let mut v = [:3, 4:]\n v[0] := p\n v}')).toBe('shared-into-mut');
+    expect(errorCode('{let mut m = dup((1, 2))\n m}')).toBe('ok');
+    expect(errorCode('fn f(x) {let mut m = dup(x)\n m}')).toBe('ok');
+    expect(errorCode('{let mut m = (1, 2)\n let mut c = dup(~m)\n (m, c)}')).toBe('ok');
+});
+
+it('rejects dup(value) of a mut binding, which would move it', () => {
+    expect(errorCode('{let mut m = (1, 2)\n let mut c = dup(m)\n c}')).toBe('dup-of-owned');
+});
+
+it('does not let source borrow a plain binding, even to dup it', () => {
+    expect(errorCode('{let p = (1, 2)\n let mut m = dup(~p)\n m}')).toBe('plain-lens');
+    expect(errorCode('{let p = (1, 2)\n let mut m = !p\n m}')).toBe('plain-lens');
 });

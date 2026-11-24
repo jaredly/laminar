@@ -16,7 +16,7 @@ fn bump(~xs) {
 }
 {
     let xs = [1, 2, 3]
-    let mut copy = dup(~xs)
+    let mut copy = dup(xs)
     bump(~copy)
     (sum(xs), sum(copy), sum(xs))
 }

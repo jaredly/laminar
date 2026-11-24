@@ -43,7 +43,7 @@ it('flags the read of a plain binding as a shared read', () => {
 });
 
 it('does not flag an explicit dup, whose result is owned', () => {
-    const c = compile('{let p = (1, 2)\n let mut m = dup(~p)\n m}');
+    const c = compile('{let p = (1, 2)\n let mut m = dup(p)\n m}');
     verifyConcreteProgram(clone(c));
     const dups = sharedOutputs(c).filter((n) => n.op === 'invoke' && n.share !== true);
     expect(dups).toEqual([]);
@@ -81,7 +81,7 @@ it('rejects assigning a shared value into mut storage in the checker', () => {
         return 'ok';
     };
     expect(code('{let p = 1\n let mut x = 0\n x := p\n x}')).toBe('shared-into-mut');
-    expect(code('{let p = (1, 2)\n let mut x = (0, 0)\n x := dup(~p)\n x}')).toBe('ok');
+    expect(code('{let p = (1, 2)\n let mut x = (0, 0)\n x := dup(p)\n x}')).toBe('ok');
 });
 
 // Building needs the toolchains; opt in with LAMINAR_EXEC=1.
@@ -122,7 +122,7 @@ for (const name of ['native', 'go'] as const)
             );
             expect(out.trim()).toBe('12');
             const copy = execute(
-                `${tree}{let t = Node(Leaf(1), Leaf(2))\n let mut m = dup(~t)\n (sum(m), sum(t))}`,
+                `${tree}{let t = Node(Leaf(1), Leaf(2))\n let mut m = dup(t)\n (sum(m), sum(t))}`,
                 name,
             );
             expect(copy.trim()).toBe('[3,3]');
@@ -162,7 +162,7 @@ for (const name of ['native', 'go'] as const)
         `updates an owned copy in place without touching the shared original on ${name}`,
         () => {
             const out = execute(
-                `${bump}{let p = [1, 2, 3]\n let mut m = dup(~p)\n bump(~m)\n (p, m)}`,
+                `${bump}{let p = [1, 2, 3]\n let mut m = dup(p)\n bump(~m)\n (p, m)}`,
                 name,
             );
             expect(out.trim()).toBe('[[1,2,3],[2,3,4]]');

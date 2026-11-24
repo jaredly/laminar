@@ -62,25 +62,17 @@ export function desugarPlain(source: Linear): PlainResult {
         share: true,
         loc,
     });
-    const isDup = (n: { type: string; fn?: Linear; args?: Term[] }, scope: Scope) =>
-        n.type === 'apply' &&
-        n.fn?.type === 'id' &&
-        n.fn.text === 'dup' &&
-        !scope.has('dup') &&
-        n.args?.length === 1 &&
-        n.args[0].type === 'lens';
+    const term = (n: Term, scope: Scope): Term =>
+        n.type === 'lens' ? { ...n, lens: lens(n.lens, scope) } : linear(n, scope);
 
-    const term = (n: Term, scope: Scope, dup = false): Term =>
-        n.type === 'lens' ? { ...n, lens: lens(n.lens, scope, dup) } : linear(n, scope);
-
-    /** A borrowed place. Only the explicit `dup(~x)` may borrow a plain binding. */
-    const place = (n: Lens, scope: Scope, dup: boolean): void => {
+    /** A borrowed place: only a `mut` binding can be borrowed; copy a plain one with `dup(x)`. */
+    const place = (n: Lens, scope: Scope): void => {
         const root = rootOf(n);
-        if (root && scope.get(root.text) === 'plain' && !dup)
+        if (root && scope.get(root.text) === 'plain')
             throw new TypeDiagnostic(
                 'plain-lens',
                 root.loc,
-                `${root.text} is not mut, so it cannot be borrowed or assigned; declare it \`mut\``,
+                `${root.text} is not mut, so it cannot be borrowed or assigned; declare it \`mut\`, or copy it with \`dup(${root.text})\``,
             );
     };
 
@@ -132,8 +124,8 @@ export function desugarPlain(source: Linear): PlainResult {
                     fields: n.fields.map((f) => ({ ...f, value: linear(f.value, scope) })),
                 };
             case 'assign':
-                place(n.lens, scope, false);
-                return { ...n, lens: lens(n.lens, scope, false), value: linear(n.value, scope) };
+                place(n.lens, scope);
+                return { ...n, lens: lens(n.lens, scope), value: linear(n.value, scope) };
             case 'apply':
                 return application(n, scope);
             case 'fn':
@@ -157,11 +149,52 @@ export function desugarPlain(source: Linear): PlainResult {
         }
     };
 
+    /**
+     * `dup(e)` on a value: an owned deep copy of a shared one. Lowered to the same unshared copy a
+     * plain read makes internally (a plain read is the `share` flavour of it); source cannot borrow
+     * a plain binding, so this is the only way to write it. A non-binding expression is bound to a
+     * plain temporary first. A `mut` binding would be moved and then copied, so it must say
+     * `dup(~x)`.
+     */
+    const dupValue = (n: Linear & { type: 'apply' }, scope: Scope): Linear => {
+        const arg = n.args[0] as Linear;
+        const loc = n.loc;
+        const borrow = (name: string, at: number): Linear => ({
+            ...n,
+            args: [{ type: 'lens', lens: { type: 'id', text: name, loc: at } }],
+        });
+        if (arg.type === 'id') {
+            if (scope.get(arg.text) === 'mut')
+                throw new TypeDiagnostic(
+                    'dup-of-owned',
+                    arg.loc,
+                    `${arg.text} is \`mut\`, so \`dup(${arg.text})\` would move it; write \`dup(~${arg.text})\` to copy it`,
+                );
+            if (scope.get(arg.text) === 'plain') return borrow(arg.text, arg.loc);
+        }
+        const temporary = `$dup${fresh++}`;
+        return {
+            type: 'let',
+            pat: { type: 'id', text: temporary, loc },
+            value: linear(arg, scope),
+            body: borrow(temporary, loc),
+            loc,
+        };
+    };
+
     const application = <T extends Linear | Lens>(n: T & { type: 'apply' }, scope: Scope): T => {
-        const dup = isDup(n, scope);
+        if (
+            n.type === 'apply' &&
+            n.fn.type === 'id' &&
+            n.fn.text === 'dup' &&
+            !scope.has('dup') &&
+            n.args.length === 1 &&
+            n.args[0].type !== 'lens'
+        )
+            return dupValue(n as Linear & { type: 'apply' }, scope) as T;
         // A callee is consumed, not copied: closures are affine and cannot be duplicated.
         const fn = n.fn.type === 'id' ? n.fn : linear(n.fn, scope);
-        return { ...n, fn, args: n.args.map((a) => term(a, scope, dup)) };
+        return { ...n, fn, args: n.args.map((a) => term(a, scope)) };
     };
 
     const closure = (n: Linear & { type: 'fn' }, scope: Scope): Linear => {
@@ -203,19 +236,19 @@ export function desugarPlain(source: Linear): PlainResult {
         return result;
     };
 
-    const lens = (n: Lens, scope: Scope, dup = false): Lens => {
+    const lens = (n: Lens, scope: Scope): Lens => {
         switch (n.type) {
             case 'id':
             case 'field':
-                place(n, scope, dup);
+                place(n, scope);
                 return n;
             case 'index':
-                place(n.target, scope, dup);
+                place(n.target, scope);
                 return { ...n, index: term(n.index, scope) };
             case 'tuple':
-                return { ...n, items: n.items.map((v) => lens(v, scope, dup)) };
+                return { ...n, items: n.items.map((v) => lens(v, scope)) };
             case 'constructor':
-                return { ...n, args: n.args.map((v) => lens(v, scope, dup)) };
+                return { ...n, args: n.args.map((v) => lens(v, scope)) };
             case 'apply':
                 return application(n, scope);
             case 'aslens':

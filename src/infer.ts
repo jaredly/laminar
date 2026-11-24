@@ -812,7 +812,7 @@ export class Inferencer {
                 this.requireOwned(
                     n.value,
                     n.value.loc,
-                    'A plain (shared) value cannot be assigned into `mut` storage; `dup` it first',
+                    'A plain (shared) value cannot be assigned into `mut` storage; `dup(x)` it first',
                 );
                 if (
                     n.lens.type !== 'id' &&
@@ -1063,7 +1063,7 @@ export class Inferencer {
             this.requireOwned(
                 n.value,
                 n.value.loc,
-                'A plain (shared) value cannot initialize a `mut` binding; `dup` it first',
+                'A plain (shared) value cannot initialize a `mut` binding; `dup(x)` it first',
             );
         this.pattern(p, type, sub);
         // First-class functions are affine monotypes; only top-level definitions are reusable schemes.
@@ -1360,7 +1360,7 @@ export class Inferencer {
                 this.requireOwned(
                     a,
                     a.loc,
-                    'A plain (shared) value cannot go where a `mut` one is expected; `dup` it first',
+                    'A plain (shared) value cannot go where a `mut` one is expected; `dup(x)` it first',
                 );
         });
         if (!lensResult) {

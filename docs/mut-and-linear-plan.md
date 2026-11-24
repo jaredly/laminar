@@ -138,8 +138,8 @@ the pure language.
   binds.
 - A read of a plain binding or a field of one becomes `dup(~x)`. So for now a shared value is a
   deep copy that cannot be told apart from sharing. Phase 5 replaces the copy with real sharing.
-- `~x`, `x := ...` and `match ~x` on a plain binding are a `plain-lens` error. The explicit
-  `dup(~x)` / `!x` is allowed.
+- `~x`, `x := ...` and `match ~x` on a plain binding are a `plain-lens` error, including
+  `dup(~x)` and `!x`. A plain value is copied with `dup(x)`, which is an owned deep copy.
 - Reading a `mut` binding consumes it for every type, so `:=` is unchanged.
 - `mut` into plain is a move, a consuming freeze: `let p = m`, and `let (a, b) = m` binds plain
   parts. The value must not be linear, which the existing `linear-plain` check already enforces

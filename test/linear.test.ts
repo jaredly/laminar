@@ -35,7 +35,7 @@ it('rejects dup of a linear value', () => {
 });
 
 it('still allows dup of values that are not linear', () => {
-    expect(code(`${fd}{let t = (1, 2)\n !t}`)).toBe('ok');
+    expect(code(`${fd}{let t = (1, 2)\n dup(t)}`)).toBe('ok');
 });
 
 it('requires a union that holds a linear value to be linear too', () => {

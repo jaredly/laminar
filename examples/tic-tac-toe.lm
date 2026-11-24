@@ -70,14 +70,6 @@ fn other(player) {
     }
 }
 
-// a plain value can't be stored in the board directly, so rebuild it as a fresh one
-fn claim(player) {
-    match player {
-        1 -> 1
-        _ -> 4
-    }
-}
-
 // asks until the player names an empty square, then claims it
 fn takeTurn(player, ~board) {
     let input = getInput("${symbol(player)}, pick a square (1-9): ")
@@ -90,8 +82,7 @@ fn takeTurn(player, ~board) {
         false -> {
             match (at(square, ~board) == 0) {
                 true -> {
-                    let mut mark = claim(player)
-                    board[square] := mark
+                    board[square] := dup(player)
                     ()
                 }
                 false -> {

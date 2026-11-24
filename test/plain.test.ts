@@ -41,7 +41,7 @@ it('takes parameters plain unless they are mut or lenses', () => {
 });
 
 it('allows an explicit dup of a plain binding', () => {
-    expect(run('{let p = (1, 2)\n (!p, p)}')).toEqual([
+    expect(run('{let p = (1, 2)\n (dup(p), p)}')).toEqual([
         [1, 2],
         [1, 2],
     ]);
@@ -58,7 +58,7 @@ it('freezes a mut binding into a plain one by moving it', () => {
     expect(run('{let mut m = (1, 2)\n match m {\n mut (a, b) -> (b, a)\n }}')).toEqual([2, 1]);
     expect(code('{let mut m = (1, 2)\n let mut (a, b) = m\n (a, a)}')).toBe('use-after-move');
     // Going the other way takes a real copy.
-    expect(run('{let p = (1, 2)\n let mut m = dup(~p)\n (m, p)}')).toEqual([
+    expect(run('{let p = (1, 2)\n let mut m = dup(p)\n (m, p)}')).toEqual([
         [1, 2],
         [1, 2],
     ]);

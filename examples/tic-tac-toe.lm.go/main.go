@@ -46,9 +46,107 @@ type Backing_Vector_Number_1264850431 struct {
 	read0 Vector_Number
 }
 
+func symbol(cell float64) string {
+	var v5 string
+	if cell == 1.0 {
+		v5 = "X"
+	} else if cell == 4.0 {
+		v5 = "O"
+	} else {
+		v5 = "."
+	}
+	return v5
+}
+
+func render(board Lens_Vector_Number) Unit {
+	v7 := row(0.0, board)
+	hostPrint_Unit(v7)
+	v20 := row(3.0, board)
+	hostPrint_Unit(v20)
+	v33 := row(6.0, board)
+	hostPrint_Unit(v33)
+	return Unit{}
+}
+
+func takeTurn(player float64, board Lens_Vector_Number) Unit {
+	v7 := symbol(player)
+	input := hostInput(v7 + ", pick a square (1-9): ")
+	square := parseSquare(input)
+	if square == 9.0 {
+		hostPrint_Unit("Please pick a number from 1 to 9.")
+		takeTurn(player, board)
+	} else {
+		v60 := at(square, board)
+		if v60 == 0.0 {
+			v78 := vector_at_Vector_Number(*board.read, square)
+			*v78 = player
+		} else {
+			hostPrint_Unit("That square is taken.")
+			takeTurn(player, board)
+		}
+	}
+	return Unit{}
+}
+
 func at(i float64, board Lens_Vector_Number) float64 {
 	v9 := vector_at_Vector_Number(*board.read, i)
 	return *v9
+}
+
+func other(player float64) float64 {
+	var v5 float64
+	if player == 1.0 {
+		v5 = 4.0
+	} else {
+		v5 = 1.0
+	}
+	return v5
+}
+
+func game() string {
+	board := vector_array_Vector_Number(9.0, 0.0)
+	var back0 Backing_Vector_Number_1264850431
+	back0.read0 = board
+	return play(1.0, 0.0, Lens_Vector_Number{read: &back0.read0})
+}
+
+func row(a float64, board Lens_Vector_Number) string {
+	v9 := at(a, board)
+	v12 := symbol(v9)
+	v28 := at(a + 1.0, board)
+	v32 := symbol(v28)
+	v48 := at(a + 2.0, board)
+	v52 := symbol(v48)
+	return v12 + " " + v32 + " " + v52
+}
+
+func winner(board Lens_Vector_Number) float64 {
+	v58 := List_Tuple_Number_Number_Number{tag: List_Tuple_Number_Number_Number_nil, v0: Unit{}}
+	v70 := new(Tuple_Tuple_Number_Number_Number_List_Tuple_Number_Number_Number)
+	*v70 = Tuple_Tuple_Number_Number_Number_List_Tuple_Number_Number_Number{item0: Tuple_Number_Number_Number{item0: 2.0, item1: 4.0, item2: 6.0}, item1: v58}
+	v59 := List_Tuple_Number_Number_Number{tag: List_Tuple_Number_Number_Number_cons, v1: v70}
+	v71 := new(Tuple_Tuple_Number_Number_Number_List_Tuple_Number_Number_Number)
+	*v71 = Tuple_Tuple_Number_Number_Number_List_Tuple_Number_Number_Number{item0: Tuple_Number_Number_Number{item0: 0.0, item1: 4.0, item2: 8.0}, item1: v59}
+	v60 := List_Tuple_Number_Number_Number{tag: List_Tuple_Number_Number_Number_cons, v1: v71}
+	v72 := new(Tuple_Tuple_Number_Number_Number_List_Tuple_Number_Number_Number)
+	*v72 = Tuple_Tuple_Number_Number_Number_List_Tuple_Number_Number_Number{item0: Tuple_Number_Number_Number{item0: 2.0, item1: 5.0, item2: 8.0}, item1: v60}
+	v61 := List_Tuple_Number_Number_Number{tag: List_Tuple_Number_Number_Number_cons, v1: v72}
+	v73 := new(Tuple_Tuple_Number_Number_Number_List_Tuple_Number_Number_Number)
+	*v73 = Tuple_Tuple_Number_Number_Number_List_Tuple_Number_Number_Number{item0: Tuple_Number_Number_Number{item0: 1.0, item1: 4.0, item2: 7.0}, item1: v61}
+	v62 := List_Tuple_Number_Number_Number{tag: List_Tuple_Number_Number_Number_cons, v1: v73}
+	v74 := new(Tuple_Tuple_Number_Number_Number_List_Tuple_Number_Number_Number)
+	*v74 = Tuple_Tuple_Number_Number_Number_List_Tuple_Number_Number_Number{item0: Tuple_Number_Number_Number{item0: 0.0, item1: 3.0, item2: 6.0}, item1: v62}
+	v63 := List_Tuple_Number_Number_Number{tag: List_Tuple_Number_Number_Number_cons, v1: v74}
+	v75 := new(Tuple_Tuple_Number_Number_Number_List_Tuple_Number_Number_Number)
+	*v75 = Tuple_Tuple_Number_Number_Number_List_Tuple_Number_Number_Number{item0: Tuple_Number_Number_Number{item0: 6.0, item1: 7.0, item2: 8.0}, item1: v63}
+	v64 := List_Tuple_Number_Number_Number{tag: List_Tuple_Number_Number_Number_cons, v1: v75}
+	v76 := new(Tuple_Tuple_Number_Number_Number_List_Tuple_Number_Number_Number)
+	*v76 = Tuple_Tuple_Number_Number_Number_List_Tuple_Number_Number_Number{item0: Tuple_Number_Number_Number{item0: 3.0, item1: 4.0, item2: 5.0}, item1: v64}
+	v65 := List_Tuple_Number_Number_Number{tag: List_Tuple_Number_Number_Number_cons, v1: v76}
+	v77 := new(Tuple_Tuple_Number_Number_Number_List_Tuple_Number_Number_Number)
+	*v77 = Tuple_Tuple_Number_Number_Number_List_Tuple_Number_Number_Number{item0: Tuple_Number_Number_Number{item0: 0.0, item1: 1.0, item2: 2.0}, item1: v65}
+	v66 := List_Tuple_Number_Number_Number{tag: List_Tuple_Number_Number_Number_cons, v1: v77}
+	return winnerIn(v66, board)
 }
 
 func parseSquare(input string) float64 {
@@ -76,59 +174,6 @@ func parseSquare(input string) float64 {
 		v5 = 9.0
 	}
 	return v5
-}
-
-func symbol(cell float64) string {
-	var v5 string
-	if cell == 1.0 {
-		v5 = "X"
-	} else if cell == 4.0 {
-		v5 = "O"
-	} else {
-		v5 = "."
-	}
-	return v5
-}
-
-func claim(player float64) float64 {
-	var v5 float64
-	if player == 1.0 {
-		v5 = 1.0
-	} else {
-		v5 = 4.0
-	}
-	return v5
-}
-
-func takeTurn(player float64, board Lens_Vector_Number) Unit {
-	v7 := symbol(player)
-	input := hostInput(v7 + ", pick a square (1-9): ")
-	square := parseSquare(input)
-	if square == 9.0 {
-		hostPrint_Unit("Please pick a number from 1 to 9.")
-		takeTurn(player, board)
-	} else {
-		v60 := at(square, board)
-		if v60 == 0.0 {
-			mark := claim(player)
-			v86 := vector_at_Vector_Number(*board.read, square)
-			*v86 = mark
-		} else {
-			hostPrint_Unit("That square is taken.")
-			takeTurn(player, board)
-		}
-	}
-	return Unit{}
-}
-
-func render(board Lens_Vector_Number) Unit {
-	v7 := row(0.0, board)
-	hostPrint_Unit(v7)
-	v20 := row(3.0, board)
-	hostPrint_Unit(v20)
-	v33 := row(6.0, board)
-	hostPrint_Unit(v33)
-	return Unit{}
 }
 
 func play(player float64, turns float64, board Lens_Vector_Number) string {
@@ -167,52 +212,6 @@ func lineOwner(a float64, b float64, c float64, board Lens_Vector_Number) float6
 	return v39
 }
 
-func winner(board Lens_Vector_Number) float64 {
-	v58 := List_Tuple_Number_Number_Number{tag: List_Tuple_Number_Number_Number_nil, v0: Unit{}}
-	v70 := new(Tuple_Tuple_Number_Number_Number_List_Tuple_Number_Number_Number)
-	*v70 = Tuple_Tuple_Number_Number_Number_List_Tuple_Number_Number_Number{item0: Tuple_Number_Number_Number{item0: 2.0, item1: 4.0, item2: 6.0}, item1: v58}
-	v59 := List_Tuple_Number_Number_Number{tag: List_Tuple_Number_Number_Number_cons, v1: v70}
-	v71 := new(Tuple_Tuple_Number_Number_Number_List_Tuple_Number_Number_Number)
-	*v71 = Tuple_Tuple_Number_Number_Number_List_Tuple_Number_Number_Number{item0: Tuple_Number_Number_Number{item0: 0.0, item1: 4.0, item2: 8.0}, item1: v59}
-	v60 := List_Tuple_Number_Number_Number{tag: List_Tuple_Number_Number_Number_cons, v1: v71}
-	v72 := new(Tuple_Tuple_Number_Number_Number_List_Tuple_Number_Number_Number)
-	*v72 = Tuple_Tuple_Number_Number_Number_List_Tuple_Number_Number_Number{item0: Tuple_Number_Number_Number{item0: 2.0, item1: 5.0, item2: 8.0}, item1: v60}
-	v61 := List_Tuple_Number_Number_Number{tag: List_Tuple_Number_Number_Number_cons, v1: v72}
-	v73 := new(Tuple_Tuple_Number_Number_Number_List_Tuple_Number_Number_Number)
-	*v73 = Tuple_Tuple_Number_Number_Number_List_Tuple_Number_Number_Number{item0: Tuple_Number_Number_Number{item0: 1.0, item1: 4.0, item2: 7.0}, item1: v61}
-	v62 := List_Tuple_Number_Number_Number{tag: List_Tuple_Number_Number_Number_cons, v1: v73}
-	v74 := new(Tuple_Tuple_Number_Number_Number_List_Tuple_Number_Number_Number)
-	*v74 = Tuple_Tuple_Number_Number_Number_List_Tuple_Number_Number_Number{item0: Tuple_Number_Number_Number{item0: 0.0, item1: 3.0, item2: 6.0}, item1: v62}
-	v63 := List_Tuple_Number_Number_Number{tag: List_Tuple_Number_Number_Number_cons, v1: v74}
-	v75 := new(Tuple_Tuple_Number_Number_Number_List_Tuple_Number_Number_Number)
-	*v75 = Tuple_Tuple_Number_Number_Number_List_Tuple_Number_Number_Number{item0: Tuple_Number_Number_Number{item0: 6.0, item1: 7.0, item2: 8.0}, item1: v63}
-	v64 := List_Tuple_Number_Number_Number{tag: List_Tuple_Number_Number_Number_cons, v1: v75}
-	v76 := new(Tuple_Tuple_Number_Number_Number_List_Tuple_Number_Number_Number)
-	*v76 = Tuple_Tuple_Number_Number_Number_List_Tuple_Number_Number_Number{item0: Tuple_Number_Number_Number{item0: 3.0, item1: 4.0, item2: 5.0}, item1: v64}
-	v65 := List_Tuple_Number_Number_Number{tag: List_Tuple_Number_Number_Number_cons, v1: v76}
-	v77 := new(Tuple_Tuple_Number_Number_Number_List_Tuple_Number_Number_Number)
-	*v77 = Tuple_Tuple_Number_Number_Number_List_Tuple_Number_Number_Number{item0: Tuple_Number_Number_Number{item0: 0.0, item1: 1.0, item2: 2.0}, item1: v65}
-	v66 := List_Tuple_Number_Number_Number{tag: List_Tuple_Number_Number_Number_cons, v1: v77}
-	return winnerIn(v66, board)
-}
-
-func row(a float64, board Lens_Vector_Number) string {
-	v9 := at(a, board)
-	v12 := symbol(v9)
-	v28 := at(a + 1.0, board)
-	v32 := symbol(v28)
-	v48 := at(a + 2.0, board)
-	v52 := symbol(v48)
-	return v12 + " " + v32 + " " + v52
-}
-
-func game() string {
-	board := vector_array_Vector_Number(9.0, 0.0)
-	var back0 Backing_Vector_Number_1264850431
-	back0.read0 = board
-	return play(1.0, 0.0, Lens_Vector_Number{read: &back0.read0})
-}
-
 func winnerIn(lines List_Tuple_Number_Number_Number, board Lens_Vector_Number) float64 {
 	var v5 float64
 	switch lines.tag {
@@ -236,25 +235,13 @@ func winnerIn(lines List_Tuple_Number_Number_Number, board Lens_Vector_Number) f
 	return v5
 }
 
-func other(player float64) float64 {
-	var v5 float64
-	if player == 1.0 {
-		v5 = 4.0
-	} else {
-		v5 = 1.0
-	}
-	return v5
-}
-
 func entry() string {
 	return game()
 }
 
-func vector_at_Vector_Number(value Vector_Number, index float64) *float64 {
-	if !(index >= 0) || index != math.Floor(index) || index >= float64(len(value)) {
-		panic("vector index out of bounds")
-	}
-	return &value[int(index)]
+func hostPrint_Unit(value string) Unit {
+	fmt.Print(value + "\n")
+	return Unit{}
 }
 
 func hostInput(prompt string) string {
@@ -269,9 +256,11 @@ func hostInput(prompt string) string {
 	return line
 }
 
-func hostPrint_Unit(value string) Unit {
-	fmt.Print(value + "\n")
-	return Unit{}
+func vector_at_Vector_Number(value Vector_Number, index float64) *float64 {
+	if !(index >= 0) || index != math.Floor(index) || index >= float64(len(value)) {
+		panic("vector index out of bounds")
+	}
+	return &value[int(index)]
 }
 
 func vector_array_Vector_Number(length float64, init float64) Vector_Number {
