@@ -9,11 +9,11 @@ import { Locals } from '../backend/imperative/locals.ts';
 import { derefText, isExpr, memberText, same, type Expr } from '../backend/imperative/code.ts';
 import { isLocal, isScope, mapScope, visit } from '../backend/imperative/statements.ts';
 import { appendFunction, appendPart, cBytes, stringRuntime, stringType } from './strings.ts';
-import { infixImports, requireImport, usesHost } from '../runtime-imports.ts';
+import { importName, infixImports, requireImport, usesHost } from '../runtime-imports.ts';
 import { functionNames } from '../backend/names.ts';
 import { localNames, takesName } from '../backend/local-names.ts';
 import { layoutNames, unionTagNames } from '../backend/type-names.ts';
-import { CNames, cScalars } from './names.ts';
+import { CNames, importReserved, cScalars } from './names.ts';
 
 type Completion = (body: Statement[]) => void;
 /**
@@ -70,7 +70,10 @@ export function lowerC(
     imports.forEach((d) => requireImport(d, 'c', program.target));
     const layouts = new Map(program.layouts.map((l) => [l.id, l]));
     // Host export symbols are fixed by the caller; every other name avoids them.
-    const packageNames = new CNames((options.exports ?? []).map((e) => e.symbol));
+    const packageNames = new CNames([
+        ...(options.exports ?? []).map((e) => e.symbol),
+        ...imports.flatMap((d) => importReserved[importName(d)] ?? []),
+    ]);
     const codes = functionNames(program, packageNames);
     const { names, abis: abiNames } = layoutNames(program, packageNames, cScalars);
     const tags = unionTagNames(program, names, packageNames);
@@ -300,12 +303,21 @@ export function lowerC(
                 flush(dot(expression, f.name), (f as { layout: string }).layout, parts[i]!, body),
             );
     };
+    // waitKey and random need POSIX headers, which -std=c11 hides unless asked for.
+    const usesImport = (name: string) => imports.some((d) => importName(d) === name);
     const declarations: (string | Declaration)[] = [
+        ...(usesImport('waitKey') || usesImport('random')
+            ? ['#define _POSIX_C_SOURCE 200809L']
+            : []),
         '#include <stdio.h>',
         '#include <stdlib.h>',
         '#include <math.h>',
         '#include <stdint.h>',
         '#include <stdbool.h>',
+        ...(usesImport('waitKey')
+            ? ['#include <poll.h>', '#include <termios.h>', '#include <unistd.h>']
+            : []),
+        ...(usesImport('random') ? ['#include <time.h>'] : []),
     ];
     const declareType = (name: string, text: string) =>
         declarations.push(new Declaration(name, text, declarationTypes.get(name)));
@@ -416,6 +428,9 @@ export function lowerC(
             | 'char_list'
             | 'round'
             | 'host_print'
+            | 'host_write'
+            | 'host_key'
+            | 'host_random'
             | 'host_input',
         id: string,
         result: string,
@@ -828,7 +843,10 @@ export function lowerC(
         result: string,
         parameters: readonly string[],
     ): Expr | undefined => {
-        if ((op === '==' || op === '!=') && !['f64', 'bool'].includes(layout(parameters[0]!).kind)) {
+        if (
+            (op === '==' || op === '!=') &&
+            !['f64', 'bool'].includes(layout(parameters[0]!).kind)
+        ) {
             // The native consumes both operands, so the wrapper drops them after comparing.
             const id = parameters[0]!;
             const consuming = pairHelper('equals', id, (body) => {
@@ -875,6 +893,89 @@ export function lowerC(
                         "putchar('\\n');",
                         cc`${use('string_drop')}(value);`,
                         cc`return ${zero(result)};`,
+                    ),
+                type(parameters[0]!),
+            )}(${args[0]})`;
+        if (op === 'write')
+            return cc`${unionHelper(
+                'host_write',
+                result,
+                type(result),
+                (body) =>
+                    body.push(
+                        {
+                            head: 'if (value)',
+                            body: ['fwrite(value->bytes, 1, value->length, stdout);'],
+                        },
+                        'fflush(stdout);',
+                        cc`${use('string_drop')}(value);`,
+                        cc`return ${zero(result)};`,
+                    ),
+                type(parameters[0]!),
+            )}(${args[0]})`;
+        if (op === 'random')
+            return cc`${unionHelper(
+                'host_random',
+                result,
+                type(result),
+                (body) =>
+                    body.push(
+                        'static uint32_t state = 0;',
+                        {
+                            head: 'if (!(value >= 1 && value < 4294967296.0 && value == floor(value)))',
+                            body: ['abort();'],
+                        },
+                        {
+                            head: 'if (state == 0)',
+                            body: [
+                                'const char *seed = getenv("LAMINAR_SEED");',
+                                'state = seed ? (uint32_t)strtoul(seed, NULL, 10) : (uint32_t)time(NULL);',
+                                { head: 'if (state == 0)', body: ['state = 2463534242u;'] },
+                            ],
+                        },
+                        'state ^= state << 13;',
+                        'state ^= state >> 17;',
+                        'state ^= state << 5;',
+                        'return (double)(state % (uint32_t)value);',
+                    ),
+                type(parameters[0]!),
+            )}(${args[0]})`;
+        if (op === 'waitKey')
+            return cc`${unionHelper(
+                'host_key',
+                result,
+                type(result),
+                (body) =>
+                    body.push(
+                        'fflush(stdout);',
+                        'struct termios saved;',
+                        'int raw = 0;',
+                        {
+                            head: 'if (isatty(0) && tcgetattr(0, &saved) == 0)',
+                            body: [
+                                'struct termios unbuffered = saved;',
+                                'unbuffered.c_lflag &= (tcflag_t)~(ICANON | ECHO);',
+                                'unbuffered.c_cc[VMIN] = 1;',
+                                'unbuffered.c_cc[VTIME] = 0;',
+                                'tcsetattr(0, TCSANOW, &unbuffered);',
+                                'raw = 1;',
+                            ],
+                        },
+                        'int timeout = value < 0 ? 0 : value > 2147483647.0 ? 2147483647 : (int)value;',
+                        'struct pollfd ready = {0, POLLIN, 0};',
+                        'string_builder key = {0};',
+                        {
+                            head: 'if (poll(&ready, 1, timeout) > 0)',
+                            body: [
+                                'char byte;',
+                                {
+                                    head: 'if (read(0, &byte, 1) == 1)',
+                                    body: [cc`${use('builder_bytes')}(&key, &byte, 1);`],
+                                },
+                            ],
+                        },
+                        { head: 'if (raw)', body: ['tcsetattr(0, TCSANOW, &saved);'] },
+                        cc`return ${use('builder_finish')}(&key);`,
                     ),
                 type(parameters[0]!),
             )}(${args[0]})`;

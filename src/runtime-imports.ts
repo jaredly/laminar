@@ -1,5 +1,16 @@
 import { BackendDiagnostic, type TargetConfig } from './backend/target.ts';
-import { Solver, SHARED, con, fn, plain, reads, flow, tuple, type FlowTy, type Ty } from './types.ts';
+import {
+    Solver,
+    SHARED,
+    con,
+    fn,
+    plain,
+    reads,
+    flow,
+    tuple,
+    type FlowTy,
+    type Ty,
+} from './types.ts';
 
 /** How a call boundary treats an argument or result: transferred data, or a lens capability. */
 export type ImportConvention = 'owned' | 'lens';
@@ -54,8 +65,15 @@ export const runtimeImports: readonly RuntimeImport[] = [
     numeric('-', number, 'IEEE-754 double subtraction'),
     numeric('*', number, 'IEEE-754 double multiplication'),
     numeric('/', number, 'IEEE-754 double division'),
-    numeric('%', number, 'ECMAScript remainder: truncated division, the result has the dividend sign'),
-    equality('==', 'Structural equality; numbers compare as IEEE-754 doubles (NaN is unequal to itself)'),
+    numeric(
+        '%',
+        number,
+        'ECMAScript remainder: truncated division, the result has the dividend sign',
+    ),
+    equality(
+        '==',
+        'Structural equality; numbers compare as IEEE-754 doubles (NaN is unequal to itself)',
+    ),
     equality('!=', 'Structural inequality, the negation of `==`'),
     numeric('<', bool, 'IEEE-754 ordered comparison'),
     numeric('>', bool, 'IEEE-754 ordered comparison'),
@@ -193,10 +211,49 @@ export const runtimeImports: readonly RuntimeImport[] = [
         backends: all,
         semantics: 'Writes the consumed string and a newline to stdout',
     },
+    {
+        name: 'write',
+        signature: () => fn([reads(string)], plain(tuple())),
+        arguments: ['owned'],
+        result: 'owned',
+        capability: 'stdout',
+        backends: all,
+        semantics: 'Writes the consumed string to stdout with no newline, then flushes stdout',
+    },
+    {
+        name: 'waitKey',
+        signature: () => fn([reads(number)], plain(string)),
+        arguments: ['owned'],
+        result: 'owned',
+        capability: 'stdin',
+        backends: all,
+        semantics:
+            'Flushes stdout, then waits up to the given milliseconds for one byte of stdin and returns it as a string; returns "" on timeout or end of input. On a terminal, input is unbuffered and unechoed during the wait only. The reference evaluator ignores the timeout',
+    },
+    {
+        name: 'random',
+        signature: () => fn([reads(number)], plain(number)),
+        arguments: ['owned'],
+        result: 'owned',
+        backends: all,
+        semantics:
+            'A pseudo-random integer in [0, n) for an integer n in [1, 2^32), else trap. xorshift32 (13, 17, 5) over a seed taken from LAMINAR_SEED when set (read as an unsigned integer; 0 becomes 2463534242), else from the clock, so a fixed seed gives the same sequence on every backend',
+    },
 ];
 
 /** Natives a backend may spell as an infix operator: scalar operands, no effects, no traps. */
-export const infixImports: readonly string[] = ['+', '-', '*', '/', '==', '!=', '<', '>', '>=', '<='];
+export const infixImports: readonly string[] = [
+    '+',
+    '-',
+    '*',
+    '/',
+    '==',
+    '!=',
+    '<',
+    '>',
+    '>=',
+    '<=',
+];
 
 const byName = new Map(runtimeImports.map((i) => [i.name, i]));
 

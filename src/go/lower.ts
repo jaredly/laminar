@@ -566,14 +566,12 @@ ${joinCode(
         if (l.kind === 'union')
             return helper(() => [
                 { head: 'if left.tag != right.tag', body: ['return false'] },
-                ...l.fields.map(
-                    (_, n): Statement => ({
-                        head: go`if left.tag == ${tagValue(id, n)}`,
-                        body: [
-                            go`return ${equalValues(payload('left', id, n), payload('right', id, n), variant(id, n).layout)}`,
-                        ],
-                    }),
-                ),
+                ...l.fields.map((_, n): Statement => ({
+                    head: go`if left.tag == ${tagValue(id, n)}`,
+                    body: [
+                        go`return ${equalValues(payload('left', id, n), payload('right', id, n), variant(id, n).layout)}`,
+                    ],
+                })),
                 'return true',
             ]);
         if (l.kind === 'vector')
@@ -664,9 +662,16 @@ ${joinCode(
         if (op === '[::]') return zero(result);
         if (op === '[:push:]') return go`append(${args[0]}, ${args[1]})`;
         if (op === 'array') return go`${vectorArray(result)}(${args[0]}, ${args[1]})`;
+        // The lowering of a call site runs once per call, so package state is declared once.
+        const declareOnce = (name: string, text: string) => {
+            if (!hostHelpers.has(`var ${name}`)) {
+                hostHelpers.set(`var ${name}`, name);
+                declarePackage(name, text, []);
+            }
+        };
         const helper = (name: string, fn: GoFunction, declaration?: string) => {
             if (!hostHelpers.has(name)) {
-                const actual = name.startsWith('hostPrint_') ? packageNames.unique(name) : name;
+                const actual = /^host(Print|Write)_/.test(name) ? packageNames.unique(name) : name;
                 hostHelpers.set(name, actual);
                 helpers.push({
                     ...fn,
@@ -692,6 +697,99 @@ ${joinCode(
                 signature: goText`func hostPrint_${type(result)}(value string) ${type(result)}`,
                 body: ['fmt.Print(value + "\\n")', go`return ${zero(result)}`],
             });
+        if (op === 'write')
+            return helper(goText`hostWrite_${type(result)}`, {
+                signature: goText`func hostWrite_${type(result)}(value string) ${type(result)}`,
+                body: ['fmt.Print(value)', go`return ${zero(result)}`],
+            });
+        if (op === 'random') {
+            hostImports.add('os').add('time');
+            declareOnce('hostRandomState', 'var hostRandomState uint32');
+            return helper('hostRandom', {
+                signature: 'func hostRandom(bound float64) float64',
+                body: [
+                    {
+                        head: 'if !(bound >= 1 && bound < 4294967296 && bound == math.Floor(bound))',
+                        body: ['panic("random bound must be an integer in [1, 2^32)")'],
+                    },
+                    {
+                        head: 'if hostRandomState == 0',
+                        body: [
+                            'hostRandomState = uint32(time.Now().UnixNano())',
+                            {
+                                head: 'if seed, ok := os.LookupEnv("LAMINAR_SEED"); ok',
+                                body: [
+                                    'n, _ := strconv.ParseUint(seed, 10, 64)',
+                                    'hostRandomState = uint32(n)',
+                                ],
+                            },
+                            {
+                                head: 'if hostRandomState == 0',
+                                body: ['hostRandomState = 2463534242'],
+                            },
+                        ],
+                    },
+                    'hostRandomState ^= hostRandomState << 13',
+                    'hostRandomState ^= hostRandomState >> 17',
+                    'hostRandomState ^= hostRandomState << 5',
+                    'return float64(hostRandomState % uint32(bound))',
+                ],
+            });
+        }
+        if (op === 'waitKey') {
+            hostImports.add('os').add('os/exec').add('strings').add('sync').add('time');
+            declareOnce('hostKeys', 'var hostKeys chan byte');
+            declareOnce('hostKeysOnce', 'var hostKeysOnce sync.Once');
+            return helper('hostKey', {
+                signature: 'func hostKey(milliseconds float64) string',
+                body: [
+                    'fmt.Print("")',
+                    // One reader goroutine owns stdin; a closed channel means end of input.
+                    'hostKeysOnce.Do(func() {',
+                    '\thostKeys = make(chan byte, 64)',
+                    '\tgo func() {',
+                    '\t\tdefer close(hostKeys)',
+                    '\t\tone := make([]byte, 1)',
+                    '\t\tfor {',
+                    '\t\t\tn, err := os.Stdin.Read(one)',
+                    '\t\t\tif n == 1 {',
+                    '\t\t\t\thostKeys <- one[0]',
+                    '\t\t\t}',
+                    '\t\t\tif err != nil {',
+                    '\t\t\t\treturn',
+                    '\t\t\t}',
+                    '\t\t}',
+                    '\t}()',
+                    '})',
+                    // On a terminal, input is unbuffered and unechoed only while waiting.
+                    'restore := func() {}',
+                    'if info, err := os.Stdin.Stat(); err == nil && info.Mode()&os.ModeCharDevice != 0 {',
+                    '\tquery := exec.Command("stty", "-g")',
+                    '\tquery.Stdin = os.Stdin',
+                    '\tif saved, err := query.Output(); err == nil {',
+                    '\t\traw := exec.Command("stty", "-icanon", "-echo")',
+                    '\t\traw.Stdin = os.Stdin',
+                    '\t\traw.Run()',
+                    '\t\trestore = func() {',
+                    '\t\t\tback := exec.Command("stty", strings.TrimSpace(string(saved)))',
+                    '\t\t\tback.Stdin = os.Stdin',
+                    '\t\t\tback.Run()',
+                    '\t\t}',
+                    '\t}',
+                    '}',
+                    'defer restore()',
+                    'select {',
+                    'case b, ok := <-hostKeys:',
+                    '\tif !ok {',
+                    '\t\treturn ""',
+                    '\t}',
+                    '\treturn string([]byte{b})',
+                    'case <-time.After(time.Duration(milliseconds * float64(time.Millisecond))):',
+                    '\treturn ""',
+                    '}',
+                ],
+            });
+        }
         if (op === 'getInput') {
             hostImports.add('bufio').add('os');
             return helper(

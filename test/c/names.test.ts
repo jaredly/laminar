@@ -114,3 +114,12 @@ it('allocates constructor constants in the reserved package namespace', () => {
     expect(tags.get(union.id)).toEqual(['List_Number_nil', 'List_Number_cons_2']);
     expect(allocator.source('List_Number_cons_2')).toBe('List_Number_cons_2_2');
 });
+
+it('reserves the POSIX names an import needs only when the program calls it', () => {
+    const named = 'fn read(x) {x}\nread("a")';
+    expect(compile(named).code).toMatch(/\bread\(void \*environment/);
+    const waiting = 'fn read(x) {x}\nread(waitKey(0))';
+    const { code } = compile(waiting);
+    expect(code).toMatch(/\bread_2\(void \*environment/);
+    expect(code).toContain('read(0, &byte, 1)');
+});

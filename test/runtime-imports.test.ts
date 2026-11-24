@@ -46,6 +46,9 @@ const probes: Record<string, string> = {
     charList: 'charList("ab")',
     getInput: 'getInput("> ")',
     print: 'print("x")',
+    write: 'write("x")',
+    waitKey: 'waitKey(0)',
+    random: 'random(2)',
 };
 
 it('derives source signatures from the registry, in registry order', () => {

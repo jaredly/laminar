@@ -449,6 +449,10 @@ const readString = (i: number, text: string, config: Config): { i: number; node:
                 case 'r':
                     head += '\r';
                     break;
+                case 'e':
+                    // ESC, for terminal control sequences such as "\e[2J".
+                    head += '\x1b';
+                    break;
                 default:
                     head += next;
             }

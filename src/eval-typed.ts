@@ -14,6 +14,7 @@ import type {
 } from './typed-ir.ts';
 import { verifyTypedProgram } from './verify-ir.ts';
 import createPrompt from 'prompt-sync';
+import { readSync } from 'node:fs';
 import { requireImport } from './runtime-imports.ts';
 
 const EMPTY = Symbol('empty-place');
@@ -69,6 +70,20 @@ export type ReferenceOptions = {
     stdout?: (text: string) => void;
     /** Host line input for `getInput`, without its newline; defaults to an interactive prompt. */
     stdin?: () => string;
+    /** Host key input for `waitKey`: one byte as a string, or "" at a timeout or end of input. */
+    key?: (milliseconds: number) => string;
+    /** Seed for `random` (read as an unsigned integer); defaults to LAMINAR_SEED, else the clock. */
+    seed?: number;
+};
+
+/** One byte of stdin as a string, "" at end of input. Blocks: the timeout is ignored. */
+const readKey = (): string => {
+    const byte = Buffer.alloc(1);
+    try {
+        return readSync(0, byte, 0, 1, null) === 1 ? String.fromCharCode(byte[0]!) : '';
+    } catch {
+        return '';
+    }
 };
 
 /** Executes only typed IR. It does not call source inference, AST lowering, or the old evaluator. */
@@ -76,6 +91,7 @@ export function executeTypedProgram(
     program: TypedProgram,
     options: ReferenceOptions = {},
 ): ReferenceValue {
+    let rng = 0;
     program = freezeTree(structuredClone(program));
     // Validate the entire compilation unit before executing any effects.
     verifyTypedProgram(program);
@@ -224,7 +240,13 @@ export function executeTypedProgram(
     const constructorParts = (name: string, v: Data): Data[] => {
         if (name === 'nil' && Array.isArray(v) && !v.length) return [];
         if (name === 'cons' && Array.isArray(v) && v.length) return [v[0], v.slice(1)];
-        if (v && typeof v === 'object' && !Array.isArray(v) && v.kind === 'variant' && v.name === name)
+        if (
+            v &&
+            typeof v === 'object' &&
+            !Array.isArray(v) &&
+            v.kind === 'variant' &&
+            v.name === name
+        )
             return v.items;
         return error('Constructor lens tag mismatch');
     };
@@ -232,12 +254,23 @@ export function executeTypedProgram(
      * from the fields, and replacing routes each field of a value with the same tag back. */
     const constructorLens = (name: string, items: Lens[]): Lens =>
         view(
-            () => construct(name, items.map((v) => v.peek())),
+            () =>
+                construct(
+                    name,
+                    items.map((v) => v.peek()),
+                ),
             (value) => {
-                if (value === EMPTY) return construct(name, items.map((v) => v.replace(EMPTY)));
+                if (value === EMPTY)
+                    return construct(
+                        name,
+                        items.map((v) => v.replace(EMPTY)),
+                    );
                 const parts = constructorParts(name, value);
                 if (parts.length !== items.length) error('Constructor lens arity mismatch');
-                return construct(name, items.map((v, i) => v.replace(parts[i])));
+                return construct(
+                    name,
+                    items.map((v, i) => v.replace(parts[i])),
+                );
             },
             () => items.forEach((v) => v.finish()),
         );
@@ -374,8 +407,7 @@ export function executeTypedProgram(
         if (Array.isArray(a))
             return Array.isArray(b) && a.length === b.length && a.every((x, i) => equal(x, b[i]!));
         if (a && typeof a === 'object') {
-            if (!b || typeof b !== 'object' || Array.isArray(b) || a.kind !== b.kind)
-                return false;
+            if (!b || typeof b !== 'object' || Array.isArray(b) || a.kind !== b.kind) return false;
             if (a.kind === 'variant' && b.kind === 'variant')
                 return (
                     a.name === b.name &&
@@ -445,6 +477,27 @@ export function executeTypedProgram(
                     if (!options.stdin) return createPrompt()(prompt) ?? '';
                     (options.stdout ?? ((text) => process.stdout.write(text)))(prompt);
                     return options.stdin();
+                }
+                case 'write': {
+                    (options.stdout ?? ((text) => process.stdout.write(text)))(
+                        data(args[0]) as string,
+                    );
+                    return null;
+                }
+                case 'waitKey':
+                    return (options.key ?? readKey)(number(0));
+                case 'random': {
+                    const bound = number(0);
+                    if (!Number.isInteger(bound) || bound < 1 || bound >= 2 ** 32)
+                        return error('random bound must be an integer in [1, 2^32)');
+                    if (rng === 0) {
+                        const seed = options.seed ?? process.env.LAMINAR_SEED;
+                        rng = (seed === undefined ? Date.now() : Number(seed)) >>> 0 || 2463534242;
+                    }
+                    rng = (rng ^ (rng << 13)) >>> 0;
+                    rng = (rng ^ (rng >>> 17)) >>> 0;
+                    rng = (rng ^ (rng << 5)) >>> 0;
+                    return rng % bound;
                 }
                 case 'print': {
                     (options.stdout ?? ((text) => process.stdout.write(text)))(

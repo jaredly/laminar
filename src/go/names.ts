@@ -29,6 +29,15 @@ const runtime = new Set([
     'formatNumber',
     'laminarRound',
     'hostInput',
+    'hostRandom',
+    'hostRandomState',
+    'hostKey',
+    'hostKeys',
+    'hostKeysOnce',
+    'exec',
+    'strings',
+    'sync',
+    'time',
     'fmt',
     'math',
     'strconv',
@@ -41,7 +50,7 @@ const runtime = new Set([
     'result',
 ]);
 const generated =
-    /^(?:L\d+|A\d+|v\d+|arg\d+|back\d+|Backing\d+|native\d+|result\d+|result_adapter\d+|(?:hostPrint|char_list|print)_[A-Za-z_0-9]+|Backing_[A-Za-z_0-9]+)$/;
+    /^(?:L\d+|A\d+|v\d+|arg\d+|back\d+|Backing\d+|native\d+|result\d+|result_adapter\d+|(?:hostPrint|hostWrite|char_list|print)_[A-Za-z_0-9]+|Backing_[A-Za-z_0-9]+)$/;
 
 export const goNameRules = { reserved: [...keywords, ...builtins, ...runtime], generated };
 

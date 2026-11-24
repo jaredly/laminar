@@ -1,3 +1,6 @@
+// A fixed seed makes `random` repeatable, and every backend runs the same xorshift32.
+process.env.LAMINAR_SEED = '7';
+
 /** Phase 7 runtime imports: registry-driven natives and host I/O adapters. */
 export const runtimeImportSamples = [
     {
@@ -70,4 +73,36 @@ export const runtimeImportSamples = [
         stdin: 'a\nb\n',
         output: '? got a\n? got b\n',
     },
+    {
+        name: 'write has no newline',
+        source: '{write("a")\n write("b${1}")\n 3}',
+        expected: 3,
+        output: 'ab1',
+    },
+    {
+        name: 'string escape e is ESC',
+        source: '{write("\\e[2J")\n 1}',
+        expected: 1,
+        output: '\x1b[2J',
+    },
+    {
+        name: 'waitKey reads one byte at a time',
+        source: '{let a = waitKey(10)\n let b = waitKey(10)\n let c = waitKey(10)\n (a, b, c)}',
+        expected: ['x', 'y', ''],
+        stdin: 'xy',
+        output: '',
+    },
+    {
+        name: 'waitKey at end of input',
+        source: 'waitKey(0)',
+        expected: '',
+        stdin: '',
+        output: '',
+    },
+    {
+        name: 'random is repeatable under a seed',
+        source: '(random(10), random(10), random(10))',
+        expected: [3, 5, 7],
+    },
+    { name: 'random of one', source: '(random(1), random(1))', expected: [0, 0] },
 ];

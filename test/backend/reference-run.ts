@@ -5,10 +5,12 @@ import type { TypedProgram } from '../../src/typed-ir.ts';
 export function referenceRun(program: TypedProgram, stdin = '') {
     const lines = stdin.split('\n');
     let output = '',
-        next = 0;
+        next = 0,
+        key = 0;
     const result = executeTypedProgram(program, {
         stdout: (text) => (output += text),
         stdin: () => lines[next++] ?? '',
+        key: () => stdin[key++] ?? '',
     });
     return { result, output };
 }
