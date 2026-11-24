@@ -105,3 +105,9 @@ it('does not let source borrow a plain binding, even to dup it', () => {
     expect(errorCode('{let p = (1, 2)\n let mut m = dup(~p)\n m}')).toBe('plain-lens');
     expect(errorCode('{let p = (1, 2)\n let mut m = !p\n m}')).toBe('plain-lens');
 });
+
+it('copies a place of a mut binding with !, not just a whole binding', () => {
+    expect(errorCode('{let mut b = [:1, 2:]\n !b[0] + !b[1]}')).toBe('ok');
+    expect(errorCode('{let mut b = [:(1, 2):]\n !b[0]}')).toBe('ok');
+    expect(errorCode('{let b = [:1, 2:]\n !b[0]}')).toBe('plain-lens');
+});

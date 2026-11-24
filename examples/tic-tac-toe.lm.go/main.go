@@ -40,10 +40,76 @@ type Lens_Vector_String struct {
 
 type Func_Vector_String_to_Unit_29de2954b1 func(environment any, arg0 Vector_String) Unit
 
-var stdin *bufio.Reader
-
 type Backing_Vector_String_4f3c2fd8c1 struct {
 	read0 Vector_String
+}
+
+var stdin *bufio.Reader
+
+func render(board Lens_Vector_String) Unit {
+	v7 := row(0.0, board)
+	hostPrint_Unit(v7)
+	v20 := row(3.0, board)
+	hostPrint_Unit(v20)
+	v33 := row(6.0, board)
+	hostPrint_Unit(v33)
+	return Unit{}
+}
+
+func lineOwner(a float64, b float64, c float64, board Lens_Vector_String) string {
+	v9 := vector_at_Vector_String(*board.read, a)
+	first := *v9
+	var v25 bool
+	if (!(first == ".")) {
+		v40 := vector_at_Vector_String(*board.read, b)
+		v44 := *v40
+		v25 = (first == v44)
+	} else {
+		v25 = false
+	}
+	var v51 bool
+	if v25 {
+		v66 := vector_at_Vector_String(*board.read, c)
+		v70 := *v66
+		v51 = (first == v70)
+	} else {
+		v51 = false
+	}
+	var v77 string
+	if v51 {
+		v77 = first
+	} else {
+		v77 = "."
+	}
+	return v77
+}
+
+func game() string {
+	board := vector_array_Vector_String(9.0, ".")
+	var back0 Backing_Vector_String_4f3c2fd8c1
+	back0.read0 = board
+	return play("X", 0.0, Lens_Vector_String{read: &back0.read0})
+}
+
+func play(player string, turns float64, board Lens_Vector_String) string {
+	render(board)
+	v11 := winner(board)
+	var v14 string
+	switch v11 {
+	case ".":
+		var v26 string
+		if (turns == 9.0) {
+			v26 = "draw"
+		} else {
+			takeTurn(player, board)
+			v48 := other(player)
+			v26 = play(v48, turns + 1.0, board)
+		}
+		v14 = v26
+	default:
+		v14 = v11
+	}
+	return v14
 }
 
 func takeTurn(player string, board Lens_Vector_String) Unit {
@@ -53,21 +119,37 @@ func takeTurn(player string, board Lens_Vector_String) Unit {
 		hostPrint_Unit("Please pick a number from 1 to 9.")
 		takeTurn(player, board)
 	} else {
-		v56 := at(square, board)
-		if (!(v56 == ".")) {
+		v57 := vector_at_Vector_String(*board.read, square)
+		v61 := *v57
+		if (!(v61 == ".")) {
 			hostPrint_Unit("That square is taken.")
 			takeTurn(player, board)
 		} else {
-			v91 := vector_at_Vector_String(*board.read, square)
-			*v91 = player
+			v95 := vector_at_Vector_String(*board.read, square)
+			*v95 = player
 		}
 	}
 	return Unit{}
 }
 
-func at(i float64, board Lens_Vector_String) string {
-	v9 := vector_at_Vector_String(*board.read, i)
-	return *v9
+func row(a float64, board Lens_Vector_String) string {
+	v9 := vector_at_Vector_String(*board.read, a)
+	v13 := *v9
+	v29 := vector_at_Vector_String(*board.read, a + 1.0)
+	v34 := *v29
+	v50 := vector_at_Vector_String(*board.read, a + 2.0)
+	v55 := *v50
+	return v13 + " " + v34 + " " + v55
+}
+
+func other(player string) string {
+	var v11 string
+	if (player == "X") {
+		v11 = "O"
+	} else {
+		v11 = "X"
+	}
+	return v11
 }
 
 func winner(board Lens_Vector_String) string {
@@ -99,59 +181,28 @@ func winner(board Lens_Vector_String) string {
 	return winnerIn(v66, board)
 }
 
-func render(board Lens_Vector_String) Unit {
-	v7 := row(0.0, board)
-	hostPrint_Unit(v7)
-	v20 := row(3.0, board)
-	hostPrint_Unit(v20)
-	v33 := row(6.0, board)
-	hostPrint_Unit(v33)
-	return Unit{}
-}
-
-func row(a float64, board Lens_Vector_String) string {
-	v8 := at(a, board)
-	v23 := at(a + 1.0, board)
-	v39 := at(a + 2.0, board)
-	return v8 + " " + v23 + " " + v39
-}
-
-func play(player string, turns float64, board Lens_Vector_String) string {
-	render(board)
-	v11 := winner(board)
-	var v14 string
-	switch v11 {
-	case ".":
-		var v26 string
-		if (turns == 9.0) {
-			v26 = "draw"
-		} else {
-			takeTurn(player, board)
-			v48 := other(player)
-			v26 = play(v48, turns + 1.0, board)
+func winnerIn(lines List_Tuple_Number_Number_Number, board Lens_Vector_String) string {
+	var v5 string
+	switch lines.tag {
+	case List_Tuple_Number_Number_Number_nil:
+		v5 = "."
+	case List_Tuple_Number_Number_Number_cons:
+		v9 := *lines.v1
+		a := v9.item0.item0
+		b := v9.item0.item1
+		c := v9.item0.item2
+		v26 := lineOwner(a, b, c, board)
+		var v29 string
+		switch v26 {
+		case ".":
+			rest := v9.item1
+			v29 = winnerIn(rest, board)
+		default:
+			v29 = v26
 		}
-		v14 = v26
-	default:
-		v14 = v11
+		v5 = v29
 	}
-	return v14
-}
-
-func other(player string) string {
-	var v11 string
-	if (player == "X") {
-		v11 = "O"
-	} else {
-		v11 = "X"
-	}
-	return v11
-}
-
-func game() string {
-	board := vector_array_Vector_String(9.0, ".")
-	var back0 Backing_Vector_String_4f3c2fd8c1
-	back0.read0 = board
-	return play("X", 0.0, Lens_Vector_String{read: &back0.read0})
+	return v5
 }
 
 func parseSquare(input string) float64 {
@@ -181,69 +232,8 @@ func parseSquare(input string) float64 {
 	return v5
 }
 
-func winnerIn(lines List_Tuple_Number_Number_Number, board Lens_Vector_String) string {
-	var v5 string
-	switch lines.tag {
-	case List_Tuple_Number_Number_Number_nil:
-		v5 = "."
-	case List_Tuple_Number_Number_Number_cons:
-		v9 := *lines.v1
-		a := v9.item0.item0
-		b := v9.item0.item1
-		c := v9.item0.item2
-		v26 := lineOwner(a, b, c, board)
-		var v29 string
-		switch v26 {
-		case ".":
-			rest := v9.item1
-			v29 = winnerIn(rest, board)
-		default:
-			v29 = v26
-		}
-		v5 = v29
-	}
-	return v5
-}
-
-func lineOwner(a float64, b float64, c float64, board Lens_Vector_String) string {
-	first := at(a, board)
-	var v21 bool
-	if (!(first == ".")) {
-		v35 := at(b, board)
-		v21 = (first == v35)
-	} else {
-		v21 = false
-	}
-	var v43 bool
-	if v21 {
-		v57 := at(c, board)
-		v43 = (first == v57)
-	} else {
-		v43 = false
-	}
-	var v65 string
-	if v43 {
-		v65 = first
-	} else {
-		v65 = "."
-	}
-	return v65
-}
-
 func entry() string {
 	return game()
-}
-
-func hostInput(prompt string) string {
-	fmt.Print(prompt)
-	if stdin == nil {
-		stdin = bufio.NewReader(os.Stdin)
-	}
-	line, _ := stdin.ReadString('\n')
-	if len(line) > 0 && line[len(line)-1] == '\n' {
-		line = line[:len(line)-1]
-	}
-	return line
 }
 
 func hostPrint_Unit(value string) Unit {
@@ -271,6 +261,18 @@ func vector_array_Vector_String(length float64, init string) Vector_String {
 		}
 	}
 	return out
+}
+
+func hostInput(prompt string) string {
+	fmt.Print(prompt)
+	if stdin == nil {
+		stdin = bufio.NewReader(os.Stdin)
+	}
+	line, _ := stdin.ReadString('\n')
+	if len(line) > 0 && line[len(line)-1] == '\n' {
+		line = line[:len(line)-1]
+	}
+	return line
 }
 
 func printString(s string) {

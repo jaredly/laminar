@@ -155,6 +155,10 @@ Linear {
     ["" "!" value:id] -> ({type: "apply", fn: {type: "id", text: "dup", loc: node.loc}, args: [
     {type: "lens", lens: value}
     ], loc: node.loc})
+    // `!b[i]` and `!r.x` copy a place, not just a whole binding.
+    ["" "!" target:id ...ops:**LensOp] -> ({type: "apply", fn: {type: "id", text: "dup", loc: node.loc}, args: [
+    {type: "lens", lens: handleLensOps(target, ops, node.loc)}
+    ], loc: node.loc})
 
     ["\"" text:id] -> ({type: "string", head: text.text, interp: [], loc: node.loc})
     ["" one:Linear] -> one

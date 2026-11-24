@@ -40,89 +40,125 @@ void builder_bytes(string_builder *b, const char *bytes, size_t length);
 void builder_string(string_builder *b, laminar_string *s);
 laminar_string *builder_finish(string_builder *b);
 void print_string(laminar_string *s);
-String at(void *environment, double i, Lens_Vector_String board);
-Unit takeTurn(void *environment, String player, Lens_Vector_String board);
 String row(void *environment, double a, Lens_Vector_String board);
-double parseSquare(void *environment, String input);
-String winner(void *environment, Lens_Vector_String board);
-String other(void *environment, String player);
 String lineOwner(void *environment, double a, double b, double c, Lens_Vector_String board);
-String winnerIn(void *environment, List_Tuple_Number_Number_Number lines, Lens_Vector_String board);
-String play(void *environment, String player, double turns, Lens_Vector_String board);
-String game(void *environment);
 Unit render(void *environment, Lens_Vector_String board);
+String winner(void *environment, Lens_Vector_String board);
+double parseSquare(void *environment, String input);
+String game(void *environment);
+String other(void *environment, String player);
+String play(void *environment, String player, double turns, Lens_Vector_String board);
+String winnerIn(void *environment, List_Tuple_Number_Number_Number lines, Lens_Vector_String board);
+Unit takeTurn(void *environment, String player, Lens_Vector_String board);
 String entry(void *environment);
 String *vector_at_Vector_String(Vector_String value, double index);
-String host_input_String(String value);
-Unit host_print_Unit(String value);
 _Bool equals_String(String left, String right);
-List_Tuple_Number_Number_Number share_List_Tuple_Number_Number_Number(List_Tuple_Number_Number_Number value);
-Unit drop_List_Tuple_Number_Number_Number(List_Tuple_Number_Number_Number value);
+Unit host_print_Unit(String value);
 Vector_String vector_array_Vector_String(double length, String init);
 void vector_drop_Vector_String(Vector_String value);
-String at(void *environment, double i, Lens_Vector_String board) {
-    (void)environment;
-    String *v5 = vector_at_Vector_String(*board.read, i);
-    return string_dup((*v5));
-}
-Unit takeTurn(void *environment, String player, Lens_Vector_String board) {
-    (void)environment;
-    String player_2 = string_share(player);
-    string_builder v4 = {0};
-    builder_bytes(&v4, "", 0);
-    builder_string(&v4, player_2);
-    builder_bytes(&v4, ", pick a square (1-9): ", 23);
-    String v3 = builder_finish(&v4);
-    String input = host_input_String(v3);
-    String input_2 = string_share(input);
-    double square = parseSquare(NULL, input_2);
-    Unit v15 = {0};
-    if (square == 9) {
-        String v17 = string_new("Please pick a number from 1 to 9.", 33);
-        host_print_Unit(v17);
-        String player_3 = string_share(player);
-        v15 = takeTurn(NULL, player_3, board);
-    }
-    else {
-        String v30 = at(NULL, square, board);
-        String v31 = string_new(".", 1);
-        bool v32 = (!equals_String(v30, v31));
-        Unit v33 = {0};
-        if (v32) {
-            String v35 = string_new("That square is taken.", 21);
-            host_print_Unit(v35);
-            String player_4 = string_share(player);
-            v33 = takeTurn(NULL, player_4, board);
-        }
-        else {
-            String *v48 = vector_at_Vector_String(*board.read, square);
-            String player_5 = string_dup(player);
-            String v51 = (*v48);
-            *v48 = player_5;
-            string_drop(v51);
-            v33 = (Unit){0};
-        }
-        v15 = v33;
-    }
-    Unit v9 = v15;
-    string_drop(input);
-    string_drop(player);
-    return v9;
-}
+List_Tuple_Number_Number_Number share_List_Tuple_Number_Number_Number(List_Tuple_Number_Number_Number value);
+Unit drop_List_Tuple_Number_Number_Number(List_Tuple_Number_Number_Number value);
+String host_input_String(String value);
 String row(void *environment, double a, Lens_Vector_String board) {
     (void)environment;
-    String v4 = at(NULL, a, board);
-    String v12 = at(NULL, a + 1, board);
-    String v20 = at(NULL, a + 2, board);
-    string_builder v22 = {0};
-    builder_bytes(&v22, "", 0);
-    builder_string(&v22, v4);
-    builder_bytes(&v22, " ", 1);
-    builder_string(&v22, v12);
-    builder_bytes(&v22, " ", 1);
-    builder_string(&v22, v20);
-    builder_bytes(&v22, "", 0);
-    return builder_finish(&v22);
+    String *v5 = vector_at_Vector_String(*board.read, a);
+    String v7 = string_dup((*v5));
+    String *v16 = vector_at_Vector_String(*board.read, a + 1);
+    String v18 = string_dup((*v16));
+    String *v27 = vector_at_Vector_String(*board.read, a + 2);
+    String v29 = string_dup((*v27));
+    string_builder v31 = {0};
+    builder_bytes(&v31, "", 0);
+    builder_string(&v31, v7);
+    builder_bytes(&v31, " ", 1);
+    builder_string(&v31, v18);
+    builder_bytes(&v31, " ", 1);
+    builder_string(&v31, v29);
+    builder_bytes(&v31, "", 0);
+    return builder_finish(&v31);
+}
+String lineOwner(void *environment, double a, double b, double c, Lens_Vector_String board) {
+    (void)environment;
+    String *v5 = vector_at_Vector_String(*board.read, a);
+    String first = string_dup((*v5));
+    String first_2 = string_share(first);
+    String v11 = string_new(".", 1);
+    bool v12 = (!equals_String(first_2, v11));
+    bool v13 = false;
+    if (v12) {
+        String first_3 = string_share(first);
+        String *v22 = vector_at_Vector_String(*board.read, b);
+        String v24 = string_dup((*v22));
+        v13 = equals_String(first_3, v24);
+    }
+    else {
+        v13 = false;
+    }
+    bool v27 = false;
+    if (v13) {
+        String first_4 = string_share(first);
+        String *v36 = vector_at_Vector_String(*board.read, c);
+        String v38 = string_dup((*v36));
+        v27 = equals_String(first_4, v38);
+    }
+    else {
+        v27 = false;
+    }
+    String v41 = NULL;
+    if (v27) {
+        v41 = string_share(first);
+    }
+    else {
+        v41 = string_new(".", 1);
+    }
+    string_drop(first);
+    return v41;
+}
+Unit render(void *environment, Lens_Vector_String board) {
+    (void)environment;
+    String v4 = row(NULL, 0, board);
+    host_print_Unit(v4);
+    String v11 = row(NULL, 3, board);
+    host_print_Unit(v11);
+    String v18 = row(NULL, 6, board);
+    return host_print_Unit(v18);
+}
+String winner(void *environment, Lens_Vector_String board) {
+    (void)environment;
+    Tuple_Number_Number_Number v5 = (Tuple_Number_Number_Number){0, 1, 2};
+    Tuple_Number_Number_Number v9 = (Tuple_Number_Number_Number){3, 4, 5};
+    Tuple_Number_Number_Number v13 = (Tuple_Number_Number_Number){6, 7, 8};
+    Tuple_Number_Number_Number v17 = (Tuple_Number_Number_Number){0, 3, 6};
+    Tuple_Number_Number_Number v21 = (Tuple_Number_Number_Number){1, 4, 7};
+    Tuple_Number_Number_Number v25 = (Tuple_Number_Number_Number){2, 5, 8};
+    Tuple_Number_Number_Number v29 = (Tuple_Number_Number_Number){0, 4, 8};
+    Tuple_Number_Number_Number v33 = (Tuple_Number_Number_Number){2, 4, 6};
+    List_Tuple_Number_Number_Number v34 = (List_Tuple_Number_Number_Number){.tag=List_Tuple_Number_Number_Number_nil, .as.v0=(Unit){0}};
+    Tuple_Tuple_Number_Number_Number_List_Tuple_Number_Number_Number *v36 = allocate_context(sizeof *v36);
+    *v36 = (Tuple_Tuple_Number_Number_Number_List_Tuple_Number_Number_Number){v33, v34};
+    List_Tuple_Number_Number_Number v35 = (List_Tuple_Number_Number_Number){.tag=List_Tuple_Number_Number_Number_cons, .as.v1=v36};
+    Tuple_Tuple_Number_Number_Number_List_Tuple_Number_Number_Number *v38 = allocate_context(sizeof *v38);
+    *v38 = (Tuple_Tuple_Number_Number_Number_List_Tuple_Number_Number_Number){v29, v35};
+    List_Tuple_Number_Number_Number v37 = (List_Tuple_Number_Number_Number){.tag=List_Tuple_Number_Number_Number_cons, .as.v1=v38};
+    Tuple_Tuple_Number_Number_Number_List_Tuple_Number_Number_Number *v40 = allocate_context(sizeof *v40);
+    *v40 = (Tuple_Tuple_Number_Number_Number_List_Tuple_Number_Number_Number){v25, v37};
+    List_Tuple_Number_Number_Number v39 = (List_Tuple_Number_Number_Number){.tag=List_Tuple_Number_Number_Number_cons, .as.v1=v40};
+    Tuple_Tuple_Number_Number_Number_List_Tuple_Number_Number_Number *v42 = allocate_context(sizeof *v42);
+    *v42 = (Tuple_Tuple_Number_Number_Number_List_Tuple_Number_Number_Number){v21, v39};
+    List_Tuple_Number_Number_Number v41 = (List_Tuple_Number_Number_Number){.tag=List_Tuple_Number_Number_Number_cons, .as.v1=v42};
+    Tuple_Tuple_Number_Number_Number_List_Tuple_Number_Number_Number *v44 = allocate_context(sizeof *v44);
+    *v44 = (Tuple_Tuple_Number_Number_Number_List_Tuple_Number_Number_Number){v17, v41};
+    List_Tuple_Number_Number_Number v43 = (List_Tuple_Number_Number_Number){.tag=List_Tuple_Number_Number_Number_cons, .as.v1=v44};
+    Tuple_Tuple_Number_Number_Number_List_Tuple_Number_Number_Number *v46 = allocate_context(sizeof *v46);
+    *v46 = (Tuple_Tuple_Number_Number_Number_List_Tuple_Number_Number_Number){v13, v43};
+    List_Tuple_Number_Number_Number v45 = (List_Tuple_Number_Number_Number){.tag=List_Tuple_Number_Number_Number_cons, .as.v1=v46};
+    Tuple_Tuple_Number_Number_Number_List_Tuple_Number_Number_Number *v48 = allocate_context(sizeof *v48);
+    *v48 = (Tuple_Tuple_Number_Number_Number_List_Tuple_Number_Number_Number){v9, v45};
+    List_Tuple_Number_Number_Number v47 = (List_Tuple_Number_Number_Number){.tag=List_Tuple_Number_Number_Number_cons, .as.v1=v48};
+    Tuple_Tuple_Number_Number_Number_List_Tuple_Number_Number_Number *v50 = allocate_context(sizeof *v50);
+    *v50 = (Tuple_Tuple_Number_Number_Number_List_Tuple_Number_Number_Number){v5, v47};
+    List_Tuple_Number_Number_Number v49 = (List_Tuple_Number_Number_Number){.tag=List_Tuple_Number_Number_Number_cons, .as.v1=v50};
+    return winnerIn(NULL, v49, board);
 }
 double parseSquare(void *environment, String input) {
     (void)environment;
@@ -171,42 +207,17 @@ double parseSquare(void *environment, String input) {
     string_drop(input);
     return v2;
 }
-String winner(void *environment, Lens_Vector_String board) {
+String game(void *environment) {
     (void)environment;
-    Tuple_Number_Number_Number v5 = (Tuple_Number_Number_Number){0, 1, 2};
-    Tuple_Number_Number_Number v9 = (Tuple_Number_Number_Number){3, 4, 5};
-    Tuple_Number_Number_Number v13 = (Tuple_Number_Number_Number){6, 7, 8};
-    Tuple_Number_Number_Number v17 = (Tuple_Number_Number_Number){0, 3, 6};
-    Tuple_Number_Number_Number v21 = (Tuple_Number_Number_Number){1, 4, 7};
-    Tuple_Number_Number_Number v25 = (Tuple_Number_Number_Number){2, 5, 8};
-    Tuple_Number_Number_Number v29 = (Tuple_Number_Number_Number){0, 4, 8};
-    Tuple_Number_Number_Number v33 = (Tuple_Number_Number_Number){2, 4, 6};
-    List_Tuple_Number_Number_Number v34 = (List_Tuple_Number_Number_Number){.tag=List_Tuple_Number_Number_Number_nil, .as.v0=(Unit){0}};
-    Tuple_Tuple_Number_Number_Number_List_Tuple_Number_Number_Number *v36 = allocate_context(sizeof *v36);
-    *v36 = (Tuple_Tuple_Number_Number_Number_List_Tuple_Number_Number_Number){v33, v34};
-    List_Tuple_Number_Number_Number v35 = (List_Tuple_Number_Number_Number){.tag=List_Tuple_Number_Number_Number_cons, .as.v1=v36};
-    Tuple_Tuple_Number_Number_Number_List_Tuple_Number_Number_Number *v38 = allocate_context(sizeof *v38);
-    *v38 = (Tuple_Tuple_Number_Number_Number_List_Tuple_Number_Number_Number){v29, v35};
-    List_Tuple_Number_Number_Number v37 = (List_Tuple_Number_Number_Number){.tag=List_Tuple_Number_Number_Number_cons, .as.v1=v38};
-    Tuple_Tuple_Number_Number_Number_List_Tuple_Number_Number_Number *v40 = allocate_context(sizeof *v40);
-    *v40 = (Tuple_Tuple_Number_Number_Number_List_Tuple_Number_Number_Number){v25, v37};
-    List_Tuple_Number_Number_Number v39 = (List_Tuple_Number_Number_Number){.tag=List_Tuple_Number_Number_Number_cons, .as.v1=v40};
-    Tuple_Tuple_Number_Number_Number_List_Tuple_Number_Number_Number *v42 = allocate_context(sizeof *v42);
-    *v42 = (Tuple_Tuple_Number_Number_Number_List_Tuple_Number_Number_Number){v21, v39};
-    List_Tuple_Number_Number_Number v41 = (List_Tuple_Number_Number_Number){.tag=List_Tuple_Number_Number_Number_cons, .as.v1=v42};
-    Tuple_Tuple_Number_Number_Number_List_Tuple_Number_Number_Number *v44 = allocate_context(sizeof *v44);
-    *v44 = (Tuple_Tuple_Number_Number_Number_List_Tuple_Number_Number_Number){v17, v41};
-    List_Tuple_Number_Number_Number v43 = (List_Tuple_Number_Number_Number){.tag=List_Tuple_Number_Number_Number_cons, .as.v1=v44};
-    Tuple_Tuple_Number_Number_Number_List_Tuple_Number_Number_Number *v46 = allocate_context(sizeof *v46);
-    *v46 = (Tuple_Tuple_Number_Number_Number_List_Tuple_Number_Number_Number){v13, v43};
-    List_Tuple_Number_Number_Number v45 = (List_Tuple_Number_Number_Number){.tag=List_Tuple_Number_Number_Number_cons, .as.v1=v46};
-    Tuple_Tuple_Number_Number_Number_List_Tuple_Number_Number_Number *v48 = allocate_context(sizeof *v48);
-    *v48 = (Tuple_Tuple_Number_Number_Number_List_Tuple_Number_Number_Number){v9, v45};
-    List_Tuple_Number_Number_Number v47 = (List_Tuple_Number_Number_Number){.tag=List_Tuple_Number_Number_Number_cons, .as.v1=v48};
-    Tuple_Tuple_Number_Number_Number_List_Tuple_Number_Number_Number *v50 = allocate_context(sizeof *v50);
-    *v50 = (Tuple_Tuple_Number_Number_Number_List_Tuple_Number_Number_Number){v5, v47};
-    List_Tuple_Number_Number_Number v49 = (List_Tuple_Number_Number_Number){.tag=List_Tuple_Number_Number_Number_cons, .as.v1=v50};
-    return winnerIn(NULL, v49, board);
+    String v2 = string_new(".", 1);
+    Vector_String board = vector_array_Vector_String(9, v2);
+    String v6 = string_new("X", 1);
+    Backing_Vector_String back0 = {0};
+    back0.read0 = board;
+    Lens_Vector_String v9 = (Lens_Vector_String){.read=&back0.read0};
+    String v8 = play(NULL, v6, 0, v9);
+    vector_drop_Vector_String(back0.read0);
+    return v8;
 }
 String other(void *environment, String player) {
     (void)environment;
@@ -223,39 +234,34 @@ String other(void *environment, String player) {
     string_drop(player);
     return v5;
 }
-String lineOwner(void *environment, double a, double b, double c, Lens_Vector_String board) {
+String play(void *environment, String player, double turns, Lens_Vector_String board) {
     (void)environment;
-    String first = at(NULL, a, board);
-    String first_2 = string_share(first);
-    String v8 = string_new(".", 1);
-    bool v9 = (!equals_String(first_2, v8));
-    bool v10 = false;
-    if (v9) {
-        String first_3 = string_share(first);
-        String v18 = at(NULL, b, board);
-        v10 = equals_String(first_3, v18);
+    render(NULL, board);
+    String v6 = winner(NULL, board);
+    String v7 = NULL;
+    if (string_equals(v6, ".", 1)) {
+        string_drop(v6);
+        String v13 = NULL;
+        if (turns == 9) {
+            v13 = string_new("draw", 4);
+        }
+        else {
+            String player_2 = string_share(player);
+            takeTurn(NULL, player_2, board);
+            String player_3 = string_share(player);
+            String v26 = other(NULL, player_3);
+            v13 = play(NULL, v26, turns + 1, board);
+        }
+        v7 = v13;
     }
     else {
-        v10 = false;
+        String owner = string_share(v6);
+        string_drop(v6);
+        v7 = owner;
     }
-    bool v21 = false;
-    if (v10) {
-        String first_4 = string_share(first);
-        String v29 = at(NULL, c, board);
-        v21 = equals_String(first_4, v29);
-    }
-    else {
-        v21 = false;
-    }
-    String v32 = NULL;
-    if (v21) {
-        v32 = string_share(first);
-    }
-    else {
-        v32 = string_new(".", 1);
-    }
-    string_drop(first);
-    return v32;
+    String v3 = v7;
+    string_drop(player);
+    return v3;
 }
 String winnerIn(void *environment, List_Tuple_Number_Number_Number lines, Lens_Vector_String board) {
     (void)environment;
@@ -294,55 +300,50 @@ String winnerIn(void *environment, List_Tuple_Number_Number_Number lines, Lens_V
     drop_List_Tuple_Number_Number_Number(lines);
     return v2;
 }
-String play(void *environment, String player, double turns, Lens_Vector_String board) {
+Unit takeTurn(void *environment, String player, Lens_Vector_String board) {
     (void)environment;
-    render(NULL, board);
-    String v6 = winner(NULL, board);
-    String v7 = NULL;
-    if (string_equals(v6, ".", 1)) {
-        string_drop(v6);
-        String v13 = NULL;
-        if (turns == 9) {
-            v13 = string_new("draw", 4);
-        }
-        else {
-            String player_2 = string_share(player);
-            takeTurn(NULL, player_2, board);
-            String player_3 = string_share(player);
-            String v26 = other(NULL, player_3);
-            v13 = play(NULL, v26, turns + 1, board);
-        }
-        v7 = v13;
+    String player_2 = string_share(player);
+    string_builder v4 = {0};
+    builder_bytes(&v4, "", 0);
+    builder_string(&v4, player_2);
+    builder_bytes(&v4, ", pick a square (1-9): ", 23);
+    String v3 = builder_finish(&v4);
+    String input = host_input_String(v3);
+    String input_2 = string_share(input);
+    double square = parseSquare(NULL, input_2);
+    Unit v15 = {0};
+    if (square == 9) {
+        String v17 = string_new("Please pick a number from 1 to 9.", 33);
+        host_print_Unit(v17);
+        String player_3 = string_share(player);
+        v15 = takeTurn(NULL, player_3, board);
     }
     else {
-        String owner = string_share(v6);
-        string_drop(v6);
-        v7 = owner;
+        String *v31 = vector_at_Vector_String(*board.read, square);
+        String v33 = string_dup((*v31));
+        String v34 = string_new(".", 1);
+        bool v35 = (!equals_String(v33, v34));
+        Unit v36 = {0};
+        if (v35) {
+            String v38 = string_new("That square is taken.", 21);
+            host_print_Unit(v38);
+            String player_4 = string_share(player);
+            v36 = takeTurn(NULL, player_4, board);
+        }
+        else {
+            String *v51 = vector_at_Vector_String(*board.read, square);
+            String player_5 = string_dup(player);
+            String v54 = (*v51);
+            *v51 = player_5;
+            string_drop(v54);
+            v36 = (Unit){0};
+        }
+        v15 = v36;
     }
-    String v3 = v7;
+    Unit v9 = v15;
+    string_drop(input);
     string_drop(player);
-    return v3;
-}
-String game(void *environment) {
-    (void)environment;
-    String v2 = string_new(".", 1);
-    Vector_String board = vector_array_Vector_String(9, v2);
-    String v6 = string_new("X", 1);
-    Backing_Vector_String back0 = {0};
-    back0.read0 = board;
-    Lens_Vector_String v9 = (Lens_Vector_String){.read=&back0.read0};
-    String v8 = play(NULL, v6, 0, v9);
-    vector_drop_Vector_String(back0.read0);
-    return v8;
-}
-Unit render(void *environment, Lens_Vector_String board) {
-    (void)environment;
-    String v4 = row(NULL, 0, board);
-    host_print_Unit(v4);
-    String v11 = row(NULL, 3, board);
-    host_print_Unit(v11);
-    String v18 = row(NULL, 6, board);
-    return host_print_Unit(v18);
+    return v9;
 }
 String entry(void *environment) {
     (void)environment;
@@ -354,30 +355,6 @@ String *vector_at_Vector_String(Vector_String value, double index) {
     }
     return &value.elements[(size_t)index];
 }
-String host_input_String(String value) {
-    (void)value;
-    if (value) {
-        fwrite(value->bytes, 1, value->length, stdout);
-    }
-    fflush(stdout);
-    string_drop(value);
-    string_builder line = {0};
-    int c;
-    while ((c = getchar()) != EOF && c != 10) {
-        char byte = (char)c;
-        builder_bytes(&line, &byte, 1);
-    }
-    return builder_finish(&line);
-}
-Unit host_print_Unit(String value) {
-    (void)value;
-    if (value) {
-        fwrite(value->bytes, 1, value->length, stdout);
-    }
-    putchar('\n');
-    string_drop(value);
-    return (Unit){0};
-}
 _Bool equals_String(String left, String right) {
     (void)left;
     (void)right;
@@ -386,21 +363,13 @@ _Bool equals_String(String left, String right) {
     string_drop(right);
     return same;
 }
-List_Tuple_Number_Number_Number share_List_Tuple_Number_Number_Number(List_Tuple_Number_Number_Number value) {
+Unit host_print_Unit(String value) {
     (void)value;
-    if (value.tag == List_Tuple_Number_Number_Number_cons) {
-        retain_context(value.as.v1);
+    if (value) {
+        fwrite(value->bytes, 1, value->length, stdout);
     }
-    return value;
-}
-Unit drop_List_Tuple_Number_Number_Number(List_Tuple_Number_Number_Number value) {
-    (void)value;
-    if (value.tag == List_Tuple_Number_Number_Number_cons) {
-        if (unique_context(value.as.v1)) {
-            drop_List_Tuple_Number_Number_Number((*value.as.v1).item1);
-        }
-        release_context(value.as.v1);
-    }
+    putchar('\n');
+    string_drop(value);
     return (Unit){0};
 }
 Vector_String vector_array_Vector_String(double length, String init) {
@@ -429,6 +398,38 @@ void vector_drop_Vector_String(Vector_String value) {
     if (value.elements) {
         release_context(value.elements);
     }
+}
+List_Tuple_Number_Number_Number share_List_Tuple_Number_Number_Number(List_Tuple_Number_Number_Number value) {
+    (void)value;
+    if (value.tag == List_Tuple_Number_Number_Number_cons) {
+        retain_context(value.as.v1);
+    }
+    return value;
+}
+Unit drop_List_Tuple_Number_Number_Number(List_Tuple_Number_Number_Number value) {
+    (void)value;
+    if (value.tag == List_Tuple_Number_Number_Number_cons) {
+        if (unique_context(value.as.v1)) {
+            drop_List_Tuple_Number_Number_Number((*value.as.v1).item1);
+        }
+        release_context(value.as.v1);
+    }
+    return (Unit){0};
+}
+String host_input_String(String value) {
+    (void)value;
+    if (value) {
+        fwrite(value->bytes, 1, value->length, stdout);
+    }
+    fflush(stdout);
+    string_drop(value);
+    string_builder line = {0};
+    int c;
+    while ((c = getchar()) != EOF && c != 10) {
+        char byte = (char)c;
+        builder_bytes(&line, &byte, 1);
+    }
+    return builder_finish(&line);
 }
 laminar_string *string_new(const char *bytes, size_t length) {
     if (!length) {

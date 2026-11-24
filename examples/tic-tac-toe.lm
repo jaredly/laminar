@@ -1,11 +1,7 @@
 // laminar: dual
 // two players take turns at the keyboard. cells hold "." (empty), "X" or "O".
-fn at(i, ~board) {
-    dup(~board[i])
-}
-
 fn row(a, ~board) {
-    "${at(a, ~board)} ${at(a + 1, ~board)} ${at(a + 2, ~board)}"
+    "${!board[a]} ${!board[a + 1]} ${!board[a + 2]}"
 }
 
 fn render(~board) {
@@ -16,8 +12,8 @@ fn render(~board) {
 
 // who owns the line, or "." if nobody does
 fn lineOwner(a, b, c, ~board) {
-    let first = at(a, ~board)
-    if first != "." && first == at(b, ~board) && first == at(c, ~board) then first else "."
+    let first = !board[a]
+    if first != "." && first == !board[b] && first == !board[c] then first else "."
 }
 
 fn winnerIn(lines, ~board) {
@@ -63,7 +59,7 @@ fn takeTurn(player, ~board) {
     if square == 9 then {
         print("Please pick a number from 1 to 9.")
         takeTurn(player, ~board)
-    } else if at(square, ~board) != "." then {
+    } else if !board[square] != "." then {
         print("That square is taken.")
         takeTurn(player, ~board)
     } else {
