@@ -1,3 +1,4 @@
+// laminar: dual
 // how to guess my number
 type direction {
     Higher
@@ -16,14 +17,14 @@ fn nextGuess(direction, ~(min, max, lastGuess)) {
 fn handleResponse(response, ~state) {
     match response {
         "higher" -> {
-            let next = nextGuess(Higher, ~state)
+            let mut next = nextGuess(Higher, ~state)
             let (min, _, last) = ~state
             min := last
             last := next
             false
         }
         "lower" -> {
-            let next = nextGuess(Lower, ~state)
+            let mut next = nextGuess(Lower, ~state)
             let (_, max, last) = ~state
             max := last
             last := next
@@ -47,7 +48,7 @@ fn step(steps, ~(min, max, lastGuess)) {
 }
 
 fn game() {
-    let state = (0, 100, 50)
+    let mut state = (0, 100, 50)
     let steps = step(0, ~state)
     (state, steps)
 }

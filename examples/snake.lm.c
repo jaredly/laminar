@@ -107,19 +107,24 @@ Vector_Number vector_push_Vector_Number(Vector_Number value, double item) {
     return value;
 }
 void *allocate_context(size_t size) {
-    void *context = malloc(size);
+    size_t *context = malloc(size + 2 * sizeof *context);
     if (!context) {
         abort();
     }
     ++live_contexts;
-    return context;
+    *context = 1;
+    return context + 2;
 }
 void release_context(void *context) {
     if (!context || live_contexts == 0) {
         abort();
     }
+    size_t *refs = (size_t *)context - 2;
+    if (--*refs) {
+        return;
+    }
     --live_contexts;
-    free(context);
+    free(refs);
 }
 void print_number(double x) {
     if (isnan(x)) {

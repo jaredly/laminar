@@ -27,6 +27,7 @@ typedef struct { List_Number read0; } Backing_List_Number;
 static size_t live_contexts = 0;
 void *allocate_context(size_t size);
 void release_context(void *context);
+_Bool unique_context(void *context);
 Fields_Option_Number find(void *environment, double needle, Lens_List_Number lst);
 Unit replace(void *environment, double needle, double repl, Lens_List_Number lst);
 List_Number entry(void *environment);
@@ -179,19 +180,27 @@ Unit restore0(void *opaque, Option_Number replacement) {
     return (Unit){0};
 }
 void *allocate_context(size_t size) {
-    void *context = malloc(size);
+    size_t *context = malloc(size + 2 * sizeof *context);
     if (!context) {
         abort();
     }
     ++live_contexts;
-    return context;
+    *context = 1;
+    return context + 2;
+}
+_Bool unique_context(void *context) {
+    return ((size_t *)context)[-2] == 1;
 }
 void release_context(void *context) {
     if (!context || live_contexts == 0) {
         abort();
     }
+    size_t *refs = (size_t *)context - 2;
+    if (--*refs) {
+        return;
+    }
     --live_contexts;
-    free(context);
+    free(refs);
 }
 void print_number(double x) {
     if (isnan(x)) {
@@ -235,7 +244,9 @@ void print_List_Number(List_Number value) {
 Unit drop_List_Number(List_Number value) {
     (void)value;
     if (value.tag == List_Number_cons) {
-        drop_List_Number((*value.as.v1).item1);
+        if (unique_context(value.as.v1)) {
+            drop_List_Number((*value.as.v1).item1);
+        }
         release_context(value.as.v1);
     }
     return (Unit){0};

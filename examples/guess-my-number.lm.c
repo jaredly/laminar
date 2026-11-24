@@ -29,40 +29,25 @@ typedef struct { double read0; double read1; double read2; } Backing_double_doub
 static size_t live_contexts = 0;
 void *allocate_context(size_t size);
 void release_context(void *context);
+void retain_context(void *context);
 laminar_string *string_new(const char *bytes, size_t length);
 void string_drop(laminar_string *s);
+laminar_string *string_share(laminar_string *s);
 _Bool string_equals(laminar_string *s, const char *bytes, size_t length);
 void builder_bytes(string_builder *b, const char *bytes, size_t length);
 void builder_number(string_builder *b, double x);
 laminar_string *builder_finish(string_builder *b);
-double step(void *environment, double steps, Scattered_Lens_double_Lens_double_Lens_double min_max_lastGuess);
 Tuple_Tuple_Number_Number_Number_Number game(void *environment);
+double step(void *environment, double steps, Scattered_Lens_double_Lens_double_Lens_double min_max_lastGuess);
 double nextGuess(void *environment, Direction direction, Scattered_Lens_double_Lens_double_Lens_double min_max_lastGuess);
 bool handleResponse(void *environment, String response, Scattered_Lens_double_Lens_double_Lens_double state);
 Tuple_Tuple_Number_Number_Number_Number entry(void *environment);
 String host_input_String(String value);
+Direction share_Direction(Direction value);
 double round_double(double value);
+Unit drop_Direction(Direction value);
 Unit host_print_Unit(String value);
 void print_number(double x);
-double step(void *environment, double steps, Scattered_Lens_double_Lens_double_Lens_double min_max_lastGuess) {
-    (void)environment;
-    double lastGuess = *min_max_lastGuess.item2.read;
-    string_builder v4 = {0};
-    builder_bytes(&v4, "My guess is ", 12);
-    builder_number(&v4, lastGuess);
-    builder_bytes(&v4, " (higher/lower/match): ", 23);
-    String v3 = builder_finish(&v4);
-    String input = host_input_String(v3);
-    bool next = handleResponse(NULL, input, min_max_lastGuess);
-    double v12 = 0;
-    if (next) {
-        v12 = steps;
-    }
-    else {
-        v12 = step(NULL, steps + 1, min_max_lastGuess);
-    }
-    return v12;
-}
 Tuple_Tuple_Number_Number_Number_Number game(void *environment) {
     (void)environment;
     Tuple_Number_Number_Number state = (Tuple_Number_Number_Number){0, 100, 50};
@@ -75,73 +60,100 @@ Tuple_Tuple_Number_Number_Number_Number game(void *environment) {
     Tuple_Number_Number_Number state_2 = (Tuple_Number_Number_Number){back0.read0, back0.read1, back0.read2};
     return (Tuple_Tuple_Number_Number_Number_Number){state_2, steps};
 }
+double step(void *environment, double steps, Scattered_Lens_double_Lens_double_Lens_double min_max_lastGuess) {
+    (void)environment;
+    double lastGuess = *min_max_lastGuess.item2.read;
+    string_builder v4 = {0};
+    builder_bytes(&v4, "My guess is ", 12);
+    builder_number(&v4, lastGuess);
+    builder_bytes(&v4, " (higher/lower/match): ", 23);
+    String v3 = builder_finish(&v4);
+    String input = host_input_String(v3);
+    String input_2 = string_share(input);
+    bool next = handleResponse(NULL, input_2, min_max_lastGuess);
+    double v16 = 0;
+    if (next) {
+        v16 = steps;
+    }
+    else {
+        v16 = step(NULL, steps + 1, min_max_lastGuess);
+    }
+    double v13 = v16;
+    string_drop(input);
+    return v13;
+}
 double nextGuess(void *environment, Direction direction, Scattered_Lens_double_Lens_double_Lens_double min_max_lastGuess) {
     (void)environment;
-    double v1 = 0;
-    switch (direction.tag) {
+    Direction direction_2 = share_Direction(direction);
+    double v3 = 0;
+    switch (direction_2.tag) {
         case Direction_Higher:
         {
             double max = *min_max_lastGuess.item1.read;
             double lastGuess = *min_max_lastGuess.item2.read;
-            v1 = (max + lastGuess) / 2;
+            v3 = (max + lastGuess) / 2;
             break;
         }
         case Direction_Lower:
         {
             double lastGuess_2 = *min_max_lastGuess.item2.read;
             double min = *min_max_lastGuess.item0.read;
-            v1 = (lastGuess_2 + min) / 2;
+            v3 = (lastGuess_2 + min) / 2;
             break;
         }
     }
-    return round_double(v1);
+    double v22 = round_double(v3);
+    drop_Direction(direction);
+    return v22;
 }
 bool handleResponse(void *environment, String response, Scattered_Lens_double_Lens_double_Lens_double state) {
     (void)environment;
-    bool v0 = false;
-    double v33 = 0;
-    double v34 = 0;
+    String response_2 = string_share(response);
+    bool v2 = false;
     double v35 = 0;
-    if (string_equals(response, "higher", 6)) {
-        string_drop(response);
-        Direction v3 = (Direction){.tag=Direction_Higher, .as.v0=(Unit){0}};
-        double next = nextGuess(NULL, v3, state);
+    double v36 = 0;
+    double v37 = 0;
+    if (string_equals(response_2, "higher", 6)) {
+        string_drop(response_2);
+        Direction v5 = (Direction){.tag=Direction_Higher, .as.v0=(Unit){0}};
+        double next = nextGuess(NULL, v5, state);
         double last = *state.item2.read;
-        v0 = false;
-        v33 = last;
-        v34 = *state.item1.read;
-        v35 = next;
+        v2 = false;
+        v35 = last;
+        v36 = *state.item1.read;
+        v37 = next;
     }
-    else if (string_equals(response, "lower", 5)) {
-        string_drop(response);
-        Direction v16 = (Direction){.tag=Direction_Lower, .as.v1=(Unit){0}};
-        double next_2 = nextGuess(NULL, v16, state);
+    else if (string_equals(response_2, "lower", 5)) {
+        string_drop(response_2);
+        Direction v18 = (Direction){.tag=Direction_Lower, .as.v1=(Unit){0}};
+        double next_2 = nextGuess(NULL, v18, state);
         double last_2 = *state.item2.read;
-        v0 = false;
-        v33 = *state.item0.read;
-        v34 = last_2;
-        v35 = next_2;
+        v2 = false;
+        v35 = *state.item0.read;
+        v36 = last_2;
+        v37 = next_2;
     }
-    else if (string_equals(response, "match", 5)) {
-        string_drop(response);
-        v0 = true;
-        v33 = *state.item0.read;
-        v34 = *state.item1.read;
-        v35 = *state.item2.read;
+    else if (string_equals(response_2, "match", 5)) {
+        string_drop(response_2);
+        v2 = true;
+        v35 = *state.item0.read;
+        v36 = *state.item1.read;
+        v37 = *state.item2.read;
     }
     else {
-        string_drop(response);
-        String v29 = string_new("I'm sorry, I didn't understand that. Please say 'higher', 'lower', or 'match'", 77);
-        host_print_Unit(v29);
-        v0 = false;
-        v33 = *state.item0.read;
-        v34 = *state.item1.read;
-        v35 = *state.item2.read;
+        string_drop(response_2);
+        String v31 = string_new("I'm sorry, I didn't understand that. Please say 'higher', 'lower', or 'match'", 77);
+        host_print_Unit(v31);
+        v2 = false;
+        v35 = *state.item0.read;
+        v36 = *state.item1.read;
+        v37 = *state.item2.read;
     }
-    *state.item0.read = v33;
-    *state.item1.read = v34;
-    *state.item2.read = v35;
-    return v0;
+    string_drop(response);
+    *state.item0.read = v35;
+    *state.item1.read = v36;
+    *state.item2.read = v37;
+    return v2;
 }
 Tuple_Tuple_Number_Number_Number_Number entry(void *environment) {
     (void)environment;
@@ -162,6 +174,10 @@ String host_input_String(String value) {
     }
     return builder_finish(&line);
 }
+Direction share_Direction(Direction value) {
+    (void)value;
+    return value;
+}
 double round_double(double value) {
     (void)value;
     double rounded = floor(value);
@@ -172,6 +188,10 @@ double round_double(double value) {
         rounded = copysign(0.0, value);
     }
     return rounded;
+}
+Unit drop_Direction(Direction value) {
+    (void)value;
+    return (Unit){0};
 }
 Unit host_print_Unit(String value) {
     (void)value;
@@ -195,6 +215,12 @@ void string_drop(laminar_string *s) {
     if (s) {
         release_context(s);
     }
+}
+laminar_string *string_share(laminar_string *s) {
+    if (s) {
+        retain_context(s);
+    }
+    return s;
 }
 _Bool string_equals(laminar_string *s, const char *bytes, size_t length) {
     size_t n = s ? s->length : 0;
@@ -291,19 +317,27 @@ laminar_string *builder_finish(string_builder *b) {
     return s;
 }
 void *allocate_context(size_t size) {
-    void *context = malloc(size);
+    size_t *context = malloc(size + 2 * sizeof *context);
     if (!context) {
         abort();
     }
     ++live_contexts;
-    return context;
+    *context = 1;
+    return context + 2;
+}
+void retain_context(void *context) {
+    ++((size_t *)context)[-2];
 }
 void release_context(void *context) {
     if (!context || live_contexts == 0) {
         abort();
     }
+    size_t *refs = (size_t *)context - 2;
+    if (--*refs) {
+        return;
+    }
     --live_contexts;
-    free(context);
+    free(refs);
 }
 void print_number(double x) {
     if (isnan(x)) {

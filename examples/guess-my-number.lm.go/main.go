@@ -49,13 +49,65 @@ type Func_Tuple_Number_Number_Number_to_Unit_31b28240d9 func(environment any, ar
 
 type Func_float64_to_Unit_e8b5a11084 func(environment any, arg0 float64) Unit
 
+var stdin *bufio.Reader
+
 type Backing_float64_float64_float64_104b591eaf struct {
 	read0 float64
 	read1 float64
 	read2 float64
 }
 
-var stdin *bufio.Reader
+func nextGuess(direction Direction, min_max_lastGuess Scattered_Lens_float64_Lens_float64_Lens_float64) float64 {
+	var v6 float64
+	switch direction.tag {
+	case Direction_Higher:
+		max := *min_max_lastGuess.item1.read
+		lastGuess := *min_max_lastGuess.item2.read
+		v6 = (max + lastGuess) / 2.0
+	case Direction_Lower:
+		lastGuess_2 := *min_max_lastGuess.item2.read
+		min := *min_max_lastGuess.item0.read
+		v6 = (lastGuess_2 + min) / 2.0
+	}
+	return laminarRound(v6)
+}
+
+func step(steps float64, min_max_lastGuess Scattered_Lens_float64_Lens_float64_Lens_float64) float64 {
+	lastGuess := *min_max_lastGuess.item2.read
+	input := hostInput("My guess is " + formatNumber(lastGuess) + " (higher/lower/match): ")
+	next := handleResponse(input, min_max_lastGuess)
+	var v28 float64
+	if next {
+		v28 = steps
+	} else {
+		v28 = step(steps + 1.0, min_max_lastGuess)
+	}
+	return v28
+}
+
+func handleResponse(response string, state Scattered_Lens_float64_Lens_float64_Lens_float64) bool {
+	var v5 bool
+	switch response {
+	case "higher":
+		v8 := Direction{tag: Direction_Higher, v0: Unit{}}
+		next := nextGuess(v8, state)
+		last := *state.item2.read
+		v5 = false
+		*state.item0.read, *state.item1.read, *state.item2.read = last, *state.item1.read, next
+	case "lower":
+		v25 := Direction{tag: Direction_Lower, v1: Unit{}}
+		next_2 := nextGuess(v25, state)
+		last_2 := *state.item2.read
+		v5 = false
+		*state.item0.read, *state.item1.read, *state.item2.read = *state.item0.read, last_2, next_2
+	case "match":
+		v5 = true
+	default:
+		hostPrint_Unit("I'm sorry, I didn't understand that. Please say 'higher', 'lower', or 'match'")
+		v5 = false
+	}
+	return v5
+}
 
 func game() Tuple_Tuple_Number_Number_Number_Number {
 	var back0 Backing_float64_float64_float64_104b591eaf
@@ -65,65 +117,19 @@ func game() Tuple_Tuple_Number_Number_Number_Number {
 	return Tuple_Tuple_Number_Number_Number_Number{item0: Tuple_Number_Number_Number{item0: back0.read0, item1: back0.read1, item2: back0.read2}, item1: steps}
 }
 
-func handleResponse(response string, state Scattered_Lens_float64_Lens_float64_Lens_float64) bool {
-	var v1 bool
-	switch response {
-	case "higher":
-		v4 := Direction{tag: Direction_Higher, v0: Unit{}}
-		next := nextGuess(v4, state)
-		last := *state.item2.read
-		v1 = false
-		*state.item0.read, *state.item1.read, *state.item2.read = last, *state.item1.read, next
-	case "lower":
-		v21 := Direction{tag: Direction_Lower, v1: Unit{}}
-		next_2 := nextGuess(v21, state)
-		last_2 := *state.item2.read
-		v1 = false
-		*state.item0.read, *state.item1.read, *state.item2.read = *state.item0.read, last_2, next_2
-	case "match":
-		v1 = true
-	default:
-		hostPrint_Unit("I'm sorry, I didn't understand that. Please say 'higher', 'lower', or 'match'")
-		v1 = false
-	}
-	return v1
-}
-
-func step(steps float64, min_max_lastGuess Scattered_Lens_float64_Lens_float64_Lens_float64) float64 {
-	lastGuess := *min_max_lastGuess.item2.read
-	input := hostInput("My guess is " + formatNumber(lastGuess) + " (higher/lower/match): ")
-	next := handleResponse(input, min_max_lastGuess)
-	var v20 float64
-	if next {
-		v20 = steps
-	} else {
-		v20 = step(steps + 1.0, min_max_lastGuess)
-	}
-	return v20
-}
-
-func nextGuess(direction Direction, min_max_lastGuess Scattered_Lens_float64_Lens_float64_Lens_float64) float64 {
-	var v2 float64
-	switch direction.tag {
-	case Direction_Higher:
-		max := *min_max_lastGuess.item1.read
-		lastGuess := *min_max_lastGuess.item2.read
-		v2 = (max + lastGuess) / 2.0
-	case Direction_Lower:
-		lastGuess_2 := *min_max_lastGuess.item2.read
-		min := *min_max_lastGuess.item0.read
-		v2 = (lastGuess_2 + min) / 2.0
-	}
-	return laminarRound(v2)
-}
-
 func entry() Tuple_Tuple_Number_Number_Number_Number {
 	return game()
 }
 
-func hostPrint_Unit(value string) Unit {
-	fmt.Print(value + "\n")
-	return Unit{}
+func laminarRound(x float64) float64 {
+	rounded := math.Floor(x)
+	if x-rounded >= 0.5 {
+		rounded++
+	}
+	if rounded == 0 {
+		rounded = math.Copysign(0, x)
+	}
+	return rounded
 }
 
 func hostInput(prompt string) string {
@@ -138,15 +144,9 @@ func hostInput(prompt string) string {
 	return line
 }
 
-func laminarRound(x float64) float64 {
-	rounded := math.Floor(x)
-	if x-rounded >= 0.5 {
-		rounded++
-	}
-	if rounded == 0 {
-		rounded = math.Copysign(0, x)
-	}
-	return rounded
+func hostPrint_Unit(value string) Unit {
+	fmt.Print(value + "\n")
+	return Unit{}
 }
 
 func printNumber(x float64) {
