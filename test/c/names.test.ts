@@ -35,14 +35,23 @@ it('names semantic specializations', () => {
 
 it('escapes C keywords, library, runtime and generated helper names', () => {
     const names = new CNames();
-    const chosen = ['double', 'sin', 'main', 'free', 'fn0', 'L3', 'drop_List_Number', 'String'].map(
-        (n) => names.source(n),
-    );
+    const chosen = [
+        'double',
+        'sin',
+        'main',
+        'free',
+        'index',
+        'fn0',
+        'L3',
+        'drop_List_Number',
+        'String',
+    ].map((n) => names.source(n));
     expect(chosen).toEqual([
         'double_2',
         'sin_2',
         'main_2',
         'free_2',
+        'index_2',
         'fn0_source',
         'L3_source',
         'drop_List_Number_source',
