@@ -169,3 +169,43 @@ for (const name of ['native', 'go'] as const)
         },
         60000,
     );
+
+it('reads an element of a plain vector as a shared value', () => {
+    const code = (source: string) => {
+        try {
+            checkSource(source, { mode: 'dual' });
+            return 'ok';
+        } catch (error) {
+            if (error instanceof CompileError) return error.code;
+            throw error;
+        }
+    };
+    const c = compile('{let p = [:1, 2:]\n (p[0], p[1])}');
+    verifyConcreteProgram(clone(c));
+    expect(sharedOutputs(c).filter((n) => n.op === 'invoke' && n.share === true)).not.toEqual([]);
+    expect(code('{let p = [:1, 2:]\n let mut m = p[0]\n m}')).toBe('shared-into-mut');
+    expect(code('{let p = [:1, 2:]\n let mut m = dup(p[0])\n m}')).toBe('ok');
+    expect(code('{let p = [:1, 2:]\n p[0] := 3\n p}')).toBe('plain-lens');
+    expect(code('{let mut v = [:1, 2:]\n v[0]}')).toBe('index-value');
+});
+
+for (const name of ['native', 'go'] as const)
+    (process.env.LAMINAR_EXEC ? it : it.skip)(
+        `shares elements of plain vectors on ${name}`,
+        () => {
+            const out = execute(
+                `fn first(b) {b[0]}
+{
+    let words = [:"a", "b":]
+    let grid = [:[:1, 2:], [:3:]:]
+    let i = 1
+    let mut row = dup(grid[0])
+    row[0] := 9
+    (words[0], words[i], words[0], grid[1], grid[1], first(grid), row, grid[0])
+}`,
+                name,
+            );
+            expect(out.trim()).toBe('["a","b","a",[3],[3],[1,2],[9,2],[1,2]]');
+        },
+        60000,
+    );

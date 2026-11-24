@@ -57,18 +57,16 @@ the backends do not change. The `shared-into-mut` message gains "use `dup(x)`".
    place, anything else is `-1 * x`, so `-0` stays right. `if`, `then` and `else` are reserved.
    The tokens are parsed flat (`IfPart` in `src/laminar.cst`, `infixOf` and `ifExpr` in
    `src/laminar-helpers.ts`). `tic-tac-toe.lm` uses `if` and `5 - player`.
-4. **Reads from a shared vector** (wishlist 3). `v[i]` on a plain binding yields a *shared*
-   element instead of `index-value`.
-   - New native `get(reads number, reads Vector<a>) -> shared a`, which traps like `[]` when out
-     of range. It is the first import with a shared result, so `ImportConvention` gains `'shared'`
-     for results, `checkConventions` accepts a shared result for `plain(a, SHARED)`, and
-     `checkReads` skips the result-variable rule when the result is itself shared (sharing is not
-     keeping an owned copy).
-   - `desugar-plain` rewrites a value-position `p[i]` rooted at a plain binding to `get(i, p)`;
-     `p[i][j]` nests. `v[i]` on a `mut` root stays the lens.
-   - Backends: Go aliases the element; C returns the element retained with `shareValue`
-     (scalars copy). The concrete verifier needs `get` results to count as shared reads.
-   - Then `tic-tac-toe.lm` helpers take a plain `board` and drop the `~board` threading.
+4. **Reads from a shared vector** (wishlist 3). **Done**, and smaller than planned: no `get`
+   native and no new import convention. A field read of a plain binding was already a `share` read
+   of a borrowed place (`dup(~p.f)`, internal only), so `desugar-plain` now treats a value-position
+   place under a plain root the same way, whatever mix of fields and indexes it has
+   (`placeOf`/`rootOf`): `p[i]`, `p[i][j]` and `p.f[i]` become share reads of the lens place, which
+   uses the existing `[]` native (so it traps out of range like the lens) and the existing share
+   path in each backend (C retains the element, Go aliases it). `v[i]` on a `mut` root is still
+   `index-value`; assigning through a plain root is still `plain-lens`; storing an element into
+   `mut` storage needs `dup(p[i])`. Tests in `test/shared-storage.test.ts` include native
+   (sanitized) and Go runs.
 5. **Generalized `==`** (wishlist 2). The largest change, so last. `==` becomes
    `(reads a, reads a) -> Bool` with an equality constraint: `a` must contain no function, lens or
    linear type. Numbers keep the IEEE native (NaN unequal to itself); everything else uses

@@ -50,10 +50,26 @@ export function desugarPlain(source: Linear): PlainResult {
         }
         return next;
     };
+    /** The binding a field/index place hangs off, if it is one. */
     const rootOf = (n: { type: string }): Id | undefined => {
         let node = n as Linear | Lens;
-        while (node.type === 'field') node = node.target;
+        while (node.type === 'field' || node.type === 'index') node = node.target;
         return node.type === 'id' ? node : undefined;
+    };
+    /** A value-position place (`p.x`, `p[i]`) as the lens a share read borrows. */
+    const placeOf = (n: Linear | Lens, scope: Scope): Lens => {
+        switch (n.type) {
+            case 'field':
+                return { ...n, target: placeOf(n.target, scope) } as Lens;
+            case 'index':
+                return {
+                    ...n,
+                    target: placeOf(n.target, scope),
+                    index: term(n.index, scope),
+                } as Lens;
+            default:
+                return n as Lens;
+        }
     };
     const copyOf = (place: Lens, loc: number): Linear => ({
         type: 'apply',
@@ -109,12 +125,12 @@ export function desugarPlain(source: Linear): PlainResult {
             case 'vector':
                 return { ...n, items: n.items.map((v) => linear(v, scope)) };
             case 'index':
-                return { ...n, index: term(n.index, scope) };
             case 'field': {
+                // A place under a plain binding is read as a shared value.
                 const root = rootOf(n);
-                return root && scope.get(root.text) === 'plain'
-                    ? copyOf(n as unknown as Lens, n.loc)
-                    : n;
+                if (root && scope.get(root.text) === 'plain')
+                    return copyOf(placeOf(n, scope), n.loc);
+                return n.type === 'index' ? { ...n, index: term(n.index, scope) } : n;
             }
             case 'constructor':
                 return { ...n, args: n.args.map((v) => linear(v, scope)) };
