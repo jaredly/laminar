@@ -45,6 +45,12 @@ const numeric = (op: string, a: number, b: number): number | boolean => {
             return a / b;
         case '==':
             return a === b;
+        case '!=':
+            return a !== b;
+        case '<':
+            return a < b;
+        case '>':
+            return a > b;
         case '>=':
             return a >= b;
         case '<=':

@@ -41,9 +41,21 @@ export const runtimeImports: readonly RuntimeImport[] = [
     numeric('-', number, 'IEEE-754 double subtraction'),
     numeric('*', number, 'IEEE-754 double multiplication'),
     numeric('/', number, 'IEEE-754 double division'),
+    numeric('%', number, 'ECMAScript remainder: truncated division, the result has the dividend sign'),
     numeric('==', bool, 'IEEE-754 equality (NaN is unequal to itself)'),
+    numeric('!=', bool, 'IEEE-754 inequality (NaN is unequal to everything, itself included)'),
+    numeric('<', bool, 'IEEE-754 ordered comparison'),
+    numeric('>', bool, 'IEEE-754 ordered comparison'),
     numeric('>=', bool, 'IEEE-754 ordered comparison'),
     numeric('<=', bool, 'IEEE-754 ordered comparison'),
+    {
+        name: 'not',
+        signature: () => fn([reads(bool)], plain(bool)),
+        arguments: ['owned'],
+        result: 'owned',
+        backends: all,
+        semantics: 'Boolean negation',
+    },
     {
         name: 'round',
         signature: () => fn([reads(number)], plain(number)),
@@ -169,6 +181,9 @@ export const runtimeImports: readonly RuntimeImport[] = [
         semantics: 'Writes the consumed string and a newline to stdout',
     },
 ];
+
+/** Natives a backend may spell as an infix operator: scalar operands, no effects, no traps. */
+export const infixImports: readonly string[] = ['+', '-', '*', '/', '==', '!=', '<', '>', '>=', '<='];
 
 const byName = new Map(runtimeImports.map((i) => [i.name, i]));
 

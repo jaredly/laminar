@@ -38,11 +38,16 @@ the backends do not change. The `shared-into-mut` message gains "use `dup(x)`".
 1. **`dup(value)`** (wishlist 1). **Done.** `dupValue` in `src/desugar-plain.ts`; `tic-tac-toe.lm` no longer has `claim`. The rewrite and the `dup-of-owned` error above. Tests in
    `test/ownership.test.ts`: plain binding, plain expression, mut binding error, `board[i] :=
    dup(player)`. Docs: `mut-and-linear.md`. Then `tic-tac-toe.lm` drops `claim`.
-2. **Numeric operators** (wishlist 2 and 4). Add `<`, `>`, `!=`, `%` as `numeric(...)` runtime
-   imports in `src/runtime-imports.ts`, plus `!` on `Bool`. `%` is the ECMAScript remainder (sign of
-   the dividend); C uses `fmod`, Go uses `math.Mod`. Every import needs the reference, C and Go
-   implementations, and a probe in `test/runtime-imports.test.ts`. `tic-tac-toe.lm` can then use
-   `%` for the player and `!=` for the invalid-square test.
+2. **Numeric operators** (wishlist 2 and 4). **Done.** `<`, `>`, `!=` and `%` are runtime imports
+   (`src/runtime-imports.ts`) with reference, C and Go implementations. The comparisons are
+   infix on every backend (`infixImports` lists them); `%` is the ECMAScript remainder (sign of
+   the dividend), spelled `fmod` in C and `math.Mod` in Go. `test/numeric-operators.test.ts` checks
+   negative operands, fractions and NaN against the reference evaluator on native (sanitized) and
+   Go. Bool negation is the prefix
+   `not` (Python style; `!x` is already the source spelling of `dup(~x)`). `not` is a reserved
+   word in both modes and negates the whole infix expression after it: `not a == b` is
+   `not (a == b)`. It is the `not` runtime import (`!` in C and Go). The corpus function
+   `fn not` in `test/flow.test.lm` was renamed `negate`.
 3. **Syntax sugar** (wishlist 4). Parser-level desugarings, no new semantics:
    `if c then a else b` to `match c { true -> a  false -> b }`; `a && b` and `a || b` to nested
    matches (short-circuiting); negative literals as unary minus on a literal (`-1` is `0 - 1`).

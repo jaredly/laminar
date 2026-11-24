@@ -9,7 +9,7 @@ import { Locals } from '../backend/imperative/locals.ts';
 import { derefText, isExpr, memberText, same, type Expr } from '../backend/imperative/code.ts';
 import { isLocal, isScope, mapScope, visit } from '../backend/imperative/statements.ts';
 import { appendFunction, appendPart, cBytes, stringRuntime, stringType } from './strings.ts';
-import { requireImport, usesHost } from '../runtime-imports.ts';
+import { infixImports, requireImport, usesHost } from '../runtime-imports.ts';
 import { functionNames } from '../backend/names.ts';
 import { localNames, takesName } from '../backend/local-names.ts';
 import { layoutNames, unionTagNames } from '../backend/type-names.ts';
@@ -748,10 +748,12 @@ export function lowerC(
         result: string,
         parameters: readonly string[],
     ): Expr | undefined => {
-        if (['+', '-', '*', '/', '==', '>=', '<='].includes(op))
+        if (infixImports.includes(op))
             return activeLocals
                 ? activeLocals.binary(op, args[0]!, args[1]!)
                 : cc`(${args[0]} ${op} ${args[1]})`;
+        if (op === 'not') return cc`(!${args[0]})`;
+        if (op === '%') return cc`fmod(${args[0]}, ${args[1]})`;
         if (op === 'charList') return cc`${charList(result)}(${args[0]})`;
         if (op === 'heapsize') return '0.0';
         if (op === '[::]') return zero(result);
@@ -2669,7 +2671,7 @@ export function lowerC(
                                               )})`;
                                 else if (w?.kind === 'native') {
                                     const op = requireImport(w.definition, 'c').name;
-                                    pure = ['+', '-', '*', '/', '==', '>=', '<='].includes(op);
+                                    pure = infixImports.includes(op) || op === '%' || op === 'not';
                                     effect = !pure && op !== 'heapsize' && op !== '[::]';
                                     expr =
                                         simpleNative(op, args, id, abi.arguments) ??

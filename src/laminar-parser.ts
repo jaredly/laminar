@@ -35,7 +35,22 @@ import {
 } from './ast.ts';
 
 export const grammar = new Grammar({
-    reserved: ['let', 'lens', 'mut', 'linear', '~', '<-', '=', ':=', 'case', '::', '=>', '_', '@'],
+    reserved: [
+        'let',
+        'lens',
+        'mut',
+        'linear',
+        'not',
+        '~',
+        '<-',
+        '=',
+        ':=',
+        'case',
+        '::',
+        '=>',
+        '_',
+        '@',
+    ],
 });
 
 grammar.add('File', [
@@ -1089,15 +1104,38 @@ grammar.add('Linear', [
     ),
     // Linear:29
     option(
+        list(
+            ' ',
+            lit('not'),
+            b('left', 'Linear'),
+            manyItems('right', [b('op', 'op'), b('right', 'Linear')]),
+        ),
+        ({
+            left,
+            right,
+            node,
+        }: {
+            left: Linear;
+            right: { op: Op; right: Linear }[];
+            node: Node;
+        }): Linear => ({
+            type: 'apply',
+            fn: { type: 'id', text: 'not', loc: node.loc },
+            args: [partition(left, right)],
+            loc: node.loc,
+        }),
+    ),
+    // Linear:30
+    option(
         list(' ', b('one', 'Linear')),
         ({ one, node }: { one: Linear; node: Node }): Linear => one,
     ),
-    // Linear:30
+    // Linear:31
     option(
         list('\n', b('one', 'Linear')),
         ({ one, node }: { one: Linear; node: Node }): Linear => one,
     ),
-    // Linear:31
+    // Linear:32
     option(
         wrapper(
             '{',
@@ -1119,7 +1157,7 @@ grammar.add('Linear', [
             node: Node;
         }): Linear => ({ type: 'let', pat, value, body, loc: node.loc }),
     ),
-    // Linear:32
+    // Linear:33
     option(
         list(
             '\n',
@@ -1138,7 +1176,7 @@ grammar.add('Linear', [
             node: Node;
         }): Linear => ({ type: 'let', pat, value, body, loc: node.loc }),
     ),
-    // Linear:33
+    // Linear:34
     option(
         wrapper(
             '{',
@@ -1174,7 +1212,7 @@ grammar.add('Linear', [
             loc: node.loc,
         }),
     ),
-    // Linear:34
+    // Linear:35
     option(
         list(
             '\n',
@@ -1207,17 +1245,17 @@ grammar.add('Linear', [
             loc: node.loc,
         }),
     ),
-    // Linear:35
+    // Linear:36
     option(
         wrapper('{', b('one', 'Linear')),
         ({ one, node }: { one: Linear; node: Node }): Linear => one,
     ),
-    // Linear:36
+    // Linear:37
     option(
         wrapper('{', list('\n', b('one', 'Linear'))),
         ({ one, node }: { one: Linear; node: Node }): Linear => one,
     ),
-    // Linear:37
+    // Linear:38
     option(
         wrapper('{', list('\n', b('value', 'Linear'), rest('body', 'Linear', false))),
         ({ value, body, node }: { value: Linear; body: Linear; node: Node }): Linear => ({
@@ -1228,7 +1266,7 @@ grammar.add('Linear', [
             loc: node.loc,
         }),
     ),
-    // Linear:38
+    // Linear:39
     option(
         list('\n', b('value', 'Linear'), rest('body', 'Linear', false)),
         ({ value, body, node }: { value: Linear; body: Linear; node: Node }): Linear => ({

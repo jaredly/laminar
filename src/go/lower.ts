@@ -20,7 +20,7 @@ import {
     type GoFunction,
 } from './syntax.ts';
 import { goBytes, goPart, goStringRuntime } from './strings.ts';
-import { requireImport, usesHost } from '../runtime-imports.ts';
+import { infixImports, requireImport, usesHost } from '../runtime-imports.ts';
 import { GoNames, functionNames } from './names.ts';
 import { localNames, takesName } from '../backend/local-names.ts';
 import { GoLocals } from './locals.ts';
@@ -587,10 +587,12 @@ ${joinCode(
     const hostHelpers = new Map<string, string>();
     /** Natives that take and return plain data, by registered name. Lens natives are separate. */
     const simpleNative = (op: string, args: Expr[], result: string): Expr | undefined => {
-        if (['+', '-', '*', '/', '==', '>=', '<='].includes(op))
+        if (infixImports.includes(op))
             return activeLocals
                 ? activeLocals.binary(op, args[0]!, args[1]!)
                 : go`(${args[0]} ${op} ${args[1]})`;
+        if (op === 'not') return go`(!${args[0]})`;
+        if (op === '%') return go`math.Mod(${args[0]}, ${args[1]})`;
         if (op === 'charList') return go`${charList(result)}(${args[0]})`;
         if (op === 'heapsize') return activeLocals ? activeLocals.scalar('0.0', 0) : '0.0';
         if (op === '[::]') return zero(result);
@@ -2139,13 +2141,9 @@ ${joinCode(
                         if (
                             w?.kind === 'native' &&
                             [
-                                '+',
-                                '-',
-                                '*',
-                                '/',
-                                '==',
-                                '>=',
-                                '<=',
+                                ...infixImports,
+                                '%',
+                                'not',
                                 'round',
                                 'heapsize',
                                 'charList',

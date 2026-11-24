@@ -27,6 +27,9 @@ const arithmetic: Record<string, string> = {
     '*': 'mul',
     '/': 'div',
     '==': 'eq',
+    '!=': 'ne',
+    '<': 'lt',
+    '>': 'gt',
     '>=': 'ge',
     '<=': 'le',
 };

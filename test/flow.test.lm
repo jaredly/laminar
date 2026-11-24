@@ -665,8 +665,8 @@ ir-> run(
 // --------------------
 //
 // First we need to establish some basic functions on lists.
-// not :: Bool -> Bool
-fn not(b) (
+// negate :: Bool -> Bool
+fn negate(b) (
     match b {
         true -> false
         false -> true
@@ -680,11 +680,11 @@ ir-> (*b0)=>(
     }
 )
 
-{not(true)}
+{negate(true)}
 
 false
 
-ir-> not(true)
+ir-> negate(true)
 
 // Consumes the input.
 // length' :: List String -> Int

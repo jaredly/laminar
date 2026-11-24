@@ -395,12 +395,22 @@ export function executeTypedProgram(
                     return number(0) * number(1);
                 case '/':
                     return number(0) / number(1);
+                case '%':
+                    return number(0) % number(1);
                 case '==':
                     return number(0) === number(1);
+                case '!=':
+                    return number(0) !== number(1);
+                case '<':
+                    return number(0) < number(1);
+                case '>':
+                    return number(0) > number(1);
                 case '>=':
                     return number(0) >= number(1);
                 case '<=':
                     return number(0) <= number(1);
+                case 'not':
+                    return !data(args[0]);
                 case 'round':
                     return Math.round(number(0));
                 case 'dup':

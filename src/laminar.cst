@@ -1,5 +1,5 @@
 @config {
-    reserved: [let lens mut linear ~ <- = := case :: => _ @]
+    reserved: [let lens mut linear not ~ <- = := case :: => _ @]
 }
 
 File {
@@ -181,6 +181,8 @@ Linear {
     [" " "fn" ["(," ...args:FnArg] body:Term] -> ({type: "fn", args, body,loc:node.loc})
     [" " lens:Lens ":=" ...value:*Linear] -> ({type: "assign", lens, value,loc:node.loc})
     [" " left:Linear ...right:(op:op right:Linear)] -> partition(left, right)
+    // `not` negates the whole infix expression after it, like Python: `not a == b` is `not (a == b)`.
+    [" " "not" left:Linear ...right:(op:op right:Linear)] -> ({type: "apply", fn: {type: "id", text: "not", loc: node.loc}, args: [partition(left, right)], loc: node.loc})
     [" " one:Linear] -> one
     ["\n" one:Linear] -> one
 
