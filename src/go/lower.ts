@@ -550,6 +550,63 @@ ${joinCode(
             )}}`;
         return expr;
     };
+    /** The ABI argument layouts of a wrapper's native call. */
+    const nativeParameters = (w: { abi: string }): readonly string[] =>
+        program.abis.find((a) => a.id === w.abi)!.arguments;
+    /** Structural equality of two values of one layout, as a Go boolean. */
+    const equalValues = (left: Expr, right: Expr, id: string): Expr => {
+        const l = layout(id);
+        if (l.kind === 'f64' || l.kind === 'bool' || l.kind === 'string' || l.kind === 'unit')
+            return go`(${left} == ${right})`;
+        const helper = (body: (name: string) => Statement[]) =>
+            go`${vectorHelper('equal', id, (name) => ({
+                signature: goText`func ${name}(left ${type(id)}, right ${type(id)}) bool`,
+                body: body(name),
+            }))}(${left}, ${right})`;
+        if (l.kind === 'union')
+            return helper(() => [
+                { head: 'if left.tag != right.tag', body: ['return false'] },
+                ...l.fields.map(
+                    (_, n): Statement => ({
+                        head: go`if left.tag == ${tagValue(id, n)}`,
+                        body: [
+                            go`return ${equalValues(payload('left', id, n), payload('right', id, n), variant(id, n).layout)}`,
+                        ],
+                    }),
+                ),
+                'return true',
+            ]);
+        if (l.kind === 'vector')
+            return helper(() => [
+                { head: 'if len(left) != len(right)', body: ['return false'] },
+                {
+                    head: 'for i := range left',
+                    body: [
+                        {
+                            head: go`if !${equalValues('left[i]', 'right[i]', element(id))}`,
+                            body: ['return false'],
+                        },
+                    ],
+                },
+                'return true',
+            ]);
+        if (l.fields.some((f) => f.kind !== 'value'))
+            return unsupported('Equality of a value holding code');
+        return helper(() => [
+            go`return ${joinCode(
+                l.fields.length
+                    ? l.fields.map((f) =>
+                          equalValues(
+                              dot('left', f.name),
+                              dot('right', f.name),
+                              (f as { layout: string }).layout,
+                          ),
+                      )
+                    : ['true'],
+                ' && ',
+            )}`,
+        ]);
+    };
     const vectorArray = (id: string): string =>
         vectorHelper('array', id, (name) => ({
             signature: goText`func ${name}(length float64, init ${type(element(id))}) ${type(id)}`,
@@ -586,7 +643,16 @@ ${joinCode(
         }));
     const hostHelpers = new Map<string, string>();
     /** Natives that take and return plain data, by registered name. Lens natives are separate. */
-    const simpleNative = (op: string, args: Expr[], result: string): Expr | undefined => {
+    const simpleNative = (
+        op: string,
+        args: Expr[],
+        result: string,
+        parameters: readonly string[] = [],
+    ): Expr | undefined => {
+        if ((op === '==' || op === '!=') && parameters[0]) {
+            const same = equalValues(args[0]!, args[1]!, parameters[0]);
+            return op === '==' ? same : go`(!${same})`;
+        }
         if (infixImports.includes(op))
             return activeLocals
                 ? activeLocals.binary(op, args[0]!, args[1]!)
@@ -666,6 +732,7 @@ ${joinCode(
             op,
             abi.arguments.map((_, i) => go`arg${i}`),
             abi.result,
+            abi.arguments,
         );
         if (simple !== undefined) result = simple;
         else if (op === 'size') {
@@ -2167,6 +2234,7 @@ ${joinCode(
                                                 requireImport(w.definition, 'go').name,
                                                 args,
                                                 id,
+                                                nativeParameters(w),
                                             ) ?? unsupported(goText`Native import ${w.definition}`)
                                         );
                                     },
@@ -2308,6 +2376,7 @@ ${joinCode(
                                         requireImport(w.definition, 'go').name,
                                         args,
                                         id,
+                                        nativeParameters(w),
                                     ) ?? unsupported(goText`Native import ${w.definition}`);
                             } else {
                                 return unsupported(goText`Wrapper kind ${w?.kind}`);

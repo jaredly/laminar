@@ -67,14 +67,18 @@ the backends do not change. The `shared-into-mut` message gains "use `dup(x)`".
    `index-value`; assigning through a plain root is still `plain-lens`; storing an element into
    `mut` storage needs `dup(p[i])`. Tests in `test/shared-storage.test.ts` include native
    (sanitized) and Go runs.
-5. **Generalized `==`** (wishlist 2). The largest change, so last. `==` becomes
-   `(reads a, reads a) -> Bool` with an equality constraint: `a` must contain no function, lens or
-   linear type. Numbers keep the IEEE native (NaN unequal to itself); everything else uses
-   structural equality, lowered to one generated function per layout (strings, Bool, tuples,
-   records, unions, vectors) in C and Go, and a structural compare in the reference evaluator.
-   Delivered in two steps: (a) `String` and `Bool`, which needs the constraint mechanism and the
-   string/bool equality runtime; (b) the recursive layouts. After this the board can hold `"."`,
-   `"X"` and `"O"`.
+5. **Generalized `==`** (wishlist 2). **Done.** `==` and `!=` are `(reads a, reads a) -> Bool` for
+   any `a`, in both modes. Structural equality: numbers compare as IEEE doubles (so `NaN` is
+   unequal to itself, also inside a tuple), strings by bytes, and tuples, records, unions and
+   vectors recursively (union tags first). The reference evaluator has `equal`; C and Go generate
+   one function per layout (`equalValues` in `src/c/lower.ts` and `src/go/lower.ts`); scalars
+   (`Number`, `Bool`) keep the infix operator. Because the native convention consumes its operands,
+   the C wrapper drops both after comparing, so shared reads balance their reference counts.
+   `checkComparable` (`src/check.ts`) rejects a function type with `not-comparable`; comparing a
+   linear value is `dup-linear` in dual mode. Not covered: a function type reaching `==` through a
+   generic function or through a named type's fields is only caught by the backends
+   (`unsupported`), not the checker. `tic-tac-toe.lm` now holds `"."`, `"X"` and `"O"` in the
+   board and drops the 1/4 encoding and `symbol`.
 
 ## Not planned now
 

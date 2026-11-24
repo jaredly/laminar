@@ -79,6 +79,22 @@ export class Checker {
         return definition?.kind === 'union' && !!definition.linear;
     };
 
+    /** `==` and `!=` compare any data, but not functions. */
+    private checkComparable(elaboration: Elaboration): void {
+        for (const inst of elaboration.instantiations) {
+            if (inst.definition !== 'native/==' && inst.definition !== 'native/!=') continue;
+            if (inst.type.tag !== 'fn') continue;
+            const argument = inst.type.args[0];
+            const read = argument?.tag === 'flow' ? argument.read : argument?.value;
+            if (read && holdsFunction(read))
+                throw new TypeDiagnostic(
+                    'not-comparable',
+                    elaboration.nodes.find((n) => n.id === inst.node)?.loc ?? 0,
+                    'Functions cannot be compared with == or !=',
+                );
+        }
+    }
+
     /** Dual mode: a linear value is neither copied nor left unconsumed at the end of its scope. */
     private checkLinear(elaboration: Elaboration, plainBinders: Set<number>): Set<string> {
         const loc = (node: string) => elaboration.nodes.find((n) => n.id === node)?.loc ?? 0;
@@ -113,6 +129,15 @@ export class Checker {
                 const argument = inst.type.args[0];
                 const read = argument?.tag === 'flow' ? argument.read : argument?.value;
                 if (read) copy(read, 'dup', inst.node);
+                continue;
+            }
+            if (
+                (inst.definition === 'native/==' || inst.definition === 'native/!=') &&
+                inst.type.tag === 'fn'
+            ) {
+                const argument = inst.type.args[0];
+                const read = argument?.tag === 'flow' ? argument.read : argument?.value;
+                if (read) copy(read, decodeURIComponent(inst.definition.slice(7)), inst.node);
                 continue;
             }
             const bounds = this.copyBounds.get(inst.definition);
@@ -211,6 +236,7 @@ export class Checker {
             this.types,
         ).infer(ast, declaration);
         verifyElaboration(inference.elaboration);
+        this.checkComparable(inference.elaboration);
         const copyBounds = this.policy.linearTypes
             ? this.checkLinear(inference.elaboration, plainBinders)
             : new Set<string>();
@@ -372,6 +398,22 @@ function findMut(tree: unknown): number | undefined {
 }
 
 /** Every type variable in a type. */
+/** Whether a function type appears in the structure of `type` (named data is not unfolded). */
+function holdsFunction(type: SemanticType): boolean {
+    switch (type.tag) {
+        case 'fn':
+            return true;
+        case 'con':
+            return type.args.some(holdsFunction);
+        case 'tuple':
+            return type.items.some(holdsFunction);
+        case 'record':
+            return type.fields.some((f) => holdsFunction(f.type));
+        case 'variable':
+            return false;
+    }
+}
+
 function variables(type: SemanticType): string[] {
     switch (type.tag) {
         case 'variable':

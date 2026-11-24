@@ -71,7 +71,7 @@ describe('constructor lens types', () => {
     });
     it('infers the recursive search through branches and a self-call', () => {
         expect(typeOf(find)).toBe(
-            '(Number, List<Number>/List<Number>) => Option<Number>/=Option<Number>',
+            '(a, List<a>/List<a>) => Option<a>/=Option<a>', // `==` compares any type
         );
     });
     it('leaves a single-constructor type replaceable', () => {

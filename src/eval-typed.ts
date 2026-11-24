@@ -369,6 +369,31 @@ export function executeTypedProgram(
         }
         return v;
     };
+    /** Structural equality; numbers compare as IEEE doubles, so NaN is unequal to itself. */
+    const equal = (a: Data, b: Data): boolean => {
+        if (Array.isArray(a))
+            return Array.isArray(b) && a.length === b.length && a.every((x, i) => equal(x, b[i]!));
+        if (a && typeof a === 'object') {
+            if (!b || typeof b !== 'object' || Array.isArray(b) || a.kind !== b.kind)
+                return false;
+            if (a.kind === 'variant' && b.kind === 'variant')
+                return (
+                    a.name === b.name &&
+                    a.items.length === b.items.length &&
+                    a.items.every((x, i) => equal(x, b.items[i]!))
+                );
+            if (a.kind === 'vector' && b.kind === 'vector')
+                return (
+                    a.items.length === b.items.length &&
+                    a.items.every((x, i) => equal(x, b.items[i]!))
+                );
+            throw new BackendDiagnostic(
+                'unsupported-reference-equality',
+                'Callable values cannot be compared',
+            );
+        }
+        return a === b;
+    };
     const vector = (v: Data): VectorValue =>
         v && typeof v === 'object' && !Array.isArray(v) && v.kind === 'vector'
             ? v
@@ -398,9 +423,9 @@ export function executeTypedProgram(
                 case '%':
                     return number(0) % number(1);
                 case '==':
-                    return number(0) === number(1);
+                    return equal(data(args[0]), data(args[1]));
                 case '!=':
-                    return number(0) !== number(1);
+                    return !equal(data(args[0]), data(args[1]));
                 case '<':
                     return number(0) < number(1);
                 case '>':

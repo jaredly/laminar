@@ -7,6 +7,8 @@ import (
 	"os"
 )
 
+type Vector_String []string
+
 type Unit struct{}
 
 type Tuple_Number_Number_Number struct {
@@ -30,91 +32,45 @@ type Tuple_Tuple_Number_Number_Number_List_Tuple_Number_Number_Number struct {
 	item1 List_Tuple_Number_Number_Number
 }
 
-type Lens_Vector_Number struct {
-	read *Vector_Number
-	restore Func_Vector_Number_to_Unit_d5da9e60ce
+type Lens_Vector_String struct {
+	read *Vector_String
+	restore Func_Vector_String_to_Unit_29de2954b1
 	context any
 }
 
-type Vector_Number []float64
-
-type Func_Vector_Number_to_Unit_d5da9e60ce func(environment any, arg0 Vector_Number) Unit
+type Func_Vector_String_to_Unit_29de2954b1 func(environment any, arg0 Vector_String) Unit
 
 var stdin *bufio.Reader
 
-type Backing_Vector_Number_1264850431 struct {
-	read0 Vector_Number
+type Backing_Vector_String_4f3c2fd8c1 struct {
+	read0 Vector_String
 }
 
-func symbol(cell float64) string {
-	var v5 string
-	if cell == 1.0 {
-		v5 = "X"
-	} else if cell == 4.0 {
-		v5 = "O"
-	} else {
-		v5 = "."
-	}
-	return v5
-}
-
-func render(board Lens_Vector_Number) Unit {
-	v7 := row(0.0, board)
-	hostPrint_Unit(v7)
-	v20 := row(3.0, board)
-	hostPrint_Unit(v20)
-	v33 := row(6.0, board)
-	hostPrint_Unit(v33)
-	return Unit{}
-}
-
-func takeTurn(player float64, board Lens_Vector_Number) Unit {
-	v7 := symbol(player)
-	input := hostInput(v7 + ", pick a square (1-9): ")
+func takeTurn(player string, board Lens_Vector_String) Unit {
+	input := hostInput(player + ", pick a square (1-9): ")
 	square := parseSquare(input)
-	if square == 9.0 {
+	if (square == 9.0) {
 		hostPrint_Unit("Please pick a number from 1 to 9.")
 		takeTurn(player, board)
 	} else {
-		v60 := at(square, board)
-		if v60 != 0.0 {
+		v56 := at(square, board)
+		if (!(v56 == ".")) {
 			hostPrint_Unit("That square is taken.")
 			takeTurn(player, board)
 		} else {
-			v95 := vector_at_Vector_Number(*board.read, square)
-			*v95 = player
+			v91 := vector_at_Vector_String(*board.read, square)
+			*v91 = player
 		}
 	}
 	return Unit{}
 }
 
-func at(i float64, board Lens_Vector_Number) float64 {
-	v9 := vector_at_Vector_Number(*board.read, i)
+func at(i float64, board Lens_Vector_String) string {
+	v9 := vector_at_Vector_String(*board.read, i)
 	return *v9
 }
 
-func other(player float64) float64 {
-	return 5.0 - player
-}
-
-func game() string {
-	board := vector_array_Vector_Number(9.0, 0.0)
-	var back0 Backing_Vector_Number_1264850431
-	back0.read0 = board
-	return play(1.0, 0.0, Lens_Vector_Number{read: &back0.read0})
-}
-
-func row(a float64, board Lens_Vector_Number) string {
-	v9 := at(a, board)
-	v12 := symbol(v9)
-	v28 := at(a + 1.0, board)
-	v32 := symbol(v28)
-	v48 := at(a + 2.0, board)
-	v52 := symbol(v48)
-	return v12 + " " + v32 + " " + v52
-}
-
-func winner(board Lens_Vector_Number) float64 {
+func winner(board Lens_Vector_String) string {
 	v58 := List_Tuple_Number_Number_Number{tag: List_Tuple_Number_Number_Number_nil, v0: Unit{}}
 	v70 := new(Tuple_Tuple_Number_Number_Number_List_Tuple_Number_Number_Number)
 	*v70 = Tuple_Tuple_Number_Number_Number_List_Tuple_Number_Number_Number{item0: Tuple_Number_Number_Number{item0: 2.0, item1: 4.0, item2: 6.0}, item1: v58}
@@ -141,6 +97,61 @@ func winner(board Lens_Vector_Number) float64 {
 	*v77 = Tuple_Tuple_Number_Number_Number_List_Tuple_Number_Number_Number{item0: Tuple_Number_Number_Number{item0: 0.0, item1: 1.0, item2: 2.0}, item1: v65}
 	v66 := List_Tuple_Number_Number_Number{tag: List_Tuple_Number_Number_Number_cons, v1: v77}
 	return winnerIn(v66, board)
+}
+
+func render(board Lens_Vector_String) Unit {
+	v7 := row(0.0, board)
+	hostPrint_Unit(v7)
+	v20 := row(3.0, board)
+	hostPrint_Unit(v20)
+	v33 := row(6.0, board)
+	hostPrint_Unit(v33)
+	return Unit{}
+}
+
+func row(a float64, board Lens_Vector_String) string {
+	v8 := at(a, board)
+	v23 := at(a + 1.0, board)
+	v39 := at(a + 2.0, board)
+	return v8 + " " + v23 + " " + v39
+}
+
+func play(player string, turns float64, board Lens_Vector_String) string {
+	render(board)
+	v11 := winner(board)
+	var v14 string
+	switch v11 {
+	case ".":
+		var v26 string
+		if (turns == 9.0) {
+			v26 = "draw"
+		} else {
+			takeTurn(player, board)
+			v48 := other(player)
+			v26 = play(v48, turns + 1.0, board)
+		}
+		v14 = v26
+	default:
+		v14 = v11
+	}
+	return v14
+}
+
+func other(player string) string {
+	var v11 string
+	if (player == "X") {
+		v11 = "O"
+	} else {
+		v11 = "X"
+	}
+	return v11
+}
+
+func game() string {
+	board := vector_array_Vector_String(9.0, ".")
+	var back0 Backing_Vector_String_4f3c2fd8c1
+	back0.read0 = board
+	return play("X", 0.0, Lens_Vector_String{read: &back0.read0})
 }
 
 func parseSquare(input string) float64 {
@@ -170,58 +181,23 @@ func parseSquare(input string) float64 {
 	return v5
 }
 
-func play(player float64, turns float64, board Lens_Vector_Number) string {
-	render(board)
-	v11 := winner(board)
-	var v14 string
-	if v11 == 0.0 {
-		var v26 string
-		if turns == 9.0 {
-			v26 = "draw"
-		} else {
-			takeTurn(player, board)
-			v48 := other(player)
-			v26 = play(v48, turns + 1.0, board)
-		}
-		v14 = v26
-	} else {
-		v14 = symbol(v11)
-	}
-	return v14
-}
-
-func lineOwner(a float64, b float64, c float64, board Lens_Vector_Number) float64 {
-	v10 := at(a, board)
-	v19 := at(b, board)
-	v32 := at(c, board)
-	v36 := v10 + v19 + v32
-	var v39 float64
-	if v36 == 3.0 {
-		v39 = 1.0
-	} else if v36 == 12.0 {
-		v39 = 4.0
-	} else {
-		v39 = 0.0
-	}
-	return v39
-}
-
-func winnerIn(lines List_Tuple_Number_Number_Number, board Lens_Vector_Number) float64 {
-	var v5 float64
+func winnerIn(lines List_Tuple_Number_Number_Number, board Lens_Vector_String) string {
+	var v5 string
 	switch lines.tag {
 	case List_Tuple_Number_Number_Number_nil:
-		v5 = 0.0
+		v5 = "."
 	case List_Tuple_Number_Number_Number_cons:
 		v9 := *lines.v1
 		a := v9.item0.item0
 		b := v9.item0.item1
 		c := v9.item0.item2
 		v26 := lineOwner(a, b, c, board)
-		var v29 float64
-		if v26 == 0.0 {
+		var v29 string
+		switch v26 {
+		case ".":
 			rest := v9.item1
 			v29 = winnerIn(rest, board)
-		} else {
+		default:
 			v29 = v26
 		}
 		v5 = v29
@@ -229,13 +205,33 @@ func winnerIn(lines List_Tuple_Number_Number_Number, board Lens_Vector_Number) f
 	return v5
 }
 
-func entry() string {
-	return game()
+func lineOwner(a float64, b float64, c float64, board Lens_Vector_String) string {
+	first := at(a, board)
+	var v21 bool
+	if (!(first == ".")) {
+		v35 := at(b, board)
+		v21 = (first == v35)
+	} else {
+		v21 = false
+	}
+	var v43 bool
+	if v21 {
+		v57 := at(c, board)
+		v43 = (first == v57)
+	} else {
+		v43 = false
+	}
+	var v65 string
+	if v43 {
+		v65 = first
+	} else {
+		v65 = "."
+	}
+	return v65
 }
 
-func hostPrint_Unit(value string) Unit {
-	fmt.Print(value + "\n")
-	return Unit{}
+func entry() string {
+	return game()
 }
 
 func hostInput(prompt string) string {
@@ -250,18 +246,23 @@ func hostInput(prompt string) string {
 	return line
 }
 
-func vector_at_Vector_Number(value Vector_Number, index float64) *float64 {
+func hostPrint_Unit(value string) Unit {
+	fmt.Print(value + "\n")
+	return Unit{}
+}
+
+func vector_at_Vector_String(value Vector_String, index float64) *string {
 	if !(index >= 0) || index != math.Floor(index) || index >= float64(len(value)) {
 		panic("vector index out of bounds")
 	}
 	return &value[int(index)]
 }
 
-func vector_array_Vector_Number(length float64, init float64) Vector_Number {
+func vector_array_Vector_String(length float64, init string) Vector_String {
 	if !(length >= 0) || length != math.Floor(length) || length > float64(math.MaxInt32) {
 		panic("array length must be a non-negative integer")
 	}
-	out := make(Vector_Number, int(length))
+	out := make(Vector_String, int(length))
 	for i := range out {
 		if i+1 == len(out) {
 			out[i] = init

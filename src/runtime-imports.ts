@@ -36,14 +36,27 @@ const numeric = (name: string, result: Ty, semantics: string): RuntimeImport => 
     semantics,
 });
 
+/** `==` and `!=` compare any two values of one type that holds no callable. */
+const equality = (name: string, semantics: string): RuntimeImport => ({
+    name,
+    signature: (s) => {
+        const a = s.fresh();
+        return fn([reads(a), reads(a)], plain(bool));
+    },
+    arguments: ['owned', 'owned'],
+    result: 'owned',
+    backends: all,
+    semantics,
+});
+
 export const runtimeImports: readonly RuntimeImport[] = [
     numeric('+', number, 'IEEE-754 double addition'),
     numeric('-', number, 'IEEE-754 double subtraction'),
     numeric('*', number, 'IEEE-754 double multiplication'),
     numeric('/', number, 'IEEE-754 double division'),
     numeric('%', number, 'ECMAScript remainder: truncated division, the result has the dividend sign'),
-    numeric('==', bool, 'IEEE-754 equality (NaN is unequal to itself)'),
-    numeric('!=', bool, 'IEEE-754 inequality (NaN is unequal to everything, itself included)'),
+    equality('==', 'Structural equality; numbers compare as IEEE-754 doubles (NaN is unequal to itself)'),
+    equality('!=', 'Structural inequality, the negation of `==`'),
     numeric('<', bool, 'IEEE-754 ordered comparison'),
     numeric('>', bool, 'IEEE-754 ordered comparison'),
     numeric('>=', bool, 'IEEE-754 ordered comparison'),

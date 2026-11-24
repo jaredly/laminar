@@ -76,6 +76,15 @@ export function stringRuntime(): {
             body: ['return s ? string_new((const char *)s->bytes, s->length) : NULL;'],
         },
         {
+            name: 'string_same',
+            uses: [],
+            signature: `_Bool string_same(${stringType} *a, ${stringType} *b)`,
+            body: [
+                'size_t n = a ? a->length : 0;',
+                'return n == (b ? b->length : 0) && (!n || memcmp(a->bytes, b->bytes, n) == 0);',
+            ],
+        },
+        {
             name: 'string_equals',
             uses: [],
             signature: `_Bool string_equals(${stringType} *s, const char *bytes, size_t length)`,

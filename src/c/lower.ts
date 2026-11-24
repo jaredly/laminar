@@ -643,6 +643,86 @@ export function lowerC(
             ', ',
         )}}`;
     };
+    /** Two-argument helpers (structural equality), generated once per layout on first use. */
+    const pairHelpers = new Map<string, string>();
+    const pairHelper = (
+        kind: string,
+        id: string,
+        generate: (body: Statement[]) => void,
+    ): string => {
+        const key = cText`${kind}:${id}`;
+        const existing = pairHelpers.get(key);
+        if (existing) return use(existing);
+        const name = cText`${kind}_${type(id)}`;
+        pairHelpers.set(key, name);
+        use(name);
+        refs.within(name, () => {
+            const signature = cText`_Bool ${name}(${type(id)} left, ${type(id)} right)`;
+            declarations.push(new Declaration(name, signature + ';'));
+            const body: Statement[] = ['(void)left;', '(void)right;'];
+            generate(body);
+            helpers.push({ name, signature, body });
+        });
+        return name;
+    };
+    /** Structural equality of two values of one layout, as a C boolean. */
+    const equalValues = (left: Expr, right: Expr, id: string): Expr => {
+        const l = layout(id);
+        if (l.kind === 'f64' || l.kind === 'bool') return cc`(${left} == ${right})`;
+        if (l.kind === 'unit') return '1';
+        if (l.kind === 'string') return cc`${use('string_same')}(${left}, ${right})`;
+        if (l.kind === 'union')
+            return cc`${pairHelper('equal', id, (body) => {
+                body.push({
+                    head: 'if (left.tag != right.tag)',
+                    body: ['return 0;'],
+                });
+                l.fields.forEach((_, n) => {
+                    const v = variant(id, n);
+                    body.push({
+                        head: cc`if (left.tag == ${tagValue(id, n)})`,
+                        body: [
+                            cc`return ${equalValues(payload('left', id, n), payload('right', id, n), v.layout)};`,
+                        ],
+                    });
+                });
+                body.push('return 1;');
+            })}(${left}, ${right})`;
+        if (l.kind === 'vector')
+            return cc`${pairHelper('equal', id, (body) => {
+                body.push(
+                    { head: 'if (left.length != right.length)', body: ['return 0;'] },
+                    {
+                        head: 'for (size_t i = 0; i < left.length; i++)',
+                        body: [
+                            {
+                                head: cc`if (!${equalValues('left.elements[i]', 'right.elements[i]', element(id))})`,
+                                body: ['return 0;'],
+                            },
+                        ],
+                    },
+                    'return 1;',
+                );
+            })}(${left}, ${right})`;
+        if (l.fields.some((f) => f.kind !== 'value'))
+            return unsupported('Equality of a value holding code');
+        return cc`${pairHelper('equal', id, (body) =>
+            body.push(
+                cc`return ${joinCode(
+                    l.fields.length
+                        ? l.fields.map((f, n) =>
+                              equalValues(
+                                  field('left', n),
+                                  field('right', n),
+                                  (f as { layout: string }).layout,
+                              ),
+                          )
+                        : ['1'],
+                    ' && ',
+                )};`,
+            ),
+        )}(${left}, ${right})`;
+    };
     const drop = (data: Data, body: Statement[]): void => {
         if (Array.isArray(data)) return data.forEach((d) => drop(d, body));
         const l = layout(data.layout);
@@ -748,6 +828,18 @@ export function lowerC(
         result: string,
         parameters: readonly string[],
     ): Expr | undefined => {
+        if ((op === '==' || op === '!=') && !['f64', 'bool'].includes(layout(parameters[0]!).kind)) {
+            // The native consumes both operands, so the wrapper drops them after comparing.
+            const id = parameters[0]!;
+            const consuming = pairHelper('equals', id, (body) => {
+                body.push(cc`_Bool same = ${equalValues('left', 'right', id)};`);
+                drop({ expression: 'left', layout: id }, body);
+                drop({ expression: 'right', layout: id }, body);
+                body.push('return same;');
+            });
+            const same = cc`${consuming}(${args[0]}, ${args[1]})`;
+            return op === '==' ? same : cc`(!${same})`;
+        }
         if (infixImports.includes(op))
             return activeLocals
                 ? activeLocals.binary(op, args[0]!, args[1]!)
@@ -2671,7 +2763,14 @@ export function lowerC(
                                               )})`;
                                 else if (w?.kind === 'native') {
                                     const op = requireImport(w.definition, 'c').name;
-                                    pure = infixImports.includes(op) || op === '%' || op === 'not';
+                                    pure =
+                                        (infixImports.includes(op) &&
+                                            (!['==', '!='].includes(op) ||
+                                                ['f64', 'bool'].includes(
+                                                    layout(abi.arguments[0]!).kind,
+                                                ))) ||
+                                        op === '%' ||
+                                        op === 'not';
                                     effect = !pure && op !== 'heapsize' && op !== '[::]';
                                     expr =
                                         simpleNative(op, args, id, abi.arguments) ??

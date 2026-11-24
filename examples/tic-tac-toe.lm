@@ -1,20 +1,11 @@
 // laminar: dual
-// two players take turns at the keyboard. cells hold 0 (empty), 1 (X) or 4 (O),
-// so a line adds up to 3 when X owns it and 12 when O does.
-fn symbol(cell) {
-    match cell {
-        1 -> "X"
-        4 -> "O"
-        _ -> "."
-    }
-}
-
+// two players take turns at the keyboard. cells hold "." (empty), "X" or "O".
 fn at(i, ~board) {
     dup(~board[i])
 }
 
 fn row(a, ~board) {
-    "${symbol(at(a, ~board))} ${symbol(at(a + 1, ~board))} ${symbol(at(a + 2, ~board))}"
+    "${at(a, ~board)} ${at(a + 1, ~board)} ${at(a + 2, ~board)}"
 }
 
 fn render(~board) {
@@ -23,20 +14,18 @@ fn render(~board) {
     print(row(6, ~board))
 }
 
+// who owns the line, or "." if nobody does
 fn lineOwner(a, b, c, ~board) {
-    match (at(a, ~board) + at(b, ~board) + at(c, ~board)) {
-        3 -> 1
-        12 -> 4
-        _ -> 0
-    }
+    let first = at(a, ~board)
+    if first != "." && first == at(b, ~board) && first == at(c, ~board) then first else "."
 }
 
 fn winnerIn(lines, ~board) {
     match lines {
-        [] -> 0
+        [] -> "."
         [(a, b, c), ...rest] -> {
             match lineOwner(a, b, c, ~board) {
-                0 -> winnerIn(rest, ~board)
+                "." -> winnerIn(rest, ~board)
                 owner -> owner
             }
         }
@@ -63,19 +52,18 @@ fn parseSquare(input) {
     }
 }
 
-// X is 1 and O is 4, so the other player is 5 minus this one
 fn other(player) {
-    5 - player
+    if player == "X" then "O" else "X"
 }
 
 // asks until the player names an empty square, then claims it
 fn takeTurn(player, ~board) {
-    let input = getInput("${symbol(player)}, pick a square (1-9): ")
+    let input = getInput("${player}, pick a square (1-9): ")
     let square = parseSquare(input)
     if square == 9 then {
         print("Please pick a number from 1 to 9.")
         takeTurn(player, ~board)
-    } else if at(square, ~board) != 0 then {
+    } else if at(square, ~board) != "." then {
         print("That square is taken.")
         takeTurn(player, ~board)
     } else {
@@ -88,19 +76,19 @@ fn takeTurn(player, ~board) {
 fn play(player, turns, ~board) {
     render(~board)
     match winner(~board) {
-        0 -> {
+        "." -> {
             if turns == 9 then "draw" else {
                 takeTurn(player, ~board)
                 play(other(player), turns + 1, ~board)
             }
         }
-        owner -> symbol(owner)
+        owner -> owner
     }
 }
 
 fn game() {
-    let mut board = array(9, 0)
-    play(1, 0, ~board)
+    let mut board = array(9, ".")
+    play("X", 0, ~board)
 }
 
 {
