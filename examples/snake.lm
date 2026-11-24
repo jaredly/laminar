@@ -1,41 +1,121 @@
+// laminar: dual
+// snake in the terminal: steer with w/a/s/d, quit with q.
+// run it with `bun cli/laminar.ts run examples/snake.lm --target native`.
+// (the reference target reads keys without a timeout, so the snake only moves when you press one.)
+type direction {
+    Up
+    Down
+    Left
+    Right
+}
 
-fn fillRange(n, end, ~arr) {
-    match (dup(~n) >= dup(~end)) {
-        true -> ()
-        false -> {
-            arr[dup(~n)] := dup(~n)
-            fillRange(n + 1, end, ~arr)
+fn width() { 20 }
+fn height() { 10 }
+
+fn contains(body, spot) {
+    match body {
+        [] -> false
+        [segment, ...rest] -> if segment == spot then true else contains(rest, spot)
+    }
+}
+
+fn dropLast(body) {
+    match body {
+        [] -> []
+        [_] -> []
+        [segment, ...rest] -> [segment, ...dropLast(rest)]
+    }
+}
+
+// a random free spot for the food
+fn placeFood(body) {
+    let spot = (random(width()), random(height()))
+    if contains(body, spot) then placeFood(body) else spot
+}
+
+fn cell(spot, body, food) {
+    match body {
+        [head, ..._] -> if spot == head then "O" else if contains(body, spot) then "o" else if spot == food then "*" else "."
+        [] -> "."
+    }
+}
+
+fn rowText(x, y, body, food) {
+    if x >= width() then "" else "${cell((x, y), body, food)}${rowText(x + 1, y, body, food)}"
+}
+
+fn drawRows(y, body, food) {
+    if y >= height() then () else {
+        print(rowText(0, y, body, food))
+        drawRows(y + 1, body, food)
+    }
+}
+
+fn render(body, food, score) {
+    write("\e[H\e[2J")
+    print("score: ${score}   (w/a/s/d to steer, q to quit)")
+    drawRows(0, body, food)
+}
+
+// a turn that would reverse onto the neck is ignored
+fn turn(dir, key) {
+    match (key, dir) {
+        ("w", Down) -> dir
+        ("s", Up) -> dir
+        ("a", Right) -> dir
+        ("d", Left) -> dir
+        ("w", _) -> Up
+        ("s", _) -> Down
+        ("a", _) -> Left
+        ("d", _) -> Right
+        _ -> dir
+    }
+}
+
+fn step(spot, dir) {
+    let (x, y) = spot
+    match dir {
+        Up -> (x, y - 1)
+        Down -> (x, y + 1)
+        Left -> (x - 1, y)
+        Right -> (x + 1, y)
+    }
+}
+
+fn crashed(head, body) {
+    let (x, y) = head
+    x < 0 || x >= width() || y < 0 || y >= height() || contains(body, head)
+}
+
+fn play(body, dir, food, score) {
+    render(body, food, score)
+    let key = waitKey(150)
+    if key == "q" then score else {
+        let dir = turn(dir, key)
+        match body {
+            [] -> score
+            [head, ..._] -> {
+                let next = step(head, dir)
+                if crashed(next, body) then score else {
+                    if next == food then {
+                        let grown = [next, ...body]
+                        play(grown, dir, placeFood(grown), score + 1)
+                    } else {
+                        play([next, ...dropLast(body)], dir, food, score)
+                    }
+                }
+            }
         }
     }
 }
 
-fn range(n) {
-    let arr = array(dup(~n), 0)
-    fillRange(0, n, ~arr)
-    arr
+fn game() {
+    let body = [(5, 5), (4, 5), (3, 5)]
+    let score = play(body, Right, placeFood(body), 0)
+    print("game over, score ${score}")
+    score
 }
 
-// // This is a snake game I think
-// fn rangeTo(at, end) {
-//     match (dup(~at) >= dup(~end)) {
-//         true -> []
-//         _ -> [dup(~at), ...rangeTo(at + 1, end)]
-//     }
-// }
-//
-// fn range(n) {rangeTo(0, 10)}
-
-(
-    range(10),
-    [:0, 1, 2, 3, 4, 5, 6, 7, 8, 9:],
-    {x: 10, y: 123}
-)
-
-// ir-> range(10)
-
-/*
-oh snap
-I need a ...
-records.
-I need records for this to be managable.
-*/
+{
+    game()
+}

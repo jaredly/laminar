@@ -43,3 +43,30 @@ Done: `dup(x)` on a plain value (see `dual-wishlist-plan.md`). Original notes:
   two-way branch, as in `takeTurn`.
 - **Loop or `range` helper.** The eight win lines are a hand-written list of tuples. Anything
   board-sized wants a loop; `examples/snake.lm` already hand-rolls `range`.
+
+## 5. What a terminal game needed (snake)
+
+`examples/snake.lm` added three runtime imports and one string escape:
+
+- `waitKey(ms)` waits up to `ms` for one byte of stdin and returns it as a string, or `""` on a
+  timeout or end of input. On a terminal it switches off line buffering and echo only for the
+  duration of the call (termios in C, `stty` in Go), so a crash cannot leave the shell raw. The
+  reference evaluator ignores the timeout. The Go version costs about 25ms per call for `stty`.
+- `write(s)` prints without a newline and flushes.
+- `random(n)` returns an integer in `[0, n)`. It is xorshift32, seeded from `LAMINAR_SEED` when set,
+  so a fixed seed gives the same numbers on every backend; otherwise from the clock.
+- `"\e"` in a string literal is ESC, for `"\e[H\e[2J"` (clear screen).
+
+Still wanted:
+
+- **Arrow keys.** They arrive as three bytes (`ESC [ A`), which `waitKey` returns one per call. A key
+  union (`Up | Down | ...`) decoded in the host would be nicer than WASD.
+- **Linear terminal handle.** `enterRaw()` returning a `type linear` value that `leaveRaw` consumes
+  would let the compiler enforce the restore, instead of toggling raw mode inside every `waitKey`.
+- **A fixed frame length.** `waitKey` returns as soon as a key arrives, so holding a key speeds the
+  snake up. A `sleep(ms)` or a `waitKey` that always waits out the full time would pace frames.
+- **A `"@"` string literal does not parse** (`"@"` inside a `match` arm is `Unrecognized top-level
+  item`); snake draws the head as `O` for that reason. Worth a separate look at the lexer.
+- **Scripted keys in `ir->` fixtures.** `setInput` and `logs()` cover line input; there is no
+  equivalent for `waitKey`, so `test/examples.test.ts` drives the reference evaluator directly.
+
