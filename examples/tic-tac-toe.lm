@@ -1,27 +1,78 @@
 // laminar: dual
-// two players take turns at the keyboard. cells hold "." (empty), "X" or "O".
-fn row(a, ~board) {
-    "${!board[a]} ${!board[a + 1]} ${!board[a + 2]}"
+// two players take turns at the keyboard.
+type cell {
+    Empty
+    X
+    O
+}
+
+// the nine places on the board, left to right and top to bottom
+type square {
+    C0
+    C1
+    C2
+    C3
+    C4
+    C5
+    C6
+    C7
+    C8
+}
+
+type outcome {
+    Won(cell)
+    Draw
+}
+
+fn symbol(c) {
+    match c {
+        Empty -> "."
+        X -> "X"
+        O -> "O"
+    }
+}
+
+// where a square lives in the board vector
+fn slot(sq) {
+    match sq {
+        C0 -> 0
+        C1 -> 1
+        C2 -> 2
+        C3 -> 3
+        C4 -> 4
+        C5 -> 5
+        C6 -> 6
+        C7 -> 7
+        C8 -> 8
+    }
+}
+
+fn cellAt(sq, ~board) {
+    !board[slot(sq)]
+}
+
+fn row(a, b, c, ~board) {
+    "${symbol(cellAt(a, ~board))} ${symbol(cellAt(b, ~board))} ${symbol(cellAt(c, ~board))}"
 }
 
 fn render(~board) {
-    print(row(0, ~board))
-    print(row(3, ~board))
-    print(row(6, ~board))
+    print(row(C0, C1, C2, ~board))
+    print(row(C3, C4, C5, ~board))
+    print(row(C6, C7, C8, ~board))
 }
 
-// who owns the line, or "." if nobody does
+// who owns the line, or Empty if nobody does
 fn lineOwner(a, b, c, ~board) {
-    let first = !board[a]
-    if first != "." && first == !board[b] && first == !board[c] then first else "."
+    let first = cellAt(a, ~board)
+    if first != Empty && first == cellAt(b, ~board) && first == cellAt(c, ~board) then first else Empty
 }
 
 fn winnerIn(lines, ~board) {
     match lines {
-        [] -> "."
+        [] -> Empty
         [(a, b, c), ...rest] -> {
             match lineOwner(a, b, c, ~board) {
-                "." -> winnerIn(rest, ~board)
+                Empty -> winnerIn(rest, ~board)
                 owner -> owner
             }
         }
@@ -29,62 +80,78 @@ fn winnerIn(lines, ~board) {
 }
 
 fn winner(~board) {
-    winnerIn([(0, 1, 2), (3, 4, 5), (6, 7, 8), (0, 3, 6), (1, 4, 7), (2, 5, 8), (0, 4, 8), (2, 4, 6)], ~board)
+    winnerIn([
+            (C0, C1, C2), (C3, C4, C5), (C6, C7, C8),
+            (C0, C3, C6), (C1, C4, C7), (C2, C5, C8),
+            (C0, C4, C8), (C2, C4, C6),
+        ], ~board)
 }
 
-// the square a player typed, or 9 for something that isn't one
+// the square a player typed, if it is one
 fn parseSquare(input) {
     match input {
-        "1" -> 0
-        "2" -> 1
-        "3" -> 2
-        "4" -> 3
-        "5" -> 4
-        "6" -> 5
-        "7" -> 6
-        "8" -> 7
-        "9" -> 8
-        _ -> 9
+        "1" -> Some(C0)
+        "2" -> Some(C1)
+        "3" -> Some(C2)
+        "4" -> Some(C3)
+        "5" -> Some(C4)
+        "6" -> Some(C5)
+        "7" -> Some(C6)
+        "8" -> Some(C7)
+        "9" -> Some(C8)
+        _ -> None
     }
 }
 
 fn other(player) {
-    if player == "X" then "O" else "X"
+    match player {
+        X -> O
+        _ -> X
+    }
 }
 
 // asks until the player names an empty square, then claims it
 fn takeTurn(player, ~board) {
-    let input = getInput("${player}, pick a square (1-9): ")
-    let square = parseSquare(input)
-    if square == 9 then {
-        print("Please pick a number from 1 to 9.")
-        takeTurn(player, ~board)
-    } else if !board[square] != "." then {
-        print("That square is taken.")
-        takeTurn(player, ~board)
-    } else {
-        board[square] := dup(player)
-        ()
+    let input = getInput("${symbol(player)}, pick a square (1-9): ")
+    match parseSquare(input) {
+        None -> {
+            print("Please pick a number from 1 to 9.")
+            takeTurn(player, ~board)
+        }
+        Some(square) -> {
+            if cellAt(square, ~board) != Empty then {
+                print("That square is taken.")
+                takeTurn(player, ~board)
+            } else {
+                board[slot(square)] := dup(player)
+                ()
+            }
+        }
     }
 }
 
-// plays until someone wins (their symbol) or the board fills up ("draw")
+// plays until someone wins or the board fills up
 fn play(player, turns, ~board) {
     render(~board)
     match winner(~board) {
-        "." -> {
-            if turns == 9 then "draw" else {
+        Empty -> {
+            if turns == 9 then Draw else {
                 takeTurn(player, ~board)
                 play(other(player), turns + 1, ~board)
             }
         }
-        owner -> owner
+        owner -> Won(owner)
     }
 }
 
 fn game() {
-    let mut board = array(9, ".")
-    play("X", 0, ~board)
+    let mut board = array(9, Empty)
+    let result = play(X, 0, ~board)
+    match result {
+        Won(who) -> print("${symbol(who)} wins!")
+        Draw -> print("It's a draw.")
+    }
+    result
 }
 
 {
