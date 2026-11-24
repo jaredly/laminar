@@ -73,16 +73,19 @@ func nextGuess(direction Direction, min_max_lastGuess Scattered_Lens_float64_Len
 }
 
 func step(steps float64, min_max_lastGuess Scattered_Lens_float64_Lens_float64_Lens_float64) float64 {
-	lastGuess := *min_max_lastGuess.item2.read
-	input := hostInput("My guess is " + formatNumber(lastGuess) + " (higher/lower/match): ")
-	next := handleResponse(input, min_max_lastGuess)
-	var v28 float64
-	if next {
-		v28 = steps
-	} else {
-		v28 = step(steps + 1.0, min_max_lastGuess)
+	for {
+		lastGuess := *min_max_lastGuess.item2.read
+		input := hostInput("My guess is " + formatNumber(lastGuess) + " (higher/lower/match): ")
+		next := handleResponse(input, min_max_lastGuess)
+		var v28 float64
+		if next {
+			v28 = steps
+		} else {
+			steps = steps + 1.0
+			continue
+		}
+		return v28
 	}
-	return v28
 }
 
 func handleResponse(response string, state Scattered_Lens_float64_Lens_float64_Lens_float64) bool {

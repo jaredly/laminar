@@ -111,27 +111,29 @@ type Backing_Vector_Cell_97128138cf struct {
 }
 
 func takeTurn(player Cell, board Lens_Vector_Cell) Unit {
-	v7 := symbol(player)
-	input := hostInput(v7 + ", pick a square (1-9): ")
-	v20 := parseSquare(input)
-	switch v20.tag {
-	case Option_Square_None:
-		hostPrint_Unit("Please pick a number from 1 to 9.")
-		takeTurn(player, board)
-	case Option_Square_Some:
-		v42 := v20.v0
-		v52 := cellAt(v42, board)
-		v53 := Cell{tag: Cell_Empty, v0: Unit{}}
-		if (!vector_equal_Cell(v52, v53)) {
-			hostPrint_Unit("That square is taken.")
-			takeTurn(player, board)
-		} else {
-			v85 := slot(v42)
-			v90 := vector_at_Vector_Cell(*board.read, v85)
-			*v90 = player
+	for {
+		v7 := symbol(player)
+		input := hostInput(v7 + ", pick a square (1-9): ")
+		v20 := parseSquare(input)
+		switch v20.tag {
+		case Option_Square_None:
+			hostPrint_Unit("Please pick a number from 1 to 9.")
+			continue
+		case Option_Square_Some:
+			v42 := v20.v0
+			v52 := cellAt(v42, board)
+			v53 := Cell{tag: Cell_Empty, v0: Unit{}}
+			if (!vector_equal_Cell(v52, v53)) {
+				hostPrint_Unit("That square is taken.")
+				continue
+			} else {
+				v85 := slot(v42)
+				v90 := vector_at_Vector_Cell(*board.read, v85)
+				*v90 = player
+			}
 		}
+		return Unit{}
 	}
-	return Unit{}
 }
 
 func render(board Lens_Vector_Cell) Unit {

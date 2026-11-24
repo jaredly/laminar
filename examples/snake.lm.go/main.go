@@ -215,14 +215,17 @@ func crashed(head Tuple_Number_Number, body List_Tuple_Number_Number) bool {
 }
 
 func drawRows(y float64, body List_Tuple_Number_Number, food Tuple_Number_Number) Unit {
-	v7 := height()
-	if y >= v7 {
-	} else {
-		v33 := rowText(0.0, y, body, food)
-		hostPrint_Unit(v33)
-		drawRows(y + 1.0, body, food)
+	for {
+		v7 := height()
+		if y >= v7 {
+		} else {
+			v33 := rowText(0.0, y, body, food)
+			hostPrint_Unit(v33)
+			y = y + 1.0
+			continue
+		}
+		return Unit{}
 	}
-	return Unit{}
 }
 
 func cell(spot Tuple_Number_Number, body List_Tuple_Number_Number, food Tuple_Number_Number) string {

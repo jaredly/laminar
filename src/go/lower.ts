@@ -26,6 +26,7 @@ import { localNames, takesName } from '../backend/local-names.ts';
 import { GoLocals } from './locals.ts';
 import { derefText, memberText, same, type Expr } from '../backend/imperative/code.ts';
 import { goTypes, fingerprint } from './types.ts';
+import { loopSelfTailCalls } from './tail-calls.ts';
 import { reachableGo } from './reachable.ts';
 import {
     lowerWritebacks,
@@ -656,7 +657,28 @@ ${joinCode(
                 ? activeLocals.binary(op, args[0]!, args[1]!)
                 : go`(${args[0]} ${op} ${args[1]})`;
         if (op === 'not') return go`(!${args[0]})`;
-        if (op === '%') return go`math.Mod(${args[0]}, ${args[1]})`;
+        if (op === '%') {
+            // math.Mod is a software loop; whole numbers, the common case, take the integer path.
+            if (!hostHelpers.has('laminarMod')) {
+                hostHelpers.set('laminarMod', 'laminarMod');
+                helpers.push({
+                    signature: 'func laminarMod(a float64, b float64) float64',
+                    body: [
+                        {
+                            head: 'if b != 0 && a == math.Trunc(a) && b == math.Trunc(b) && math.Abs(a) < 9007199254740992 && math.Abs(b) < 9007199254740992',
+                            body: [
+                                'r := float64(int64(a) % int64(b))',
+                                // The result keeps the dividend's sign, even for zero.
+                                { head: 'if r == 0 && math.Signbit(a)', body: ['return math.Copysign(0, -1)'] },
+                                'return r',
+                            ],
+                        },
+                        'return math.Mod(a, b)',
+                    ],
+                });
+            }
+            return go`laminarMod(${args[0]}, ${args[1]})`;
+        }
         if (op === 'charList') return go`${charList(result)}(${args[0]})`;
         if (op === 'heapsize') return activeLocals ? activeLocals.scalar('0.0', 0) : '0.0';
         if (op === '[::]') return zero(result);
@@ -2971,7 +2993,7 @@ ${joinCode(
         );
         const placed = locals.place(body);
         activeLocals = undefined;
-        return { signature: String(sig), body: placed };
+        return loopSelfTailCalls({ signature: String(sig), body: placed });
     });
 
     // Helper functions

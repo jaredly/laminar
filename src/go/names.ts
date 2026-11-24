@@ -28,6 +28,7 @@ const runtime = new Set([
     'printString',
     'formatNumber',
     'laminarRound',
+    'laminarMod',
     'hostInput',
     'hostRandom',
     'hostWriteFile',

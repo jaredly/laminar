@@ -62,7 +62,7 @@ func find(needle float64, lst Lens_List_Number) Fields_Option_Number {
 		v6 := v2.v1
 		one := ((*v6)).item0
 		v36 := Fields_Option_Number{}
-		if one == needle {
+		if (one == needle) {
 			v36 = Fields_Option_Number{tag: Option_Number_Some, v0: &(*v6).item0}
 		} else {
 			v36 = find(needle, Lens_List_Number{read: &(*v6).item1})
@@ -85,21 +85,24 @@ func find(needle float64, lst Lens_List_Number) Fields_Option_Number {
 }
 
 func replace(needle float64, repl float64, lst Lens_List_Number) Unit {
-	v2 := *lst.read
-	switch v2.tag {
-	case List_Number_cons:
-		v5 := v2.v1
-		one := ((*v5)).item0
-		if one == needle {
-			(*v5).item0 = repl
-		} else {
-			replace(needle, repl, Lens_List_Number{read: &(*v5).item1})
+	for {
+		v2 := *lst.read
+		switch v2.tag {
+		case List_Number_cons:
+			v5 := v2.v1
+			one := ((*v5)).item0
+			if (one == needle) {
+				(*v5).item0 = repl
+			} else {
+				lst = Lens_List_Number{read: &(*v5).item1}
+				continue
+			}
+		case List_Number_nil:
+			v44 := List_Number{tag: List_Number_nil, v0: Unit{}}
+			*lst.read = v44
 		}
-	case List_Number_nil:
-		v44 := List_Number{tag: List_Number_nil, v0: Unit{}}
-		*lst.read = v44
+		return Unit{}
 	}
-	return Unit{}
 }
 
 func entry() List_Number {
