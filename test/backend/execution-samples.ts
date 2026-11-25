@@ -25,6 +25,7 @@ import { aslensNominalSamples, borrowedNominalSamples } from './nominal-pattern-
 import { stringSamples } from './string-samples.ts';
 import { runtimeImportSamples } from './runtime-import-samples.ts';
 import { vectorSamples } from './vector-samples.ts';
+import { sharedClosureSamples } from './shared-closure-samples.ts';
 /** Host I/O samples give their stdin and expected output; others perform no I/O. */
 export type ExecutionSample = {
     name: string;
@@ -56,6 +57,7 @@ export const samples: ExecutionSample[] = [
     ...stringSamples.map((s) => ({ ...s, name: `string: ${s.name}` })),
     ...runtimeImportSamples.map((s) => ({ ...s, name: `import: ${s.name}` })),
     ...vectorSamples.map((s) => ({ ...s, name: `vector: ${s.name}` })),
+    ...sharedClosureSamples.map((s) => ({ ...s, name: `shared closure: ${s.name}` })),
     ...capturedCleanupSamples,
     ...indirectCallSamples,
     ...unconstrainedClosureSamples,

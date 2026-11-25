@@ -395,9 +395,19 @@ export function executeTypedProgram(
         if (v && typeof v === 'object') {
             if (v.kind === 'variant' || v.kind === 'vector')
                 return { ...v, items: v.items.map(copy) };
+            // A closure is consumed by its call, so each copy owns its own captures. A reusable
+            // definition has none to consume.
+            if (v.kind === 'function')
+                return v.reusable
+                    ? v
+                    : {
+                          ...v,
+                          captures: new Map([...v.captures].map(([k, c]) => [k, copy(c)])),
+                          used: false,
+                      };
             throw new BackendDiagnostic(
                 'unsupported-reference-dup',
-                'Duplication of callable values requires a separate language feature',
+                'Duplication of this value is not supported',
             );
         }
         return v;

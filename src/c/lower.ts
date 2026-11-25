@@ -564,9 +564,35 @@ export function lowerC(
     const variantField = (expr: Expr, n: number): Expr => dot(dot(expr, 'as'), `v${n}`);
     const payload = (expr: Expr, id: string, n: number): Expr =>
         variant(id, n).boxed ? star(variantField(expr, n)) : variantField(expr, n);
+    /** A closure record: an environment and a `dispose` entry, plus one entry per invocation shape. */
+    const isCallable = (id: string): boolean => {
+        const l = layout(id);
+        return (
+            l.kind === 'record' &&
+            l.fields.some((f) => f.name === 'environment') &&
+            l.fields.some((f) => f.name === 'dispose')
+        );
+    };
+    /**
+     * A copy or shared read of a closure is one more holder of its environment, which is
+     * reference counted. Each holder ends by calling the closure or disposing it, and either one
+     * gives up exactly one reference. A closure with no captures has no environment to count.
+     */
+    const shareCallable = (expr: Expr, id: string): Expr =>
+        cc`${unionHelper('share', id, type(id), (body) => {
+            body.pop();
+            body.push(
+                {
+                    head: 'if (value.environment)',
+                    body: [cc`${use('retain_context')}(value.environment);`],
+                },
+                'return value;',
+            );
+        })}(${expr})`;
     /** Deep copy for affine `dup`: each boxed payload gets its own allocation. */
     const duplicate = (expr: Expr, id: string): Expr => {
         const l = layout(id);
+        if (isCallable(id)) return shareCallable(expr, id);
         if (l.kind === 'union')
             return cc`${unionHelper('dup', id, type(id), (body) => {
                 body.push(cc`${type(id)} copy = value;`);
@@ -616,15 +642,15 @@ export function lowerC(
     const reaches = (id: string): boolean => {
         const l = layout(id);
         if (l.kind === 'union' || l.kind === 'string' || l.kind === 'vector') return true;
+        if (isCallable(id)) return true;
         return (
-            l.kind === 'record' &&
-            !l.fields.some((f) => f.name === 'dispose') &&
-            l.fields.some((f) => f.kind === 'value' && reaches(f.layout))
+            l.kind === 'record' && l.fields.some((f) => f.kind === 'value' && reaches(f.layout))
         );
     };
     const shareValue = (expr: Expr, id: string): Expr => {
         const l = layout(id);
         if (!reaches(id)) return expr;
+        if (isCallable(id)) return shareCallable(expr, id);
         if (l.kind === 'union')
             return cc`${unionHelper('share', id, type(id), (body) => {
                 l.fields.forEach((_, n) => {
@@ -1056,9 +1082,13 @@ export function lowerC(
             const signature = cText`${type(unit.id)} ${name}(void *environment)`;
             declarations.push(new Declaration(name, signature + ';'));
             const body: Statement[] = [cc`${type(w.environment)} *captured = environment;`];
+            // The environment may be shared: only its last holder drops what it captured.
+            const drops: Statement[] = [];
             w.captures.forEach((id, i) =>
-                drop({ expression: cc`captured->capture${i}`, layout: id }, body),
+                drop({ expression: cc`captured->capture${i}`, layout: id }, drops),
             );
+            if (drops.length)
+                body.push({ head: cc`if (${use('unique_context')}(captured))`, body: drops });
             body.push(cc`${use('release_context')}(captured);`, cc`return ${zero(unit.id)};`);
             helpers.push({ name, signature, body });
         });
@@ -3005,11 +3035,16 @@ export function lowerC(
             const body: Statement[] = [...setup];
             c.captures.forEach((capture, i) => {
                 const base = bindingName({ place: capture.place, path: [] });
+                // The sole holder moves its captures out; a holder of a shared environment copies
+                // them, so each call owns what it uses and the others still see theirs.
+                const captured = cc`((${type(c.environment)} *)${'environment'})->capture${i}`;
                 const name = declare(
                     capture.layout,
                     erasedEnvironment(c.captures)
                         ? zero(capture.layout)
-                        : cc`((${type(c.environment)} *)${'environment'})->capture${i}`,
+                        : reaches(capture.layout)
+                          ? cc`(${use('unique_context')}(${'environment'}) ? ${captured} : ${duplicate(captured, capture.layout)})`
+                          : captured,
                     body,
                     base ? locals.reference(versionName(base)) : fresh(),
                 );
