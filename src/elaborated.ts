@@ -96,6 +96,8 @@ export type Elaboration = {
         node: NodeId;
         parameters: BindingId[][];
         parameterPlaces: PlaceId[][];
+        /** Which parameters the function owns: not lenses, and not plain (shared) values. */
+        ownedParameters: boolean[];
         body: NodeId;
         transitions: [number, number];
         entry: PlaceState[];
@@ -176,6 +178,8 @@ export class ElaborationBuilder {
         node: NodeId;
         parameters: BindingId[][];
         parameterPlaces: PlaceId[][];
+        /** Which parameters the function owns: not lenses, and not plain (shared) values. */
+        ownedParameters: boolean[];
         body: NodeId;
         transitions: [number, number];
         entry: RawState[];

@@ -61,3 +61,26 @@ it('binds `lens p <- v` names as ordinary mut values of their own type', () => {
     const wrap = `${fd}fn open(~x) ~{lens Fd(n) <- Fd(x)\n LEAK}\n`;
     expect(code(wrap.replace('LEAK', 'x := n'))).toBe('ok');
 });
+
+it('requires a linear parameter to be consumed', () => {
+    const conn = 'type linear Conn {\n    Conn(Number)\n}\n';
+    // dropped: nothing consumes it
+    expect(code(`${conn}fn forget(mut c) {match ~c {Conn(fd) -> dup(~fd)}}\n1`)).toBe('linear-unconsumed');
+    // consumed by a match, by being returned, or by being passed on
+    expect(code(`${conn}fn close(mut c) {match c {Conn(fd) -> fd}}\n1`)).toBe('ok');
+    expect(code(`${conn}fn keep(mut c) {match ~c {Conn(fd) -> dup(~fd)}\n c}\n1`)).toBe('ok');
+    expect(code(`${conn}fn close(mut c) {match c {Conn(fd) -> fd}}\nfn through(mut c) {close(c)}\n1`)).toBe('ok');
+    // a lens parameter is borrowed, so the caller keeps the value
+    expect(code(`${conn}fn peek(~c) {match ~c {Conn(fd) -> dup(~fd)}}\n1`)).toBe('ok');
+});
+
+it('rejects a linear argument for a function that drops its parameter', () => {
+    const conn = 'type linear Conn {\n    Conn(Number)\n}\n';
+    const ignore = 'fn ignore(mut x) {0}\n';
+    expect(code(`${conn}${ignore}{let mut c = Conn(1)\n ignore(c)}`)).toBe('linear-unconsumed');
+    // dropping a value that can be copied is fine
+    expect(code(`${ignore}{let mut v = [:1:]\n ignore(v)}`)).toBe('ok');
+    // a function that consumes its parameter takes a linear value
+    expect(code(`${conn}fn take(mut x) {x}\n{let mut c = Conn(1)\n take(c)}`)).toBe('ok');
+});
+

@@ -937,6 +937,7 @@ export class Inferencer {
             node: this.builder.node(n),
             parameters,
             parameterPlaces,
+            ownedParameters: n.args.map((a) => a.pat.type !== 'lens' && a.shared !== true),
             body: this.builder.node(n.body),
             transitions: [bodyStart, this.builder.transitions.length],
             entry: functionEntry,

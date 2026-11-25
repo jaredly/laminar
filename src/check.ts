@@ -74,6 +74,8 @@ export class Checker {
     }
     /** Per published definition: the type variables its plain bindings and `dup`s copy. */
     private copyBounds = new Map<string, Set<string>>();
+    /** Type variables of a definition's parameters that it drops, so they cannot be linear. */
+    private dropBounds = new Map<string, Set<string>>();
     private declaredLinear = (name: string): boolean => {
         const definition = this.types.get(name);
         return definition?.kind === 'union' && !!definition.linear;
@@ -140,6 +142,15 @@ export class Checker {
                 if (read) copy(read, decodeURIComponent(inst.definition.slice(7)), inst.node);
                 continue;
             }
+            const drops = this.dropBounds.get(inst.definition);
+            if (drops)
+                for (const argument of inst.arguments)
+                    if (drops.has(argument.parameter) && isLinear(argument.type, this.declaredLinear))
+                        throw new TypeDiagnostic(
+                            'linear-unconsumed',
+                            loc(inst.node),
+                            `${decodeURIComponent(inst.definition.split('/').at(-1)!)} drops its argument, so it cannot take a linear value`,
+                        );
             const bounds = this.copyBounds.get(inst.definition);
             if (!bounds) continue;
             const name = decodeURIComponent(inst.definition.split('/').at(-1)!);
@@ -171,6 +182,27 @@ export class Checker {
                     'A linear value must be consumed before its scope ends',
                 );
         }
+        // A parameter the function owns and never consumes is dropped, so it cannot be linear:
+        // a concrete linear type is an error here, and a type variable is bound like a copy's.
+        const dropped = new Set<string>();
+        for (const f of elaboration.functions) {
+            const owned = new Set(f.parameterPlaces.filter((_, i) => f.ownedParameters[i]).flat());
+            for (const state of f.exit) {
+                if (!owned.has(state.place) || state.empty.some((path) => path.length === 0))
+                    continue;
+                if (isLinear(state.type, this.declaredLinear))
+                    throw new TypeDiagnostic(
+                        'linear-unconsumed',
+                        loc(f.node),
+                        'A linear parameter must be consumed before the function ends',
+                    );
+                variables(state.type).forEach((id) => dropped.add(id));
+            }
+        }
+        this.dropBounds.set(
+            elaboration.id,
+            new Set([...dropped].filter((id) => elaboration.signature.quantified.includes(id))),
+        );
         return new Set([...copied].filter((id) => elaboration.signature.quantified.includes(id)));
     }
 
