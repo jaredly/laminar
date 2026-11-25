@@ -300,8 +300,10 @@ and its test program aborts if any allocation is still live at exit.
 
 Not yet:
 
-- Only Go has `spawn`, so `examples/server.lm` is Go only, and moves into tasks have no reference
-  result to compare with.
+- C has no `spawn`. The reference evaluator has `spawn`, channels and `sleep`, so moves into tasks
+  are compared between it and Go. It has no sockets, so `examples/server.lm` runs only on Go.
+- The reference runs one interleaving of a program and cannot find a data race. That still takes
+  `go build -race`.
 - A lens cannot move inside a lens-valued `case`.
 
 ## Backend plan

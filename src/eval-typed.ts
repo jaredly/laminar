@@ -13,6 +13,7 @@ import type {
     Instruction,
 } from './typed-ir.ts';
 import { verifyTypedProgram } from './verify-ir.ts';
+import { channel, enter, schedule, type Channel, type Run } from './eval-tasks.ts';
 import createPrompt from 'prompt-sync';
 import { readSync, writeFileSync } from 'node:fs';
 import { requireImport } from './runtime-imports.ts';
@@ -56,7 +57,8 @@ type Lens = {
     kind: 'lens';
     peek(): Data;
     replace(value: Data): Data;
-    finish(): void;
+    /** Ending a lens runs its producer's cleanup, which may block. */
+    finish(): Run<void>;
     project(path: number[]): Lens;
 };
 type Argument = Data | Lens;
@@ -89,6 +91,8 @@ export type ReferenceOptions = {
     /** Seed for `random` (read as an unsigned integer); defaults to LAMINAR_SEED, else the clock. */
     seed?: number;
 };
+
+const nothing = function* (): Run<void> {};
 
 /** One byte of stdin as a string, "" at end of input. Blocks: the timeout is ignored. */
 const readKey = (): string => {
@@ -169,7 +173,7 @@ export function executeTypedProgram(
     const view = (
         peek: () => Data,
         replace: (v: Data) => Data,
-        finish: () => void = () => {},
+        finish: () => Run<void> = nothing,
     ): Lens => {
         const result: Lens = {
             kind: 'lens',
@@ -203,16 +207,16 @@ export function executeTypedProgram(
             },
         );
     };
-    const scoped = (inner: Lens, close: () => void): Lens => {
+    const scoped = (inner: Lens, close: () => Run<void>): Lens => {
         let finished = false;
         return view(
             () => inner.peek(),
             (v) => inner.replace(v),
-            () => {
+            function* () {
                 if (finished) return error('Restoration executed twice');
                 finished = true;
-                inner.finish();
-                close();
+                yield* enter(inner.finish());
+                yield* enter(close());
             },
         );
     };
@@ -243,7 +247,9 @@ export function executeTypedProgram(
                     v.replace(value === EMPTY ? EMPTY : (value as Data[])[i]),
                 );
             },
-            () => items.forEach((v) => v.finish()),
+            function* () {
+                for (const item of items) yield* enter(item.finish());
+            },
         );
     const construct = (name: string, args: Data[]): Data =>
         name === 'nil'
@@ -286,7 +292,9 @@ export function executeTypedProgram(
                     items.map((v, i) => v.replace(parts[i])),
                 );
             },
-            () => items.forEach((v) => v.finish()),
+            function* () {
+                for (const item of items) yield* enter(item.finish());
+            },
         );
     const dispose = (v: Data): void => {
         if (Array.isArray(v)) v.forEach(dispose);
@@ -379,23 +387,34 @@ export function executeTypedProgram(
             }
         }
     };
-    const cleanup = (f: Frame, actions: Cleanup[]): void => {
+    /** Only ending a lens runs program code; everything else a cleanup does is immediate. */
+    const ends = (action: Cleanup) => action.kind === 'release' || action.kind === 'end';
+    /** Run `actions`, through the scheduler when one of them ends a lens. */
+    const cleanup = (f: Frame, actions: Cleanup[]): Run<void> | undefined => {
+        if (actions.some(ends)) return cleanupLenses(f, actions);
+        actions.forEach((action) => discard(f, action));
+        return undefined;
+    };
+    const discard = (f: Frame, action: Cleanup): void => {
+        if (action.kind !== 'restored' && action.kind !== 'drop-place')
+            return error('A lens can only end on the scheduler');
+        const v = reference(f, action.slot);
+        if (action.kind === 'restored') owned(v.peek());
+        else dispose(v.replace(EMPTY));
+    };
+    const cleanupLenses = function* (f: Frame, actions: Cleanup[]): Run<void> {
         for (const action of actions) {
             if (action.kind === 'release') {
                 const borrowed = f.loans.get(action.loan) ?? error('Missing lexical loan');
                 owned(borrowed.peek());
-                borrowed.finish();
+                yield* enter(borrowed.finish());
                 f.loans.delete(action.loan);
             } else if (action.kind === 'end') {
                 const owner = f.held.get(action.slot.place) ?? error('No owned lens to end');
                 owned(owner.peek());
                 f.held.delete(action.slot.place);
-                owner.finish();
-            } else {
-                const v = reference(f, action.slot);
-                if (action.kind === 'restored') owned(v.peek());
-                else dispose(v.replace(EMPTY));
-            }
+                yield* enter(owner.finish());
+            } else discard(f, action);
         }
     };
     const materialize = (v: Data, t: SemanticType): Data => {
@@ -456,11 +475,37 @@ export function executeTypedProgram(
         }
         return a === b;
     };
+    /** Channels by handle, numbered from 1 as the Go runtime numbers them. */
+    const channels = new Map<number, Channel>();
+    const channelAt = (handle: Data): Channel =>
+        channels.get(handle as number) ?? error('not a channel handle');
     const vector = (v: Data): VectorValue =>
         v && typeof v === 'object' && !Array.isArray(v) && v.kind === 'vector'
             ? v
             : error('Expected a vector');
-    const invoke = (callee: Data, args: Argument[]): Argument => {
+    /** The natives that may have to wait for another task. */
+    const waits = new Set(['chanSend', 'chanRecv', 'sleep']);
+    const wait = function* (name: string, args: Argument[]): Run<Argument> {
+        const number = (n: number) => data(args[n]) as number;
+        switch (name) {
+            case 'chanSend':
+                yield { op: 'send', channel: channelAt(number(0)), value: number(1) };
+                return null;
+            case 'chanRecv':
+                return (yield { op: 'receive', channel: channelAt(number(0)) }) as number;
+            default:
+                yield { op: 'sleep', milliseconds: number(0) };
+                return null;
+        }
+    };
+    /**
+     * Call a function value. A closure, or a native that waits, gives code to run on the
+     * scheduler; any other native has run by the time this returns.
+     */
+    const invoke = (
+        callee: Data,
+        args: Argument[],
+    ): { run: Run<Argument> } | { value: Argument } => {
         if (
             !callee ||
             typeof callee !== 'object' ||
@@ -468,142 +513,150 @@ export function executeTypedProgram(
             (callee.kind !== 'function' && callee.kind !== 'native')
         )
             return error('Calling a non-function');
-        if (callee.kind === 'native') {
-            const number = (n: number): number => {
-                const v = data(args[n]);
-                return typeof v === 'number' ? v : error('Numeric import received a non-number');
-            };
-            switch (callee.name) {
-                case '+':
-                    return number(0) + number(1);
-                case '-':
-                    return number(0) - number(1);
-                case '*':
-                    return number(0) * number(1);
-                case '/':
-                    return number(0) / number(1);
-                case '%':
-                    return number(0) % number(1);
-                case '==':
-                    return equal(data(args[0]), data(args[1]));
-                case '!=':
-                    return !equal(data(args[0]), data(args[1]));
-                case '<':
-                    return number(0) < number(1);
-                case '>':
-                    return number(0) > number(1);
-                case '>=':
-                    return number(0) >= number(1);
-                case '<=':
-                    return number(0) <= number(1);
-                case 'not':
-                    return !data(args[0]);
-                case 'round':
-                    return Math.round(number(0));
-                case 'dup':
-                    return copy(owned(lens(args[0]).peek()));
-                case 'getInput': {
-                    const prompt = data(args[0]) as string;
-                    if (!options.stdin) return createPrompt()(prompt) ?? '';
-                    (options.stdout ?? ((text) => process.stdout.write(text)))(prompt);
-                    return options.stdin();
-                }
-                case 'write': {
-                    (options.stdout ?? ((text) => process.stdout.write(text)))(
-                        data(args[0]) as string,
-                    );
-                    return null;
-                }
-                case 'writeFile': {
-                    const bytes = vector(owned(data(args[1]))).items.map((item) => {
-                        const b = item;
-                        return typeof b === 'number' && Number.isInteger(b) && b >= 0 && b < 256
-                            ? b
-                            : error('writeFile bytes must be integers in [0, 255]');
-                    });
-                    writeFileSync(data(args[0]) as string, Uint8Array.from(bytes));
-                    return null;
-                }
-                case 'waitKey':
-                    return (options.key ?? readKey)(number(0));
-                case 'random': {
-                    const bound = number(0);
-                    if (!Number.isInteger(bound) || bound < 1 || bound >= 2 ** 32)
-                        return error('random bound must be an integer in [1, 2^32)');
-                    if (rng === 0) {
-                        const seed = options.seed ?? process.env.LAMINAR_SEED;
-                        rng = (seed === undefined ? Date.now() : Number(seed)) >>> 0 || 2463534242;
-                    }
-                    rng = (rng ^ (rng << 13)) >>> 0;
-                    rng = (rng ^ (rng >>> 17)) >>> 0;
-                    rng = (rng ^ (rng << 5)) >>> 0;
-                    return rng % bound;
-                }
-                case 'print': {
-                    (options.stdout ?? ((text) => process.stdout.write(text)))(
-                        `${data(args[0]) as string}\n`,
-                    );
-                    return null;
-                }
-                case 'fst': {
-                    const parent = lens(args[0]);
-                    // The call boundary owns argument completion. A native
-                    // projection must not also retain that same continuation.
-                    return view(
-                        () => parent.peek(),
-                        (value) => parent.replace(value),
-                    ).project([0]);
-                }
-                case 'array': {
-                    const length = number(0),
-                        init = owned(data(args[1]));
-                    if (!Number.isInteger(length) || length < 0)
-                        return error('array length must be a non-negative integer');
-                    const items = Array.from({ length }, () => copy(init));
-                    dispose(init);
-                    return { kind: 'vector', items };
-                }
-                case 'size':
-                    return vector(lens(args[0]).peek()).items.length;
-                case '[::]':
-                    return { kind: 'vector', items: [] };
-                case '[:push:]': {
-                    const v = vector(owned(data(args[0])));
-                    return { kind: 'vector', items: [...v.items, owned(data(args[1]))] };
-                }
-                case '[]': {
-                    const at = number(0),
-                        parent = lens(args[1]);
-                    const items = () => vector(parent.peek()).items;
-                    if (!Number.isInteger(at) || at < 0 || at >= items().length)
-                        return error('Vector index out of bounds');
-                    // As with fst, argument completion belongs to the call boundary.
-                    return view(
-                        () => items()[at]!,
-                        (value) => {
-                            const old = items()[at]!;
-                            parent.replace({
-                                kind: 'vector',
-                                items: items().map((v, i) => (i === at ? value : v)),
-                            });
-                            return old;
-                        },
-                    );
-                }
-                case 'charList': {
-                    const s = data(args[0]);
-                    return typeof s === 'string' ? [...s] : error('charList requires a string');
-                }
-                // Reference frames are ordinary JS storage; no heap allocation primitive is supported here.
-                case 'heapsize':
-                    return 0;
-                default:
-                    throw new BackendDiagnostic(
-                        'unsupported-reference-import',
-                        `No typed IR implementation for ${callee.name}`,
-                    );
+        if (callee.kind === 'function') return { run: call(callee, args) };
+        if (waits.has(callee.name)) return { run: wait(callee.name, args) };
+        return { value: native(callee.name, args) };
+    };
+    const native = (name: string, args: Argument[]): Argument => {
+        const number = (n: number): number => {
+            const v = data(args[n]);
+            return typeof v === 'number' ? v : error('Numeric import received a non-number');
+        };
+        switch (name) {
+            case '+':
+                return number(0) + number(1);
+            case '-':
+                return number(0) - number(1);
+            case '*':
+                return number(0) * number(1);
+            case '/':
+                return number(0) / number(1);
+            case '%':
+                return number(0) % number(1);
+            case '==':
+                return equal(data(args[0]), data(args[1]));
+            case '!=':
+                return !equal(data(args[0]), data(args[1]));
+            case '<':
+                return number(0) < number(1);
+            case '>':
+                return number(0) > number(1);
+            case '>=':
+                return number(0) >= number(1);
+            case '<=':
+                return number(0) <= number(1);
+            case 'not':
+                return !data(args[0]);
+            case 'round':
+                return Math.round(number(0));
+            case 'dup':
+                return copy(owned(lens(args[0]).peek()));
+            case 'chanNew': {
+                const handle = channels.size + 1;
+                channels.set(handle, channel());
+                return handle;
             }
+            case 'getInput': {
+                const prompt = data(args[0]) as string;
+                if (!options.stdin) return createPrompt()(prompt) ?? '';
+                (options.stdout ?? ((text) => process.stdout.write(text)))(prompt);
+                return options.stdin();
+            }
+            case 'write': {
+                (options.stdout ?? ((text) => process.stdout.write(text)))(data(args[0]) as string);
+                return null;
+            }
+            case 'writeFile': {
+                const bytes = vector(owned(data(args[1]))).items.map((item) => {
+                    const b = item;
+                    return typeof b === 'number' && Number.isInteger(b) && b >= 0 && b < 256
+                        ? b
+                        : error('writeFile bytes must be integers in [0, 255]');
+                });
+                writeFileSync(data(args[0]) as string, Uint8Array.from(bytes));
+                return null;
+            }
+            case 'waitKey':
+                return (options.key ?? readKey)(number(0));
+            case 'random': {
+                const bound = number(0);
+                if (!Number.isInteger(bound) || bound < 1 || bound >= 2 ** 32)
+                    return error('random bound must be an integer in [1, 2^32)');
+                if (rng === 0) {
+                    const seed = options.seed ?? process.env.LAMINAR_SEED;
+                    rng = (seed === undefined ? Date.now() : Number(seed)) >>> 0 || 2463534242;
+                }
+                rng = (rng ^ (rng << 13)) >>> 0;
+                rng = (rng ^ (rng >>> 17)) >>> 0;
+                rng = (rng ^ (rng << 5)) >>> 0;
+                return rng % bound;
+            }
+            case 'print': {
+                (options.stdout ?? ((text) => process.stdout.write(text)))(
+                    `${data(args[0]) as string}\n`,
+                );
+                return null;
+            }
+            case 'fst': {
+                const parent = lens(args[0]);
+                // The call boundary owns argument completion. A native
+                // projection must not also retain that same continuation.
+                return view(
+                    () => parent.peek(),
+                    (value) => parent.replace(value),
+                ).project([0]);
+            }
+            case 'array': {
+                const length = number(0),
+                    init = owned(data(args[1]));
+                if (!Number.isInteger(length) || length < 0)
+                    return error('array length must be a non-negative integer');
+                const items = Array.from({ length }, () => copy(init));
+                dispose(init);
+                return { kind: 'vector', items };
+            }
+            case 'size':
+                return vector(lens(args[0]).peek()).items.length;
+            case '[::]':
+                return { kind: 'vector', items: [] };
+            case '[:push:]': {
+                const v = vector(owned(data(args[0])));
+                return { kind: 'vector', items: [...v.items, owned(data(args[1]))] };
+            }
+            case '[]': {
+                const at = number(0),
+                    parent = lens(args[1]);
+                const items = () => vector(parent.peek()).items;
+                if (!Number.isInteger(at) || at < 0 || at >= items().length)
+                    return error('Vector index out of bounds');
+                // As with fst, argument completion belongs to the call boundary.
+                return view(
+                    () => items()[at]!,
+                    (value) => {
+                        const old = items()[at]!;
+                        parent.replace({
+                            kind: 'vector',
+                            items: items().map((v, i) => (i === at ? value : v)),
+                        });
+                        return old;
+                    },
+                );
+            }
+            case 'charList': {
+                const s = data(args[0]);
+                return typeof s === 'string' ? [...s] : error('charList requires a string');
+            }
+            // Reference frames are ordinary JS storage; no heap allocation primitive is supported here.
+            case 'heapsize':
+                return 0;
+            default:
+                throw new BackendDiagnostic(
+                    'unsupported-reference-import',
+                    `No typed IR implementation for ${name}`,
+                );
         }
+    };
+    const call = function* (callee: FunctionValue, args: Argument[]): Run<Argument> {
         if (!callee.reusable && callee.used) return error('Closure invoked twice');
         if (!callee.reusable) callee.used = true;
         const f = frame();
@@ -623,16 +676,19 @@ export function executeTypedProgram(
             else if (p.lensPlace) f.places.set(p.lensPlace, lens(args[i]));
             else bind(f, p.pattern, owned(data(args[i])));
         });
-        const result = executeBlock(callee.unit, callee.fn.body, f);
+        const result = yield* enter(executeBlock(callee.unit, callee.fn.body, f));
         const settled = () => {
             if (f.held.size) error('A function kept an owned lens without ending it');
         };
         // A returned lens may still rest on one, until its own restoration ends it.
-        if (isLens(result)) return scoped(result, settled);
+        if (isLens(result))
+            return scoped(result, function* () {
+                settled();
+            });
         settled();
         return result;
     };
-    const executeBlock = (u: IRUnit, b: IRBlock, f: Frame): Argument => {
+    const executeBlock = function* (u: IRUnit, b: IRBlock, f: Frame): Run<Argument> {
         const oldPlaces = new Set(f.places.keys());
         for (const i of b.instructions) {
             if (++steps > (options.maxSteps ?? 1_000_000))
@@ -718,7 +774,7 @@ export function executeTypedProgram(
                     const target = lens(take(f, i.lens)),
                         replacement = owned(data(take(f, i.value)));
                     result = logical(target.replace(replacement));
-                    target.finish();
+                    yield* enter(target.finish());
                     break;
                 }
                 case 'closure': {
@@ -744,12 +800,6 @@ export function executeTypedProgram(
                     break;
                 }
                 case 'call': {
-                    if (i.detached)
-                        throw new BackendDiagnostic(
-                            'unsupported-reference-import',
-                            'spawn has no reference implementation',
-                            i.origin,
-                        );
                     const fn = data(take(f, i.callee)),
                         args = i.args.map((id) => take(f, id));
                     // Reify an empty unit focus as a unit value at the call boundary.
@@ -767,31 +817,60 @@ export function executeTypedProgram(
                             );
                         }
                     });
-                    result = invoke(fn, args);
-                    const finish = () =>
-                        args.forEach((arg, n) => {
-                            const t = signature.args[n]!;
-                            // An owned argument is the callee's to end.
-                            if (isLens(arg) && !(t.tag === 'flow' && t.owned)) {
-                                owned(arg.peek());
-                                arg.finish();
-                            }
-                        });
+                    if (i.detached) {
+                        // A task that never returns leaves its type open, as a loop does.
+                        const returns = signature.result;
+                        if (
+                            returns.tag !== 'plain' ||
+                            (returns.value.tag !== 'variable' &&
+                                !(returns.value.tag === 'tuple' && !returns.value.items.length))
+                        )
+                            return error('A spawned task must return ()', i.origin);
+                        const origin = i.origin;
+                        // The task is read here, on the spawning task; its call runs on its own.
+                        yield {
+                            op: 'spawn',
+                            task: (function* (): Run<void> {
+                                const called = invoke(fn, args);
+                                const returned =
+                                    'run' in called ? yield* enter(called.run) : called.value;
+                                // Generic code only shows what it returns here.
+                                if (returned !== null)
+                                    error('A spawned task must return ()', origin);
+                            })(),
+                        };
+                        result = null;
+                        break;
+                    }
+                    const called = invoke(fn, args);
+                    result = 'run' in called ? yield* enter(called.run) : called.value;
+                    // An owned argument is the callee's to end.
+                    const borrowed = args.filter((arg, n): arg is Lens => {
+                        const t = signature.args[n]!;
+                        return isLens(arg) && !(t.tag === 'flow' && t.owned);
+                    });
+                    if (!borrowed.length) break;
+                    const finish = function* (): Run<void> {
+                        for (const arg of borrowed) {
+                            owned(arg.peek());
+                            if (arg.finish !== nothing) yield* enter(arg.finish());
+                        }
+                    };
                     if (isLens(result)) result = scoped(result, finish);
-                    else finish();
+                    else yield* enter(finish());
                     break;
                 }
                 case 'aslens': {
                     const backing = cell(owned(data(take(f, i.initial))));
                     f.places.set(i.backing, backing);
-                    result = scoped(backing, () => {
-                        dispose(owned(data(executeBlock(u, i.cleanup, f))));
+                    result = scoped(backing, function* () {
+                        dispose(owned(data(yield* enter(executeBlock(u, i.cleanup, f)))));
                         f.places.delete(i.backing);
                     });
                     break;
                 }
                 case 'scope':
-                    result = executeBlock(u, i.body, f);
+                    result = yield* enter(executeBlock(u, i.body, f));
                     break;
                 case 'case': {
                     const value = owned(data(take(f, i.value))),
@@ -804,49 +883,67 @@ export function executeTypedProgram(
                         );
                     const before = new Set(f.places.keys());
                     bind(f, arm.pattern, value);
-                    result = executeBlock(u, arm.body, f);
-                    cleanup(f, arm.setup ?? []);
-                    const close = () => {
-                        cleanup(f, arm.restored ?? []);
+                    result = yield* enter(executeBlock(u, arm.body, f));
+                    const setup = cleanup(f, arm.setup ?? []);
+                    if (setup) yield* enter(setup);
+                    const close = function* (): Run<void> {
+                        const restored = cleanup(f, arm.restored ?? []);
+                        if (restored) yield* enter(restored);
                         for (const key of f.places.keys())
                             if (!before.has(key)) f.places.delete(key);
                     };
                     if (isLens(result)) result = scoped(result, close);
-                    else close();
+                    else yield* enter(close());
                     break;
                 }
             }
             f.values.set(i.out.id, result);
         }
         const result = take(f, b.result);
-        const close = () => {
-            cleanup(f, b.cleanup);
+        const retire = () => {
             for (const key of f.places.keys()) if (!oldPlaces.has(key)) f.places.delete(key);
         };
-        if (isLens(result)) return scoped(result, close);
-        close();
+        if (isLens(result))
+            return scoped(result, function* () {
+                const pending = cleanup(f, b.cleanup);
+                if (pending) yield* enter(pending);
+                retire();
+            });
+        const pending = cleanup(f, b.cleanup);
+        if (pending) yield* enter(pending);
+        retire();
         return result;
     };
-    let result: Argument = null;
-    for (const u of program.units) {
-        // Earlier expression roots are affine results discarded by this last-result test runner.
-        // Reusable definitions own no captures and are not disposed here.
-        dispose(data(result));
-        result = executeBlock(u, u.entry, frame());
-        if (u.definition) {
-            const value = data(result);
-            if (
-                !value ||
-                typeof value !== 'object' ||
-                Array.isArray(value) ||
-                value.kind !== 'function' ||
-                value.captures.size
-            )
-                return error('A reusable definition must be a closed function');
-            value.reusable = true;
-            definitions.set(u.definition, value);
+    /** The program's units run in order on the main task. */
+    const main = function* (): Run<Argument> {
+        let result: Argument = null;
+        for (const u of program.units) {
+            // Earlier expression roots are affine results discarded by this last-result test runner.
+            // Reusable definitions own no captures and are not disposed here.
+            dispose(data(result));
+            result = yield* enter(executeBlock(u, u.entry, frame()));
+            if (u.definition) {
+                const value = data(result);
+                if (
+                    !value ||
+                    typeof value !== 'object' ||
+                    Array.isArray(value) ||
+                    value.kind !== 'function' ||
+                    value.captures.size
+                )
+                    return error('A reusable definition must be a closed function');
+                value.reusable = true;
+                definitions.set(u.definition, value);
+            }
         }
-    }
+        return result;
+    };
+    const result = schedule(main(), () => {
+        throw new BackendDiagnostic(
+            'reference-deadlock',
+            'Every task is blocked, so none can ever continue',
+        );
+    });
     return report(owned(data(result)));
 }
 

@@ -237,7 +237,7 @@ export const runtimeImports: readonly RuntimeImport[] = [
         arguments: ['owned'],
         result: 'owned',
         capability: 'threads',
-        backends: ['go'],
+        backends: ['reference', 'go'],
         semantics:
             'Consumes a task and runs it concurrently, returning at once. The task owns everything it captured: a closure may move or share values but never borrow, so no two tasks reach the same mutable data',
     },
@@ -247,7 +247,7 @@ export const runtimeImports: readonly RuntimeImport[] = [
         arguments: ['owned'],
         result: 'owned',
         capability: 'threads',
-        backends: ['go'],
+        backends: ['reference', 'go'],
         semantics: 'Blocks the calling task for the given milliseconds; other tasks keep running',
     },
     {
@@ -256,7 +256,7 @@ export const runtimeImports: readonly RuntimeImport[] = [
         arguments: [],
         result: 'owned',
         capability: 'threads',
-        backends: ['go'],
+        backends: ['reference', 'go'],
         semantics:
             'A new unbuffered channel of numbers, named by a handle. Sending and receiving block until the other side arrives',
     },
@@ -266,7 +266,7 @@ export const runtimeImports: readonly RuntimeImport[] = [
         arguments: ['owned', 'owned'],
         result: 'owned',
         capability: 'threads',
-        backends: ['go'],
+        backends: ['reference', 'go'],
         semantics: 'Sends a number on a channel, blocking until a task receives it',
     },
     {
@@ -275,7 +275,7 @@ export const runtimeImports: readonly RuntimeImport[] = [
         arguments: ['owned'],
         result: 'owned',
         capability: 'threads',
-        backends: ['go'],
+        backends: ['reference', 'go'],
         semantics: 'Receives a number from a channel, blocking until a task sends one',
     },
     {

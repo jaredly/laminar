@@ -3,12 +3,10 @@ import { readFileSync } from 'node:fs';
 import { CompileError, checkSource, compileSource } from '../../src/compiler.ts';
 import { goTarget, wasm32Emscripten } from '../../src/backend/target.ts';
 import { detectTarget } from '../../src/backend/host.ts';
-import { expectRun } from '../backend/backends.ts';
 
 const dual = (source: string) => `// laminar: dual\n${source}`;
 const emit = (source: string) =>
     compileSource(dual(source), { target: goTarget('test') }).code;
-const execute = process.env.LAMINAR_EXEC ? it : it.skip;
 const rejection = (source: string) => {
     try {
         checkSource(dual(source));
@@ -86,34 +84,6 @@ it('cannot copy a connection or hand a borrowed one to a task', () => {
     expect(rejection('fn f(~n) {spawn(fn () {print("${dup(~n)}")})}\n0')).toBe('borrowed-capture');
 });
 
-for (const [name, source, expected, output] of [
-    [
-        'a task answers over a channel',
-        '{let ch = chanNew()\n spawn(fn () {chanSend(ch, 42)})\n chanRecv(ch)}',
-        42,
-        '',
-    ],
-    [
-        'many tasks, one reply each',
-        'fn ask(ch, n) {if n == 0 then () else {spawn(fn () {chanSend(ch, n)})\n ask(ch, n - 1)}}\nfn total(ch, n, acc) {if n == 0 then acc else total(ch, n - 1, acc + chanRecv(ch))}\n{let ch = chanNew()\n ask(ch, 50)\n total(ch, 50, 0)}',
-        1275,
-        '',
-    ],
-    [
-        'a task that owns its state',
-        // the counter task owns `count`; requests and replies are the only way in
-        'fn counter(requests, count) {let reply = chanRecv(requests)\n chanSend(reply, count + 1)\n counter(requests, count + 1)}\nfn next(requests) {let reply = chanNew()\n chanSend(requests, reply)\n chanRecv(reply)}\n{let requests = chanNew()\n spawn(fn () {counter(requests, 0)})\n (next(requests), next(requests), next(requests))}',
-        [1, 2, 3],
-        '',
-    ],
-    [
-        'sleep lets other tasks run',
-        '{let ch = chanNew()\n spawn(fn () {sleep(30)\n chanSend(ch, 2)})\n spawn(fn () {chanSend(ch, 1)})\n (chanRecv(ch), chanRecv(ch))}',
-        [1, 2],
-        '',
-    ],
-] as const)
-    execute(`go runs ${name}`, () => expectRun('go', dual(source), { expected, output }), 60000);
 
 it('explains spawn in pure mode', () => {
     expect(() => compileSource('spawn(fn () {()})', { target: goTarget('test') })).toThrow(

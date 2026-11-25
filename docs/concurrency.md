@@ -40,8 +40,8 @@ spawn(fn () { print("forgot") })            // linear-unconsumed: nobody closes 
 - **`spawn(task)`** runs a closure on its own task and returns `()` at once. It is not a native
   import. The dual-mode desugar rewrites `spawn(f)` into a *detached call* of `f`, so the task goes
   through representation inference, entries and wrappers like any other call. The Go lowerer reads
-  the task value on the spawning side and starts `go func() { f(env) }()`. C and the reference
-  evaluator reject a detached call rather than quietly run it inline.
+  the task value on the spawning side and starts `go func() { f(env) }()`. The reference evaluator
+  runs it on its own scheduler. C rejects a detached call rather than quietly run it inline.
 - **`chanNew()`, `chanSend(ch, n)`, `chanRecv(ch)`** are unbuffered channels of numbers, named by
   handles in a locked table.
 - **`sleep(ms)`** blocks one task while the rest run.
@@ -102,9 +102,13 @@ length of a scope fits the model.
   atomic `retain_context` / `release_context`, which are ordinary counters now. Allocation is
   `allocate_context`; whether it is thread safe depends on the allocator behind it. Everything the
   checker proves still holds, so this is runtime work, not language work.
-- **Reference evaluator.** Today it rejects `spawn`. As the oracle for tests it needs a scheduler;
-  a deterministic one that picks interleavings from a seed would also let tests explore races that
-  cannot happen.
+- **Reference evaluator.** Done for `spawn`, channels and `sleep`, not sockets
+  (`src/eval-tasks.ts`). Scheduling is cooperative and deterministic: a task runs until it waits,
+  ready tasks run in turn, and `sleep` advances a simulated clock. As in Go, the program ends when
+  the main task returns; if every task waits, that is a deadlock. It keeps each task's call stack
+  in an array, so recursion depth no longer depends on JavaScript's stack. It tries one
+  interleaving and cannot find a data race. Picking the next task from a seed would let tests
+  try more of them.
 
 ## Gaps this prototype found
 

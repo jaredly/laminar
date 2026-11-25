@@ -232,18 +232,12 @@ it('closes the older leaks that a linear closure would have gone through', () =>
     expect(program('let mut c = Conn(1)\n lose(c)', `${base}fn lose(mut x) { match x { _ -> 0 } }\n`)).toBe('linear-unconsumed');
 });
 
-it('runs a move on the reference evaluator, which still cannot spawn', () => {
-    const run = (body: string) => {
-        let output = '';
-        executeTypedProgram(checkSource(`${printing}${body}`), {
-            stdout: (text) => (output += text),
-        });
-        return output;
-    };
-    expect(run('handle("a", ~connection(1))')).toBe('a start\npeek 1\na done\nclose 1\n');
-    expect(() => run('{let c = ~connection(1)\n spawn(fn () { handle("a", ~c) })}')).toThrow(
-        'spawn has no reference implementation',
-    );
+it('runs a move on the reference evaluator', () => {
+    let output = '';
+    executeTypedProgram(checkSource(`${printing}handle("a", ~connection(1))`), {
+        stdout: (text) => (output += text),
+    });
+    expect(output).toBe('a start\npeek 1\na done\nclose 1\n');
 });
 
 it('verifies in typed IR that each owned lens ends exactly once', () => {
