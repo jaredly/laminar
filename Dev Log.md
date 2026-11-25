@@ -1,4 +1,33 @@
 
+BTW we should allow the lens arg to be anywhere, not just the last of the fn (that's a relic of currying)
+
+heyyy what if instead of `mut` we call it `my` lol. So it's owned, not shared.
+
+---
+
+Ok so we've got this dual mode setup.
+How do we feel about it?
+I'm going to need to try it out a bit.
+Still a decent amount of `!` duping needed.
+And like, a lens gives you a readonly view.
+So there's a bit of a question of 'why would you need immutable data'
+
+BUT ALSO does it result in better/faster code?
+
+Also, what does merge sort look like?
+
+andddd what about like a server or something?
+
+OOF we need to dedup the parser-generator stuff
+
+
+->
+
+mandelbrot, we've done perf testing.
+How about something like merge sort?    
+
+---
+
 let's get if/else going
 
 
