@@ -78,7 +78,9 @@ it('a same-layout borrowed update projects its fields into the box', () => {
     expect(body).not.toContain('Backing');
     expect(body).toMatch(/read: &\(\*v\d+\)\.item1/);
     expect(body).toMatch(/\(\*v\d+\)\.item0 = h \+ 1\.0/);
-    expect(body.indexOf('.item0 = h + 1.0')).toBeLessThan(body.indexOf('\tbump('));
+    // Go turns the self call into a loop, so the write precedes the jump back to the top.
+    expect(body).toContain('for {');
+    expect(body.indexOf('.item0 = h + 1.0')).toBeLessThan(body.indexOf('continue'));
 });
 
 it('the verifier rejects an in-place mark without box reuse', () => {
