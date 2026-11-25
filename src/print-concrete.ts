@@ -280,7 +280,9 @@ export function lconcrete(program: ConcreteProgram, options: ConcretePrintOption
                 ? words('release', ref(c.loan, 'loan'))
                 : c.kind === 'drop-place'
                   ? words('drop', slot(c.slot))
-                  : words('restored', slot(c.slot), ':', semantic(c.type));
+                  : c.kind === 'end'
+                    ? words('end', slot(c.slot))
+                    : words('restored', slot(c.slot), ':', semantic(c.type));
         const instruction = (i: ConcreteInstruction): Node => {
             let expression: Node;
             switch (i.op) {
@@ -409,6 +411,8 @@ export function lconcrete(program: ConcreteProgram, options: ConcretePrintOption
                     );
                     break;
                 }
+                case 'give':
+                    throw new Error('Moved lenses have no concrete form yet');
                 case 'lens-construct':
                     throw new Error('Constructor lenses have no concrete form yet');
                 default: {

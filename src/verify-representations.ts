@@ -1,5 +1,5 @@
 import { layoutSchemaKey, scatterVariants } from './layout-definitions.ts';
-import { mapSemantic, type Instance } from './typed-ir.ts';
+import { mapSemantic, type Instance, type IRFunction } from './typed-ir.ts';
 import { createHash } from 'node:crypto';
 import type { SemanticType, SemanticFlow } from './elaborated.ts';
 import { BackendDiagnostic, targetKey } from './backend/target.ts';
@@ -316,6 +316,8 @@ export function verifyRepresentations(
     };
     const containsCallable = (t: SemanticType): boolean =>
         t.tag === 'fn' || (t.tag === 'tuple' && t.items.some(containsCallable));
+    const captureFlow = (c: IRFunction['captures'][number]): SemanticFlow =>
+        c.lens ? { tag: 'flow', read: c.type, write: c.lens.write } : irPlain(c.type);
     function fitMember(m: CallableMember, t: SemanticType): void {
         if (!m || typeof m !== 'object' || t.tag !== 'fn') return fail('Invalid callable member');
         if (m.kind === 'native') {
@@ -327,7 +329,7 @@ export function verifyRepresentations(
         const fn = fnFor(m.unit, m.function);
         typeEqual(fn.type, t);
         if (fn.captures.length !== m.captures.length) fail('Callable capture arity mismatch');
-        fn.captures.forEach((c, i) => fit(m.captures[i]!, irPlain(c.type)));
+        fn.captures.forEach((c, i) => fit(m.captures[i]!, captureFlow(c)));
     }
     function fit(v: ValueRepresentation, t: SemanticFlow): void {
         if (!v || typeof v !== 'object') return fail('Missing value representation');
@@ -500,6 +502,9 @@ export function verifyRepresentations(
                         s.knownPlaces.clear();
                         if (lens(v).kind !== 'thin') fail('Temporary lens must have owned storage');
                         block(i.cleanup, clone(s));
+                        break;
+                    case 'give':
+                        if (lens(v).kind !== 'thin') fail('A moved lens must be one lens');
                         break;
                     case 'lens-construct':
                         s.knownPlaces.clear();
@@ -776,7 +781,9 @@ export function verifyRepresentations(
             else bind(p.pattern, a, state);
         });
         v.captures.forEach((c, i) => {
-            fit(c, irPlain(fn.captures[i]!.type));
+            const capture = fn.captures[i]!;
+            fit(c, captureFlow(capture));
+            if (capture.lens) state.lenses.set(capture.place, lens(c));
         });
         fit(v.result, fn.type.result);
         requireEqual(

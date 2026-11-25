@@ -9,8 +9,8 @@
 //   captures and can never borrow, so a task cannot reach another task's mutable data.
 // - A connection is a `linear` value that exists only as a lens: `connection` produces it and
 //   owns its cleanup, so it is closed when the borrow ends, cannot be copied (`dup(~conn)` is
-//   a type error) and cannot be handed to another task (a closure cannot borrow it).
-//   That is why each worker accepts its own connections instead of receiving them.
+//   a type error). Here each worker accepts and serves its own connections, which bounds
+//   how many are open at once; server.lm moves each one into a task of its own instead.
 // - Plain values are immutable, so any number of tasks can read them. The only state that
 //   changes is the request count, and one task owns it: others ask it over a channel.
 //

@@ -1,8 +1,8 @@
 import type { SemanticFlow, SemanticType } from './elaborated.ts';
 import { BackendDiagnostic } from './backend/target.ts';
 import {
-    flowKey,
     typeKey,
+    valueKey,
     irPlain,
     irCon,
     irUnit,
@@ -46,6 +46,11 @@ type Cap =
           cleanup: IRBlock;
           reconstructionOwner?: SlotRef;
       }
+    /**
+     * An owned lens taken out of its holder. It borrows nothing, and ending it means leaving
+     * `write` behind; `inner` is the producer's own capability when the holder was a scope.
+     */
+    | { kind: 'given'; read: SemanticType; write: SemanticType; inner?: Cap }
     | {
           kind: 'choice';
           read: SemanticType;
@@ -61,6 +66,8 @@ type State = {
     slots: Map<string, Slot>;
     values: Map<string, Value>;
     loans: Map<string, { cap: Cap; type: SemanticFlow & { tag: 'flow' } }>;
+    /** Places holding an owned lens that is still theirs to end, with what it must hold. */
+    held: Map<string, SemanticType>;
 };
 
 /** Independent typed-IR validation: does not inspect source ASTs, inference state, or evaluator values. */
@@ -130,7 +137,7 @@ export function verifyTypedProgram(program: TypedProgram): void {
     const feq = (a: SemanticFlow, b: SemanticFlow, origin?: string) => {
         validFlow(a);
         validFlow(b);
-        if (flowKey(a) !== flowKey(b)) fail('Value/lens type mismatch', origin);
+        if (valueKey(a) !== valueKey(b)) fail('Value/lens type mismatch', origin);
     };
     const prefix = (a: number[], b: number[]) =>
         a.length <= b.length && a.every((v, i) => v === b[i]);
@@ -429,6 +436,7 @@ export function verifyTypedProgram(program: TypedProgram): void {
             slots: new Map(),
             values: new Map(),
             loans: new Map(),
+            held: new Map(),
         });
         const clone = (s: State): State => ({
             slots: new Map(
@@ -439,6 +447,7 @@ export function verifyTypedProgram(program: TypedProgram): void {
             ),
             values: new Map(s.values),
             loans: new Map(s.loans),
+            held: new Map(s.held),
         });
         const take = (s: State, id: string): Value => {
             const v =
@@ -522,7 +531,9 @@ export function verifyTypedProgram(program: TypedProgram): void {
                     ),
             );
         const targets = (c: Cap): SlotRef[] =>
-            c.kind === 'aslens'
+            c.kind === 'given'
+                ? []
+                : c.kind === 'aslens'
                 ? [c.backing, ...c.holds]
                 : c.kind === 'choice'
                   ? c.refs
@@ -534,7 +545,9 @@ export function verifyTypedProgram(program: TypedProgram): void {
                         ? targets(c.inner)
                         : c.effects.flatMap((e) => targets(e.cap));
         const read = (s: State, c: Cap): SemanticType =>
-            c.kind === 'aslens'
+            c.kind === 'given'
+                ? c.read
+                : c.kind === 'aslens'
                 ? focus(s, c.backing)
                 : c.kind === 'choice'
                   ? c.read
@@ -559,6 +572,7 @@ export function verifyTypedProgram(program: TypedProgram): void {
                 case 'scope':
                     return empty(s, c.inner);
                 case 'call':
+                case 'given':
                     return [];
                 case 'choice':
                     return c.arms.flatMap((arm) => empty(arm.state, arm.cap));
@@ -586,6 +600,7 @@ export function verifyTypedProgram(program: TypedProgram): void {
             if (c.kind === 'choice')
                 return c.arms.flatMap((a) => externalTargets(outer, a.state, a.cap));
             if (c.kind === 'scope') return externalTargets(outer, branch, c.inner);
+            if (c.kind === 'given') return [];
             if (c.kind === 'aslens')
                 return targets(c).flatMap((slot) =>
                     externalTargets(outer, branch, { kind: 'place', slot }),
@@ -607,6 +622,10 @@ export function verifyTypedProgram(program: TypedProgram): void {
         };
         const apply = (s: State, c: Cap, type: SemanticType): void => {
             switch (c.kind) {
+                case 'given':
+                    eq(type, c.write);
+                    if (c.inner) apply(s, c.inner, type);
+                    return;
                 case 'aslens':
                     write(s, c.backing, type);
                     plain(verifyBlock(c.cleanup, s));
@@ -704,12 +723,22 @@ export function verifyTypedProgram(program: TypedProgram): void {
                         const replacement = read(s, { kind: 'place', slot: focus });
                         eq(replacement, borrowed.type.write);
                         apply(s, borrowed.cap, replacement);
-                        s.slots.delete(loan.place);
+                        if (loan.owners.length) s.slots.delete(loan.place);
+                        else write(s, focus, irUnit(), true);
                         continue;
                     }
                     const refs = targets(borrowed.cap);
                     if (refs.some((r) => !full(s, r))) fail('Unrestored borrowed focus');
                     eq(read(s, borrowed.cap), borrowed.type.write);
+                } else if (action.kind === 'end') {
+                    lexicalPlace(action.slot.place);
+                    const contract =
+                        s.held.get(action.slot.place) ?? fail('No owned lens to end');
+                    if (action.slot.path.length || !full(s, action.slot))
+                        fail('Unrestored owned lens');
+                    eq(focus(s, action.slot), contract);
+                    s.held.delete(action.slot.place);
+                    write(s, action.slot, irUnit(), true);
                 } else if (action.kind === 'restored') {
                     lexicalPlace(action.slot.place);
                     if (!full(s, action.slot)) fail('Unrestored lens parameter');
@@ -971,6 +1000,42 @@ export function verifyTypedProgram(program: TypedProgram): void {
                         );
                         break;
                     }
+                    case 'give': {
+                        const t = i.out.type;
+                        if (t.tag !== 'flow') return fail('Giving away a lens produced data');
+                        if ('loan' in i.from) {
+                            const id = i.from.loan,
+                                loan = loans.get(id) ?? fail('Unknown lens loan'),
+                                borrowed = s.loans.get(id) ?? fail('Lens loan is not held');
+                            // An owned lens protects no storage but its own focus.
+                            if (!loan.owners || loan.owners.length)
+                                fail('Only a lens that borrows nothing can move', i.origin);
+                            const slot = { place: loan.place, path: [], permit: id };
+                            if (!full(s, slot)) fail('Moved an unrestored lens', i.origin);
+                            eq(focus(s, slot), t.read);
+                            eq(t.write, borrowed.type.write);
+                            write(s, slot, irUnit(), true);
+                            s.loans.delete(id);
+                            result.cap = {
+                                kind: 'given',
+                                read: t.read,
+                                write: t.write,
+                                inner: borrowed.cap,
+                            };
+                        } else {
+                            const slot = { place: i.from.place, path: [] };
+                            lexicalPlace(slot.place);
+                            const contract =
+                                s.held.get(slot.place) ?? fail('Place holds no owned lens');
+                            if (!full(s, slot)) fail('Moved an unrestored lens', i.origin);
+                            eq(focus(s, slot), t.read);
+                            eq(t.write, contract);
+                            write(s, slot, irUnit(), true);
+                            s.held.delete(slot.place);
+                            result.cap = { kind: 'given', read: t.read, write: t.write };
+                        }
+                        break;
+                    }
                     case 'swap': {
                         const target = take(s, i.lens),
                             replacement = plain(take(s, i.value)),
@@ -994,7 +1059,13 @@ export function verifyTypedProgram(program: TypedProgram): void {
                             if (v.type.tag === 'flow') {
                                 const c = cap(v);
                                 eq(read(s, c), v.type.read);
-                                effects.push({ cap: c, type: v.type.write });
+                                const parameter = f.args[index];
+                                if (parameter.tag === 'flow' && parameter.owned) {
+                                    if (targets(c).length)
+                                        fail('Moved lens borrows caller storage', i.origin);
+                                    // The callee now ends it, so this path is done with it.
+                                    apply(s, c, v.type.write);
+                                } else effects.push({ cap: c, type: v.type.write });
                             }
                         });
                         feq(i.out.type, f.result);
@@ -1022,8 +1093,19 @@ export function verifyTypedProgram(program: TypedProgram): void {
                         if (f.captures.length !== i.captures.length)
                             fail('Closure environment mismatch');
                         i.captures.forEach((c, n) => {
-                            if (c.place !== f.captures[n].place) fail('Capture target mismatch');
-                            eq(plain(take(s, c.value)), f.captures[n].type);
+                            const expected = f.captures[n];
+                            if (c.place !== expected.place) fail('Capture target mismatch');
+                            const v = take(s, c.value);
+                            if (!expected.lens) {
+                                eq(plain(v), expected.type);
+                                return;
+                            }
+                            if (v.type.tag !== 'flow') return fail('Lens capture received data');
+                            const moved = cap(v);
+                            if (targets(moved).length) fail('Captured lens borrows outer storage');
+                            eq(v.type.read, expected.type);
+                            eq(v.type.write, expected.lens.write);
+                            apply(s, moved, v.type.write);
                         });
                         break;
                     }
@@ -1220,9 +1302,16 @@ export function verifyTypedProgram(program: TypedProgram): void {
                             )
                                 fail('Branch temporary consumption mismatch');
                         }
+                        for (const other of branches.slice(1))
+                            if (
+                                JSON.stringify([...first.held.keys()]) !==
+                                JSON.stringify([...other.state.held.keys()])
+                            )
+                                fail('Branch owned-lens state mismatch');
                         s.slots = first.slots;
                         s.values = first.values;
                         s.loans = first.loans;
+                        s.held = first.held;
                         break;
                     }
                     default:
@@ -1251,7 +1340,10 @@ export function verifyTypedProgram(program: TypedProgram): void {
             source(f.origin);
             validType(f.type);
             const state = fresh();
-            f.captures.forEach((c) => allocate(state, c.place, c.type));
+            f.captures.forEach((c) => {
+                allocate(state, c.place, c.type);
+                if (c.lens) state.held.set(c.place, c.lens.write);
+            });
             if (f.parameters.length !== f.type.args.length)
                 fail('Function parameter arity mismatch');
             const lensPlaces = new Set<string>();
@@ -1261,6 +1353,7 @@ export function verifyTypedProgram(program: TypedProgram): void {
                     if (!p.lensPlace) fail('Missing lens parameter place');
                     allocate(state, p.lensPlace!, argument.read);
                     lensPlaces.add(p.lensPlace!);
+                    if (argument.owned) state.held.set(p.lensPlace!, argument.write);
                     pattern(state, p.pattern, argument.read, p.lensPlace);
                 } else {
                     if (p.lensPlace) fail('Plain parameter has a lens place');
@@ -1281,6 +1374,7 @@ export function verifyTypedProgram(program: TypedProgram): void {
                     if (c.kind === 'tuple' || c.kind === 'constructor')
                         return c.items.some((v) => escapes(state, v));
                     if (c.kind === 'call') return c.effects.some((e) => escapes(state, e.cap));
+                    if (c.kind === 'given') return false;
                     const loan = [...state.loans.entries()].find(
                         ([id]) => loans.get(id)!.owners && loans.get(id)!.place === c.slot.place,
                     );
@@ -1290,8 +1384,10 @@ export function verifyTypedProgram(program: TypedProgram): void {
                 eq(read(state, c), result.type.read);
                 apply(state, c, result.type.write);
             }
+            if (state.held.size) fail('An owned lens was neither ended nor moved', f.origin);
             f.parameters.forEach((p, n) => {
-                if (p.lensPlace) {
+                const declared = f.type.args[n];
+                if (p.lensPlace && !(declared.tag === 'flow' && declared.owned)) {
                     if (!full(state, { place: p.lensPlace, path: [] }))
                         fail('Lens parameter was not restored');
                     const argument = f.type.args[n];

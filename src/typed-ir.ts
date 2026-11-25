@@ -44,6 +44,8 @@ export type Instance = {
 export type IRValue = { id: ValueId; type: SemanticFlow };
 export type Cleanup =
     | { kind: 'drop-place'; slot: SlotRef }
+    /** Run the restore of the owned lens held in this place: a `mut ~` parameter or capture. */
+    | { kind: 'end'; slot: SlotRef }
     | { kind: 'release'; loan: string }
     | { kind: 'restored'; slot: SlotRef; type: SemanticType };
 export type IRBlock = {
@@ -85,6 +87,11 @@ export type Instruction =
       })
     | (Output & { op: 'swap'; lens: ValueId; value: ValueId })
     /**
+     * Take an owned lens out of whatever holds it, a scope's loan or a place, without restoring
+     * it. Its restore leaves with the value, which a `mut ~` argument or a capture consumes.
+     */
+    | (Output & { op: 'give'; from: { loan: string } | { place: string } })
+    /**
      * `share` marks the read of a plain binding: the result is shared storage (the out type's
      * mode is `shared`) instead of a fresh owned copy. A backend may alias it; until then it
      * is still a `dup`.
@@ -103,7 +110,8 @@ export type IRFunction = {
     id: string;
     origin: string;
     type: SemanticType & { tag: 'fn' };
-    captures: { place: string; type: SemanticType }[];
+    /** `lens`: the capture is an owned lens focusing `type`, which must end holding `write`. */
+    captures: { place: string; type: SemanticType; lens?: { write: SemanticType } }[];
     parameters: { pattern: IRPattern; lensPlace?: string }[];
     body: IRBlock;
 };
@@ -152,6 +160,7 @@ export function mapSemantic(
                 tag: 'fn',
                 args: type.args.map((t) => mapSemanticFlow(t, variable)),
                 result: mapSemanticFlow(type.result, variable),
+                ...(type.linear ? { linear: true as const } : {}),
             };
     }
 }
@@ -166,6 +175,7 @@ export function mapSemanticFlow(
               read: mapSemantic(type.read, variable),
               write: mapSemantic(type.write, variable),
               ...(type.replaceable === false ? { replaceable: false as const } : {}),
+              ...(type.owned ? { owned: true as const } : {}),
           };
 }
 /** Types are structural; property insertion order and solver-local identities do not participate. */
@@ -186,7 +196,51 @@ export function typeKey(type: SemanticType): string {
 export const flowKey = (type: SemanticFlow): string =>
     type.tag === 'plain'
         ? `value:${typeKey(type.value)}`
-        : `lens${type.replaceable === false ? '!' : ''}:${typeKey(type.read)}:${typeKey(type.write)}`;
+        : `lens${type.replaceable === false ? '!' : ''}${type.owned ? 'own' : ''}:${typeKey(type.read)}:${typeKey(type.write)}`;
+/** A lens value against the position it fills: ownership belongs to the position alone. */
+export const valueKey = (type: SemanticFlow): string =>
+    flowKey(type.tag === 'flow' ? { ...type, owned: undefined } : type);
+
+/**
+ * The first place a program moves an owned lens, for backends that cannot run one. Declaring a
+ * `mut ~` parameter counts: its function ends the lens through a restore it was handed.
+ */
+export function ownedLensUse(program: TypedProgram): string | undefined {
+    for (const unit of program.units)
+        for (const f of unit.functions)
+            if (
+                f.captures.some((c) => c.lens) ||
+                f.type.args.some((a) => a.tag === 'flow' && a.owned)
+            )
+                return f.origin;
+    const called = (b: IRBlock): string | undefined => {
+        for (const i of b.instructions) {
+            if (i.op === 'bind' || i.op === 'borrow') continue;
+            if (i.op === 'global' && i.instance.type.tag === 'fn') {
+                if (i.instance.type.args.some((a) => a.tag === 'flow' && a.owned)) return i.origin;
+            }
+            const nested =
+                i.op === 'scope'
+                    ? [i.body]
+                    : i.op === 'case'
+                      ? i.cases.map((c) => c.body)
+                      : i.op === 'aslens'
+                        ? [i.cleanup]
+                        : [];
+            for (const inner of nested) {
+                const found = called(inner);
+                if (found) return found;
+            }
+        }
+        return undefined;
+    };
+    for (const unit of program.units)
+        for (const b of [unit.entry, ...unit.functions.map((f) => f.body)]) {
+            const found = called(b);
+            if (found) return found;
+        }
+    return undefined;
+}
 
 /**
  * Backends never see record types: a record is stored as the tuple of its

@@ -62,6 +62,8 @@ export function canonicalLensPolicies(source: SpecializedProgram): CanonicalLens
                 const base = canonicalLensTopology(type.read, type.write);
                 const opaque = args.get(n) ?? new Set<string>();
                 args.set(n, opaque);
+                // An owned lens travels as one struct: only that has a restore to hand over.
+                if (type.owned) opaque.add('');
                 const constrain = (
                     topology: LensTopology,
                     r: SemanticType,

@@ -85,6 +85,7 @@ RecordField {
 Type {
     text:id -> ({type: "id", text: text.text, loc: node.loc})
     ["" "~" left:Type] -> ({type: "lens", left})
+    [" " "mut" ["" "~" left:Type]] -> ({type: "lens", left, owned: true})
     ["" "=" left:Type] -> ({type: "lens", left, replaceable: false})
     ["" left:Type "/" right:Type] -> ({type: "lens", left, right})
     ["" left:Type "/=" right:Type] -> ({type: "lens", left, right, replaceable: false})

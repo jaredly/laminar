@@ -6,6 +6,7 @@ import {
     type RawState,
 } from './elaborated.ts';
 import { captureUses } from './captures.ts';
+import { isLinear } from './linear.ts';
 import {
     free,
     names,
@@ -31,6 +32,8 @@ import {
     mapFlow,
     FIXED,
     OWNED,
+    BORROWED_LENS,
+    OWNED_LENS,
     REPLACEABLE,
     SHARED,
     reads,
@@ -51,6 +54,13 @@ type Root = {
     empty: number[][];
     borrows: Set<Borrow>;
     revisions: Map<string, number>;
+    /**
+     * Set when this place is an owned lens. `permit` is the one its own binding holds: a
+     * reborrow has a different one, so only the whole, original binding can move.
+     */
+    ownedLens?: { permit?: Borrow };
+    /** The owned lens left for another holder, which also ends it. */
+    moved?: boolean;
 };
 type Binding = {
     id?: string;
@@ -79,6 +89,16 @@ type View = {
      * constructor of lenses over a multi-constructor type is `FIXED`.
      */
     replaceable?: Ty;
+    /** Whether this lens may move to another holder; absent means borrowed. */
+    owned?: Ty;
+    /** The binding that loses the lens if it moves; absent for a temporary. */
+    holder?: Binding;
+};
+export type InferOptions = {
+    /** Linear types exist, so a closure may take an owned lens or become linear. */
+    linearTypes?: boolean;
+    /** Which parameters of a published definition consume a linear closure. */
+    acceptsLinear?: ReadonlyMap<string, ReadonlySet<number>>;
 };
 export type TypeEnvironment = ReadonlyMap<string, Scheme>;
 /** User-declared type names. Unions are nominal; aliases expand at each use. */
@@ -103,6 +123,8 @@ export type Inference = {
     types: ReadonlyMap<object, FlowTy>;
     bindings: ReadonlyMap<object, BindingRecord>;
     elaboration: Elaboration;
+    /** Parameters that are only ever called, once on every path, so they take linear closures. */
+    acceptsLinear: ReadonlySet<number>;
 };
 
 /** One solver per checked expression/definition; environments contain finalized schemes. */
@@ -115,6 +137,11 @@ export class Inferencer {
     private bindings = new Map<object, Binding>();
     private builder: ElaborationBuilder;
     private current?: object;
+    /** Variable reads that consume a closure exactly once: calls, and accepting arguments. */
+    private consumingUses = new Set<string>();
+    private rootFunction?: object;
+    private rootDeclaration?: Decl;
+    private acceptsLinear = new Set<number>();
     private globalParameters = new Map<string, { local: number; parameter: string }[]>();
     private constructors: Map<string, Scheme>;
     constructor(
@@ -122,6 +149,7 @@ export class Inferencer {
         constructors: TypeEnvironment = new Map(),
         context: ElaborationContext = { id: 'unit/expression' },
         private typeDefinitions: TypeDefinitions = new Map(),
+        private options: InferOptions = {},
     ) {
         this.builder = new ElaborationBuilder(context);
         // Re-home externally supplied variables so solver IDs never collide.
@@ -172,6 +200,7 @@ export class Inferencer {
                 return fn(
                     t.args.map((v) => mapFlow(v, (t) => this.replace(t, vars))),
                     mapFlow(t.result, (t) => this.replace(t, vars)),
+                    t.linear,
                 );
         }
     }
@@ -287,6 +316,12 @@ export class Inferencer {
         );
     }
     private accessible(b: Binding, loc: number): void {
+        if (b.root.moved)
+            this.error(
+                'use-after-move',
+                loc,
+                'This owned lens has moved to another holder, which now ends it',
+            );
         const permits = new Set<Borrow>();
         for (let p = b.permit; p; p = p.parent) permits.add(p);
         for (const borrow of b.root.borrows) {
@@ -365,6 +400,25 @@ export class Inferencer {
                 'Lens must contain a value at the end of its lifetime',
             );
     }
+    private isOwnedLens(b: Binding): boolean {
+        return !!b.root.ownedLens && !b.path.length && b.permit === b.root.ownedLens.permit;
+    }
+    /** The final contents of a lens that is ending, or that already left for another holder. */
+    private ending(b: Binding, loc: number): Ty {
+        if (b.root.moved) return b.root.type;
+        this.restored(b, loc);
+        return this.get(b, loc);
+    }
+    /** An owned lens takes its restore with it, so it must have a value to restore from. */
+    private movable(b: Binding, loc: number): void {
+        this.accessible(b, loc);
+        if (!this.available(b))
+            this.error('unrestored-lens', loc, 'An owned lens must hold a value when it moves');
+    }
+    private declaredLinear = (name: string): boolean => {
+        const definition = this.typeDefinitions.get(name);
+        return definition?.kind === 'union' && !!definition.linear;
+    };
     private freshBinding(type: Ty): Binding {
         return {
             root: {
@@ -452,7 +506,10 @@ export class Inferencer {
             const binding = { ...this.freshBinding(self), scheme: mono(self) };
             this.declare(binding, ast.name, ast, 'global', this.builder.context.id);
             env.set(ast.name, binding);
+            this.seedOwnership(ast, self);
         }
+        this.rootFunction = ast;
+        this.rootDeclaration = declaration;
         const type = this.linear(ast, env);
         if (self) this.solver.unify(self, type, ast.loc);
         let scheme = this.solver.generalize(type, [...this.globals.values()]);
@@ -501,6 +558,7 @@ export class Inferencer {
         const bindingRecords = new Map(elaboration.bindings.map((b) => [b.id, b]));
         return {
             elaboration,
+            acceptsLinear: this.acceptsLinear,
             type: this.solver.resolve(type),
             scheme,
             types: new Map(
@@ -513,6 +571,36 @@ export class Inferencer {
                 ]),
             ),
         };
+    }
+    /**
+     * A self-call sees only a type variable while the body is checked, and an unknown callee
+     * borrows. Where the signature says otherwise, give the recursion that shape up front.
+     */
+    private seedOwnership(n: Linear & { type: 'fn' }, self: Ty): void {
+        const owns = n.args.some((a) => a.ownedLens);
+        const produces = n.body.type === 'lens' && this.resultOwnership(n) === OWNED_LENS;
+        if (!owns && !produces) return;
+        const lens = (owned: Ty) =>
+            flow(this.solver.fresh(), this.solver.fresh(), this.solver.fresh(), owned);
+        const value = () => plain(this.solver.fresh(), this.solver.freshMode());
+        this.solver.unify(
+            self,
+            fn(
+                n.args.map((a) =>
+                    a.pat.type === 'lens'
+                        ? lens(a.ownedLens ? OWNED_LENS : BORROWED_LENS)
+                        : value(),
+                ),
+                n.body.type === 'lens' ? lens(this.resultOwnership(n)) : value(),
+            ),
+            n.loc,
+        );
+    }
+    /** A lens a function returns is owned exactly when the function borrows no lens. */
+    private resultOwnership(n: Linear & { type: 'fn' }): Ty {
+        return n.args.some((a) => a.pat.type === 'lens' && !a.ownedLens)
+            ? BORROWED_LENS
+            : OWNED_LENS;
     }
     /**
      * Resolve a named type. Builtins and declared types win over type variables; in a
@@ -564,6 +652,7 @@ export class Inferencer {
                     a,
                     t.right ? this.valueAnnotation(t.right, vars, closed) : a,
                     t.replaceable === false ? FIXED : REPLACEABLE,
+                    t.owned ? OWNED_LENS : BORROWED_LENS,
                 );
             }
             case 'constr': {
@@ -580,13 +669,18 @@ export class Inferencer {
                         })),
                     ),
                 );
-            case 'fn':
-                return plain(
-                    fn(
-                        t.args.map((v) => this.annotation(v, vars, closed)),
-                        this.annotation(t.body, vars, closed),
-                    ),
-                );
+            case 'fn': {
+                const args = t.args.map((v) => this.annotation(v, vars, closed));
+                let result = this.annotation(t.body, vars, closed);
+                if (result.tag === 'flow') {
+                    const borrows = args.some(
+                        (a) => a.tag === 'flow' && this.solver.lensOwnership(a.owned) !== 'owned',
+                    );
+                    // The signature decides it, so a result is only ever written `~A`.
+                    result = { ...result, owned: borrows ? BORROWED_LENS : OWNED_LENS };
+                }
+                return plain(fn(args, result));
+            }
         }
     }
     private valueAnnotation(t: Type, vars: Map<string, Ty>, closed = false): Ty {
@@ -843,16 +937,48 @@ export class Inferencer {
         const sub = new Map(env),
             vars = new Map<string, Ty>();
         const captureRoots: Root[] = [];
+        const lensCaptures = new Map<string, Binding>();
         for (const name of borrowed) {
             const b = this.lookup(env, name, n.loc);
-            if (!b.scheme)
+            if (b.scheme) continue;
+            if (!this.options.linearTypes || !this.isOwnedLens(b))
                 this.error(
                     'borrowed-capture',
                     n.loc,
                     `Closure cannot borrow outer binding ${name}`,
                 );
+            lensCaptures.set(name, b);
+        }
+        const captureTypes: Ty[] = [];
+        // An owned lens is captured whole, by move: the closure now ends it.
+        const lensEnds: { captured: Binding; final: Ty }[] = [];
+        for (const [name, b] of lensCaptures) {
+            this.movable(b, n.loc);
+            const type = this.get(b, n.loc),
+                final = this.solver.fresh(),
+                captured = this.freshBinding(type);
+            // Whatever ends the lens in the body is what the producer's cleanup receives.
+            this.put(b, final, n.loc);
+            b.root.moved = true;
+            captured.root.ownedLens = {};
+            this.declare(captured, name, n, 'capture');
+            this.builder.captures.push({
+                node: this.builder.node(n),
+                from: b.id!,
+                to: captured.id!,
+                type,
+            });
+            this.builder.lensMoves.push({
+                node: this.builder.node(n),
+                binding: b.id!,
+                write: final,
+            });
+            sub.set(name, captured);
+            captureRoots.push(captured.root);
+            lensEnds.push({ captured, final });
         }
         for (const name of captures) {
+            if (lensCaptures.has(name)) continue;
             const b = this.lookup(env, name, n.loc);
             if (!b.scheme) {
                 const type = this.consume(b, n.loc),
@@ -866,6 +992,7 @@ export class Inferencer {
                 });
                 sub.set(name, captured);
                 captureRoots.push(captured.root);
+                captureTypes.push(type);
             }
         }
         const exits: { root: Binding; read: Ty; write: Ty }[] = [];
@@ -880,9 +1007,10 @@ export class Inferencer {
                     this.error('lens-position', a.pat.loc, 'Lens argument must be last');
                 const root = this.freshBinding(read),
                     write = this.solver.fresh();
+                if (a.ownedLens) root.root.ownedLens = {};
                 this.pattern(a.pat.inner, read, sub, root, seen);
                 exits.push({ root, read, write });
-                type = flow(read, write);
+                type = flow(read, write, REPLACEABLE, a.ownedLens ? OWNED_LENS : BORROWED_LENS);
             } else {
                 this.pattern(a.pat, read, sub, undefined, seen);
                 type = plain(
@@ -897,6 +1025,14 @@ export class Inferencer {
                     : [...new Set(names(a.pat).map((name) => sub.get(name)!.root.place!))],
             );
             if (a.typ) this.solver.unifyFlow(type, this.annotation(a.typ, vars), a.pat.loc, false);
+            // A call to a parameter borrows unless its type is known, and a declaration is
+            // otherwise only compared after the body. So it speaks first about owned lenses.
+            const declared =
+                n === this.rootFunction && this.rootDeclaration?.ann.type === 'fn'
+                    ? this.rootDeclaration.ann.args[i]
+                    : undefined;
+            if (declared?.type === 'fn' && declared.args.some((t) => t.type === 'lens' && t.owned))
+                this.solver.unifyFlow(type, this.annotation(declared, vars), a.pat.loc, false);
             return type;
         });
         const parameterIds = new Set(parameters.flat());
@@ -908,7 +1044,8 @@ export class Inferencer {
             ]),
         ];
         const functionEntry = functionRoots.map((r) => this.state(r));
-        const bodyStart = this.builder.transitions.length;
+        const bodyStart = this.builder.transitions.length,
+            branchStart = this.builder.branches.length;
         let result: FlowTy;
         if (n.body.type === 'lens') {
             const view = this.lens(n.body.lens, sub),
@@ -923,15 +1060,13 @@ export class Inferencer {
                 this.error('escaping-lens', n.loc, 'Returned lens must refer to a lens parameter');
             const read = view.read;
             view.put(write);
-            result = flow(read, write, view.replaceable);
+            result = flow(read, write, view.replaceable, this.resultOwnership(n));
         } else {
             const value = this.linear(n.body, sub);
             result = plain(value, this.modeOf(n.body));
         }
-        exits.forEach((v) => {
-            this.restored(v.root, n.loc);
-            this.solver.unify(v.write, this.get(v.root, n.loc), n.loc);
-        });
+        exits.forEach((v) => this.solver.unify(v.write, this.ending(v.root, n.loc), n.loc));
+        lensEnds.forEach((v) => this.solver.unify(v.final, this.ending(v.captured, n.loc), n.loc));
         if (n.ann) this.solver.unifyFlow(result, this.annotation(n.ann, vars), n.loc, false);
         this.builder.functions.push({
             node: this.builder.node(n),
@@ -943,7 +1078,51 @@ export class Inferencer {
             entry: functionEntry,
             exit: functionRoots.map((r) => this.state(r)),
         });
-        return fn(args, result);
+        if (n === this.rootFunction)
+            this.acceptingParameters(n, args, parameters, sub, branchStart);
+        const linear =
+            !!this.options.linearTypes &&
+            (lensEnds.length > 0 ||
+                captureTypes.some((t) => isLinear(this.solver.resolve(t), this.declaredLinear)));
+        return fn(args, result, linear);
+    }
+    /**
+     * A function parameter takes a linear closure when the body can be seen to consume it:
+     * every use calls it or passes it to a parameter that does, and every path has a use.
+     */
+    private acceptingParameters(
+        n: Linear & { type: 'fn' },
+        args: FlowTy[],
+        parameters: string[][],
+        sub: Env,
+        branchStart: number,
+    ): void {
+        n.args.forEach((a, i) => {
+            const type = args[i];
+            if (a.pat.type !== 'id' || a.shared !== false || type.tag !== 'plain') return;
+            if (this.solver.prune(type.value).tag !== 'fn') return;
+            const id = parameters[i][0],
+                root = sub.get(a.pat.text)!.root;
+            const consumed = (s: RawState) => s.empty.some((path) => !path.length);
+            if (
+                consumed(this.state(root)) &&
+                !this.builder.captures.some((c) => c.from === id) &&
+                this.builder.uses
+                    .filter((u) => u.binding === id)
+                    .every((u) => u.mode === 'value' && this.consumingUses.has(u.node)) &&
+                this.builder.branches.slice(branchStart).every((branch) => {
+                    const after = branch.output.find((s) => s.place === root.place);
+                    return (
+                        !after ||
+                        !consumed(after) ||
+                        branch.arms.every((arm) =>
+                            consumed(arm.output.find((s) => s.place === root.place)!),
+                        )
+                    );
+                })
+            )
+                this.acceptsLinear.add(i);
+        });
     }
     /**
      * Resolve `r.a.b` (a variable followed by field names) to a binding at the field's
@@ -1049,6 +1228,8 @@ export class Inferencer {
                 const view = this.lens(n.body as Lens, sub);
                 return {
                     ...view,
+                    owned: undefined,
+                    holder: undefined,
                     put: (t) => {
                         view.put(t);
                         close();
@@ -1078,6 +1259,8 @@ export class Inferencer {
             const view = this.lens(n.body as Lens, sub);
             return {
                 ...view,
+                owned: undefined,
+                holder: undefined,
                 put: (t) => {
                     view.put(t);
                     close();
@@ -1107,6 +1290,8 @@ export class Inferencer {
         focus.root.protectedOwners = view.targets;
         focus.root.empty = view.empty?.map((p) => [...p]) ?? [];
         const loan: Borrow = { path: [], id: this.builder.borrow() };
+        if (view.owned && this.solver.lensOwnership(view.owned) === 'owned' && !n.borrowedOwner)
+            focus.root.ownedLens = { permit: loan };
         const protections = view.targets.map((target) => {
             this.accessible(target, n.loc);
             const borrow: Borrow = { path: target.path, parent: target.permit, id: loan.id };
@@ -1128,9 +1313,10 @@ export class Inferencer {
         this.pattern(p, read, sub, { ...focus, permit: loan });
         const close = () => {
             focus.root.borrows.delete(loan);
-            this.restored(focus, n.loc);
+            const final = this.ending(focus, n.loc);
             protections.forEach(({ target, borrow }) => target.root.borrows.delete(borrow));
-            view.put(this.get(focus, n.loc));
+            // The producer's cleanup is checked here wherever the lens ends.
+            view.put(final);
             this.builder.scopes.push({
                 node: this.builder.node(n),
                 bindings: names(p).map((name) => sub.get(name)!.id!),
@@ -1141,6 +1327,8 @@ export class Inferencer {
             const result = this.lens(n.body as Lens, sub);
             return {
                 ...result,
+                owned: undefined,
+                holder: undefined,
                 put: (type) => {
                     result.put(type);
                     close();
@@ -1161,6 +1349,8 @@ export class Inferencer {
                 return v.read;
             },
             replaceable: v.replaceable,
+            owned: v.owned,
+            holder: v.holder,
             get empty() {
                 return v.empty;
             },
@@ -1178,6 +1368,7 @@ export class Inferencer {
             case 'field':
             case 'id': {
                 const b = this.alias(n, env);
+                this.accessible(b, n.loc);
                 this.use(n, b, 'lens');
                 const self = this;
                 return {
@@ -1192,6 +1383,7 @@ export class Inferencer {
                     put: (t) => this.put(b, t, n.loc),
                     targets: [b],
                     replaceable: b.path.length ? undefined : b.replaceable,
+                    ...(this.isOwnedLens(b) ? { owned: OWNED_LENS, holder: b } : {}),
                 };
             }
             case 'tuple': {
@@ -1320,12 +1512,33 @@ export class Inferencer {
         const view = last?.type === 'lens' ? this.lens(last.lens, env) : undefined;
         const states = view?.targets.map((b) => this.revision(b));
         const callee = this.linear(n.fn, env);
-        const replacement = this.solver.fresh();
-        const args = n.args.map((a) =>
-            a.type === 'lens'
-                ? flow(view!.read, replacement, view!.replaceable)
-                : plain(this.linear(a, env), this.solver.freshMode()),
-        );
+        const signature = this.solver.prune(callee);
+        const finalParameter =
+            signature.tag === 'fn' ? signature.args[signature.args.length - 1] : undefined;
+        if (
+            view?.holder &&
+            finalParameter?.tag === 'flow' &&
+            this.solver.lensOwnership(finalParameter.owned) === 'owned'
+        )
+            this.movable(view.holder, n.loc);
+        if (n.fn.type === 'id') this.consumingUses.add(this.builder.node(n.fn));
+        const global =
+            n.fn.type === 'id' && this.bindings.get(n.fn)?.scheme ? n.fn.text : undefined;
+        const accepts =
+            global === undefined
+                ? undefined
+                : this.options.acceptsLinear?.get(
+                      this.builder.context.definitions?.get(global) ?? `native/${global}`,
+                  );
+        const replacement = this.solver.fresh(),
+            // Unknown until the callee is: its signature says whether this call borrows or moves.
+            owned = this.solver.fresh();
+        const args = n.args.map((a, i) => {
+            if (a.type === 'lens') return flow(view!.read, replacement, view!.replaceable, owned);
+            const value = this.linear(a, env);
+            if (accepts?.has(i) && a.type === 'id') this.consumingUses.add(this.builder.node(a));
+            return plain(this.argumentType(callee, i, value, accepts, a), this.solver.freshMode());
+        });
         if (
             view &&
             last?.type === 'lens' &&
@@ -1343,12 +1556,24 @@ export class Inferencer {
             write = this.solver.fresh(),
             // Unknown until the callee's result is known (a self-call resolves it from the body).
             replaceable = this.solver.fresh(),
-            resultMode = this.solver.freshMode();
+            resultMode = this.solver.freshMode(),
+            resultOwned = this.solver.fresh();
+        const known = this.solver.prune(callee);
         this.solver.unify(
             callee,
-            fn(args, lensResult ? flow(read, write, replaceable) : plain(read, resultMode)),
+            fn(
+                args,
+                lensResult ? flow(read, write, replaceable, resultOwned) : plain(read, resultMode),
+                known.tag === 'fn' && known.linear,
+            ),
             n.loc,
         );
+        // A callee that says nothing borrows.
+        for (const flag of [...(view ? [owned] : []), ...(lensResult ? [resultOwned] : [])])
+            if (this.solver.lensOwnership(flag) === 'unknown')
+                this.solver.unify(flag, BORROWED_LENS, n.loc);
+        const moves = !!view && this.solver.lensOwnership(owned) === 'owned';
+        if (moves && last?.type === 'lens') this.moveLens(n, last.lens, view, replacement);
         this.resultModes.set(n, (n as { share?: boolean }).share ? SHARED : resultMode);
         n.args.forEach((a, i) => {
             const param = args[i];
@@ -1365,19 +1590,68 @@ export class Inferencer {
                 );
         });
         if (!lensResult) {
-            view?.put(replacement);
+            if (!moves) view?.put(replacement);
             return { read, put: () => {}, targets: [] };
         }
+        // A moved lens is the callee's now, so the result does not hang off the caller's storage.
+        const kept = moves ? undefined : view;
         return {
             read,
-            targets: view?.targets ?? [],
-            provenance: view?.provenance,
+            targets: kept?.targets ?? [],
+            provenance: moves ? [] : view?.provenance,
             replaceable,
+            owned: resultOwned,
             put: (t) => {
                 this.solver.unify(write, t, n.loc);
-                view?.put(replacement);
+                kept?.put(replacement);
             },
         };
+    }
+    private moveLens(n: Linear | Lens, source: Lens, view: View, replacement: Ty): void {
+        const loc = (n as { loc: number }).loc;
+        if (!view.owned || this.solver.lensOwnership(view.owned) !== 'owned')
+            this.error(
+                'borrowed-lens-move',
+                loc,
+                'This lens is borrowed, so it cannot move into a `mut ~` parameter. A lens is owned when it comes from a function that borrows no lens, or is itself a `mut ~` parameter',
+            );
+        if (view.holder) this.movable(view.holder, loc);
+        view.put(replacement);
+        if (view.holder) {
+            view.holder.root.moved = true;
+            this.builder.lensMoves.push({
+                node: this.builder.node(source),
+                binding: view.holder.id!,
+            });
+        }
+    }
+    /**
+     * Unification keeps linear closures apart from ordinary ones. A linear one may still go to
+     * a function parameter that is known to consume it.
+     */
+    private argumentType(
+        callee: Ty,
+        index: number,
+        value: Ty,
+        accepts: ReadonlySet<number> | undefined,
+        node: Linear,
+    ): Ty {
+        const argument = this.solver.prune(value);
+        if (argument.tag !== 'fn' || !argument.linear) return value;
+        const known = this.solver.prune(callee);
+        if (known.tag !== 'fn') return value;
+        const parameter = known.args[index];
+        if (parameter?.tag !== 'plain') return value;
+        const expected = this.solver.prune(parameter.value);
+        // A type variable takes the closure as it is; the definition's drop and copy bounds apply.
+        if (expected.tag !== 'fn' || expected.linear) return value;
+        if (!accepts?.has(index))
+            this.error(
+                'linear-unconsumed',
+                (node as { loc: number }).loc,
+                'This closure captured a linear value or an owned lens, and the function may drop or reuse it. Take it as a `mut` parameter and call it exactly once on every path',
+            );
+        return fn(argument.args, argument.result);
     }
     private aslens(n: Lens & { type: 'aslens' }, env: Env): View {
         const read = this.linear(n.value, env);
@@ -1442,6 +1716,7 @@ export class Inferencer {
             empty: number[][];
             borrows: Set<Borrow>;
             revisions: Map<string, number>;
+            moved?: boolean;
         }[];
         const snapshot = (): Snapshot =>
             roots.map((r) => ({
@@ -1449,6 +1724,7 @@ export class Inferencer {
                 empty: r.empty.map((p) => [...p]),
                 borrows: new Set(r.borrows),
                 revisions: new Map(r.revisions),
+                moved: r.moved,
             }));
         const restore = (states: Snapshot) =>
             roots.forEach((r, i) =>
@@ -1490,9 +1766,16 @@ export class Inferencer {
                         throw e;
                     }
                 }
+                if (states.some((s) => !s[i].moved !== !states[0][i].moved))
+                    this.error(
+                        'branch-state',
+                        n.loc,
+                        'Every branch of a lens must move the same owned lenses',
+                    );
                 return {
                     type,
                     empty,
+                    moved: states[0][i].moved,
                     borrows: new Set(initial[i].borrows),
                     revisions: this.joinRevisions(states.map((s) => s[i].revisions)),
                 };
@@ -1603,18 +1886,27 @@ export class Inferencer {
             type: r.type,
             empty: [...r.empty],
             revisions: new Map(r.revisions),
+            moved: r.moved,
         }));
+        // Per outer place: whether some arm moved it, and whether some arm left it unrestorable.
+        const moved = roots.map(() => false),
+            unrestorable = roots.map(() => false);
         let joined: { type: Ty; empty: number[][]; revisions: Map<string, number> }[] | undefined;
         for (const branch of n.cases) {
             roots.forEach((r, i) => {
                 r.type = initial[i].type;
                 r.empty = [...initial[i].empty];
                 r.revisions = new Map(initial[i].revisions);
+                r.moved = initial[i].moved;
             });
             const sub = new Map(env);
             this.pattern(branch.pat, scrutinee, sub);
             const firstTransition = this.builder.transitions.length;
             this.solver.unify(result, this.linear(branch.body, sub), branch.body.loc);
+            roots.forEach((r, i) => {
+                if (r.moved) moved[i] = true;
+                else if (r.empty.length) unrestorable[i] = true;
+            });
             branchRecord.arms.push({
                 node: this.builder.node(branch.body),
                 output: this.states(env),
@@ -1670,6 +1962,14 @@ export class Inferencer {
             r.type = joined![i].type;
             r.empty = joined![i].empty;
             r.revisions = new Map(joined![i].revisions);
+            // Moved on one path is moved afterwards; the other paths end it at the branch edge.
+            if (moved[i] && unrestorable[i])
+                this.error(
+                    'unrestored-lens',
+                    n.loc,
+                    'An owned lens that one branch moves must hold a value in the others',
+                );
+            r.moved = moved[i] || initial[i].moved;
         });
         branchRecord.output = this.states(env);
         this.builder.branches.push(branchRecord);

@@ -1,3 +1,4 @@
+import type { SemanticFlow } from '../elaborated.ts';
 import { Declaration, typeDependencies } from '../backend/reachable.ts';
 import { unionTagNames } from '../backend/type-names.ts';
 import type { ConcreteProgram, ConcreteBlock } from '../concrete-ir.ts';
@@ -1145,6 +1146,15 @@ ${joinCode(
         const lenses = new Map<string, Lens>();
         const places = new Map<string, View>();
         const loans = new Map<string, Lens>();
+        /** Owned lenses this function was handed, by place, until it ends or moves them. */
+        const held = new Map<string, Lens>();
+        const source = program.semantic.program.units
+            .find((u) => u.id === c.unit)
+            ?.functions.find((f) => f.id === c.function);
+        const ownsParameter = (n: number): boolean => {
+            const argument = source?.type.args[n];
+            return argument?.tag === 'flow' && !!argument.owned;
+        };
         let counter = 0;
         const fresh = () => locals.reference(`v${counter++}`);
 
@@ -1402,6 +1412,8 @@ ${joinCode(
         };
 
         c.parameters.forEach((p, i) => {
+            // An owned lens is not written back for the caller: it ends here, or moves on.
+            if (p.lensPlace && ownsParameter(i)) return;
             if (p.lensPlace) {
                 const view = incoming(parameterNames[i]!, p.layout);
                 places.set(p.lensPlace, view);
@@ -1915,9 +1927,20 @@ ${joinCode(
         };
 
         const outputLayouts = new Map<string, string>();
+        const outputTypes = new Map<string, SemanticFlow>();
+        /** Whether the callee in `value` takes argument `n` as an owned lens. */
+        const movesArgument = (value: string, n: number): boolean => {
+            const t = outputTypes.get(value);
+            if (t?.tag !== 'plain' || t.value.tag !== 'fn') return false;
+            const argument = t.value.args[n];
+            return argument?.tag === 'flow' && !!argument.owned;
+        };
         const index = (b: ConcreteBlock) =>
             b.instructions.forEach((i) => {
-                if ('out' in i) outputLayouts.set(i.out.id, i.out.layout);
+                if ('out' in i) {
+                    outputLayouts.set(i.out.id, i.out.layout);
+                    outputTypes.set(i.out.id, i.out.type);
+                }
                 if (i.op === 'scope') index(i.body);
                 if (i.op === 'aslens') {
                     if (i.inPlace) inPlaceIds.add(i.inPlace);
@@ -2099,6 +2122,8 @@ ${joinCode(
                     if (cl.kind === 'release') {
                         const lens = loans.get(cl.loan);
                         if (lens) lens.finish(body);
+                    } else if (cl.kind === 'end') {
+                        (held.get(cl.slot.place) ?? unsupported('Missing owned lens')).finish(body);
                     } else if (cl.kind === 'drop-place') {
                         storage.put(ref(cl.slot), { expression: zero(unit.id), layout: unit.id });
                     }
@@ -2154,6 +2179,14 @@ ${joinCode(
                     const lens = lenses.get(i.lens)!;
                     if (loan!.owners) places.set(loan!.place, lens.view);
                     loans.set(i.loan, lens);
+                    continue;
+                }
+                if (i.op === 'give') {
+                    // The lens leaves with its pending restoration; nothing runs here.
+                    const [holder, key] =
+                        'loan' in i.from ? [loans, i.from.loan] : [held, i.from.place];
+                    lenses.set(i.out.id, holder.get(key) ?? unsupported('Missing owned lens'));
+                    holder.delete(key);
                     continue;
                 }
 
@@ -2458,6 +2491,19 @@ ${joinCode(
                     }
                     case 'make-callable': {
                         const callable = program.callables.find((cb) => cb.id === i.callable)!;
+                        // A captured lens rides in the environment as a self-contained struct.
+                        const packed = new Map(
+                            i.captures.flatMap((capture, n) => {
+                                const lens = lenses.get(capture.value);
+                                if (!lens) return [];
+                                const slot = layout(callable.environment).fields[n] as {
+                                    layout: string;
+                                };
+                                return [
+                                    [capture.value, closureLens(lens, slot.layout, body, false)],
+                                ];
+                            }),
+                        );
                         const entries = joinCode(
                             callable.entries.map((e) => {
                                 const w = program.wrappers.find((w) => w.id === e.wrapper)!;
@@ -2484,7 +2530,10 @@ ${joinCode(
                         }
                         expr = () =>
                             go`${type(id)}{environment: &${type(callable.environment)}{${joinCode(
-                                i.captures.map((c, n) => go`capture${n}: ${value(c.value)}`),
+                                i.captures.map(
+                                    (c, n) =>
+                                        go`capture${n}: ${packed.get(c.value) ?? value(c.value)}`,
+                                ),
                                 ', ',
                             )} }${entries}}`;
                         break;
@@ -2638,6 +2687,15 @@ ${joinCode(
                         } else {
                             args = i.args.map((v, n) => {
                                 if (!lenses.has(v)) return value(v);
+                                if (movesArgument(i.callee, n))
+                                    // The callee ends it: hand over its whole restoration and
+                                    // run nothing here after the call.
+                                    return closureLens(
+                                        lenses.get(v)!,
+                                        abi.arguments[n]!,
+                                        body,
+                                        false,
+                                    );
                                 const a = adapt(lenses.get(v)!, abi.arguments[n]!, isLens, body);
                                 adapters.push(a);
                                 return a.expression;
@@ -2953,8 +3011,18 @@ ${joinCode(
                         const group: JoinGroup = { boundary: [] };
                         const resultData = phi(id, resultInputs, body);
                         const before = storage.snapshot();
+                        // Each arm starts with the same lenses, and ends or moves on its own.
+                        const pending = [loans, held].map((map) => ({
+                            map,
+                            entries: [...map],
+                            gone: new Set<string>(),
+                        }));
                         const arms = i.cases.map((arm, armIndex) => {
                             storage.reset(before);
+                            for (const p of pending) {
+                                p.map.clear();
+                                p.entries.forEach(([key, lens]) => p.map.set(key, lens));
+                            }
                             const nested: Statement[] = [];
                             if (arm.retains && movedFrom.has(i.value))
                                 retainedOwners.set(arm.retains, movedFrom.get(i.value)!);
@@ -2968,8 +3036,12 @@ ${joinCode(
                                 },
                                 body: nested,
                             });
+                            for (const p of pending)
+                                for (const [key] of p.entries)
+                                    if (!p.map.has(key)) p.gone.add(key);
                             return { nested, state: storage.snapshot() };
                         });
+                        for (const p of pending) p.gone.forEach((key) => p.map.delete(key));
                         storage.reset(before);
                         // phi-join: for each cell, merge the per-arm states
                         const merge = (data: Data[], previous?: Data): Data => {
@@ -3087,7 +3159,28 @@ ${joinCode(
 
         const body: Statement[] = [...setup];
 
+        const hold = (place: string, name: string, layoutId: string) => {
+            const lens = runtimeLens(name, layoutId, noFinish);
+            held.set(place, lens);
+            places.set(place, lens.view);
+        };
+        c.parameters.forEach((p, i) => {
+            if (p.lensPlace && ownsParameter(i))
+                hold(p.lensPlace, parameterNames[i]!, p.layout);
+        });
         c.captures.forEach((capture, n) => {
+            if (source?.captures[n]?.lens) {
+                const name = fresh();
+                body.push(
+                    locals.declaration(
+                        name,
+                        type(capture.layout),
+                        go`environment.(*${type(c.environment)}).capture${n}`,
+                    ),
+                );
+                hold(capture.place, name, capture.layout);
+                return;
+            }
             const base = bindingName({ place: capture.place, path: [] });
             places.set(
                 capture.place,

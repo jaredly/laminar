@@ -1,7 +1,7 @@
 import type { Linear, Lens, Pat } from './ast.ts';
 import type { Elaboration, SemanticFlow, SemanticType, BindingRecord } from './elaborated.ts';
 import { freezeTree } from './elaborated.ts';
-import type { Ty, Scheme } from './types.ts';
+import { Solver, type Ty, type Scheme } from './types.ts';
 import { builtinTypes, constructorTypes } from './builtins.ts';
 import { BackendDiagnostic } from './backend/target.ts';
 import { verifyElaboration } from './backend/verify-elaboration.ts';
@@ -54,13 +54,25 @@ export function importScheme(definition: string, scheme: Scheme): IRScheme {
                     fields: t.fields.map((f) => ({ name: f.name, type: type(f.type) })),
                 };
             case 'fn':
-                return { tag: 'fn', args: t.args.map(flow), result: flow(t.result) };
+                return {
+                    tag: 'fn',
+                    args: t.args.map(flow),
+                    result: flow(t.result),
+                    ...(t.linear ? { linear: true as const } : {}),
+                };
         }
     };
     const flow = (f: import('./types.ts').FlowTy): SemanticFlow =>
         f.tag === 'plain'
             ? irPlain(type(f.value))
-            : { tag: 'flow', read: type(f.read), write: type(f.write) };
+            : {
+                  tag: 'flow',
+                  read: type(f.read),
+                  write: type(f.write),
+                  ...(new Solver().lensOwnership(f.owned) === 'owned'
+                      ? { owned: true as const }
+                      : {}),
+              };
     return { definition, quantified: [...vars.values()], type: type(scheme.body) };
 }
 export function defaultIRImports(): IRScheme[] {
@@ -101,6 +113,30 @@ export function lowerTypedUnit(e: Elaboration): IRUnit {
         return i
             ? { definition: i.definition, arguments: i.arguments, type: i.type }
             : fail('Missing generic instantiation', node);
+    };
+    /** Where an owned lens binding keeps its lens: a scope's loan, or a parameter or capture. */
+    const holder = (b: BindingRecord): { loan: string } | { place: string } =>
+        b.borrow ? { loan: b.borrow } : { place: b.place };
+    /** Holders that have given their lens away on the path being lowered. */
+    type Given = { from: { loan: string } | { place: string }; declared: number };
+    let given = new Map<string, Given>();
+    const holderKey = (h: { loan: string } | { place: string }) => JSON.stringify(h);
+    /** The cleanup that ends a lens its holder still has. */
+    const endHolder = (h: { loan: string } | { place: string }): Cleanup =>
+        'loan' in h
+            ? { kind: 'release', loan: h.loan }
+            : { kind: 'end', slot: { place: h.place, path: [] } };
+    const give = (
+        block: IRBlock,
+        node: object,
+        bindingId: string,
+        result: SemanticFlow,
+    ): IRValue => {
+        const b =
+            e.bindings.find((v) => v.id === bindingId) ?? fail('Missing moved lens binding', node);
+        const from = holder(b);
+        given.set(holderKey(from), { from, declared: e.bindings.indexOf(b) });
+        return emit(block, node, { op: 'give', from }, result);
     };
     const emit = (
         block: IRBlock,
@@ -175,7 +211,14 @@ export function lowerTypedUnit(e: Elaboration): IRUnit {
         }));
     const call = (n: (Linear | Lens) & { type: 'apply' }, b: IRBlock): IRValue => {
         const last = n.args[n.args.length - 1];
-        const finalLens = last?.type === 'lens' ? lens(last.lens, b) : undefined;
+        const move =
+            last?.type === 'lens' ? e.lensMoves.find((m) => m.node === id(last.lens)) : undefined;
+        const finalLens =
+            last?.type === 'lens'
+                ? move
+                    ? give(b, last.lens, move.binding, type(last.lens))
+                    : lens(last.lens, b)
+                : undefined;
         const callee = linear(n.fn, b);
         const args = n.args.map((a) => (a.type === 'lens' ? finalLens!.id : linear(a, b).id));
         return emit(b, n, {
@@ -197,7 +240,13 @@ export function lowerTypedUnit(e: Elaboration): IRUnit {
             const loan =
                 e.borrows.find((loan) => loan.node === id(n)) ?? fail('Missing lexical borrow', n);
             nested.instructions.push({ op: 'borrow', origin: id(n), loan: loan.id, lens: view.id });
-            nested.cleanup.push({ kind: 'release', loan: loan.id });
+            nested.result = (
+                lensBody ? lens(n.body as Lens, nested) : linear(n.body as Linear, nested)
+            ).id;
+            // A lens given away in the scope is no longer this scope's to end.
+            if (!given.delete(holderKey({ loan: loan.id })))
+                nested.cleanup.push({ kind: 'release', loan: loan.id });
+            return emit(b, n, { op: 'scope', body: nested });
         } else {
             const value = linear(n.value, b);
             let p: IRPattern;
@@ -290,9 +339,25 @@ export function lowerTypedUnit(e: Elaboration): IRUnit {
                     .map((c) => {
                         const from = e.bindings.find((v) => v.id === c.from)!,
                             to = e.bindings.find((v) => v.id === c.to)!;
-                        const value = emit(b, n, { op: 'move', slot: ref(from) }, irPlain(c.type));
-                        return { place: to.place, value: value.id, type: c.type };
+                        const move = e.lensMoves.find(
+                            (m) => m.node === id(n) && m.binding === c.from,
+                        );
+                        if (!move) {
+                            const value = emit(
+                                b,
+                                n,
+                                { op: 'move', slot: ref(from) },
+                                irPlain(c.type),
+                            );
+                            return { place: to.place, value: value.id, type: c.type };
+                        }
+                        const write = move.write ?? fail('Missing captured lens contract', n);
+                        const value = give(b, n, c.from, { tag: 'flow', read: c.type, write });
+                        return { place: to.place, value: value.id, type: c.type, lens: { write } };
                     });
+                // The body is its own path: it holds what it captured and was passed.
+                const outer = given;
+                given = new Map();
                 const body = block(n.body);
                 body.result = (
                     n.body.type === 'lens' ? lens(n.body.lens, body) : linear(n.body, body)
@@ -301,32 +366,43 @@ export function lowerTypedUnit(e: Elaboration): IRUnit {
                     pattern: pattern(a.pat),
                     lensPlace: a.pat.type === 'lens' ? f.parameterPlaces[i][0] : undefined,
                 }));
+                /** End an owned lens this function holds, unless it passed it on. */
+                const ends = (place: string): Cleanup[] =>
+                    given.has(holderKey({ place })) ? [] : [endHolder({ place })];
                 parameters.forEach((p, i) => {
                     const argument = t.args[i];
                     body.cleanup.push(
                         ...(p.lensPlace && argument.tag === 'flow'
-                            ? [
-                                  {
-                                      kind: 'restored' as const,
-                                      slot: { place: p.lensPlace, path: [] },
-                                      type: argument.write,
-                                  },
-                              ]
+                            ? argument.owned
+                                ? ends(p.lensPlace)
+                                : [
+                                      {
+                                          kind: 'restored' as const,
+                                          slot: { place: p.lensPlace, path: [] },
+                                          type: argument.write,
+                                      },
+                                  ]
                             : drops(p.pattern)),
                     );
                 });
                 body.cleanup.push(
-                    ...captures.map((c) => ({
-                        kind: 'drop-place' as const,
-                        slot: { place: c.place, path: [] },
-                    })),
+                    ...captures.flatMap((c): Cleanup[] =>
+                        c.lens
+                            ? ends(c.place)
+                            : [{ kind: 'drop-place', slot: { place: c.place, path: [] } }],
+                    ),
                 );
+                given = outer;
                 const functionId = `${id(n)}/function`;
                 functions.push({
                     id: functionId,
                     origin: id(n),
                     type: t,
-                    captures: captures.map((c) => ({ place: c.place, type: c.type })),
+                    captures: captures.map((c) => ({
+                        place: c.place,
+                        type: c.type,
+                        ...(c.lens ? { lens: c.lens } : {}),
+                    })),
                     parameters,
                     body,
                 });
@@ -344,10 +420,14 @@ export function lowerTypedUnit(e: Elaboration): IRUnit {
                     return fail('Lens cases have not been semantically checked', n);
                 const value = linear(n.value, b);
                 const join = e.branches.find((v) => v.node === id(n))!;
+                const before = new Map(given);
+                const armGiven: (typeof given)[] = [];
                 const cases = n.cases.map((arm, i) => {
                     const p = pattern(arm.pat),
                         body = block(arm.body);
+                    given = new Map(before);
                     body.result = linear(arm.body, body).id;
+                    armGiven.push(given);
                     // Drop live branch-edge values that the affine join makes unavailable.
                     for (const output of join.output) {
                         const before = join.arms[i].output.find((s) => s.place === output.place)!;
@@ -377,6 +457,15 @@ export function lowerTypedUnit(e: Elaboration): IRUnit {
                     }
                     body.cleanup.push(...drops(p));
                     return { pattern: p, body };
+                });
+                // A lens that one branch gives away is gone afterwards, so the others end it
+                // on their own edge.
+                given = new Map(armGiven.flatMap((g) => [...g]));
+                // Newest first, the order their scopes would have ended them in.
+                const newest = [...given].sort(([, a], [, b]) => b.declared - a.declared);
+                cases.forEach((arm, i) => {
+                    for (const [key, { from }] of newest)
+                        if (!armGiven[i]!.has(key)) arm.body.cleanup.push(endHolder(from));
                 });
                 return emit(b, n, { op: 'case', value: value.id, cases });
             }
@@ -494,10 +583,17 @@ export function lowerTypedUnit(e: Elaboration): IRUnit {
                 if (n.value.type === 'lens') return fail('Borrowed matching is not checked', n);
                 const value = linear(n.value, b);
                 const join = e.branches.find((v) => v.node === id(n))!;
+                const before = given.size;
                 const cases = n.cases.map((arm, i) => {
                     const p = pattern(arm.pat),
                         body = block(arm.body);
                     body.result = lens(arm.body, body).id;
+                    if (given.size !== before)
+                        throw new BackendDiagnostic(
+                            'unsupported-owned-lens',
+                            'An owned lens cannot yet move inside a lens-valued branch',
+                            id(arm.body),
+                        );
                     body.cleanup.push(...drops(p));
                     return {
                         pattern: p,

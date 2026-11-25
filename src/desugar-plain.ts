@@ -243,9 +243,10 @@ export function desugarPlain(source: Linear): PlainResult {
         const bound = new Set(n.args.flatMap((a) => names(a.pat)));
         const { values } = captureUses(n.body, bound);
         const captured = [...values].filter((name) => scope.get(name) === 'plain');
-        const args = n.args.map(({ mut: _, ...a }, i) => ({
+        const args = n.args.map(({ mut, ...a }, i) => ({
             ...a,
             shared: argMode(n.args[i]) === 'plain',
+            ...(mut && a.pat.type === 'lens' ? { ownedLens: true } : {}),
         }));
         let body = term(n.body, inner);
         const loc = n.loc;

@@ -81,7 +81,9 @@ it('cannot copy a connection or hand a borrowed one to a task', () => {
     const lens =
         'type linear Conn {\n    Conn(Number)\n}\nfn connection(l) ~{lens conn <- Conn(accept(l))\n match conn {Conn(fd) -> closeHandle(fd)}}\n';
     expect(rejection(`${lens}{let conn = ~connection(1)\n let mut copy = dup(~conn)\n copy}`)).toBe('dup-linear');
-    expect(rejection(`${lens}{let conn = ~connection(1)\n spawn(fn () {let mut c = dup(~conn)\n print("x")})\n 0}`)).toBe('borrowed-capture');
+    expect(rejection(`${lens}{let conn = ~connection(1)\n spawn(fn () {let mut c = dup(~conn)\n print("x")})\n 0}`)).toBe('dup-linear');
+    // a lens argument is borrowed from the caller, so it stays where it is
+    expect(rejection('fn f(~n) {spawn(fn () {print("${dup(~n)}")})}\n0')).toBe('borrowed-capture');
 });
 
 for (const [name, source, expected, output] of [

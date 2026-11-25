@@ -108,6 +108,10 @@ length of a scope fits the model.
 
 ## Gaps this prototype found
 
+Since these were written, [owned lenses](owned-lenses.md) closed the first two on Go: a lens that
+`connection` produces now moves into a task with its cleanup, and `examples/server.lm` uses that.
+The notes below are kept as the record of what led there.
+
 - **The example's `Conn` is a convention, not the real design.** A linear wrapper is consumed but
   not closed: `match c { Conn(fd) -> () }` leaks the descriptor. The language's answer is that the
   *producer* returns a lens on the resource, as `useFile` does in the Dev Log: the lens body's

@@ -484,6 +484,11 @@ grammar.add('Type', [
     ),
     // Type:3
     option(
+        list(' ', lit('mut'), list('', lit('~'), b('left', 'Type'))),
+        ({ left, node }: { left: Type; node: Node }): Type => ({ type: 'lens', left, owned: true }),
+    ),
+    // Type:4
+    option(
         list('', lit('='), b('left', 'Type')),
         ({ left, node }: { left: Type; node: Node }): Type => ({
             type: 'lens',
@@ -491,7 +496,7 @@ grammar.add('Type', [
             replaceable: false,
         }),
     ),
-    // Type:4
+    // Type:5
     option(
         list('', b('left', 'Type'), lit('/'), b('right', 'Type')),
         ({ left, right, node }: { left: Type; right: Type; node: Node }): Type => ({
@@ -500,7 +505,7 @@ grammar.add('Type', [
             right,
         }),
     ),
-    // Type:5
+    // Type:6
     option(
         list('', b('left', 'Type'), lit('/='), b('right', 'Type')),
         ({ left, right, node }: { left: Type; right: Type; node: Node }): Type => ({
@@ -510,7 +515,7 @@ grammar.add('Type', [
             replaceable: false,
         }),
     ),
-    // Type:6
+    // Type:7
     option(
         list('', b('name', 'id'), wrapper('(', list(',', many('args', 'Type')))),
         ({ name, args, node }: { name: Id; args: Type[]; node: Node }): Type => ({
@@ -520,12 +525,12 @@ grammar.add('Type', [
             loc: node.loc,
         }),
     ),
-    // Type:7
+    // Type:8
     option(
         wrapper('(', list(',', many('items', 'Type'))),
         ({ items, node }: { items: Type[]; node: Node }): Type => ({ type: 'tuple', items }),
     ),
-    // Type:8
+    // Type:9
     option(
         wrapper('{', list(',', many('fields', 'TypeField'))),
         ({ fields, node }: { fields: TypeField[]; node: Node }): Type => ({
@@ -534,7 +539,7 @@ grammar.add('Type', [
             loc: node.loc,
         }),
     ),
-    // Type:9
+    // Type:10
     option(
         wrapper('{', b('one', 'TypeField')),
         ({ one, node }: { one: TypeField; node: Node }): Type => ({
@@ -543,9 +548,9 @@ grammar.add('Type', [
             loc: node.loc,
         }),
     ),
-    // Type:10
-    option(wrapper('(', null), ({ node }: { node: Node }): Type => ({ type: 'tuple', items: [] })),
     // Type:11
+    option(wrapper('(', null), ({ node }: { node: Node }): Type => ({ type: 'tuple', items: [] })),
+    // Type:12
     option(
         list(' ', wrapper('(', list(',', many('args', 'Type'))), lit('=>'), b('body', 'Type')),
         ({ args, body, node }: { args: Type[]; body: Type; node: Node }): Type => ({

@@ -39,6 +39,7 @@ export class Checker {
             elaboration: Elaboration;
             /** Type variables that must not be instantiated at a linear type. */
             copyBounds: Set<string>;
+            acceptsLinear: ReadonlySet<number>;
             imports: IRScheme[];
         }
     >();
@@ -74,6 +75,8 @@ export class Checker {
     }
     /** Per published definition: the type variables its plain bindings and `dup`s copy. */
     private copyBounds = new Map<string, Set<string>>();
+    /** Per published definition: the parameters that consume a linear closure. */
+    private acceptsLinear = new Map<string, ReadonlySet<number>>();
     /** Type variables of a definition's parameters that it drops, so they cannot be linear. */
     private dropBounds = new Map<string, Set<string>>();
     private declaredLinear = (name: string): boolean => {
@@ -126,6 +129,8 @@ export class Checker {
         for (const b of elaboration.bindings)
             if (b.kind === 'local' && b.declaration && plainBinders.has(loc(b.declaration)))
                 variables(b.initialType).forEach((id) => copied.add(id));
+        // Type variables whose values this definition may lose, so they cannot be linear.
+        const lost = new Set<string>();
         for (const inst of elaboration.instantiations) {
             if (inst.definition === 'native/dup' && inst.type.tag === 'fn') {
                 const argument = inst.type.args[0];
@@ -144,13 +149,17 @@ export class Checker {
             }
             const drops = this.dropBounds.get(inst.definition);
             if (drops)
-                for (const argument of inst.arguments)
-                    if (drops.has(argument.parameter) && isLinear(argument.type, this.declaredLinear))
+                for (const argument of inst.arguments) {
+                    if (!drops.has(argument.parameter)) continue;
+                    if (isLinear(argument.type, this.declaredLinear))
                         throw new TypeDiagnostic(
                             'linear-unconsumed',
                             loc(inst.node),
                             `${decodeURIComponent(inst.definition.split('/').at(-1)!)} drops its argument, so it cannot take a linear value`,
                         );
+                    // Passing a generic value on to a function that drops it drops it too.
+                    variables(argument.type).forEach((id) => lost.add(id));
+                }
             const bounds = this.copyBounds.get(inst.definition);
             if (!bounds) continue;
             const name = decodeURIComponent(inst.definition.split('/').at(-1)!);
@@ -182,9 +191,53 @@ export class Checker {
                     'A linear value must be consumed before its scope ends',
                 );
         }
+        // `_` drops what it matches.
+        for (const node of elaboration.nodes) {
+            if (node.kind !== 'drop' || node.type?.tag !== 'plain') continue;
+            if (isLinear(node.type.value, this.declaredLinear))
+                throw new TypeDiagnostic(
+                    'linear-unconsumed',
+                    node.loc ?? 0,
+                    '`_` drops a linear value; bind it and consume it',
+                );
+            variables(node.type.value).forEach((id) => lost.add(id));
+        }
+        // Consumed on one path is not consumed on all of them.
+        for (const branch of elaboration.branches) {
+            if (branch.restored) continue;
+            for (const after of branch.output)
+                for (const arm of branch.arms) {
+                    const state = arm.output.find((s) => s.place === after.place)!;
+                    for (const path of after.empty) {
+                        if (state.empty.some((p) => p.every((v, i) => path[i] === v))) continue;
+                        const type = project(state.type, path);
+                        if (!type) continue;
+                        variables(type).forEach((id) => lost.add(id));
+                        if (isLinear(type, this.declaredLinear))
+                            throw new TypeDiagnostic(
+                                'linear-unconsumed',
+                                loc(branch.node),
+                                'A linear value consumed by one branch must be consumed by all of them',
+                            );
+                    }
+                }
+        }
+        // A closure that is not linear may be dropped, so what it holds must not be.
+        for (const capture of elaboration.captures) {
+            const closure = elaboration.nodes.find((n) => n.id === capture.node)?.type;
+            if (closure?.tag !== 'plain' || closure.value.tag !== 'fn' || closure.value.linear)
+                continue;
+            if (isLinear(capture.type, this.declaredLinear))
+                throw new TypeDiagnostic(
+                    'linear-unconsumed',
+                    loc(capture.node),
+                    'This closure holds a linear value that was only known to be linear after the closure was checked; annotate its type',
+                );
+            variables(capture.type).forEach((id) => lost.add(id));
+        }
         // A parameter the function owns and never consumes is dropped, so it cannot be linear:
         // a concrete linear type is an error here, and a type variable is bound like a copy's.
-        const dropped = new Set<string>();
+        const dropped = lost;
         for (const f of elaboration.functions) {
             const owned = new Set(f.parameterPlaces.filter((_, i) => f.ownedParameters[i]).flat());
             for (const state of f.exit) {
@@ -266,6 +319,7 @@ export class Checker {
             this.constructors,
             { id, definitions: this.definitionIds },
             this.types,
+            { linearTypes: this.policy.linearTypes, acceptsLinear: this.acceptsLinear },
         ).infer(ast, declaration);
         verifyElaboration(inference.elaboration);
         this.checkComparable(inference.elaboration);
@@ -280,6 +334,7 @@ export class Checker {
             definitionId: inference.elaboration.id,
             elaboration: inference.elaboration,
             copyBounds,
+            acceptsLinear: inference.acceptsLinear,
             imports: [
                 ...[...this.environment].map(([name, scheme]) =>
                     importScheme(this.definitionIds.get(name)!, scheme),
@@ -321,6 +376,7 @@ export class Checker {
         this.environment.set(stored.ast.name, structuredClone(stored.scheme));
         this.definitionIds.set(stored.ast.name, stored.definitionId);
         this.copyBounds.set(stored.definitionId, stored.copyBounds);
+        this.acceptsLinear.set(stored.definitionId, stored.acceptsLinear);
     }
     define(
         ast: Linear & { type: 'fn' },
@@ -444,6 +500,18 @@ function holdsFunction(type: SemanticType): boolean {
         case 'variable':
             return false;
     }
+}
+
+function project(type: SemanticType, path: number[]): SemanticType | undefined {
+    if (!path.length) return type;
+    const items =
+        type.tag === 'tuple'
+            ? type.items
+            : type.tag === 'record'
+              ? type.fields.map((f) => f.type)
+              : undefined;
+    const item = items?.[path[0]];
+    return item && project(item, path.slice(1));
 }
 
 function variables(type: SemanticType): string[] {

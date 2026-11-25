@@ -1,6 +1,6 @@
 import type { SemanticType } from './elaborated.ts';
 import { freezeTree } from './elaborated.ts';
-import { decodeNumber } from './typed-ir.ts';
+import { decodeNumber, ownedLensUse } from './typed-ir.ts';
 import { BackendDiagnostic } from './backend/target.ts';
 import type {
     TypedProgram,
@@ -95,6 +95,13 @@ export function executeTypedProgram(
     program = freezeTree(structuredClone(program));
     // Validate the entire compilation unit before executing any effects.
     verifyTypedProgram(program);
+    const moved = ownedLensUse(program);
+    if (moved)
+        throw new BackendDiagnostic(
+            'unsupported-owned-lens',
+            'Moving an owned lens has no reference implementation; build it for Go',
+            moved,
+        );
     const definitions = new Map<string, FunctionValue>();
     const valueTypes = new Map<IRUnit, Map<string, import('./elaborated.ts').SemanticFlow>>();
     for (const unit of program.units) {
@@ -669,6 +676,8 @@ export function executeTypedProgram(
                         i.items.map((id) => lens(take(f, id))),
                     );
                     break;
+                case 'give':
+                    return error('Moved lenses are rejected before execution', i.origin);
                 case 'swap': {
                     const target = lens(take(f, i.lens)),
                         replacement = owned(data(take(f, i.value)));

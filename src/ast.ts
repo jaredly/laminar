@@ -26,7 +26,7 @@ export type Type =
      * `~A` is `A/A`; `=A` is `A/=A`. `replaceable: false` marks a lens whose whole value
      * cannot be replaced (a constructor of borrowed fields); absent means replaceable.
      */
-    | { type: 'lens'; left: Type; right?: Type; replaceable?: boolean }
+    | { type: 'lens'; left: Type; right?: Type; replaceable?: boolean; owned?: boolean }
     | { type: 'constr'; name: Id; args?: Type[]; loc: Loc }
     | { type: 'tuple'; items: Type[] }
     | { type: 'record'; fields: { name: string; type: Type; loc: Loc }[]; loc: Loc }
@@ -96,7 +96,14 @@ export type Op = { type: 'op'; text: string; loc: Loc };
  * `shared` is set by the dual-mode desugar on a plain parameter, whose value is shared and
  * immutable. A pure parameter is never shared.
  */
-export type FnArg = { pat: Pat; typ?: Type; mut?: boolean; shared?: boolean };
+export type FnArg = {
+    pat: Pat;
+    typ?: Type;
+    mut?: boolean;
+    shared?: boolean;
+    /** `mut ~x`: the function receives the lens and its restore obligation. */
+    ownedLens?: boolean;
+};
 export type LinearInterp = { value: Linear; tail: string };
 
 export type Linear =

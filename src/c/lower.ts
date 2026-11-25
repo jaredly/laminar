@@ -1,7 +1,7 @@
 import { Declaration, References, reachableNames, typeDependencies } from '../backend/reachable.ts';
 import type { ConcreteProgram, ConcreteBlock } from '../concrete-ir.ts';
 import { Storage, type Cell, type Data, type Leaf, type View } from './storage.ts';
-import { decodeNumber, type IRPattern, type SlotRef } from '../typed-ir.ts';
+import { decodeNumber, type IRPattern, type SlotRef, ownedLensUse } from '../typed-ir.ts';
 import { verifyConcreteProgram } from '../verify-concrete.ts';
 import { BackendDiagnostic } from '../backend/target.ts';
 import { cSyntax, identifier, type Statement, type TranslationUnit } from './syntax.ts';
@@ -63,6 +63,13 @@ export function lowerC(
     options: { exports?: readonly CExport[]; optimize?: boolean } = {},
 ): TranslationUnit {
     verifyConcreteProgram(program);
+    const moved = ownedLensUse(program.semantic.program);
+    if (moved)
+        throw new BackendDiagnostic(
+            'unsupported-owned-lens',
+            'Moving an owned lens has no C implementation; build it for Go',
+            moved,
+        );
     // Every import reaching C must be registered, implemented and available on the target.
     const imports = program.semantic.program.imports
         .map((i) => i.definition)

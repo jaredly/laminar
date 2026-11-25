@@ -14,12 +14,24 @@ export type SemanticType =
     | { tag: 'tuple'; items: SemanticType[] }
     /** Closed record, fields sorted by name. Its runtime shape is the tuple of its fields in that order. */
     | { tag: 'record'; fields: { name: string; type: SemanticType }[] }
-    | { tag: 'fn'; args: SemanticFlow[]; result: SemanticFlow };
+    /** `linear`: a closure that cannot be dropped or copied. Not part of type identity. */
+    | { tag: 'fn'; args: SemanticFlow[]; result: SemanticFlow; linear?: true };
 export type SemanticFlow =
     /** `mode: 'shared'` marks a plain (shared, immutable) position; absent means owned (`mut`). */
     | { tag: 'plain'; value: SemanticType; mode?: 'shared' }
     /** `replaceable: false` marks a constructor of lenses, whose whole value has no storage. */
-    | { tag: 'flow'; read: SemanticType; write: SemanticType; replaceable?: false };
+    /**
+     * `owned: true` marks an owned lens position in a function type: its callee takes the lens
+     * and ends it. Part of a function type's identity, because the calling convention differs.
+     * A lens value itself carries no flag.
+     */
+    | {
+          tag: 'flow';
+          read: SemanticType;
+          write: SemanticType;
+          replaceable?: false;
+          owned?: true;
+      };
 export type PlaceState = {
     place: PlaceId;
     type: SemanticType;
@@ -72,6 +84,12 @@ export type Elaboration = {
         arguments: { parameter: TypeVariableId; type: SemanticType }[];
     }[];
     captures: { node: NodeId; from: BindingId; to: BindingId; type: SemanticType }[];
+    /**
+     * Bindings that give their owned lens away. `node` is the lens argument, or the closure
+     * that captures it; `write` is then what the closure's body leaves in it. A temporary lens
+     * moved straight into a call has no binding, so no entry.
+     */
+    lensMoves: { node: NodeId; binding: BindingId; write?: SemanticType }[];
     transitions: {
         node: NodeId;
         kind: 'move' | 'write' | 'borrow-open' | 'borrow-close';
@@ -154,6 +172,7 @@ export class ElaborationBuilder {
         arguments: { parameter: TypeVariableId; type: Ty }[];
     }[] = [];
     readonly captures: { node: NodeId; from: BindingId; to: BindingId; type: Ty }[] = [];
+    readonly lensMoves: { node: NodeId; binding: BindingId; write?: Ty }[] = [];
     readonly transitions: {
         node: NodeId;
         kind: Elaboration['transitions'][number]['kind'];
@@ -277,7 +296,12 @@ export class ElaborationBuilder {
                         fields: t.fields.map((f) => ({ name: f.name, type: type(f.type) })),
                     };
                 case 'fn':
-                    return { tag: 'fn', args: t.args.map(flow), result: flow(t.result) };
+                    return {
+                        tag: 'fn',
+                        args: t.args.map(flow),
+                        result: flow(t.result),
+                        ...(t.linear ? { linear: true as const } : {}),
+                    };
             }
         };
         const flow = (f: FlowTy): SemanticFlow =>
@@ -293,6 +317,9 @@ export class ElaborationBuilder {
                       write: type(f.write),
                       ...(solver.replaceability(f) === 'fixed'
                           ? { replaceable: false as const }
+                          : {}),
+                      ...(solver.lensOwnership(f.owned) === 'owned'
+                          ? { owned: true as const }
                           : {}),
                   };
         const state = (s: RawState): PlaceState => ({ ...s, type: type(s.type) });
@@ -342,6 +369,11 @@ export class ElaborationBuilder {
                 ).map((a) => ({ ...a, type: type(a.type) })),
             })),
             captures: this.captures.map((c) => ({ ...c, type: type(c.type) })),
+            lensMoves: this.lensMoves.map((m) => ({
+                node: m.node,
+                binding: m.binding,
+                ...(m.write ? { write: type(m.write) } : {}),
+            })),
             transitions: this.transitions.map((e) => ({
                 ...e,
                 before: state(e.before),
