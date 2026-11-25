@@ -132,6 +132,8 @@ export type ConcreteInstruction =
           args: string[];
           /** A read of a plain binding; see `share` on the typed call. */
           share?: true;
+          /** The call runs as its own task: its result is not waited for. */
+          detached?: true;
           abi: string;
           /** The callee record's entry for an indirect call; absent for a direct call
            * of statically known code, which alone names a `wrapper`. */

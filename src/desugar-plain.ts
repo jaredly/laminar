@@ -143,6 +143,29 @@ export function desugarPlain(source: Linear): PlainResult {
                 place(n.lens, scope);
                 return { ...n, lens: lens(n.lens, scope), value: linear(n.value, scope) };
             case 'apply':
+                // `spawn(task)` is the task's own call, run detached: the task is an ordinary
+                // closure, so it owns what it captured and the checker's rules for closures
+                // (no borrowing, moves consume) are what make it safe to run elsewhere.
+                if (
+                    n.fn.type === 'id' &&
+                    n.fn.text === 'spawn' &&
+                    !scope.has('spawn') &&
+                    n.args.length === 1 &&
+                    n.args[0]!.type !== 'lens'
+                )
+                    return {
+                        type: 'let',
+                        pat: { type: 'drop', loc: n.loc },
+                        value: {
+                            type: 'apply',
+                            fn: linear(n.args[0] as Linear, scope),
+                            args: [],
+                            detached: true,
+                            loc: n.loc,
+                        },
+                        body: { type: 'tuple', items: [], loc: n.loc },
+                        loc: n.loc,
+                    };
                 return application(n, scope);
             case 'fn':
                 return closure(n, scope);

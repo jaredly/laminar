@@ -15,7 +15,7 @@ import {
 /** How a call boundary treats an argument or result: transferred data, or a lens capability. */
 export type ImportConvention = 'owned' | 'lens';
 /** Host services an import needs beyond the backend's own allocation and traps. */
-export type HostCapability = 'stdout' | 'stdin' | 'files';
+export type HostCapability = 'stdout' | 'stdin' | 'files' | 'threads' | 'network';
 export type ImportBackend = 'reference' | 'c' | 'go';
 
 /**
@@ -232,6 +232,100 @@ export const runtimeImports: readonly RuntimeImport[] = [
             'Consumes a path and a vector of byte values and writes the bytes to that file, replacing it. Every element must be an integer in [0, 255] and the file must be writable, else trap',
     },
     {
+        name: 'spawn',
+        signature: () => fn([plain(fn([], plain(tuple())))], plain(tuple())),
+        arguments: ['owned'],
+        result: 'owned',
+        capability: 'threads',
+        backends: ['go'],
+        semantics:
+            'Consumes a task and runs it concurrently, returning at once. The task owns everything it captured: a closure may move or share values but never borrow, so no two tasks reach the same mutable data',
+    },
+    {
+        name: 'sleep',
+        signature: () => fn([reads(number)], plain(tuple())),
+        arguments: ['owned'],
+        result: 'owned',
+        capability: 'threads',
+        backends: ['go'],
+        semantics: 'Blocks the calling task for the given milliseconds; other tasks keep running',
+    },
+    {
+        name: 'chanNew',
+        signature: () => fn([], plain(number)),
+        arguments: [],
+        result: 'owned',
+        capability: 'threads',
+        backends: ['go'],
+        semantics:
+            'A new unbuffered channel of numbers, named by a handle. Sending and receiving block until the other side arrives',
+    },
+    {
+        name: 'chanSend',
+        signature: () => fn([reads(number), reads(number)], plain(tuple())),
+        arguments: ['owned', 'owned'],
+        result: 'owned',
+        capability: 'threads',
+        backends: ['go'],
+        semantics: 'Sends a number on a channel, blocking until a task receives it',
+    },
+    {
+        name: 'chanRecv',
+        signature: () => fn([reads(number)], plain(number)),
+        arguments: ['owned'],
+        result: 'owned',
+        capability: 'threads',
+        backends: ['go'],
+        semantics: 'Receives a number from a channel, blocking until a task sends one',
+    },
+    {
+        name: 'listen',
+        signature: () => fn([reads(number)], plain(number)),
+        arguments: ['owned'],
+        result: 'owned',
+        capability: 'network',
+        backends: ['go'],
+        semantics:
+            'Listens for TCP connections on the port and returns a handle; traps if the port cannot be bound',
+    },
+    {
+        name: 'accept',
+        signature: () => fn([reads(number)], plain(number)),
+        arguments: ['owned'],
+        result: 'owned',
+        capability: 'network',
+        backends: ['go'],
+        semantics: 'Waits for a connection on a listener handle and returns a handle for it',
+    },
+    {
+        name: 'recv',
+        signature: () => fn([reads(number)], plain(string)),
+        arguments: ['owned'],
+        result: 'owned',
+        capability: 'network',
+        backends: ['go'],
+        semantics:
+            'Reads what one read of the connection returns, up to 8192 bytes, as text; "" at end of input or on an error',
+    },
+    {
+        name: 'send',
+        signature: () => fn([reads(number), reads(string)], plain(tuple())),
+        arguments: ['owned', 'owned'],
+        result: 'owned',
+        capability: 'network',
+        backends: ['go'],
+        semantics: 'Writes the text to the connection; errors are ignored',
+    },
+    {
+        name: 'closeHandle',
+        signature: () => fn([reads(number)], plain(tuple())),
+        arguments: ['owned'],
+        result: 'owned',
+        capability: 'network',
+        backends: ['go'],
+        semantics: 'Closes a listener or connection handle; closing twice is harmless',
+    },
+    {
         name: 'waitKey',
         signature: () => fn([reads(number)], plain(string)),
         arguments: ['owned'],
@@ -271,7 +365,7 @@ const byName = new Map(runtimeImports.map((i) => [i.name, i]));
 /** Host capabilities each runtime profile provides. */
 export const runtimeCapabilities: Record<TargetConfig['runtime'], readonly HostCapability[]> = {
     native: ['stdout', 'stdin', 'files'],
-    go: ['stdout', 'stdin', 'files'],
+    go: ['stdout', 'stdin', 'files', 'threads', 'network'],
     'emscripten-node': ['stdout', 'stdin', 'files'],
     // Browser builds have console output but no synchronous line input.
     'emscripten-browser': ['stdout'],

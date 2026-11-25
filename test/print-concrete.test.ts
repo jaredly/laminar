@@ -1460,11 +1460,11 @@ it('can show original identities and source origins for debugging', () => {
           }
       }
       fn code_9ed092d8f8c2275f59ec3a7887e96e7eacfc3b8304ae9710053c46a0c6a23d59(
-          unit/definition/id/p29: layout_904fe785e425170c4753ac2aa280cc140492f2ed8514768a8c28db5073e1d5ef
+          unit/definition/id/p39: layout_904fe785e425170c4753ac2aa280cc140492f2ed8514768a8c28db5073e1d5ef
       ) : abi_2557b72183a4607daa242bcd749d5491ea66af8382ee7a15f6d4a8d67514f350 env layout_6db1d02aec1cc65d90f5d6656a50ee58b5631a7b539f2b11b9c73b2b85457630 source "spec_f5355660216bf78b6186f353f3b32788d36c13d88a6cc9b3f63d4e3e06219f7a" "unit/definition/id/n0/function" {
-          unit/definition/id/v0: layout_904fe785e425170c4753ac2aa280cc140492f2ed8514768a8c28db5073e1d5ef = move unit/definition/id/p29 @ "unit/definition/id/n2"
+          unit/definition/id/v0: layout_904fe785e425170c4753ac2aa280cc140492f2ed8514768a8c28db5073e1d5ef = move unit/definition/id/p39 @ "unit/definition/id/n2"
           return unit/definition/id/v0 : layout_904fe785e425170c4753ac2aa280cc140492f2ed8514768a8c28db5073e1d5ef
-          cleanup {drop unit/definition/id/p29}
+          cleanup {drop unit/definition/id/p39}
       }
       fn entry_bafc42f7f8fe2aaa54cc755da38b0f3c1b5a8b1ccf580d4828a58caaaf938947() : abi_f62d6b85c2ffd15b1c966622fd997fe6516449f10c80481db4d6a77e4f895394 env layout_54e87936ddd855ff180315156315fc921450e51b98e0d46cf360ab9ec1d5d689 source "spec_3bc84350fdb5ea443a5bdc1ea3eb9d8eff9afa2f0506c0534811199c08f3821b" {
           unit/expression/0/v0: layout_d6f73c1cdebbfa4611cc66982a17c2177dc898a537cf0ce826a7280eb869398e = make-callable callable_05614e43da3daacb7c8f9b386624391cdd42a0c2987e7918da5a388d0f6904d6 {} @ "unit/expression/0/n2"

@@ -52,6 +52,22 @@ const callArguments = (text: string, name: string): string[] | undefined => {
     return splitTop(text.slice(open + 1, -1));
 };
 
+/** The text between the braces that open at `open`, skipping string and rune literals. */
+const closureText = (text: string, open: number): string | undefined => {
+    let depth = 0;
+    for (let i = open; i < text.length; i++) {
+        const c = text[i]!;
+        if (c === '"' || c === "'") {
+            for (i++; i < text.length && text[i] !== c; i++) if (text[i] === '\\') i++;
+        } else if (c === '`') {
+            i = text.indexOf('`', i + 1);
+            if (i < 0) return undefined;
+        } else if (c === '{') depth++;
+        else if (c === '}' && --depth === 0) return text.slice(open + 1, i);
+    }
+    return undefined;
+};
+
 const flatten = (list: Statement[]): Statement[] =>
     list.flatMap((s) => (Array.isArray(s) ? flatten(s) : [s]));
 
@@ -70,10 +86,18 @@ export function loopSelfTailCalls(fn: GoFunction): GoFunction {
     const effect = returned === 'Unit{}';
     if (!effect && !/^[A-Za-z_]\w*$/.test(returned)) return fn;
 
-    // A closure or an address of a parameter could observe the reassignment.
+    // A closure that mentions a parameter, or the address of one, could observe the
+    // reassignment. A closure that only uses locals is fine: each pass through the loop body
+    // declares its own.
     const text = printGoStatements(body).join('\n');
-    if (/\bfunc\s*\(|\bgo\s|\bdefer\s/.test(text)) return fn;
+    if (/\bdefer\s/.test(text)) return fn;
     if (parameters.some((p) => new RegExp(`&\\s*${p}\\b`).test(text))) return fn;
+    const mentions = (code: string) => parameters.some((p) => new RegExp(`\\b${p}\\b`).test(code));
+    for (const literal of text.matchAll(/\bfunc\s*\(/g)) {
+        const open = text.indexOf('{', literal.index);
+        if (open < 0 || closureText(text, open) === undefined) return fn;
+        if (mentions(closureText(text, open)!)) return fn;
+    }
 
     let replaced = 0;
     const jump = (args: string[]): Statement[] | undefined => {

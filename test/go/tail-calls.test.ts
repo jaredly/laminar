@@ -53,6 +53,10 @@ it('leaves a function whose parameter a closure or pointer could observe', () =>
     });
     // the control case is rewritten, so the others are skipped for their own reason
     expect(loopSelfTailCalls(f([])).body).not.toEqual(f([]).body);
+    // a closure over a local only is fine: every pass declares its own
+    expect(loopSelfTailCalls(f(['go func() { print(local) }()'])).body).not.toEqual(
+        f(['go func() { print(local) }()']).body,
+    );
     for (const extra of ['g := func() float64 { return n }', 'p := &n'])
         expect(loopSelfTailCalls(f([extra])).body).toEqual(f([extra]).body);
 });

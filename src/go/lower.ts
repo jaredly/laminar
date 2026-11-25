@@ -691,6 +691,12 @@ ${joinCode(
                 declarePackage(name, text, []);
             }
         };
+        const hostFunction = (name: string, signature: string, body: Statement[]) => {
+            if (!hostHelpers.has(name)) {
+                hostHelpers.set(name, name);
+                helpers.push({ signature, body });
+            }
+        };
         const helper = (name: string, fn: GoFunction, declaration?: string) => {
             if (!hostHelpers.has(name)) {
                 const actual = /^host(Print|Write)_/.test(name) ? packageNames.unique(name) : name;
@@ -724,6 +730,144 @@ ${joinCode(
                 signature: goText`func hostWrite_${type(result)}(value string) ${type(result)}`,
                 body: ['fmt.Print(value)', go`return ${zero(result)}`],
             });
+        if (op === 'spawn')
+            return unsupported('spawn runs a task detached, which only dual mode can express');
+        // Handles name host objects (channels, listeners, connections) in one locked table, so
+        // the program only ever holds numbers and the host decides what they mean.
+        const table = () => {
+            hostImports.add('sync');
+            declareOnce('hostMu', 'var hostMu sync.Mutex');
+            declareOnce('hostObjects', 'var hostObjects = map[float64]any{}');
+            declareOnce('hostNext', 'var hostNext float64');
+            hostFunction('hostRegister', 'func hostRegister(object any) float64', [
+                'hostMu.Lock()',
+                'defer hostMu.Unlock()',
+                'hostNext++',
+                'hostObjects[hostNext] = object',
+                'return hostNext',
+            ]);
+            hostFunction('hostLookup', 'func hostLookup(handle float64) any', [
+                'hostMu.Lock()',
+                'defer hostMu.Unlock()',
+                'return hostObjects[handle]',
+            ]);
+        };
+        const unit = go`return ${zero(result)}`;
+        if (op === 'sleep') {
+            hostImports.add('time');
+            hostFunction('hostSleep', goText`func hostSleep(milliseconds float64) ${type(result)}`, [
+                'time.Sleep(time.Duration(milliseconds * float64(time.Millisecond)))',
+                unit,
+            ]);
+            return go`hostSleep(${args[0]})`;
+        }
+        if (op === 'chanNew') {
+            table();
+            hostFunction('hostChanNew', 'func hostChanNew() float64', [
+                'return hostRegister(make(chan float64))',
+            ]);
+            return go`hostChanNew()`;
+        }
+        if (op === 'chanSend') {
+            table();
+            hostFunction(
+                'hostChanSend',
+                goText`func hostChanSend(handle float64, value float64) ${type(result)}`,
+                [
+                    'channel, ok := hostLookup(handle).(chan float64)',
+                    { head: 'if !ok', body: ['panic("not a channel handle")'] },
+                    'channel <- value',
+                    unit,
+                ],
+            );
+            return go`hostChanSend(${args[0]}, ${args[1]})`;
+        }
+        if (op === 'chanRecv') {
+            table();
+            hostFunction('hostChanRecv', 'func hostChanRecv(handle float64) float64', [
+                'channel, ok := hostLookup(handle).(chan float64)',
+                { head: 'if !ok', body: ['panic("not a channel handle")'] },
+                'return <-channel',
+            ]);
+            return go`hostChanRecv(${args[0]})`;
+        }
+        if (op === 'listen') {
+            table();
+            hostImports.add('net').add('strconv');
+            hostFunction('hostListen', 'func hostListen(port float64) float64', [
+                {
+                    head: 'if !(port >= 0 && port < 65536 && port == math.Floor(port))',
+                    body: ['panic("listen needs a port from 0 to 65535")'],
+                },
+                'listener, err := net.Listen("tcp", ":"+strconv.Itoa(int(port)))',
+                { head: 'if err != nil', body: ['panic(err)'] },
+                'return hostRegister(listener)',
+            ]);
+            return go`hostListen(${args[0]})`;
+        }
+        if (op === 'accept') {
+            table();
+            hostImports.add('net');
+            hostFunction('hostAccept', 'func hostAccept(handle float64) float64', [
+                'listener, ok := hostLookup(handle).(net.Listener)',
+                { head: 'if !ok', body: ['panic("not a listener handle")'] },
+                'connection, err := listener.Accept()',
+                { head: 'if err != nil', body: ['panic(err)'] },
+                'return hostRegister(connection)',
+            ]);
+            return go`hostAccept(${args[0]})`;
+        }
+        if (op === 'recv') {
+            table();
+            hostImports.add('net');
+            hostFunction('hostRecv', 'func hostRecv(handle float64) string', [
+                'connection, ok := hostLookup(handle).(net.Conn)',
+                { head: 'if !ok', body: ['return ""'] },
+                'buffer := make([]byte, 8192)',
+                'n, _ := connection.Read(buffer)',
+                'return string(buffer[:n])',
+            ]);
+            return go`hostRecv(${args[0]})`;
+        }
+        if (op === 'send') {
+            table();
+            hostImports.add('net');
+            hostFunction(
+                'hostSend',
+                goText`func hostSend(handle float64, text string) ${type(result)}`,
+                [
+                    'connection, ok := hostLookup(handle).(net.Conn)',
+                    { head: 'if ok', body: ['connection.Write([]byte(text))'] },
+                    unit,
+                ],
+            );
+            return go`hostSend(${args[0]}, ${args[1]})`;
+        }
+        if (op === 'closeHandle') {
+            table();
+            hostImports.add('net');
+            hostFunction(
+                'hostClose',
+                goText`func hostClose(handle float64) ${type(result)}`,
+                [
+                    'hostMu.Lock()',
+                    'object := hostObjects[handle]',
+                    'delete(hostObjects, handle)',
+                    'hostMu.Unlock()',
+                    {
+                        head: 'switch object := object.(type)',
+                        body: [
+                            'case net.Conn:',
+                            '\tobject.Close()',
+                            'case net.Listener:',
+                            '\tobject.Close()',
+                        ],
+                    },
+                    unit,
+                ],
+            );
+            return go`hostClose(${args[0]})`;
+        }
         if (op === 'writeFile') {
             hostImports.add('os');
             if (!hostHelpers.has('hostWriteFile')) {
@@ -2350,6 +2494,15 @@ ${joinCode(
                         const abi = program.abis.find((a) => a.id === i.abi)!;
                         const isLens = layout(id).fields.some((f) => f.name === 'restore');
                         const adapters: { finish: (body: Statement[]) => void }[] = [];
+                        if (i.detached) {
+                            if (layout(id).kind !== 'unit')
+                                return unsupported('A spawned task must return ()');
+                            // The task value is read here, on the spawning task; only the call
+                            // happens on the new one.
+                            const task = fresh();
+                            declare(outputLayouts.get(i.callee)!, value(i.callee), body, task);
+                            values.set(i.callee, task);
+                        }
                         // These registered natives have no observable effect in Go.
                         // User functions and indirect calls remain effectful, including
                         // traps, even when their returned value has no consumer.
@@ -2540,6 +2693,12 @@ ${joinCode(
                             // Calls execute even when their result is discarded. Only
                             // introduce a result local if a later IR consumer asks for it.
                             const call = code(expr);
+                            if (i.detached) {
+                                body.push(go`go func() { ${call} }()`);
+                                values.set(i.out.id, zero(id));
+                                adapters.forEach((a) => a.finish(body));
+                                continue;
+                            }
                             const at: Statement[] = [call];
                             body.push(at);
                             let materialized = false;

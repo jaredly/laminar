@@ -183,6 +183,7 @@ export function lowerTypedUnit(e: Elaboration): IRUnit {
             callee: callee.id,
             args,
             ...((n as { share?: boolean }).share ? { share: true as const } : {}),
+            ...((n as { detached?: boolean }).detached ? { detached: true as const } : {}),
         });
     };
     const letBody = (

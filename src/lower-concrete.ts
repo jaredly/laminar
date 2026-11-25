@@ -508,6 +508,7 @@ export function lowerConcreteProgram(
                             callee: i.callee,
                             args: i.args,
                             ...(i.share ? { share: true as const } : {}),
+                            ...(i.detached ? { detached: true as const } : {}),
                             wrapper: w.id,
                             abi: w.abi,
                         };
@@ -525,6 +526,7 @@ export function lowerConcreteProgram(
                         callee: i.callee,
                         args: i.args,
                         ...(i.share ? { share: true as const } : {}),
+                            ...(i.detached ? { detached: true as const } : {}),
                         abi: entry.abi,
                         field: entry.field,
                     };

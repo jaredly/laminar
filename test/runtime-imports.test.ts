@@ -48,6 +48,17 @@ const probes: Record<string, string> = {
     print: 'print("x")',
     write: 'write("x")',
     writeFile: 'writeFile("/tmp/laminar-probe.bin", [:0:])',
+    // only dual mode rewrites spawn into a detached call
+    spawn: '// laminar: dual\nspawn(fn () { () })',
+    sleep: 'sleep(0)',
+    chanNew: 'chanNew()',
+    chanSend: 'chanSend(0, 1)',
+    chanRecv: 'chanRecv(0)',
+    listen: 'listen(0)',
+    accept: 'accept(0)',
+    recv: 'recv(0)',
+    send: 'send(0, "x")',
+    closeHandle: 'closeHandle(0)',
     waitKey: 'waitKey(0)',
     random: 'random(2)',
 };

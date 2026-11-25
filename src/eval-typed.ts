@@ -683,6 +683,12 @@ export function executeTypedProgram(
                     break;
                 }
                 case 'call': {
+                    if (i.detached)
+                        throw new BackendDiagnostic(
+                            'unsupported-reference-import',
+                            'spawn has no reference implementation',
+                            i.origin,
+                        );
                     const fn = data(take(f, i.callee)),
                         args = i.args.map((id) => take(f, id));
                     // Reify an empty unit focus as a unit value at the call boundary.

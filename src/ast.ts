@@ -133,7 +133,16 @@ export type Linear =
     | { type: 'index'; target: Linear; index: Term; loc: Loc }
     /** Move field `name` out of a variable's record: `r.x`, `r.a.b`. */
     | { type: 'field'; target: Linear; name: string; loc: Loc }
-    | { type: 'apply'; fn: Linear; args: Term[]; isLens?: boolean; share?: boolean; loc: Loc }
+    /** `detached`: the call runs as its own task and its result is not waited for (`spawn`). */
+    | {
+          type: 'apply';
+          fn: Linear;
+          args: Term[];
+          isLens?: boolean;
+          share?: boolean;
+          detached?: boolean;
+          loc: Loc;
+      }
     | { type: 'tuple'; items: Linear[]; loc: Loc }
     | { type: 'vector'; items: Linear[]; loc: Loc }
     | { type: 'record'; fields: { name: string; value: Linear; loc: Loc }[]; loc: Loc }

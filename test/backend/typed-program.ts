@@ -5,11 +5,19 @@ import { Checker } from '../../src/check.ts';
 import { lowerTypedProgram } from '../../src/lower-typed.ts';
 import type { Elaboration } from '../../src/elaborated.ts';
 import type { TypeEnvironment } from '../../src/infer.ts';
+import { declaredMode, policyFor } from '../../src/mode.ts';
 export function typedProgram(
     source: string,
     opts?: { environment?: TypeEnvironment; constructors?: TypeEnvironment },
 ) {
-    const checker = new Checker(opts?.environment, opts?.constructors),
+    // A `// laminar: dual` pragma selects the dual language, as it does for the compiler.
+    const declared = declaredMode(source);
+    const checker = new Checker(
+            opts?.environment,
+            opts?.constructors,
+            undefined,
+            typeof declared === 'string' ? policyFor(declared) : undefined,
+        ),
         elaborations: Elaboration[] = [];
     let declaration: Decl | undefined;
     for (const node of readLines(source).nodes) {

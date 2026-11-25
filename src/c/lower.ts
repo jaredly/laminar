@@ -2809,6 +2809,8 @@ export function lowerC(
                             continue;
                         }
                         case 'invoke': {
+                            if (i.detached)
+                                return unsupported('spawn has no C implementation');
                             // An indirect call goes through the callee record's entry; a
                             // direct call invokes its known member's wrapper itself.
                             if (

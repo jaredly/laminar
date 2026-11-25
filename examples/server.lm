@@ -1,0 +1,117 @@
+// laminar: dual
+// a small concurrent web server: every connection is served by its own task.
+// run it with `bun cli/laminar.ts run examples/server.lm --target go`, then try
+//   curl localhost:8080/            curl localhost:8080/count
+//   curl localhost:8080/mandelbrot  curl localhost:8080/slow   (run several at once)
+//
+// What the language guarantees here, with no locks:
+// - `spawn(task)` runs a closure on its own task. A closure moves or shares what it
+//   captures and can never borrow, so a task cannot reach another task's mutable data.
+//   Two tasks incrementing one counter does not compile (`borrowed-capture`).
+// - A connection is a `linear` value. It is moved into the task that serves it, and that
+//   task must consume it, so it cannot be used twice or forgotten.
+// - Plain values are immutable, so any number of tasks can read them. The only state that
+//   changes is the request count, and one task owns it: others ask it over a channel.
+type linear Conn {
+    Conn(Number)
+}
+
+// ---- reading the request ----
+
+// the text after the first space of "GET /path HTTP/1.1"
+fn afterMethod(chars) {
+    match chars {
+        [] -> []
+        [" ", ...rest] -> rest
+        [_, ...rest] -> afterMethod(rest)
+    }
+}
+
+fn untilSpace(chars) {
+    match chars {
+        [] -> ""
+        [" ", ..._] -> ""
+        ["\r", ..._] -> ""
+        ["\n", ..._] -> ""
+        [c, ...rest] -> "${c}${untilSpace(rest)}"
+    }
+}
+
+fn pathOf(request) { untilSpace(afterMethod(charList(request))) }
+
+// ---- the pages ----
+
+fn glyph(steps) {
+    if steps >= 30 then "#" else if steps >= 12 then "+" else if steps >= 5 then "." else " "
+}
+
+// how many steps z -> z*z + c takes to leave the circle of radius 2
+fn escape(cr, ci, zr, zi, n) {
+    if n >= 40 || zr * zr + zi * zi > 4 then n else {
+        escape(cr, ci, zr * zr - zi * zi + cr, 2 * zr * zi + ci, n + 1)
+    }
+}
+
+fn artRow(x, y) {
+    if x >= 64 then "" else {
+        let steps = escape(x * 0.046875 - 2.2, 1.2 - y * 0.1, 0, 0, 0)
+        "${glyph(steps)}${artRow(x + 1, y)}"
+    }
+}
+
+fn art(y) {
+    if y >= 24 then "" else "${artRow(0, y)}\n${art(y + 1)}"
+}
+
+// the request counter lives in one task: it is a parameter, so nothing else can touch it
+fn counter(requests, count) {
+    let reply = chanRecv(requests)
+    chanSend(reply, count + 1)
+    counter(requests, count + 1)
+}
+
+fn nextRequest(requests) {
+    let reply = chanNew()
+    chanSend(requests, reply)
+    chanRecv(reply)
+}
+
+fn page(path, requests) {
+    match path {
+        "/" -> ("200 OK", "hello from laminar\n")
+        "/count" -> ("200 OK", "request number ${nextRequest(requests)}\n")
+        "/mandelbrot" -> ("200 OK", art(0))
+        "/slow" -> {
+            sleep(1000)
+            ("200 OK", "that took a second, and nobody waited for it\n")
+        }
+        _ -> ("404 Not Found", "no page at ${path}\n")
+    }
+}
+
+// ---- serving ----
+
+// consumes the connection: it is read, answered and closed here
+fn handle(mut conn, requests) {
+    match conn {
+        Conn(fd) -> {
+            let (status, body) = page(pathOf(recv(fd)), requests)
+            send(fd, "HTTP/1.1 ${status}\r\nContent-Type: text/plain\r\nConnection: close\r\n\r\n${body}")
+            closeHandle(fd)
+        }
+    }
+}
+
+fn serve(listener, requests) {
+    let mut conn = Conn(accept(listener))
+    spawn(fn () { handle(conn, requests) })
+    serve(listener, requests)
+}
+
+{
+    let listener = listen(8080)
+    let requests = chanNew()
+    print("listening on http://localhost:8080")
+    spawn(fn () { counter(requests, 0) })
+    serve(listener, requests)
+}
