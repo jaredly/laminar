@@ -3041,7 +3041,21 @@ ${joinCode(
                                     if (!p.map.has(key)) p.gone.add(key);
                             return { nested, state: storage.snapshot() };
                         });
-                        for (const p of pending) p.gone.forEach((key) => p.map.delete(key));
+                        // A lens that ended or moved leaves nothing to join. Its new holder may
+                        // be writing its storage, so no arm may be left reading it.
+                        for (const p of pending)
+                            for (const [key, lens] of p.entries) {
+                                if (!p.gone.has(key)) continue;
+                                p.map.delete(key);
+                                for (const arm of arms) {
+                                    storage.reset(arm.state);
+                                    storage.put(lens.view, {
+                                        expression: zero(unit.id),
+                                        layout: unit.id,
+                                    });
+                                    arm.state = storage.snapshot();
+                                }
+                            }
                         storage.reset(before);
                         // phi-join: for each cell, merge the per-arm states
                         const merge = (data: Data[], previous?: Data): Data => {

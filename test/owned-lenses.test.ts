@@ -7,8 +7,8 @@ import { checkSource } from '../src/compiler.ts';
 import { dualMode } from '../src/mode.ts';
 import { TypeDiagnostic } from '../src/types.ts';
 import { executeTypedProgram } from '../src/eval-typed.ts';
-import { ownedLensUse } from '../src/typed-ir.ts';
 import { verifyTypedProgram } from '../src/verify-ir.ts';
+import { net as printing } from './backend/owned-lens-samples.ts';
 
 /** The checker alone, so a rejection is the checker's. */
 const code = (source: string) => {
@@ -232,12 +232,18 @@ it('closes the older leaks that a linear closure would have gone through', () =>
     expect(program('let mut c = Conn(1)\n lose(c)', `${base}fn lose(mut x) { match x { _ -> 0 } }\n`)).toBe('linear-unconsumed');
 });
 
-it('lowers a move to typed IR, which the reference evaluator refuses to run', () => {
-    const source = `// laminar: dual\n${net}{let conn = ~connection(1)\n spawn(fn () { handle("a", ~conn) })\n 0}`;
-    const typed = checkSource(source);
-    expect(ownedLensUse(typed)).toBeDefined();
-    expect(() => executeTypedProgram(typed, {})).toThrow('no reference implementation');
-    expect(() => verifyTypedProgram(typed)).not.toThrow();
+it('runs a move on the reference evaluator, which still cannot spawn', () => {
+    const run = (body: string) => {
+        let output = '';
+        executeTypedProgram(checkSource(`${printing}${body}`), {
+            stdout: (text) => (output += text),
+        });
+        return output;
+    };
+    expect(run('handle("a", ~connection(1))')).toBe('a start\npeek 1\na done\nclose 1\n');
+    expect(() => run('{let c = ~connection(1)\n spawn(fn () { handle("a", ~c) })}')).toThrow(
+        'spawn has no reference implementation',
+    );
 });
 
 it('verifies in typed IR that each owned lens ends exactly once', () => {

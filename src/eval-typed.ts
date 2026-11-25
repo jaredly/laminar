@@ -1,6 +1,6 @@
 import type { SemanticType } from './elaborated.ts';
 import { freezeTree } from './elaborated.ts';
-import { decodeNumber, ownedLensUse } from './typed-ir.ts';
+import { decodeNumber } from './typed-ir.ts';
 import { BackendDiagnostic } from './backend/target.ts';
 import type {
     TypedProgram,
@@ -24,6 +24,8 @@ type FunctionValue = {
     unit: IRUnit;
     fn: IRFunction;
     captures: Map<string, Data>;
+    /** Captured owned lenses: only a call can end them, so the closure cannot be dropped. */
+    lenses: Map<string, Lens>;
     reusable: boolean;
     used: boolean;
 };
@@ -58,7 +60,19 @@ type Lens = {
     project(path: number[]): Lens;
 };
 type Argument = Data | Lens;
-type Frame = { places: Map<string, Lens>; values: Map<string, Argument>; loans: Map<string, Lens> };
+type Frame = {
+    places: Map<string, Lens>;
+    values: Map<string, Argument>;
+    loans: Map<string, Lens>;
+    /** Owned lenses this call was handed, by place, until it ends or moves them. */
+    held: Map<string, Lens>;
+};
+const frame = (): Frame => ({
+    places: new Map(),
+    values: new Map(),
+    loans: new Map(),
+    held: new Map(),
+});
 export type ReferenceOptions = {
     /** Execution trace is useful for checking sequencing and diagnosing reference failures. */
     onStep?: (origin: string, operation: Instruction['op']) => void;
@@ -95,13 +109,6 @@ export function executeTypedProgram(
     program = freezeTree(structuredClone(program));
     // Validate the entire compilation unit before executing any effects.
     verifyTypedProgram(program);
-    const moved = ownedLensUse(program);
-    if (moved)
-        throw new BackendDiagnostic(
-            'unsupported-owned-lens',
-            'Moving an owned lens has no reference implementation; build it for Go',
-            moved,
-        );
     const definitions = new Map<string, FunctionValue>();
     const valueTypes = new Map<IRUnit, Map<string, import('./elaborated.ts').SemanticFlow>>();
     for (const unit of program.units) {
@@ -287,6 +294,7 @@ export function executeTypedProgram(
             if (v.kind === 'variant' || v.kind === 'vector') v.items.forEach(dispose);
             else if (v.kind === 'function' && !v.reusable) {
                 if (v.used) return error('Closure disposed or invoked twice');
+                if (v.lenses.size) return error('Dropped a closure that holds an owned lens');
                 v.used = true;
                 v.captures.forEach(dispose);
                 v.captures.clear();
@@ -378,6 +386,11 @@ export function executeTypedProgram(
                 owned(borrowed.peek());
                 borrowed.finish();
                 f.loans.delete(action.loan);
+            } else if (action.kind === 'end') {
+                const owner = f.held.get(action.slot.place) ?? error('No owned lens to end');
+                owned(owner.peek());
+                f.held.delete(action.slot.place);
+                owner.finish();
             } else {
                 const v = reference(f, action.slot);
                 if (action.kind === 'restored') owned(v.peek());
@@ -404,7 +417,7 @@ export function executeTypedProgram(
                 return { ...v, items: v.items.map(copy) };
             // A closure is consumed by its call, so each copy owns its own captures. A reusable
             // definition has none to consume.
-            if (v.kind === 'function')
+            if (v.kind === 'function' && !v.lenses.size)
                 return v.reusable
                     ? v
                     : {
@@ -593,14 +606,31 @@ export function executeTypedProgram(
         }
         if (!callee.reusable && callee.used) return error('Closure invoked twice');
         if (!callee.reusable) callee.used = true;
-        const frame: Frame = { places: new Map(), values: new Map(), loans: new Map() };
-        callee.captures.forEach((value, place) => frame.places.set(place, cell(value)));
-        if (!callee.reusable) callee.captures.clear();
+        const f = frame();
+        const hold = (place: string, owner: Lens) => {
+            f.places.set(place, owner);
+            f.held.set(place, owner);
+        };
+        callee.captures.forEach((value, place) => f.places.set(place, cell(value)));
+        callee.lenses.forEach((owner, place) => hold(place, owner));
+        if (!callee.reusable) {
+            callee.captures.clear();
+            callee.lenses.clear();
+        }
         callee.fn.parameters.forEach((p, i) => {
-            if (p.lensPlace) frame.places.set(p.lensPlace, lens(args[i]));
-            else bind(frame, p.pattern, owned(data(args[i])));
+            const type = callee.fn.type.args[i]!;
+            if (p.lensPlace && type.tag === 'flow' && type.owned) hold(p.lensPlace, lens(args[i]));
+            else if (p.lensPlace) f.places.set(p.lensPlace, lens(args[i]));
+            else bind(f, p.pattern, owned(data(args[i])));
         });
-        return executeBlock(callee.unit, callee.fn.body, frame);
+        const result = executeBlock(callee.unit, callee.fn.body, f);
+        const settled = () => {
+            if (f.held.size) error('A function kept an owned lens without ending it');
+        };
+        // A returned lens may still rest on one, until its own restoration ends it.
+        if (isLens(result)) return scoped(result, settled);
+        settled();
+        return result;
     };
     const executeBlock = (u: IRUnit, b: IRBlock, f: Frame): Argument => {
         const oldPlaces = new Set(f.places.keys());
@@ -676,8 +706,14 @@ export function executeTypedProgram(
                         i.items.map((id) => lens(take(f, id))),
                     );
                     break;
-                case 'give':
-                    return error('Moved lenses are rejected before execution', i.origin);
+                case 'give': {
+                    // The lens leaves with its pending restoration; nothing runs here.
+                    const [holders, key] =
+                        'loan' in i.from ? [f.loans, i.from.loan] : [f.held, i.from.place];
+                    result = holders.get(key) ?? error('No owned lens to move', i.origin);
+                    holders.delete(key);
+                    break;
+                }
                 case 'swap': {
                     const target = lens(take(f, i.lens)),
                         replacement = owned(data(take(f, i.value)));
@@ -689,13 +725,19 @@ export function executeTypedProgram(
                     const fn =
                         u.functions.find((v) => v.id === i.function) ??
                         error('Missing closure code');
+                    const captures = new Map<string, Data>(),
+                        lenses = new Map<string, Lens>();
+                    for (const c of i.captures) {
+                        const value = take(f, c.value);
+                        if (isLens(value)) lenses.set(c.place, value);
+                        else captures.set(c.place, owned(value));
+                    }
                     result = {
                         kind: 'function',
                         unit: u,
                         fn,
-                        captures: new Map(
-                            i.captures.map((c) => [c.place, owned(data(take(f, c.value)))]),
-                        ),
+                        captures,
+                        lenses,
                         reusable: false,
                         used: false,
                     };
@@ -727,8 +769,10 @@ export function executeTypedProgram(
                     });
                     result = invoke(fn, args);
                     const finish = () =>
-                        args.forEach((arg) => {
-                            if (isLens(arg)) {
+                        args.forEach((arg, n) => {
+                            const t = signature.args[n]!;
+                            // An owned argument is the callee's to end.
+                            if (isLens(arg) && !(t.tag === 'flow' && t.owned)) {
                                 owned(arg.peek());
                                 arg.finish();
                             }
@@ -788,11 +832,7 @@ export function executeTypedProgram(
         // Earlier expression roots are affine results discarded by this last-result test runner.
         // Reusable definitions own no captures and are not disposed here.
         dispose(data(result));
-        result = executeBlock(u, u.entry, {
-            places: new Map(),
-            values: new Map(),
-            loans: new Map(),
-        });
+        result = executeBlock(u, u.entry, frame());
         if (u.definition) {
             const value = data(result);
             if (

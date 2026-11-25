@@ -1,9 +1,9 @@
 # Owned lenses: moving a lens into a closure
 
 Status: owned lenses are implemented in the checker (see
-[What the checker does now](#what-the-checker-does-now)) and on the Go backend (see
-[What the backends do now](#what-the-backends-do-now)). C and the reference evaluator reject a
-move, and the shared closure mode is not started. It grew out of [concurrency.md](concurrency.md), where
+[What the checker does now](#what-the-checker-does-now)), on the Go and C backends and in the
+reference evaluator (see [What the backends do now](#what-the-backends-do-now)). The shared closure
+mode is not started. It grew out of [concurrency.md](concurrency.md), where
 a connection that should be a lens, with its cleanup owned by the library that produced it, cannot be
 handed to a task.
 
@@ -261,8 +261,10 @@ linear type are all `linear-unconsumed` now.
 
 ## What the backends do now
 
-Go runs moved lenses. `test/go/owned-lenses.test.ts` makes every cleanup print, so each test
-checks when each lens ends.
+All three run moved lenses. The samples in `test/backend/owned-lens-samples.ts` make every cleanup
+print, so each checks when each lens ends, and all three must print the same thing
+(`test/owned-lens-execution.test.ts`). C runs them under ASan and UBSan at `-O0` and again at `-O2`,
+and its test program aborts if any allocation is still live at exit.
 
 - **One convention.** An argument to a `mut ~` parameter, or a captured owned lens, is one
   self-contained lens struct whose `restore` runs everything still pending. The caller runs nothing
@@ -278,14 +280,28 @@ checks when each lens ends.
 - **Tail calls.** A restore is a Go closure. A function whose closures mention its own parameters
   is already left as recursion, and one that only mentions locals gets fresh ones on each pass, so
   an accept loop stays a loop.
+- **C** has no closures of its own, so the struct's `context` is a counted heap allocation holding
+  the focus and every local the pending cleanup reads. The restore function releases it. A function
+  that moves several lenses builds one context for each. A captured lens is moved out of the
+  environment and never copied, since a closure that holds one cannot be shared.
+- **C exports** reject a definition whose result holds a closure that must be called: a host could
+  drop the handle, skipping the cleanup. Lens parameters and results were already rejected.
+- **The reference evaluator** hands over the lens object itself, still unfinished. It runs the typed
+  IR directly, so it shares nothing with the backends' lowering. It fails if a lens is restored
+  twice, if a function returns still holding one, or if a closure that holds one is dropped.
+- **Branch joins.** A branch that ends or moves a lens clears that lens's storage in every arm
+  before joining them. Without that, C read freed memory when one arm wrote a string through a
+  lens and another moved it. Random programs compared against the reference found this; the
+  hand-written samples had not. `test/owned-lens-random.test.ts` keeps that comparison, with
+  fixed seeds; `LAMINAR_LENS_SEEDS=1000-1400` runs other ones.
 - **`examples/server.lm`** now moves each connection into its own task. Built with `go build -race`
   and sent 200 `/count`, 100 `/mandelbrot` and 100 `/slow` requests at once, it answered all 400
   in 1.1 seconds with counts 1 to 200, left only the listener open, and reported no races.
 
 Not yet:
 
-- C and the reference evaluator reject a program that moves a lens, or declares a `mut ~`
-  parameter, with `unsupported-owned-lens`. So there is no reference result to compare Go against.
+- Only Go has `spawn`, so `examples/server.lm` is Go only, and moves into tasks have no reference
+  result to compare with.
 - A lens cannot move inside a lens-valued `case`.
 
 ## Backend plan

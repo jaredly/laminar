@@ -202,47 +202,6 @@ export const valueKey = (type: SemanticFlow): string =>
     flowKey(type.tag === 'flow' ? { ...type, owned: undefined } : type);
 
 /**
- * The first place a program moves an owned lens, for backends that cannot run one. Declaring a
- * `mut ~` parameter counts: its function ends the lens through a restore it was handed.
- */
-export function ownedLensUse(program: TypedProgram): string | undefined {
-    for (const unit of program.units)
-        for (const f of unit.functions)
-            if (
-                f.captures.some((c) => c.lens) ||
-                f.type.args.some((a) => a.tag === 'flow' && a.owned)
-            )
-                return f.origin;
-    const called = (b: IRBlock): string | undefined => {
-        for (const i of b.instructions) {
-            if (i.op === 'bind' || i.op === 'borrow') continue;
-            if (i.op === 'global' && i.instance.type.tag === 'fn') {
-                if (i.instance.type.args.some((a) => a.tag === 'flow' && a.owned)) return i.origin;
-            }
-            const nested =
-                i.op === 'scope'
-                    ? [i.body]
-                    : i.op === 'case'
-                      ? i.cases.map((c) => c.body)
-                      : i.op === 'aslens'
-                        ? [i.cleanup]
-                        : [];
-            for (const inner of nested) {
-                const found = called(inner);
-                if (found) return found;
-            }
-        }
-        return undefined;
-    };
-    for (const unit of program.units)
-        for (const b of [unit.entry, ...unit.functions.map((f) => f.body)]) {
-            const found = called(b);
-            if (found) return found;
-        }
-    return undefined;
-}
-
-/**
  * Backends never see record types: a record is stored as the tuple of its
  * name-sorted fields, which is exactly how the IR already builds and matches it.
  * Field names only matter to the checker and the reference evaluator.

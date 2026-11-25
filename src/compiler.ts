@@ -255,6 +255,21 @@ export type CompiledLibrary = {
  * Compile definitions into a C library with a host ABI and header (see the C
  * backend's host export notes). The library has no `main` and prints nothing.
  */
+function holdsLinearClosure(type: SemanticType): boolean {
+    switch (type.tag) {
+        case 'fn':
+            return !!type.linear;
+        case 'con':
+            return type.args.some(holdsLinearClosure);
+        case 'tuple':
+            return type.items.some(holdsLinearClosure);
+        case 'record':
+            return type.fields.some((f) => holdsLinearClosure(f.type));
+        case 'variable':
+            return false;
+    }
+}
+
 export function compileLibrary(
     source: string,
     options: {
@@ -280,6 +295,12 @@ export function compileLibrary(
         const type = unit.signature.type;
         if (type.tag !== 'fn')
             throw new CompileError('backend', 'unsupported-export', `${e.name} is not a function`);
+        if (type.result.tag === 'plain' && holdsLinearClosure(type.result.value))
+            throw new CompileError(
+                'backend',
+                'unsupported-export',
+                `${e.name} returns a closure that must be called, which a host could drop instead`,
+            );
         const args = e.typeArguments ?? [];
         if (args.length !== unit.signature.quantified.length)
             throw new CompileError(
