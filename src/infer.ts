@@ -101,6 +101,16 @@ type View = {
     /** The binding that loses the lens if it moves; absent for a temporary. */
     holder?: Binding;
 };
+/** One lens argument of a call, from its setup until the call returns it or takes it. */
+type LensArgument = {
+    source: Lens;
+    view: View;
+    /** The targets' revisions just after setup. */
+    revisions: number[];
+    replacement: Ty;
+    /** Unknown until the callee is: its signature says whether this call borrows or moves. */
+    owned: Ty;
+};
 export type InferOptions = {
     /** Linear types exist, so a closure may take an owned lens or become linear. */
     linearTypes?: boolean;
@@ -1057,8 +1067,6 @@ export class Inferencer {
             const read = this.solver.fresh();
             let type: FlowTy;
             if (a.pat.type === 'lens') {
-                if (i !== n.args.length - 1)
-                    this.error('lens-position', a.pat.loc, 'Lens argument must be last');
                 const root = this.freshBinding(read),
                     write = this.solver.fresh();
                 if (a.ownedLens) root.root.ownedLens = {};
@@ -1560,9 +1568,10 @@ export class Inferencer {
         for (const s of this.constructors.values()) if (resultName(s) === target) count++;
         return count;
     }
-    private disjoint(targets: Binding[], loc: number): void {
+    /** No two targets may overlap; with `others`, no target may overlap one of those. */
+    private disjoint(targets: Binding[], loc: number, others?: Binding[]): void {
         targets.forEach((a, i) =>
-            targets.slice(i + 1).forEach((b) => {
+            (others ?? targets.slice(i + 1)).forEach((b) => {
                 if (
                     a.root === b.root &&
                     a.path
@@ -1574,37 +1583,46 @@ export class Inferencer {
         );
     }
     private call(n: (Linear | Lens) & { type: 'apply' }, env: Env, lensResult: boolean): View {
-        const last = n.args[n.args.length - 1];
-        if (n.args.slice(0, -1).some((a) => a.type === 'lens'))
-            this.error('lens-position', n.loc, 'Lens argument must be last');
-        // Match decomposition: final lens setup is hoisted before callee/ordinary arguments.
-        const view = last?.type === 'lens' ? this.lens(last.lens, env) : undefined;
-        const states = view?.targets.map((b) => this.revision(b));
+        // Match decomposition: lenses are set up before the callee and the ordinary
+        // arguments, wherever they are written, in the order they are written.
+        const lenses = new Map<number, LensArgument>();
+        n.args.forEach((a, i) => {
+            if (a.type !== 'lens') return;
+            const view = this.lens(a.lens, env);
+            for (const earlier of lenses.values())
+                this.disjoint(view.targets, n.loc, earlier.view.targets);
+            lenses.set(i, {
+                source: a.lens,
+                view,
+                revisions: view.targets.map((b) => this.revision(b)),
+                replacement: this.solver.fresh(),
+                owned: this.solver.fresh(),
+            });
+        });
         const callee = this.linear(n.fn, env);
         const signature = this.solver.prune(callee);
-        const finalParameter =
-            signature.tag === 'fn' ? signature.args[signature.args.length - 1] : undefined;
-        if (
-            view?.holder &&
-            finalParameter?.tag === 'flow' &&
-            this.solver.lensOwnership(finalParameter.owned) === 'owned'
-        )
-            this.movable(view.holder, n.loc);
+        for (const [i, { view }] of lenses) {
+            const parameter = signature.tag === 'fn' ? signature.args[i] : undefined;
+            if (
+                view.holder &&
+                parameter?.tag === 'flow' &&
+                this.solver.lensOwnership(parameter.owned) === 'owned'
+            )
+                this.movable(view.holder, n.loc);
+        }
         if (n.fn.type === 'id') this.consumingUses.add(this.builder.node(n.fn));
         const global =
             n.fn.type === 'id' && this.bindings.get(n.fn)?.scheme ? n.fn.text : undefined;
         const accepts = this.callsOnce.get(n.fn);
         // A copy of a callable has the same callback contract as its source.
-        const copy =
-            global === 'dup' && last?.type === 'lens' && last.lens.type === 'id'
-                ? this.lookup(env, last.lens.text, n.loc)
-                : undefined;
+        const copied = global === 'dup' ? lenses.get(0)?.source : undefined;
+        const copy = copied?.type === 'id' ? this.lookup(env, copied.text, n.loc) : undefined;
         const copiedOnce = copy && !copy.path.length ? copy.root.callsOnce : undefined;
-        const replacement = this.solver.fresh(),
-            // Unknown until the callee is: its signature says whether this call borrows or moves.
-            owned = this.solver.fresh();
         const args = n.args.map((a, i) => {
-            if (a.type === 'lens') return flow(view!.read, replacement, view!.replaceable, owned);
+            if (a.type === 'lens') {
+                const { view, replacement, owned } = lenses.get(i)!;
+                return flow(view.read, replacement, view.replaceable, owned);
+            }
             const value = this.linear(a, env);
             if (accepts?.includes(i) && a.type === 'id')
                 this.consumingUses.add(this.builder.node(a));
@@ -1615,19 +1633,18 @@ export class Inferencer {
                     : this.argumentType(callee, i, value, accepts, a);
             return plain(passed, this.solver.freshMode());
         });
-        if (
-            view &&
-            last?.type === 'lens' &&
-            last.lens.type !== 'id' &&
-            last.lens.type !== 'field' &&
-            last.lens.type !== 'tuple' &&
-            view.targets.some((b, i) => this.revision(b) !== states![i])
-        )
-            this.error(
-                'alias-conflict',
-                n.loc,
-                'Arguments change the owner of an active computed lens',
-            );
+        for (const { source, view, revisions } of lenses.values())
+            if (
+                source.type !== 'id' &&
+                source.type !== 'field' &&
+                source.type !== 'tuple' &&
+                view.targets.some((b, i) => this.revision(b) !== revisions[i])
+            )
+                this.error(
+                    'alias-conflict',
+                    n.loc,
+                    'Arguments change the owner of an active computed lens',
+                );
         const read = this.solver.fresh(),
             write = this.solver.fresh(),
             // Unknown until the callee's result is known (a self-call resolves it from the body).
@@ -1645,11 +1662,19 @@ export class Inferencer {
             n.loc,
         );
         // A callee that says nothing borrows.
-        for (const flag of [...(view ? [owned] : []), ...(lensResult ? [resultOwned] : [])])
+        for (const flag of [
+            ...[...lenses.values()].map((l) => l.owned),
+            ...(lensResult ? [resultOwned] : []),
+        ])
             if (this.solver.lensOwnership(flag) === 'unknown')
                 this.solver.unify(flag, BORROWED_LENS, n.loc);
-        const moves = !!view && this.solver.lensOwnership(owned) === 'owned';
-        if (moves && last?.type === 'lens') this.moveLens(n, last.lens, view, replacement);
+        const borrowed: LensArgument[] = [];
+        for (const argument of lenses.values())
+            if (this.solver.lensOwnership(argument.owned) === 'owned')
+                this.moveLens(n, argument.source, argument.view, argument.replacement);
+            else borrowed.push(argument);
+        // Lenses end like nested scopes: the last one set up is restored first.
+        const restore = () => [...borrowed].reverse().forEach((l) => l.view.put(l.replacement));
         this.resultModes.set(n, (n as { share?: boolean }).share ? SHARED : resultMode);
         n.args.forEach((a, i) => {
             const param = args[i];
@@ -1666,7 +1691,7 @@ export class Inferencer {
                 );
         });
         if (!lensResult) {
-            if (!moves) view?.put(replacement);
+            restore();
             if (copy && !copy.path.length) {
                 copy.root.callsOnce = copiedOnce;
                 this.callsOnce.set(n, copiedOnce);
@@ -1674,16 +1699,15 @@ export class Inferencer {
             return { read, put: () => {}, targets: [] };
         }
         // A moved lens is the callee's now, so the result does not hang off the caller's storage.
-        const kept = moves ? undefined : view;
         return {
             read,
-            targets: kept?.targets ?? [],
-            provenance: moves ? [] : view?.provenance,
+            targets: borrowed.flatMap((l) => l.view.targets),
+            provenance: borrowed.flatMap((l) => l.view.provenance ?? l.view.targets),
             replaceable,
             owned: resultOwned,
             put: (t) => {
                 this.solver.unify(write, t, n.loc);
-                kept?.put(replacement);
+                restore();
             },
         };
     }

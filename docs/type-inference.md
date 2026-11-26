@@ -28,7 +28,7 @@ const compiled = checkFile(file);
 - First-order unification with occurs checks, rank-1 top-level schemes, fresh instantiation, and stable type printing.
 - Literals, tuples, homogeneous lists, registered constructors, pattern destructuring, functions, higher-order calls, monomorphic recursion, ordinary cases, and branch state joins.
 - Declared signatures checked with rigid variables. A narrower declaration controls the exported scheme. Argument/return annotation syntax is supported; `Int` aliases JavaScript-style `Number`, and `~A` means `A/A`.
-- Distinct value/lens modes and n-ary arity checks. Lens arguments must be final.
+- Distinct value/lens modes and n-ary arity checks. Functions and calls take any number of lens arguments, in any position. Two arguments of one call may not borrow overlapping storage; elements of one vector count as overlapping.
 - Type-changing swaps, variable aliases, tuple aliases, tuple lenses, lens-returning functions, and computed lens assignments. Swaps return the previous value's type. Inference follows decomposition's lens setup order.
 - Top-level definitions are reusable polymorphic schemes. All local values, including function literals and local copies of top-level functions, are affine monotypes: they may be unused, but each stored value may be consumed at most once. Writing a new value replenishes the storage.
 - Persistent aliases exclusively borrow their owner until scope exit. Nested aliases suspend access through the parent alias. Lens contents may be consumed, but every borrowed focus and lens parameter must hold a value when its lifetime ends.
@@ -61,7 +61,7 @@ snapshot, elaboration and typed IR contain only ordinary calls. `v[i]` becomes
 `[:push:]([:push:]([::](), a), b)`, evaluating items left to right. These import
 names are not source identifiers, so definitions cannot shadow them. Because the
 index lens reads and writes the element type, elements cannot change type or be
-left empty, and the vector stays whole. As for any final lens argument, the vector
+left empty, and the vector stays whole. As for any lens argument, the vector
 lens is set up before the index is evaluated.
 
 ## Backend elaboration

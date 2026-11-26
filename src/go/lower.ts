@@ -2561,6 +2561,9 @@ ${joinCode(
                         const abi = program.abis.find((a) => a.id === i.abi)!;
                         const isLens = layout(id).fields.some((f) => f.name === 'restore');
                         const adapters: { finish: (body: Statement[]) => void }[] = [];
+                        // Lenses end like nested scopes, the last argument first.
+                        const finishAdapters = (body: Statement[]) =>
+                            [...adapters].reverse().forEach((a) => a.finish(body));
                         if (i.detached) {
                             if (layout(id).kind !== 'unit')
                                 return unsupported('A spawned task must return ()');
@@ -2772,7 +2775,7 @@ ${joinCode(
                             if (i.detached) {
                                 body.push(go`go func() { ${call} }()`);
                                 values.set(i.out.id, zero(id));
-                                adapters.forEach((a) => a.finish(body));
+                                finishAdapters(body);
                                 continue;
                             }
                             const at: Statement[] = [call];
@@ -2792,14 +2795,13 @@ ${joinCode(
                             );
                         }
                         if (isLens) {
-                            const rest = (body: Statement[]) =>
-                                adapters.forEach((a) => a.finish(body));
+                            const rest = (body: Statement[]) => finishAdapters(body);
                             lenses.set(i.out.id, {
                                 ...runtimeLens(name, id, rest),
                                 forwarded: { expression: name, rest },
                             });
                         } else {
-                            adapters.forEach((a) => a.finish(body));
+                            finishAdapters(body);
                         }
                         continue;
                     }

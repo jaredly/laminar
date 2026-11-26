@@ -115,7 +115,11 @@ fn serve(listener, requests) {
 }
 ```
 
-(A lens argument must come last, so `requests` precedes `conn`.)
+A call may take several lenses. Their cleanups run in reverse setup order, like nested scopes, and
+a function ends the owned lens parameters it still holds from last to first. Moving one lens and
+borrowing another ends the moved one first, because its new holder ends it during the call. Two
+older cases still end in the order written: a tuple lens, and the owned lenses a closure captured
+and did not pass on.
 
 ## Checker work
 
@@ -125,7 +129,7 @@ All in the checker, testable without touching a backend.
    the `OWNED`/`SHARED` mode that plain types carry in `src/types.ts`. It has to unify, print and
    round-trip through `src/elaborated.ts` and the typed IR.
 2. **The `mut ~x` parameter.** `lambda` in `src/infer.ts` already handles `pat.type === 'lens'`,
-   including "Lens argument must be last" and the restore check at exit. An owned lens parameter
+   including the restore check at exit. An owned lens parameter
    skips the "borrowed from the caller" bookkeeping and gets its own place that it must end.
 3. **The producer rule.** A function whose result is an owned lens may take no borrowed lens
    parameter. An error otherwise, with a message that names the parameter.

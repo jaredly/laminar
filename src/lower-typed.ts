@@ -216,17 +216,15 @@ export function lowerTypedUnit(e: Elaboration): IRUnit {
             slot: { place, path: [] },
         }));
     const call = (n: (Linear | Lens) & { type: 'apply' }, b: IRBlock): IRValue => {
-        const last = n.args[n.args.length - 1];
-        const move =
-            last?.type === 'lens' ? e.lensMoves.find((m) => m.node === id(last.lens)) : undefined;
-        const finalLens =
-            last?.type === 'lens'
-                ? move
-                    ? give(b, last.lens, move.binding, type(last.lens))
-                    : lens(last.lens, b)
-                : undefined;
+        // Lenses are set up first, wherever they are written.
+        const lenses = new Map<unknown, IRValue>();
+        for (const a of n.args) {
+            if (a.type !== 'lens') continue;
+            const move = e.lensMoves.find((m) => m.node === id(a.lens));
+            lenses.set(a, move ? give(b, a.lens, move.binding, type(a.lens)) : lens(a.lens, b));
+        }
         const callee = linear(n.fn, b);
-        const args = n.args.map((a) => (a.type === 'lens' ? finalLens!.id : linear(a, b).id));
+        const args = n.args.map((a) => (a.type === 'lens' ? lenses.get(a)!.id : linear(a, b).id));
         return emit(b, n, {
             op: 'call',
             callee: callee.id,
@@ -375,22 +373,27 @@ export function lowerTypedUnit(e: Elaboration): IRUnit {
                 /** End an owned lens this function holds, unless it passed it on. */
                 const ends = (place: string): Cleanup[] =>
                     given.has(holderKey({ place })) ? [] : [endHolder({ place })];
-                parameters.forEach((p, i) => {
+                const disposals = parameters.map((p, i): Cleanup[] => {
                     const argument = t.args[i];
-                    body.cleanup.push(
-                        ...(p.lensPlace && argument.tag === 'flow'
-                            ? argument.owned
-                                ? ends(p.lensPlace)
-                                : [
-                                      {
-                                          kind: 'restored' as const,
-                                          slot: { place: p.lensPlace, path: [] },
-                                          type: argument.write,
-                                      },
-                                  ]
-                            : drops(p.pattern)),
-                    );
+                    return p.lensPlace && argument.tag === 'flow'
+                        ? argument.owned
+                            ? ends(p.lensPlace)
+                            : [
+                                  {
+                                      kind: 'restored' as const,
+                                      slot: { place: p.lensPlace, path: [] },
+                                      type: argument.write,
+                                  },
+                              ]
+                        : drops(p.pattern);
                 });
+                // Owned lenses end last to first, each in the place of a lens parameter.
+                const lensDisposals = disposals.filter((_, i) => parameters[i].lensPlace).reverse();
+                body.cleanup.push(
+                    ...disposals.flatMap((actions, i) =>
+                        parameters[i].lensPlace ? lensDisposals.shift()! : actions,
+                    ),
+                );
                 body.cleanup.push(
                     ...captures.flatMap((c): Cleanup[] =>
                         c.lens

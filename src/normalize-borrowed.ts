@@ -150,21 +150,29 @@ export function normalizeBorrowed(source: Linear): Linear {
         // Normalize children before expansion; generated core nodes need no second pass.
         const c: any = Object.fromEntries(Object.entries(n).map(([k, v]) => [k, visit(v)]));
         if (c.type === 'fn') {
-            const last = c.args.at(-1);
-            if (last?.pat?.type === 'lens' && hasConstructor(last.pat.inner)) {
-                const owner = fresh(last.pat.loc);
-                const body = c.body.type === 'lens' ? c.body.lens : c.body;
-                const arm = wrap(last.pat.inner, body, owner, c.loc);
-                const expanded = {
-                    type: 'case',
-                    value: copy(owner),
-                    cases: [{ pat: arm.pattern, body: arm.body }],
-                    loc: c.loc,
-                };
+            const matched = c.args.flatMap((a: any, i: number) =>
+                a.pat.type === 'lens' && hasConstructor(a.pat.inner) ? [i] : [],
+            );
+            if (matched.length) {
+                const args = [...c.args];
+                let body = c.body.type === 'lens' ? c.body.lens : c.body;
+                // Wrapped from the last, so the first is matched first and restored last.
+                for (const at of matched.reverse()) {
+                    const param = c.args[at];
+                    const owner = fresh(param.pat.loc);
+                    const arm = wrap(param.pat.inner, body, owner, c.loc);
+                    body = {
+                        type: 'case',
+                        value: copy(owner),
+                        cases: [{ pat: arm.pattern, body: arm.body }],
+                        loc: c.loc,
+                    };
+                    args[at] = { ...param, pat: { ...param.pat, inner: owner } };
+                }
                 return {
                     ...c,
-                    args: [...c.args.slice(0, -1), { ...last, pat: { ...last.pat, inner: owner } }],
-                    body: c.body.type === 'lens' ? { type: 'lens', lens: expanded } : expanded,
+                    args,
+                    body: c.body.type === 'lens' ? { type: 'lens', lens: body } : body,
                 };
             }
         }

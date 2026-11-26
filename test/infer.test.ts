@@ -335,7 +335,8 @@ describe('AST inference', () => {
         expect(type('fn (~x) {x := ()}')).toBe('(a/()) => a');
         expect(type('fn (~(x, y)) ~x')).toBe('((a, b)/(c, b)) => a/c');
         expect(type('fn (f, ~x) {x := f(x)}')).toBe('((a) => b, a/b) => ()');
-        rejects('fn (~x, y) y', 'lens-position');
+        expect(type('fn (~x, y) y')).toBe('(a/a, b) => b');
+        expect(type('fn (~x, ~y) ()')).toBe('(a/a, b/b) => ()');
         rejects('round(~x)', 'unbound-name');
     });
     it('instantiates higher-order flow functions and updates their arguments', () => {
@@ -399,7 +400,7 @@ describe('checked compilation', () => {
         expect(type('id(1)', checker)).toBe('Number');
         rejects('id(true)', 'type-mismatch', checker);
     });
-    it('keeps final lens setup ahead of ordinary argument evaluation', () => {
+    it('keeps lens setup ahead of ordinary argument evaluation', () => {
         const checker = new Checker();
         checker.define(expression('fn update(n, ~x) {x := n}') as Linear & { type: 'fn' });
         expect(
@@ -665,7 +666,7 @@ describe('vectors', () => {
         rejects('fn (v) v[0]', 'index-value');
         rejects('fn (~v) {v[0] := 1\nv[1] := true}', 'type-mismatch');
         rejects('fn (~v) {let x = ~v[0]\nlet y = x\n()}', 'unrestored-lens');
-        rejects('fn (~v) {v[~v] := 1}', 'lens-position');
+        rejects('fn (~v) {v[~v] := 1}', 'alias-conflict');
         rejects('fn (~v) {v[true] := 1}', 'type-mismatch');
         rejects('{let v = [:1:]\nlet w = v\nv[0] := 2}', 'type-mismatch');
     });

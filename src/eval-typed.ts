@@ -852,7 +852,8 @@ export function executeTypedProgram(
                     });
                     if (!borrowed.length) break;
                     const finish = function* (): Run<void> {
-                        for (const arg of borrowed) {
+                        // Lenses end like nested scopes, the last argument first.
+                        for (const arg of [...borrowed].reverse()) {
                             owned(arg.peek());
                             if (arg.finish !== nothing) yield* enter(arg.finish());
                         }

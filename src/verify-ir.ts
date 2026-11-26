@@ -1095,12 +1095,23 @@ export function verifyTypedProgram(program: TypedProgram): void {
                         const f = functionType(plain(take(s, i.callee)));
                         if (f.args.length !== i.args.length) fail('Call arity mismatch');
                         const effects: { cap: Cap; type: SemanticType }[] = [];
+                        const lent: SlotRef[] = [];
                         i.args.forEach((id, index) => {
                             const v = take(s, id);
                             feq(v.type, f.args[index]);
                             if (v.type.tag === 'flow') {
                                 const c = cap(v);
                                 eq(read(s, c), v.type.read);
+                                const refs = targets(c);
+                                if (
+                                    refs.some((a) =>
+                                        lent.some(
+                                            (b) => a.place === b.place && overlap(a.path, b.path),
+                                        ),
+                                    )
+                                )
+                                    fail('Overlapping call lenses', i.origin);
+                                lent.push(...refs);
                                 const parameter = f.args[index];
                                 if (parameter.tag === 'flow' && parameter.owned) {
                                     if (targets(c).length)
@@ -1111,6 +1122,8 @@ export function verifyTypedProgram(program: TypedProgram): void {
                             }
                         });
                         feq(i.out.type, f.result);
+                        // Restorations apply like nested scopes, the last argument first.
+                        effects.reverse();
                         if (f.result.tag === 'plain')
                             effects.forEach((e) => apply(s, e.cap, e.type));
                         else

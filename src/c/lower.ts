@@ -2947,6 +2947,9 @@ export function lowerC(
                             const abi = program.abis.find((a) => a.id === i.abi)!;
                             const isLens = layout(id).fields.some((f) => f.name === 'restore');
                             const adapters: { finish: (body: Statement[]) => void }[] = [];
+                            // Lenses end like nested scopes, the last argument first.
+                            const finishAdapters = (body: Statement[]) =>
+                                [...adapters].reverse().forEach((a) => a.finish(body));
                             let args: Expr[] = [];
                             if (w?.kind === 'native' && w.definition === 'native/dup') {
                                 const lens = lenses.get(i.args[0]!)!;
@@ -3057,13 +3060,12 @@ export function lowerC(
                             });
                             values.set(i.out.id, name);
                             if (isLens) {
-                                const rest = (body: Statement[]) =>
-                                    adapters.forEach((a) => a.finish(body));
+                                const rest = (body: Statement[]) => finishAdapters(body);
                                 lenses.set(i.out.id, {
                                     ...runtimeLens(name, id, rest),
                                     forwarded: { expression: name, rest },
                                 });
-                            } else adapters.forEach((a) => a.finish(body));
+                            } else finishAdapters(body);
                             continue;
                         }
                         default:
