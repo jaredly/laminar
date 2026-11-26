@@ -119,7 +119,7 @@ export type IRFunction = {
 export type IRUnit = {
     id: string;
     definition?: string;
-    signature: { quantified: string[]; bounds?: Bound[]; type: SemanticType };
+    signature: Pick<IRScheme, 'quantified' | 'bounds' | 'callsOnce' | 'type'>;
     origins: { id: string; loc?: number }[];
     bindings: BindingRecord[];
     loans: { id: string; place: string; path: number[]; parent?: string; owners?: SlotRef[] }[];
@@ -131,6 +131,7 @@ export type IRScheme = {
     linearResult?: true;
     quantified: string[];
     bounds?: Bound[];
+    callsOnce?: readonly number[];
     type: SemanticType;
 };
 export type TypedProgram = { schemaVersion: 1; imports: IRScheme[]; units: IRUnit[] };

@@ -125,6 +125,7 @@ export type Elaboration = {
     signature: {
         quantified: TypeVariableId[];
         bounds?: Bound[];
+        callsOnce?: readonly number[];
         type: SemanticType;
         bodyType: SemanticType;
         bodyVariables: { variable: TypeVariableId; type: SemanticType }[];
@@ -401,6 +402,7 @@ export class ElaborationBuilder {
             signature: {
                 quantified,
                 ...(scheme.bounds && { bounds: scheme.bounds }),
+                ...(scheme.callsOnce && { callsOnce: scheme.callsOnce }),
                 type: type(scheme.body),
                 bodyType: body,
                 bodyVariables: [...bodyVariables].map(([id, t]) => ({

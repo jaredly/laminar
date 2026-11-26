@@ -2,7 +2,6 @@ import {
     comparableUnions,
     requirements,
     linearUnions,
-    type Bound,
     type Predicate,
 } from './constraints.ts';
 import type { SemanticFlow, SemanticType } from './elaborated.ts';
@@ -174,10 +173,7 @@ export function verifyTypedProgram(program: TypedProgram): void {
             ]),
         );
     if (program.schemaVersion !== 1) fail('Unknown IR version');
-    const closedScheme = (
-        scheme: { quantified: string[]; bounds?: Bound[]; type: SemanticType },
-        definition: string,
-    ): void => {
+    const closedScheme = (scheme: IRUnit['signature'], definition: string): void => {
         validType(scheme.type);
         const allowed = new Set(scheme.quantified);
         if (
@@ -185,6 +181,17 @@ export function verifyTypedProgram(program: TypedProgram): void {
             scheme.quantified.some((p, i) => p !== `${definition}/q${i}`)
         )
             fail('Invalid quantified type parameters');
+        for (const index of scheme.callsOnce ?? []) {
+            const arg = scheme.type.tag === 'fn' && scheme.type.args[index];
+            if (
+                !Number.isInteger(index) ||
+                !arg ||
+                arg.tag !== 'plain' ||
+                arg.mode === 'shared' ||
+                arg.value.tag !== 'fn'
+            )
+                fail('Invalid exactly-once callback parameter');
+        }
         for (const b of scheme.bounds ?? [])
             if (
                 !['Display', 'Comparable', 'Copyable', 'Droppable'].includes(b.predicate) ||

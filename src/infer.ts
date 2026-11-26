@@ -46,7 +46,12 @@ import {
 } from './types.ts';
 
 type Borrow = { path: number[]; parent?: Borrow; id: string };
+type OnceParameters = readonly number[] | undefined;
+const commonOnceParameters = (a: OnceParameters, b: OnceParameters): OnceParameters =>
+    a && b && a.filter((i) => b.includes(i));
 type Root = {
+    /** Evidence for the function value currently occupying this whole place. */
+    callsOnce?: OnceParameters;
     /** Provenance retained while this computed focus owns deferred restoration. */
     owners?: Binding[];
     // Exclusive protection is independent of permission to retain owned backing.
@@ -100,8 +105,6 @@ export type InferOptions = {
     /** Linear types exist, so a closure may take an owned lens or become linear. */
     linearTypes?: boolean;
     plainBinders?: ReadonlySet<number>;
-    /** Which parameters of a published definition consume a linear closure. */
-    acceptsLinear?: ReadonlyMap<string, ReadonlySet<number>>;
 };
 export type TypeEnvironment = ReadonlyMap<string, Scheme>;
 /** User-declared type names. Unions are nominal; aliases expand at each use. */
@@ -145,7 +148,7 @@ export class Inferencer {
     private consumingUses = new Set<string>();
     private rootFunction?: object;
     private rootDeclaration?: Decl;
-    private acceptsLinear = new Set<number>();
+    private callsOnce = new WeakMap<object, OnceParameters>();
     /**
      * Checks that need every type known. A function can turn out to be one-use after a call
      * that passed it has been checked, when a channel carries it further on.
@@ -394,6 +397,7 @@ export class Inferencer {
                 return this.error('alias-shape', loc, 'Aliased tuple shape changed');
             return tuple(...p.items.map((v, i) => (i === path[0] ? update(v, path.slice(1)) : v)));
         };
+        b.root.callsOnce = undefined;
         b.root.type = update(b.root.type, b.path);
         const revisionPath = JSON.stringify(b.path);
         b.root.revisions.set(revisionPath, (b.root.revisions.get(revisionPath) ?? 0) + 1);
@@ -579,6 +583,8 @@ export class Inferencer {
             ),
             this.declaredLinear,
         );
+        const callsOnce = this.callsOnce.get(ast);
+        if (callsOnce?.length) scheme.callsOnce = callsOnce;
         const elaboration = this.builder.finish(
             ast,
             declaration,
@@ -590,7 +596,7 @@ export class Inferencer {
         const bindingRecords = new Map(elaboration.bindings.map((b) => [b.id, b]));
         return {
             elaboration,
-            acceptsLinear: this.acceptsLinear,
+            acceptsLinear: new Set(callsOnce),
             type: this.solver.resolve(type),
             scheme,
             types: new Map(
@@ -872,6 +878,9 @@ export class Inferencer {
         this.current = n;
         try {
             const t = this.linearInner(n, env);
+            if (n.type === 'let') this.callsOnce.set(n, this.callsOnce.get(n.body));
+            if (n.type === 'tuple' && n.items.length === 1)
+                this.callsOnce.set(n, this.callsOnce.get(n.items[0]!));
             const mode = this.expressionMode(n);
             this.modes.set(n, mode);
             this.record(n, plain(t, mode));
@@ -886,6 +895,10 @@ export class Inferencer {
             case 'op': {
                 const b = this.lookup(env, n.text, n.loc);
                 this.use(n, b, 'value');
+                this.callsOnce.set(
+                    n,
+                    b.scheme?.callsOnce ?? (!b.path.length ? b.root.callsOnce : undefined),
+                );
                 return b.scheme ? this.instantiate(n.text, b.scheme, n) : this.consume(b, n.loc);
             }
             case 'number':
@@ -954,7 +967,12 @@ export class Inferencer {
                         'Assignment RHS changes the owner of an active computed lens',
                     );
                 const previous = view.read;
+                const target =
+                    n.lens.type === 'id' ? this.lookup(env, n.lens.text, n.loc) : undefined;
+                if (target && !target.path.length) this.callsOnce.set(n, target.root.callsOnce);
                 view.put(value);
+                if (target && !target.path.length)
+                    target.root.callsOnce = this.callsOnce.get(n.value);
                 return previous;
             }
             case 'let':
@@ -1015,8 +1033,10 @@ export class Inferencer {
             if (lensCaptures.has(name)) continue;
             const b = this.lookup(env, name, n.loc);
             if (!b.scheme) {
+                const once = !b.path.length ? b.root.callsOnce : undefined;
                 const type = this.consume(b, n.loc),
                     captured = this.freshBinding(type);
+                captured.root.callsOnce = once;
                 this.declare(captured, name, n, 'capture');
                 this.builder.captures.push({
                     node: this.builder.node(n),
@@ -1112,8 +1132,8 @@ export class Inferencer {
             entry: functionEntry,
             exit: functionRoots.map((r) => this.state(r)),
         });
-        if (n === this.rootFunction)
-            this.acceptingParameters(n, args, parameters, sub, branchStart);
+        if (this.options.linearTypes)
+            this.callsOnce.set(n, this.acceptingParameters(n, args, parameters, sub, branchStart));
         const linear =
             !!this.options.linearTypes &&
             (lensEnds.length > 0 ||
@@ -1130,7 +1150,8 @@ export class Inferencer {
         parameters: string[][],
         sub: Env,
         branchStart: number,
-    ): void {
+    ): number[] {
+        const accepted: number[] = [];
         n.args.forEach((a, i) => {
             const type = args[i];
             if (a.pat.type !== 'id' || a.shared !== false || type.tag !== 'plain') return;
@@ -1145,18 +1166,31 @@ export class Inferencer {
                     .filter((u) => u.binding === id)
                     .every((u) => u.mode === 'value' && this.consumingUses.has(u.node)) &&
                 this.builder.branches.slice(branchStart).every((branch) => {
-                    const after = branch.output.find((s) => s.place === root.place);
+                    const agrees = (joined: RawState[], arms: RawState[][]) => {
+                        const after = joined.find((s) => s.place === root.place);
+                        return (
+                            !after ||
+                            !consumed(after) ||
+                            arms.every((arm) => consumed(arm.find((s) => s.place === root.place)!))
+                        );
+                    };
+                    // A lens branch also runs a cleanup per arm, after its setup.
                     return (
-                        !after ||
-                        !consumed(after) ||
-                        branch.arms.every((arm) =>
-                            consumed(arm.output.find((s) => s.place === root.place)!),
-                        )
+                        agrees(
+                            branch.output,
+                            branch.arms.map((arm) => arm.output),
+                        ) &&
+                        (!branch.restored ||
+                            agrees(
+                                branch.restored,
+                                branch.arms.map((arm) => arm.restored!),
+                            ))
                     );
                 })
             )
-                this.acceptsLinear.add(i);
+                accepted.push(i);
         });
+        return accepted;
     }
     /**
      * Resolve `r.a.b` (a variable followed by field names) to a binding at the field's
@@ -1282,6 +1316,7 @@ export class Inferencer {
                 'A plain (shared) value cannot initialize a `mut` binding; `dup(x)` it first',
             );
         this.pattern(p, type, sub);
+        if (p.type === 'id') sub.get(p.text)!.root.callsOnce = this.callsOnce.get(n.value);
         // First-class functions are affine monotypes; only top-level definitions are reusable schemes.
         const close = () =>
             this.builder.scopes.push({
@@ -1558,19 +1593,21 @@ export class Inferencer {
         if (n.fn.type === 'id') this.consumingUses.add(this.builder.node(n.fn));
         const global =
             n.fn.type === 'id' && this.bindings.get(n.fn)?.scheme ? n.fn.text : undefined;
-        const accepts =
-            global === undefined
-                ? undefined
-                : this.options.acceptsLinear?.get(
-                      this.builder.context.definitions?.get(global) ?? `native/${global}`,
-                  );
+        const accepts = this.callsOnce.get(n.fn);
+        // A copy of a callable has the same callback contract as its source.
+        const copy =
+            global === 'dup' && last?.type === 'lens' && last.lens.type === 'id'
+                ? this.lookup(env, last.lens.text, n.loc)
+                : undefined;
+        const copiedOnce = copy && !copy.path.length ? copy.root.callsOnce : undefined;
         const replacement = this.solver.fresh(),
             // Unknown until the callee is: its signature says whether this call borrows or moves.
             owned = this.solver.fresh();
         const args = n.args.map((a, i) => {
             if (a.type === 'lens') return flow(view!.read, replacement, view!.replaceable, owned);
             const value = this.linear(a, env);
-            if (accepts?.has(i) && a.type === 'id') this.consumingUses.add(this.builder.node(a));
+            if (accepts?.includes(i) && a.type === 'id')
+                this.consumingUses.add(this.builder.node(a));
             this.recheckArgument(callee, i, value, accepts, a);
             const passed =
                 global === 'chanSend' && i === 1
@@ -1630,6 +1667,10 @@ export class Inferencer {
         });
         if (!lensResult) {
             if (!moves) view?.put(replacement);
+            if (copy && !copy.path.length) {
+                copy.root.callsOnce = copiedOnce;
+                this.callsOnce.set(n, copiedOnce);
+            }
             return { read, put: () => {}, targets: [] };
         }
         // A moved lens is the callee's now, so the result does not hang off the caller's storage.
@@ -1683,11 +1724,11 @@ export class Inferencer {
         callee: Ty,
         index: number,
         value: Ty,
-        accepts: ReadonlySet<number> | undefined,
+        accepts: OnceParameters,
         node: Linear,
     ): void {
         const known = this.solver.prune(callee);
-        if (known.tag !== 'fn' || accepts?.has(index)) return;
+        if (known.tag !== 'fn' || accepts?.includes(index)) return;
         const parameter = known.args[index];
         if (parameter?.tag !== 'plain') return;
         const expected = this.solver.prune(parameter.value);
@@ -1712,7 +1753,7 @@ export class Inferencer {
         callee: Ty,
         index: number,
         value: Ty,
-        accepts: ReadonlySet<number> | undefined,
+        accepts: OnceParameters,
         node: Linear,
     ): Ty {
         const argument = this.solver.prune(value);
@@ -1729,7 +1770,7 @@ export class Inferencer {
         if (expected.linear)
             return argument.linear ? value : fn(argument.args, argument.result, true);
         if (!argument.linear) return value;
-        if (!accepts?.has(index)) this.unaccepted(node);
+        if (!accepts?.includes(index)) this.unaccepted(node);
         return fn(argument.args, argument.result);
     }
     private aslens(n: Lens & { type: 'aslens' }, env: Env): View {
@@ -1796,6 +1837,7 @@ export class Inferencer {
             borrows: Set<Borrow>;
             revisions: Map<string, number>;
             moved?: boolean;
+            callsOnce?: OnceParameters;
         }[];
         const snapshot = (): Snapshot =>
             roots.map((r) => ({
@@ -1804,6 +1846,7 @@ export class Inferencer {
                 borrows: new Set(r.borrows),
                 revisions: new Map(r.revisions),
                 moved: r.moved,
+                callsOnce: r.callsOnce,
             }));
         const restore = (states: Snapshot) =>
             roots.forEach((r, i) =>
@@ -1855,6 +1898,7 @@ export class Inferencer {
                     type,
                     empty,
                     moved: states[0][i].moved,
+                    callsOnce: states.map((s) => s[i].callsOnce).reduce(commonOnceParameters),
                     borrows: new Set(initial[i].borrows),
                     revisions: this.joinRevisions(states.map((s) => s[i].revisions)),
                 };
@@ -1966,17 +2010,26 @@ export class Inferencer {
             empty: [...r.empty],
             revisions: new Map(r.revisions),
             moved: r.moved,
+            callsOnce: r.callsOnce,
         }));
         // Per outer place: whether some arm moved it, and whether some arm left it unrestorable.
         const moved = roots.map(() => false),
             unrestorable = roots.map(() => false);
-        let joined: { type: Ty; empty: number[][]; revisions: Map<string, number> }[] | undefined;
+        let joined:
+            | {
+                  type: Ty;
+                  empty: number[][];
+                  revisions: Map<string, number>;
+                  callsOnce: OnceParameters;
+              }[]
+            | undefined;
         for (const branch of n.cases) {
             roots.forEach((r, i) => {
                 r.type = initial[i].type;
                 r.empty = [...initial[i].empty];
                 r.revisions = new Map(initial[i].revisions);
                 r.moved = initial[i].moved;
+                r.callsOnce = initial[i].callsOnce;
             });
             const sub = new Map(env);
             this.pattern(branch.pat, scrutinee, sub);
@@ -2002,6 +2055,7 @@ export class Inferencer {
             if (!joined)
                 joined = roots.map((r) => ({
                     type: r.type,
+                    callsOnce: r.callsOnce,
                     empty: [...r.empty],
                     revisions: new Map(r.revisions),
                 }));
@@ -2030,6 +2084,7 @@ export class Inferencer {
                         const type = erase(joined![i].type);
                         this.solver.unify(type, erase(r.type), n.loc);
                         joined![i] = {
+                            callsOnce: commonOnceParameters(joined![i].callsOnce, r.callsOnce),
                             type,
                             empty,
                             revisions: this.joinRevisions([joined![i].revisions, r.revisions]),
@@ -2047,6 +2102,7 @@ export class Inferencer {
         }
         roots.forEach((r, i) => {
             r.type = joined![i].type;
+            r.callsOnce = joined![i].callsOnce;
             r.empty = joined![i].empty;
             r.revisions = new Map(joined![i].revisions);
             // Moved on one path is moved afterwards; the other paths end it at the branch edge.
@@ -2060,6 +2116,10 @@ export class Inferencer {
         });
         branchRecord.output = this.states(env);
         this.builder.branches.push(branchRecord);
+        this.callsOnce.set(
+            n,
+            n.cases.map((arm) => this.callsOnce.get(arm.body)).reduce(commonOnceParameters),
+        );
         return result;
     }
 }

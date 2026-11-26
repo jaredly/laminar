@@ -1,7 +1,7 @@
 import { expect, it } from 'bun:test';
 import { readLines } from '../parser-generator/lexer.ts';
 import { grammar } from '../src/laminar-parser.ts';
-import type { Decl, FileItem } from '../src/ast.ts';
+import type { Decl, FileItem, Linear, TypeDecl } from '../src/ast.ts';
 import { Checker } from '../src/check.ts';
 import { checkSource } from '../src/compiler.ts';
 import { dualMode } from '../src/mode.ts';
@@ -172,6 +172,159 @@ it('passes a linear closure only to a function that consumes it', () => {
     expect(run('fn run(mut task) { let mut again = dup(~task)\n task()\n again() }')).toBe('linear-unconsumed');
     // hands it to another closure that may be dropped
     expect(run('fn run(mut task) { let mut later = fn () { task() }\n 0 }')).toBe('linear-unconsumed');
+});
+
+it('carries exactly-once callback evidence through function values', () => {
+    const source = (bind: string) =>
+        `// laminar: dual
+type linear Token { Token(Number) }
+fn finish(mut t) { match t { mut Token(n) -> n } }
+fn run(mut f) { f() }
+fn maybe(mut f) { if true then f() else 0 }
+{
+    ${bind}
+    let mut t = Token(42)
+    runner(fn () { finish(t) })
+}`;
+    for (const bind of [
+        'let runner = run',
+        'let runner = fn (mut f) { f() }',
+        'let first = run\n let runner = first',
+        'let runner = if true then run else run',
+        'let runner = fn (mut f) { let invoke = run\n invoke(f) }',
+        'let invoke = run\n let runner = fn (mut f) { invoke(f) }',
+        'let mut runner = maybe\n runner := run',
+    ])
+        expect(executeTypedProgram(checkSource(source(bind)))).toBe(42);
+    for (const bind of [
+        'let runner = maybe',
+        'let runner = if true then run else maybe',
+        'let mut runner = run\n runner := maybe',
+        'let mut runner = run\n if true then {runner := maybe\n ()} else ()',
+    ])
+        expect(() => checkSource(source(bind))).toThrow('must be called exactly once');
+});
+
+it('drops callback evidence when a lens call may replace the function', () => {
+    const use = (bind: string) =>
+        code(`${conn}fn run(mut f) { f() }
+fn maybe(mut f) { if true then f() else 0 }
+fn clobber(~f) { f := maybe }
+{
+    ${bind}
+    let mut c = Conn(1)
+    runner(fn () { finish(c) })
+}`);
+    expect(use('let mut runner = run\n let copy = dup(~runner)\n let runner = copy')).toBe('ok');
+    expect(use('let mut runner = run\n clobber(~runner)')).toBe('linear-unconsumed');
+    expect(use('let mut runner = run\n let pair = (runner, maybe)\n let (runner, _) = pair')).toBe(
+        'linear-unconsumed',
+    );
+    // first-class spawn has no proof of its own
+    expect(use('let runner = spawn')).toBe('linear-unconsumed');
+});
+
+it('requires every lens cleanup arm to call the callback', () => {
+    const pick = (other: string) =>
+        code(`${conn}fn pick(mut f, flag) {
+    {let g = ~{match flag {
+        true -> {lens x <- 1\n { f()\n () }}
+        false -> {lens y <- 2\n { ${other}\n () }}
+    }}\n g := 3}
+    ()
+}
+{
+    let mut c = Conn(1)
+    pick(fn () { let n = finish(c)\n () }, false)
+}`);
+    expect(pick('f()')).toBe('ok');
+    expect(pick('()')).toBe('linear-unconsumed');
+});
+
+it('requires every lens branch arm to consume the same linear values', () => {
+    const pick = (first: string, second: string) =>
+        program(
+            `let mut c = Conn(1)
+    let flag = false
+    {let g = ~{match flag {
+        true -> {${first}}
+        false -> {${second}}
+    }}
+    g := 3}
+    0`,
+            conn,
+        );
+    const idle = 'lens x <- 1\n ()';
+    const inSetup = 'lens x <- { let n = finish(c)\n 1 }\n ()';
+    const inCleanup = 'lens x <- 1\n { let n = finish(c)\n () }';
+    for (const arm of [inSetup, inCleanup]) {
+        expect(pick(arm, arm)).toBe('ok');
+        expect(pick(arm, idle)).toBe('linear-unconsumed');
+        expect(pick(idle, arm)).toBe('linear-unconsumed');
+    }
+    // cleanups start from the joined setup, so the stages cannot be mixed
+    expect(pick(inSetup, inCleanup)).toBe('use-after-move');
+});
+
+it('does not count a value one lens arm lends and puts back as consumed by the others', () => {
+    const pick = (first: string, second: string, after = 'finish(c)') =>
+        program(
+            `let mut c = Conn(1)
+    let flag = false
+    {let g = ~{match flag {
+        true -> {${first}}
+        false -> {${second}}
+    }}
+    let mut old = (g := Conn(3))
+    finish(old)}
+    ${after}`,
+            conn,
+        );
+    const lends = 'lens x <- c\n { c := x\n () }';
+    const idle = 'lens x <- Conn(2)\n { let n = finish(x)\n () }';
+    expect(pick(lends, lends)).toBe('ok');
+    for (const [first, second] of [
+        [lends, idle],
+        [idle, lends],
+    ] as const) {
+        expect(pick(first, second)).toBe('use-after-move');
+        // left alone afterwards, the arm that never lent it would drop it
+        expect(pick(first, second, '0')).toBe('linear-unconsumed');
+    }
+});
+
+it('does not let a generic value be dropped by one lens branch arm', () => {
+    const generic = `${conn}fn lose(mut v, flag) {
+    {let g = ~{match flag {
+        true -> {lens x <- 1\n { let mut kept = v\n kept }}
+        false -> {lens y <- 2\n ()}
+    }}
+    g := 3}
+}
+fn keep(mut v) { v }
+`;
+    expect(program('let mut c = Conn(1)\n lose(c, false)\n 0', generic)).toBe('linear-unconsumed');
+});
+
+it('keeps callback evidence on schemes imported by another checker', () => {
+    const parse = (source: string) => {
+        const parsed = grammar.parse<FileItem>('FileItem', readLines(source).nodes[0]!);
+        if (parsed.type === 'failure') throw Error('Syntax');
+        return parsed.value as Linear;
+    };
+    const first = new Checker(undefined, undefined, 'first', dualMode);
+    for (const source of ['fn run(mut f) { f() }', 'fn maybe(mut f) { if true then f() else 0 }'])
+        first.publish(first.check(parse(source)));
+    const second = new Checker(first.definitions, first.constructorDefinitions, 'second', dualMode);
+    second.addType(parse('type linear Fd { Fd(Number) }') as unknown as TypeDecl);
+    const call = (name: string) =>
+        parse(`{
+    let runner = ${name}
+    let mut fd = Fd(1)
+    runner(fn () { match fd { mut Fd(n) -> n } })
+}`);
+    second.lowerTyped(second.check(call('run')));
+    expect(() => second.check(call('maybe'))).toThrow('must be called exactly once');
 });
 
 it('keeps a returned closure linear across definitions', () => {

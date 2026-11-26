@@ -76,6 +76,7 @@ export function importScheme(definition: string, scheme: Scheme): IRScheme {
     return {
         definition,
         ...(scheme.bounds && { bounds: structuredClone(scheme.bounds) }),
+        ...(scheme.callsOnce && { callsOnce: scheme.callsOnce }),
         quantified: [...vars.values()],
         type: type(scheme.body),
     };
@@ -620,6 +621,7 @@ export function lowerTypedUnit(e: Elaboration): IRUnit {
         definition: e.source.type === 'fn' && e.source.name ? e.id : undefined,
         signature: {
             ...(e.signature.bounds && { bounds: e.signature.bounds }),
+            ...(e.signature.callsOnce && { callsOnce: e.signature.callsOnce }),
             quantified: e.signature.quantified,
             type: e.signature.type,
         },

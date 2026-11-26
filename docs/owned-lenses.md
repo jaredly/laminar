@@ -247,10 +247,13 @@ linearity is not inferred through unification:
 
 - A closure is linear when it captured a linear value or an owned lens. Two function types that
   differ in this do not unify (`linear-closure-mismatch`), so two branches cannot mix them.
-- A linear closure can be passed to a top-level function whose `mut` parameter is only ever called,
-  or passed on to another such parameter, once on every path. `spawn` counts as a call. Anything
-  else is `linear-unconsumed`. This is conservative: a local function and a recursive self-call
-  never qualify.
+- A function can receive a linear closure in a `mut` parameter when every path calls it
+  exactly once or forwards it to another parameter with that guarantee. Named definitions
+  export the verified parameter positions in their schemes. Local function literals and
+  aliases carry the same evidence. After a branch, only guarantees shared by every arm
+  survive. Replacing a function in storage replaces its guarantee as well.
+  A direct `spawn(task)` counts as a call; `spawn` used as a value carries no guarantee.
+  A recursive self-call has no inferred guarantee while its body is being checked.
 - A generic closure that captures a value of unknown type can only be used at types that are not
   linear.
 

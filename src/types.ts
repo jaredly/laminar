@@ -36,7 +36,13 @@ export type Ty =
 export type FlowTy =
     | { tag: 'plain'; value: Ty; mode: Ty }
     | { tag: 'flow'; read: Ty; write: Ty; replaceable: Ty; owned: Ty };
-export type Scheme = { quantified: number[]; bounds?: Bound[]; body: Ty };
+export type Scheme = {
+    quantified: number[];
+    bounds?: Bound[];
+    /** Callback parameters this callable invokes or forwards exactly once on every path. */
+    callsOnce?: readonly number[];
+    body: Ty;
+};
 export const con = (name: string, ...args: Ty[]): Ty => ({ tag: 'con', name, args });
 export const tuple = (...items: Ty[]): Ty => ({ tag: 'tuple', items });
 export const record = (fields: { name: string; type: Ty }[]): Ty => ({

@@ -39,7 +39,6 @@ export class Checker {
             scheme: Scheme;
             definitionId: string;
             elaboration: Elaboration;
-            acceptsLinear: ReadonlySet<number>;
             imports: IRScheme[];
         }
     >();
@@ -87,8 +86,6 @@ export class Checker {
             ...this.constructorImports(),
         ];
     }
-    /** Per published definition: the parameters that consume a linear closure. */
-    private acceptsLinear = new Map<string, ReadonlySet<number>>();
     private declaredLinear = (name: string): boolean => {
         const definition = this.types.get(name);
         return definition?.kind === 'union' && !!definition.linear;
@@ -131,11 +128,24 @@ export class Checker {
             variables(node.type.value).forEach((id) => lost.add(id));
         }
         // Consumed on one path is not consumed on all of them.
-        for (const branch of elaboration.branches) {
-            if (branch.restored) continue;
-            for (const after of branch.output)
-                for (const arm of branch.arms) {
-                    const state = arm.output.find((s) => s.place === after.place)!;
+        // A lens branch is compared twice. Its cleanups start from the joined setup, where an
+        // arm that kept a value already looks as if it had consumed it.
+        const joins = elaboration.branches.flatMap((branch) => [
+            { node: branch.node, joined: branch.output, arms: branch.arms.map((a) => a.output) },
+            ...(branch.restored
+                ? [
+                      {
+                          node: branch.node,
+                          joined: branch.restored,
+                          arms: branch.arms.map((a) => a.restored!),
+                      },
+                  ]
+                : []),
+        ]);
+        for (const { node, joined, arms } of joins) {
+            for (const after of joined)
+                for (const arm of arms) {
+                    const state = arm.find((s) => s.place === after.place)!;
                     for (const path of after.empty) {
                         if (state.empty.some((p) => p.every((v, i) => path[i] === v))) continue;
                         const type = project(state.type, path);
@@ -144,7 +154,7 @@ export class Checker {
                         if (isLinear(type, this.declaredLinear))
                             throw new TypeDiagnostic(
                                 'linear-unconsumed',
-                                loc(branch.node),
+                                loc(node),
                                 'A linear value consumed by one branch must be consumed by all of them',
                             );
                     }
@@ -246,7 +256,6 @@ export class Checker {
             {
                 linearTypes: this.policy.linearTypes,
                 plainBinders,
-                acceptsLinear: this.acceptsLinear,
             },
         ).infer(ast, declaration);
         verifyElaboration(inference.elaboration);
@@ -278,7 +287,6 @@ export class Checker {
             scheme: structuredClone(scheme),
             definitionId: inference.elaboration.id,
             elaboration,
-            acceptsLinear: inference.acceptsLinear,
             imports: [
                 ...[...this.environment].map(([name, scheme]) =>
                     importScheme(this.definitionIds.get(name)!, scheme),
@@ -317,7 +325,6 @@ export class Checker {
             );
         this.environment.set(stored.ast.name, structuredClone(stored.scheme));
         this.definitionIds.set(stored.ast.name, stored.definitionId);
-        this.acceptsLinear.set(stored.definitionId, stored.acceptsLinear);
     }
     define(
         ast: Linear & { type: 'fn' },
