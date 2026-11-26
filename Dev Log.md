@@ -2,6 +2,7 @@
 BTW we should allow the lens arg to be anywhere, not just the last of the fn (that's a relic of currying)
 
 heyyy what if instead of `mut` we call it `my` lol. So it's owned, not shared.
+yeah I like that.
 
 ---
 
