@@ -39,6 +39,8 @@ export const record = (fields: { name: string; type: Ty }[]): Ty => ({
 export const plain = (value: Ty, mode: Ty = OWNED): FlowTy => ({ tag: 'plain', value, mode });
 /** A parameter that only reads its argument, so it accepts shared and owned values alike. */
 export const reads = (value: Ty): FlowTy => plain(value, SHARED);
+/** The builtin channel type, `Chan(a)`. */
+export const CHANNEL = 'Chan';
 /** The names start with `$` so they cannot collide with a user-declared type. */
 const REPLACEABLE_NAME = '$replaceable';
 const FIXED_NAME = '$fixed';
@@ -114,11 +116,34 @@ export class Solver {
     private next = 0;
     private substitutions = new Map<number, Ty>();
     private modeMetas = new Set<number>();
+    /** Variables standing for what a channel carries: any function they turn out to be is one-use. */
+    private carriedMetas = new Set<number>();
     fresh(): Ty {
         return { tag: 'meta', id: this.next++ };
     }
     rigid(): Ty {
         return { tag: 'rigid', id: this.next++ };
+    }
+    /**
+     * `value` is carried by a channel (docs/concurrency.md). A function sent over one may own
+     * anything, so whoever receives it must call it exactly once: it is linear, even where the
+     * receiver's code is all that has been seen of it. This marks the function's own type
+     * object, so every reference to it agrees.
+     */
+    private carried(value: Ty): void {
+        const t = this.prune(value);
+        if (t.tag === 'meta') this.carriedMetas.add(t.id);
+        else if (t.tag === 'fn') t.linear = true;
+        else if (t.tag === 'tuple') t.items.forEach((v) => this.carried(v));
+        else if (t.tag === 'record') t.fields.forEach((f) => this.carried(f.type));
+        else if (t.tag === 'con' && t.name !== CHANNEL) t.args.forEach((v) => this.carried(v));
+    }
+    /** Apply `carried` to what every channel type within `t` carries. */
+    channels(t: Ty): void {
+        mapType(t, (v) => {
+            if (v.tag === 'con' && v.name === CHANNEL) v.args.forEach((a) => this.carried(a));
+            return undefined;
+        });
     }
     prune(t: Ty): Ty {
         if (t.tag !== 'meta') return t;
@@ -147,12 +172,11 @@ export class Solver {
     }
     instantiateWithArguments(s: Scheme, rigid = false): { type: Ty; arguments: Map<number, Ty> } {
         const vars = new Map(s.quantified.map((id) => [id, rigid ? this.rigid() : this.fresh()]));
-        return {
-            type: mapType(this.resolve(s.body), (t) =>
-                t.tag === 'meta' ? vars.get(t.id) : undefined,
-            ),
-            arguments: vars,
-        };
+        const type = mapType(this.resolve(s.body), (t) =>
+            t.tag === 'meta' ? vars.get(t.id) : undefined,
+        );
+        this.channels(type);
+        return { type, arguments: vars };
     }
     generalize(t: Ty, environment: Scheme[]): Scheme {
         const excluded = new Set(
@@ -278,6 +302,8 @@ export class Solver {
             if (this.free(value).has(variable.id))
                 throw new TypeDiagnostic('infinite-type', loc, 'Type contains itself');
             this.substitutions.set(variable.id, value);
+            if (this.carriedMetas.has(variable.id)) this.carried(value);
+            if (value.tag === 'con' && value.name === CHANNEL) this.channels(value);
             return;
         }
         if (
@@ -286,6 +312,10 @@ export class Solver {
             a.name === b.name &&
             a.args.length === b.args.length
         ) {
+            if (a.name === CHANNEL) {
+                this.channels(a);
+                this.channels(b);
+            }
             a.args.forEach((v, i) => this.unify(v, b.args[i], loc));
             return;
         }

@@ -155,7 +155,7 @@ export class Checker {
                         throw new TypeDiagnostic(
                             'linear-unconsumed',
                             loc(inst.node),
-                            `${decodeURIComponent(inst.definition.split('/').at(-1)!)} drops its argument, so it cannot take a linear value`,
+                            `${decodeURIComponent(inst.definition.split('/').at(-1)!)}, or something it passes this to, can drop a value of this type, so the type cannot be linear. If it receives from a channel, check that it consumes everything it receives`,
                         );
                     // Passing a generic value on to a function that drops it drops it too.
                     variables(argument.type).forEach((id) => lost.add(id));
@@ -180,16 +180,17 @@ export class Checker {
                     )
                     .map((b) => b.place),
             );
-            if (
-                scope.exit.some(
-                    (state) => owned.has(state.place) && isLinear(state.type, this.declaredLinear),
-                )
-            )
-                throw new TypeDiagnostic(
-                    'linear-unconsumed',
-                    loc(scope.node),
-                    'A linear value must be consumed before its scope ends',
-                );
+            for (const state of scope.exit) {
+                if (!owned.has(state.place) || state.empty.some((path) => !path.length)) continue;
+                if (isLinear(state.type, this.declaredLinear))
+                    throw new TypeDiagnostic(
+                        'linear-unconsumed',
+                        loc(scope.node),
+                        'A linear value must be consumed before its scope ends',
+                    );
+                // Left behind here, so it cannot turn out to be linear where this is used.
+                variables(state.type).forEach((id) => lost.add(id));
+            }
         }
         // `_` drops what it matches.
         for (const node of elaboration.nodes) {
@@ -519,7 +520,8 @@ function variables(type: SemanticType): string[] {
         case 'variable':
             return [type.id];
         case 'con':
-            return type.args.flatMap(variables);
+            // Holding a channel holds nothing of what it carries.
+            return type.name === 'Chan' ? [] : type.args.flatMap(variables);
         case 'tuple':
             return type.items.flatMap(variables);
         case 'record':

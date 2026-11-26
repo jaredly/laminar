@@ -68,7 +68,7 @@ it('keeps a server accept loop a loop', () => {
     expect(code).not.toMatch(/= serve\(/);
 });
 
-for (const file of ['server.lm', 'server-pool.lm'])
+for (const file of ['server.lm', 'server-pool.lm', 'server-bounded.lm', 'server-workers.lm'])
     it(`checks the ${file} example`, () => {
         const source = readFileSync(new URL(`../../examples/${file}`, import.meta.url), 'utf8');
         expect(() => checkSource(source)).not.toThrow();

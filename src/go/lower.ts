@@ -764,8 +764,9 @@ ${joinCode(
         }
         if (op === 'chanNew') {
             table();
+            // One Go channel type carries every `Chan(a)`: the checker keeps each to one type.
             hostFunction('hostChanNew', 'func hostChanNew() float64', [
-                'return hostRegister(make(chan float64))',
+                'return hostRegister(make(chan any))',
             ]);
             return go`hostChanNew()`;
         }
@@ -773,9 +774,9 @@ ${joinCode(
             table();
             hostFunction(
                 'hostChanSend',
-                goText`func hostChanSend(handle float64, value float64) ${type(result)}`,
+                goText`func hostChanSend(handle float64, value any) ${type(result)}`,
                 [
-                    'channel, ok := hostLookup(handle).(chan float64)',
+                    'channel, ok := hostLookup(handle).(chan any)',
                     { head: 'if !ok', body: ['panic("not a channel handle")'] },
                     'channel <- value',
                     unit,
@@ -785,12 +786,13 @@ ${joinCode(
         }
         if (op === 'chanRecv') {
             table();
-            hostFunction('hostChanRecv', 'func hostChanRecv(handle float64) float64', [
-                'channel, ok := hostLookup(handle).(chan float64)',
+            // The assertion is inside, so a discarded receive is still a call statement.
+            hostFunction('hostChanRecv', 'func hostChanRecv[T any](handle float64) T', [
+                'channel, ok := hostLookup(handle).(chan any)',
                 { head: 'if !ok', body: ['panic("not a channel handle")'] },
-                'return <-channel',
+                'return (<-channel).(T)',
             ]);
-            return go`hostChanRecv(${args[0]})`;
+            return go`hostChanRecv[${type(result)}](${args[0]})`;
         }
         if (op === 'listen') {
             table();

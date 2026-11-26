@@ -36,6 +36,7 @@ import {
     OWNED_LENS,
     REPLACEABLE,
     SHARED,
+    CHANNEL,
     reads,
     mapType,
     type Ty,
@@ -113,6 +114,7 @@ const builtinTypeArity: Record<string, number> = {
     String: 0,
     World: 0,
     Handle: 0,
+    Chan: 1,
     List: 1,
     Vector: 1,
 };
@@ -142,6 +144,11 @@ export class Inferencer {
     private rootFunction?: object;
     private rootDeclaration?: Decl;
     private acceptsLinear = new Set<number>();
+    /**
+     * Checks that need every type known. A function can turn out to be one-use after a call
+     * that passed it has been checked, when a channel carries it further on.
+     */
+    private deferred: (() => void)[] = [];
     private globalParameters = new Map<string, { local: number; parameter: string }[]>();
     private constructors: Map<string, Scheme>;
     constructor(
@@ -512,6 +519,7 @@ export class Inferencer {
         this.rootDeclaration = declaration;
         const type = this.linear(ast, env);
         if (self) this.solver.unify(self, type, ast.loc);
+        this.deferred.forEach((check) => check());
         let scheme = this.solver.generalize(type, [...this.globals.values()]);
         if (declaration) {
             if (ast.type !== 'fn' || ast.name !== declaration.name.text)
@@ -617,12 +625,12 @@ export class Inferencer {
         };
         if (isBuiltinTypeName(id.text)) {
             arity(builtinTypeArity[id.text]);
-            return plain(
-                con(
-                    id.text === 'Int' ? 'Number' : id.text,
-                    ...args.map((t) => this.valueAnnotation(t, vars, closed)),
-                ),
+            const named = con(
+                id.text === 'Int' ? 'Number' : id.text,
+                ...args.map((t) => this.valueAnnotation(t, vars, closed)),
             );
+            this.solver.channels(named);
+            return plain(named);
         }
         const definition = this.typeDefinitions.get(id.text);
         if (definition) {
@@ -1537,7 +1545,12 @@ export class Inferencer {
             if (a.type === 'lens') return flow(view!.read, replacement, view!.replaceable, owned);
             const value = this.linear(a, env);
             if (accepts?.has(i) && a.type === 'id') this.consumingUses.add(this.builder.node(a));
-            return plain(this.argumentType(callee, i, value, accepts, a), this.solver.freshMode());
+            this.recheckArgument(callee, i, value, accepts, a);
+            const passed =
+                global === 'chanSend' && i === 1
+                    ? this.sent(value)
+                    : this.argumentType(callee, i, value, accepts, a);
+            return plain(passed, this.solver.freshMode());
         });
         if (
             view &&
@@ -1625,6 +1638,46 @@ export class Inferencer {
             });
         }
     }
+    /** What goes onto a channel: every function in it becomes one-use on the way. */
+    private sent(value: Ty): Ty {
+        const t = this.solver.prune(value);
+        if (t.tag === 'fn') return fn(t.args, t.result, true);
+        if (t.tag === 'tuple') return tuple(...t.items.map((v) => this.sent(v)));
+        if (t.tag === 'record')
+            return record(t.fields.map((f) => ({ name: f.name, type: this.sent(f.type) })));
+        if (t.tag === 'con' && t.name !== CHANNEL)
+            return con(t.name, ...t.args.map((v) => this.sent(v)));
+        return value;
+    }
+    /**
+     * Once everything is inferred, a function that turned out to be linear must still not
+     * have been passed where it could be dropped or reused.
+     */
+    private recheckArgument(
+        callee: Ty,
+        index: number,
+        value: Ty,
+        accepts: ReadonlySet<number> | undefined,
+        node: Linear,
+    ): void {
+        const known = this.solver.prune(callee);
+        if (known.tag !== 'fn' || accepts?.has(index)) return;
+        const parameter = known.args[index];
+        if (parameter?.tag !== 'plain') return;
+        const expected = this.solver.prune(parameter.value);
+        if (expected.tag !== 'fn' || expected.linear) return;
+        this.deferred.push(() => {
+            const argument = this.solver.prune(value);
+            if (argument.tag === 'fn' && argument.linear) this.unaccepted(node);
+        });
+    }
+    private unaccepted(node: Linear): never {
+        return this.error(
+            'linear-unconsumed',
+            (node as { loc: number }).loc,
+            'This closure must be called exactly once, and the function may drop or reuse it. Take it as a `mut` parameter and call it exactly once on every path',
+        );
+    }
     /**
      * Unification keeps linear closures apart from ordinary ones. A linear one may still go to
      * a function parameter that is known to consume it.
@@ -1637,20 +1690,20 @@ export class Inferencer {
         node: Linear,
     ): Ty {
         const argument = this.solver.prune(value);
-        if (argument.tag !== 'fn' || !argument.linear) return value;
+        if (argument.tag !== 'fn') return value;
         const known = this.solver.prune(callee);
         if (known.tag !== 'fn') return value;
         const parameter = known.args[index];
         if (parameter?.tag !== 'plain') return value;
         const expected = this.solver.prune(parameter.value);
         // A type variable takes the closure as it is; the definition's drop and copy bounds apply.
-        if (expected.tag !== 'fn' || expected.linear) return value;
-        if (!accepts?.has(index))
-            this.error(
-                'linear-unconsumed',
-                (node as { loc: number }).loc,
-                'This closure captured a linear value or an owned lens, and the function may drop or reuse it. Take it as a `mut` parameter and call it exactly once on every path',
-            );
+        if (expected.tag !== 'fn') return value;
+        // Calling a function exactly once is always allowed, so one that need not be may go
+        // where one that must be is expected.
+        if (expected.linear)
+            return argument.linear ? value : fn(argument.args, argument.result, true);
+        if (!argument.linear) return value;
+        if (!accepts?.has(index)) this.unaccepted(node);
         return fn(argument.args, argument.result);
     }
     private aslens(n: Lens & { type: 'aslens' }, env: Env): View {
@@ -1903,6 +1956,14 @@ export class Inferencer {
             this.pattern(branch.pat, scrutinee, sub);
             const firstTransition = this.builder.transitions.length;
             this.solver.unify(result, this.linear(branch.body, sub), branch.body.loc);
+            // An arm is the scope of what its pattern binds.
+            const bound = names(branch.pat).map((name) => sub.get(name)!);
+            if (bound.length)
+                this.builder.scopes.push({
+                    node: this.builder.node(branch.body),
+                    bindings: bound.map((b) => b.id!),
+                    exit: bound.map((b) => this.state(b.root)),
+                });
             roots.forEach((r, i) => {
                 if (r.moved) moved[i] = true;
                 else if (r.empty.length) unrestorable[i] = true;

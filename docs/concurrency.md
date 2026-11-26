@@ -42,14 +42,16 @@ spawn(fn () { print("forgot") })            // linear-unconsumed: nobody closes 
   through representation inference, entries and wrappers like any other call. The Go lowerer reads
   the task value on the spawning side and starts `go func() { f(env) }()`. The reference evaluator
   runs it on its own scheduler. C rejects a detached call rather than quietly run it inline.
-- **`chanNew()`, `chanSend(ch, n)`, `chanRecv(ch)`** are unbuffered channels of numbers, named by
-  handles in a locked table.
+- **`chanNew()`, `chanSend(ch, v)`, `chanRecv(ch)`** are unbuffered channels. See
+  [Typed channels](#typed-channels).
 - **`sleep(ms)`** blocks one task while the rest run.
 - **`listen(port)`, `accept(l)`, `recv(c)`, `send(c, text)`, `closeHandle(h)`** are the socket
   handles `examples/server.lm` uses. The program holds only numbers; the host decides what they mean.
 
+`examples/server-workers.lm` has long-running workers that are sent connections.
 `examples/server-pool.lm` is the same server with the connection as a lens and a fixed pool of
-workers; see the gaps below for why.
+workers; see the gaps below for why. `examples/server-bounded.lm` has a task per connection
+and limits how many are open with slots passed over a channel.
 
 State lives in tasks, not in shared memory. `examples/server.lm` keeps its request count as a
 parameter of one counter task: handlers send it a reply channel and receive the new count. That is
@@ -59,16 +61,54 @@ Measured with `go build -race`: 200 concurrent `/count` requests mixed with 100 
 100 `/slow` returned 200 distinct counts (1 to 200), and the race detector reported nothing. Ten
 parallel `/slow` requests (one second each) finish in 1.1 seconds.
 
+## Typed channels
+
+`chanNew()` makes a `Chan(a)`, and every use of one channel agrees on `a`. The channel itself is
+only a handle: any number of tasks may hold it, whatever it carries. Dual mode, on Go and the
+reference evaluator.
+
+- **A send moves.** `chanSend(ch, x)` uses up a `mut` value. A plain binding is sent as a real
+  copy, because the receiver owns what it gets and the two tasks must share nothing that either
+  could change. So a plain binding of a linear value cannot be sent.
+- **A function received from a channel must be called exactly once.** It may have captured
+  anything, including a connection, so it is linear wherever it came from. A worker that drops a
+  job, copies it, or calls it on only some paths does not compile. Sending an ordinary function
+  makes it one-use on the way. The same holds for a function inside a tuple, record or generic
+  data that is sent.
+- **Linear data** (`type linear`) sent over a channel must likewise be consumed by the receiver.
+
+How the checker does it: a function type that becomes part of what a channel carries is marked
+linear there, even if all it has seen is the receiver calling it. Because that can happen after
+a call that passed the function on, those calls are checked again at the end of the definition.
+
+Where it is stricter than it needs to be, or does not reach:
+
+- A local function cannot take a job; only a top-level function that consumes it can.
+- Order can matter. A parameter sent in one branch and then, in a later branch, passed to a
+  function that might drop it is refused. The other order is accepted, and the definition then
+  takes only ordinary functions. Both are safe.
+- When a generic worker loses what it receives, the error points at where it is used with a
+  linear type, not at the line that loses it.
+- A channel is unbuffered, so it holds nothing. But a task still waiting to send when the program
+  ends never hands its value over: that job never runs, and a lens inside it is never restored.
+  No check prevents this. As in Go, the program ending ends every task.
+- There is no closing a channel, no choosing between channels, and no separate send and receive
+  ends.
+
+Checking this found that names a scope or a `match` arm bound and then left were not counted
+when a generic function was later used with a linear type, and that arm names were not checked at
+all. Both were older than channels and are closed.
+
 ## Options
 
 **A. Detached tasks that own their captures (done).** Simplest, covers servers and background
 work. Weak point: no result, no join, no cancellation, and a task that panics takes the process
 with it.
 
-**B. Channels that move ownership (prototype: numbers only).** A send consumes its value, so a
-message is handed over rather than shared, with no copy. This is the natural second half of A.
-The real version is typed (`Chan(a)`), which needs host types in the layout system, and linear
-endpoints (`Sender(a)`, `Receiver(a)`) so a channel cannot be used after it is closed.
+**B. Channels that move ownership (typed; see above).** A send consumes its value, so a message
+is handed over rather than shared. This is the natural second half of A. Still to do: closing,
+and with it linear endpoints (`Sender(a)`, `Receiver(a)`) so a channel cannot be used after it
+is closed.
 
 **C. Actors (works today on B).** A task that loops over `chanRecv`, threading its state through a
 recursive call. The Go backend turns that recursion into a loop. No new feature needed.
@@ -92,7 +132,7 @@ what the checker already proves.
 `mut` is exclusive". If it is ever needed, a `linear Mutex(a)` whose `lock` yields a lens for the
 length of a scope fits the model.
 
-**Recommendation.** Keep A, grow B into typed channels with linear endpoints, add E's `Task(a)` and
+**Recommendation.** Keep A, give B closing and linear endpoints, add E's `Task(a)` and
 `join`, then do D as the feature that shows what the language is for.
 
 ## What each backend needs

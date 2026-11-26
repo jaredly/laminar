@@ -221,6 +221,32 @@ export function desugarPlain(source: Linear): PlainResult {
         };
     };
 
+    /**
+     * The receiver of a message owns it, so a plain binding that is sent goes as a real copy:
+     * the two tasks must not share anything either could change.
+     */
+    const unshared = (n: Term): Term => {
+        switch (n.type) {
+            case 'apply': {
+                if (!n.share) return n;
+                const { share: _, ...copy } = n;
+                return copy;
+            }
+            case 'tuple':
+            case 'vector':
+                return { ...n, items: n.items.map((v) => unshared(v) as Linear) };
+            case 'record':
+                return {
+                    ...n,
+                    fields: n.fields.map((f) => ({ ...f, value: unshared(f.value) as Linear })),
+                };
+            case 'constructor':
+                return { ...n, args: n.args.map((v) => unshared(v) as Linear) };
+            default:
+                return n;
+        }
+    };
+
     const application = <T extends Linear | Lens>(n: T & { type: 'apply' }, scope: Scope): T => {
         if (
             n.type === 'apply' &&
@@ -233,7 +259,10 @@ export function desugarPlain(source: Linear): PlainResult {
             return dupValue(n as Linear & { type: 'apply' }, scope) as T;
         // A callee is consumed, not copied: closures are affine and cannot be duplicated.
         const fn = n.fn.type === 'id' ? n.fn : linear(n.fn, scope);
-        return { ...n, fn, args: n.args.map((a) => term(a, scope)) };
+        const args = n.args.map((a) => term(a, scope));
+        if (fn.type === 'id' && fn.text === 'chanSend' && !scope.has('chanSend') && args[1])
+            args[1] = unshared(args[1]);
+        return { ...n, fn, args };
     };
 
     const closure = (n: Linear & { type: 'fn' }, scope: Scope): Linear => {

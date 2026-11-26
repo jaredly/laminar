@@ -2,6 +2,7 @@ import { BackendDiagnostic, type TargetConfig } from './backend/target.ts';
 import {
     Solver,
     SHARED,
+    CHANNEL,
     con,
     fn,
     plain,
@@ -252,31 +253,38 @@ export const runtimeImports: readonly RuntimeImport[] = [
     },
     {
         name: 'chanNew',
-        signature: () => fn([], plain(number)),
+        signature: (s) => fn([], plain(con(CHANNEL, s.fresh()))),
         arguments: [],
         result: 'owned',
         capability: 'threads',
         backends: ['reference', 'go'],
         semantics:
-            'A new unbuffered channel of numbers, named by a handle. Sending and receiving block until the other side arrives',
+            'A new unbuffered channel of values of one type, named by a handle. Sending and receiving block until the other side arrives',
     },
     {
         name: 'chanSend',
-        signature: () => fn([reads(number), reads(number)], plain(tuple())),
+        signature: (s) => {
+            const a = s.fresh();
+            return fn([reads(con(CHANNEL, a)), plain(a)], plain(tuple()));
+        },
         arguments: ['owned', 'owned'],
         result: 'owned',
         capability: 'threads',
         backends: ['reference', 'go'],
-        semantics: 'Sends a number on a channel, blocking until a task receives it',
+        semantics:
+            'Moves a value onto a channel, blocking until a task receives it. A function sent this way must be called exactly once by whoever receives it',
     },
     {
         name: 'chanRecv',
-        signature: () => fn([reads(number)], plain(number)),
+        signature: (s) => {
+            const a = s.fresh();
+            return fn([reads(con(CHANNEL, a))], plain(a));
+        },
         arguments: ['owned'],
         result: 'owned',
         capability: 'threads',
         backends: ['reference', 'go'],
-        semantics: 'Receives a number from a channel, blocking until a task sends one',
+        semantics: 'Receives a value from a channel, blocking until a task sends one',
     },
     {
         name: 'listen',
@@ -451,6 +459,8 @@ export function checkReads(entry: RuntimeImport, type: Ty): void {
     variables(type.result, kept);
     type.args.forEach((a) => a.tag === 'plain' && a.mode !== SHARED && variables(a, kept));
     type.args.forEach((a) => {
+        // A channel is only a handle: reading one reads nothing of what it carries.
+        if (a.tag === 'plain' && a.value.tag === 'con' && a.value.name === CHANNEL) return;
         if (a.tag === 'plain' && a.mode === SHARED && [...variables(a)].some((v) => kept.has(v)))
             throw new BackendDiagnostic(
                 'invalid-import',

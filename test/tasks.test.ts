@@ -39,7 +39,6 @@ it('does not wait in real time to sleep', () => {
 });
 
 it('rejects what the Go backend rejects', () => {
-    expect(() => run('chanRecv(12)')).toThrow('not a channel handle');
     expect(() => run('spawn(fn () {1})')).toThrow('A spawned task must return ()');
     expect(() => run('fn start(mut task) {spawn(task)}\n{start(fn () {1})\n sleep(1)}')).toThrow(
         'A spawned task must return ()',

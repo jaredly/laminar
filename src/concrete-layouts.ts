@@ -189,6 +189,7 @@ export class ConcreteLayoutTable {
             ['Number', 'Bool', 'String'].includes(type.name)
         )
             kind = type.name === 'Number' ? 'f64' : type.name === 'Bool' ? 'bool' : 'string';
+        else if (type.tag === 'con' && type.name === 'Chan') kind = 'f64';
         else if (type.tag === 'con') {
             const d = this.nominal.get(type.name);
             if (!d || d.parameters.length !== type.args.length)

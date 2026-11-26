@@ -80,6 +80,57 @@ fn total(n, closed, sum) {if n == 0 then sum else total(n - 1, closed, sum + cha
         [1, 2],
         'receiving\nsent\n',
     ],
+    [
+        'long-running workers are sent jobs that own connections',
+        `${reporting}fn worker(jobs) {
+    let mut job = chanRecv(jobs)
+    job()
+    worker(jobs)
+}
+fn accepting(n, jobs, closed) {
+    if n == 0 then () else {
+        let conn = ~connection(dup(n), closed)
+        chanSend(jobs, fn () {double(~conn)})
+        accepting(n - 1, jobs, closed)
+    }
+}
+fn total(n, closed, sum) {if n == 0 then sum else total(n - 1, closed, sum + chanRecv(closed))}
+{let jobs = chanNew()
+ let closed = chanNew()
+ spawn(fn () {worker(jobs)})
+ spawn(fn () {worker(jobs)})
+ spawn(fn () {worker(jobs)})
+ spawn(fn () {accepting(20, jobs, closed)})
+ total(20, closed, 0)}`,
+        420,
+    ],
+    [
+        'a channel of strings',
+        '{let ch = chanNew()\n spawn(fn () {chanSend(ch, "a${1}")})\n chanRecv(ch)}',
+        'a1',
+    ],
+    [
+        'a reply channel sent over a channel',
+        'fn echo(requests) {let reply = chanRecv(requests)\n chanSend(reply, 5)}\n{let requests = chanNew()\n let reply = chanNew()\n spawn(fn () {echo(requests)})\n chanSend(requests, reply)\n chanRecv(reply)}',
+        5,
+    ],
+    [
+        'the receiver changes its own copy of a sent vector',
+        '{let ch = chanNew()\n let back = chanNew()\n spawn(fn () {let v = [:1, 2:]\n chanSend(ch, v)\n let _ = chanRecv(back)\n chanSend(ch, v)})\n let mut got = chanRecv(ch)\n got[0] := 9\n chanSend(back, 0)\n let mut again = chanRecv(ch)\n (dup(~got[0]), dup(~again[0]))}',
+        [9, 1],
+    ],
+    [
+        'a job sent beside a number',
+        '{let ch = chanNew()\n spawn(fn () {chanSend(ch, (fn () {print("ran")}, 7))})\n let mut (job, n) = chanRecv(ch)\n job()\n n}',
+        7,
+        'ran\n',
+    ],
+    [
+        'a named function sent as a job',
+        'fn hi() {print("hi")}\n{let jobs = chanNew()\n spawn(fn () {chanSend(jobs, hi)})\n let mut job = chanRecv(jobs)\n job()\n 1}',
+        1,
+        'hi\n',
+    ],
 ];
 
 export const taskSamples: TaskSample[] = cases.map(([name, source, expected, output]) => ({

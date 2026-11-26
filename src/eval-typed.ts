@@ -489,10 +489,10 @@ export function executeTypedProgram(
         const number = (n: number) => data(args[n]) as number;
         switch (name) {
             case 'chanSend':
-                yield { op: 'send', channel: channelAt(number(0)), value: number(1) };
+                yield { op: 'send', channel: channelAt(number(0)), value: owned(data(args[1]!)) };
                 return null;
             case 'chanRecv':
-                return (yield { op: 'receive', channel: channelAt(number(0)) }) as number;
+                return (yield { op: 'receive', channel: channelAt(number(0)) }) as Data;
             default:
                 yield { op: 'sleep', milliseconds: number(0) };
                 return null;

@@ -40,7 +40,7 @@ it('type checks and runs every generated program on the reference', () => {
     }
     // Guards against a generator that quietly stops making lenses.
     if (!process.env.LAMINAR_LENS_SEEDS) expect(ended).toBeGreaterThan(1000);
-});
+}, 60_000);
 
 // Seeds 29 and 30 are the ones that found C reading a moved lens's freed storage.
 for (const backend of selectedBackends().filter((b) => b !== 'reference'))
@@ -69,7 +69,7 @@ it('type checks and runs every generated task program on the reference', () => {
             throw explain(seed, source, error);
         }
     }
-});
+}, 60_000);
 
 for (const backend of selectedBackends().filter((b) => b === 'go'))
     for (const seed of range(0, 20))

@@ -18,6 +18,8 @@ export function isLinear(type: Shape, isDeclaredLinear: (name: string) => boolea
         (types ?? []).some((t) => isLinear(t, isDeclaredLinear));
     switch (type.tag) {
         case 'con':
+            // A channel is a handle, shared between tasks, whatever it carries.
+            if (type.name === 'Chan') return false;
             return isDeclaredLinear(type.name!) || any(type.args);
         case 'tuple':
             return any(type.items);

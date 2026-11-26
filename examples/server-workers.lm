@@ -1,0 +1,167 @@
+// laminar: dual
+// a small concurrent web server with eight long-running workers and one accept loop that
+// sends them the connections.
+// run it with `bun cli/laminar.ts run examples/server-workers.lm --target go`, then try
+//   curl localhost:8080/            curl localhost:8080/count
+//   curl localhost:8080/mandelbrot  curl localhost:8080/slow   (run more than eight at once)
+//
+// A channel is typed: this one carries jobs, closures that take no arguments. The accept loop
+// puts each connection inside a job, and whichever worker is free receives it. A send waits
+// for a receiver, so while every worker is busy the loop waits too. At most nine connections
+// are open: one per worker, and one the loop is waiting to hand over.
+//
+// What the language guarantees here, with no locks:
+// - A connection is a lens that `connection` produces, and `connection` owns its cleanup.
+//   It moves into the job, and the job moves to the worker. The accept loop cannot use it
+//   again (`use-after-move`).
+// - A function received from a channel must be called exactly once. A worker that dropped a
+//   job, or only sometimes called it, does not compile (`linear-unconsumed`), so a worker
+//   cannot receive a connection and forget to serve and close it.
+// - `spawn(task)` runs a closure on its own task. A closure can never borrow, so a task
+//   cannot reach another task's mutable data.
+// - Plain values are immutable, so any number of tasks can read them. The only state that
+//   changes is the request count, and one task owns it: others ask it over a channel.
+//
+// A job that is still waiting to be received when the program ends never runs. Here the
+// program only ends when it is stopped, and the system then closes its connections.
+//
+// server-bounded.lm limits connections with a task for each; server-pool.lm has workers that
+// each accept their own.
+
+// ---- reading the request ----
+
+// the text after the first space of "GET /path HTTP/1.1"
+fn afterMethod(chars) {
+    match chars {
+        [] -> []
+        [" ", ...rest] -> rest
+        [_, ...rest] -> afterMethod(rest)
+    }
+}
+
+fn untilSpace(chars) {
+    match chars {
+        [] -> ""
+        [" ", ..._] -> ""
+        ["\r", ..._] -> ""
+        ["\n", ..._] -> ""
+        [c, ...rest] -> "${c}${untilSpace(rest)}"
+    }
+}
+
+fn pathOf(request) { untilSpace(afterMethod(charList(request))) }
+
+// ---- the pages ----
+
+fn glyph(steps) {
+    if steps >= 30 then "#" else if steps >= 12 then "+" else if steps >= 5 then "." else " "
+}
+
+// how many steps z -> z*z + c takes to leave the circle of radius 2
+fn escape(cr, ci, zr, zi, n) {
+    if n >= 40 || zr * zr + zi * zi > 4 then n else {
+        escape(cr, ci, zr * zr - zi * zi + cr, 2 * zr * zi + ci, n + 1)
+    }
+}
+
+fn artRow(x, y) {
+    if x >= 64 then "" else {
+        let steps = escape(x * 0.046875 - 2.2, 1.2 - y * 0.1, 0, 0, 0)
+        "${glyph(steps)}${artRow(x + 1, y)}"
+    }
+}
+
+fn art(y) {
+    if y >= 24 then "" else "${artRow(0, y)}\n${art(y + 1)}"
+}
+
+// the request counter lives in one task: it is a parameter, so nothing else can touch it
+fn counter(requests, count) {
+    let reply = chanRecv(requests)
+    chanSend(reply, count + 1)
+    counter(requests, count + 1)
+}
+
+fn nextRequest(requests) {
+    let reply = chanNew()
+    chanSend(requests, reply)
+    chanRecv(reply)
+}
+
+fn page(path, requests) {
+    match path {
+        "/" -> ("200 OK", "hello from laminar\n")
+        "/count" -> ("200 OK", "request number ${nextRequest(requests)}\n")
+        "/mandelbrot" -> ("200 OK", art(0))
+        "/slow" -> {
+            sleep(1000)
+            ("200 OK", "that took a second, and nobody waited for it\n")
+        }
+        _ -> ("404 Not Found", "no page at ${path}\n")
+    }
+}
+
+// ---- serving ----
+
+// a connection cannot be copied: dup(~conn) is a type error
+type linear Conn {
+    Conn(Number)
+}
+
+// these borrow the connection. A lens argument comes last.
+fn recvFrom(~conn) {
+    match ~conn {
+        Conn(fd) -> recv(dup(~fd))
+    }
+}
+
+fn sendTo(text, ~conn) {
+    match ~conn {
+        Conn(fd) -> send(dup(~fd), text)
+    }
+}
+
+// the producer owns the cleanup. It borrows no lens, so the lens it returns is owned
+fn connection(listener) ~{
+    lens conn <- Conn(accept(listener))
+    match conn {
+        Conn(fd) -> closeHandle(fd)
+    }
+}
+
+// `mut ~` takes the lens: this function reads, answers, and the connection closes with it
+fn handle(requests, mut ~conn) {
+    let (status, body) = page(pathOf(recvFrom(~conn)), requests)
+    sendTo("HTTP/1.1 ${status}\r\nContent-Type: text/plain\r\nConnection: close\r\n\r\n${body}", ~conn)
+}
+
+// a worker takes one job at a time. `mut`, because calling the job uses it up
+fn worker(jobs) {
+    let mut job = chanRecv(jobs)
+    job()
+    worker(jobs)
+}
+
+fn startWorkers(count, jobs) {
+    if count == 0 then () else {
+        spawn(fn () { worker(jobs) })
+        startWorkers(count - 1, jobs)
+    }
+}
+
+// the send returns once a worker has taken the job, and the connection with it
+fn serve(listener, requests, jobs) {
+    let conn = ~connection(listener)
+    chanSend(jobs, fn () { handle(requests, ~conn) })
+    serve(listener, requests, jobs)
+}
+
+{
+    let listener = listen(8080)
+    let requests = chanNew()
+    let jobs = chanNew()
+    print("listening on http://localhost:8080 with 8 workers")
+    spawn(fn () { counter(requests, 0) })
+    startWorkers(8, jobs)
+    serve(listener, requests, jobs)
+}

@@ -148,6 +148,8 @@ export function verifyRepresentations(
             ['Number', 'Bool', 'String'].includes(t.name)
         )
             return;
+        // A channel is a handle: what it carries has no storage in it.
+        if (t.tag === 'con' && t.name === 'Chan' && t.args.length === 1) return;
         if (t.tag === 'con') {
             const d = schemas.find((d) => d.name === t.name);
             if (d && d.parameters.length === t.args.length) {
@@ -171,6 +173,7 @@ export function verifyRepresentations(
                             : l.type.name === 'Bool'
                               ? 'bool'
                               : 'string';
+                else if (l.type.name === 'Chan') storage = 'f64';
                 else {
                     const t = l.type,
                         d = schemas.find((d) => d.name === t.name)!;

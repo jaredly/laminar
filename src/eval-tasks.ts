@@ -14,13 +14,13 @@
 export type Request =
     | { op: 'enter'; run: Run<unknown> }
     | { op: 'spawn'; task: Run<void> }
-    | { op: 'send'; channel: Channel; value: number }
+    | { op: 'send'; channel: Channel; value: unknown }
     | { op: 'receive'; channel: Channel }
     | { op: 'sleep'; milliseconds: number };
 
 /**
  * Code that may block. It is resumed with what its request produced: an entered call's result,
- * or the number a `receive` got.
+ * or the value a `receive` got.
  */
 export type Run<T> = Generator<Request, T, unknown>;
 
@@ -32,7 +32,7 @@ export function* enter<T>(run: Run<T>): Run<T> {
 type Task = { stack: Run<unknown>[] };
 /** Unbuffered: whichever side arrives first waits here for the other. */
 export type Channel = {
-    senders: { task: Task; value: number }[];
+    senders: { task: Task; value: unknown }[];
     receivers: Task[];
 };
 export const channel = (): Channel => ({ senders: [], receivers: [] });

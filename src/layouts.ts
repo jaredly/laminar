@@ -76,7 +76,9 @@ export class LayoutTable {
         else if (type.tag === 'tuple') {
             storage = type.items.length ? 'tuple' : 'unit';
             dependencies = type.items;
-        } else if (!type.args.length && type.name === 'Number') storage = 'f64';
+        } else if (type.name === 'Number' && !type.args.length) storage = 'f64';
+        // A channel is a handle, whatever it carries.
+        else if (type.name === 'Chan' && type.args.length === 1) storage = 'f64';
         else if (!type.args.length && type.name === 'Bool') storage = 'bool';
         else if (!type.args.length && type.name === 'String') storage = 'string';
         else {

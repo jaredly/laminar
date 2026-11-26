@@ -154,6 +154,7 @@ export function verifyConcreteProgram(p: ConcreteProgram): void {
                 t.name === 'Number' ? 'f64' : t.name === 'Bool' ? 'bool' : 'string',
                 [],
             );
+        else if (t.tag === 'con' && t.name === 'Chan') concreteFields(id, 'f64', []);
         else if (t.tag === 'con') {
             const d = nominalSchemas.find((d) => d.name === t.name);
             if (!d || d.parameters.length !== t.args.length)

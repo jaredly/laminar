@@ -359,8 +359,9 @@ Rejected, each with its own code:
 - **Lenses in data.** Whether an owned lens can be stored in a tuple or record, or returned inside
   one. Nothing above needs it. Allowing it makes owned lenses first-class values, which is a bigger
   step than moving them into closures.
-- **Channels.** Sending an owned lens over a channel is the natural next step and needs typed
-  channels (`Chan(a)`), which do not exist yet.
+- **Channels.** Channels are typed now ([concurrency.md](concurrency.md#typed-channels)). A lens
+  still cannot be sent as itself, but a closure that captured one can, and its receiver must call
+  it. `examples/server-workers.lm` hands connections to workers that way.
 
 ## Not in this work
 

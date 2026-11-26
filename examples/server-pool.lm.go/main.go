@@ -9,10 +9,6 @@ import (
 	"time"
 )
 
-type Environment_float64_1d1d36f0ff struct {
-	capture0 float64
-}
-
 type Callable_Value_28c65e294d struct {
 	environment any
 	dispose Func_to_Unit_90e61a078a
@@ -42,9 +38,13 @@ type Conn struct {
 	v0 float64
 }
 
-type Environment_float64_float64_8a48597dc5 struct {
+type Environment_float64_float64_9207126699 struct {
 	capture0 float64
 	capture1 float64
+}
+
+type Environment_float64_9717602ee7 struct {
+	capture0 float64
 }
 
 type Tuple_String_String struct {
@@ -68,108 +68,33 @@ var hostObjects = map[float64]any{}
 
 var hostNext float64
 
-func sendTo(text string, conn Lens_Conn) Unit {
-	v2 := *conn.read
-	switch v2.tag {
-	case Conn_Conn:
-		v5 := v2.v0
-		hostSend(v5, text)
-		v23 := Conn{tag: Conn_Conn, v0: v5}
-		*conn.read = v23
-	}
-	return Unit{}
-}
-
-func connection(listener float64) Lens_Conn {
-	v6 := hostAccept(listener)
-	v8 := Conn{tag: Conn_Conn, v0: v6}
-	v10 := v8
-	v11 := Lens_Conn{read: &v10}
-	v11.restore = func(_ any, replacement Conn) Unit {
-		conn := replacement
-		switch conn.tag {
-		case Conn_Conn:
-			v14 := conn.v0
-			hostClose(v14)
-		}
-		return Unit{}
-	}
-	return v11
-}
-
-func closure(environment any) Unit {
-	v0 := environment.(*Environment_float64_1d1d36f0ff).capture0
-	counter(v0, 0.0)
-	return Unit{}
-}
-
-func workers(n float64, listener float64, requests float64) Unit {
-	for {
-		if (n == 0.0) {
-		} else {
-			v26 := Callable_Value_28c65e294d{environment: &Environment_float64_float64_8a48597dc5{capture0: requests, capture1: listener }}
-			go func() { workers_closure(v26.environment) }()
-			n = n - 1.0
-			continue
-		}
-		return Unit{}
-	}
-}
-
-func page(path string, requests float64) Tuple_String_String {
+func untilSpace(chars List_String) string {
 	var v5 string
-	var v6 string
-	switch path {
-	case "/":
-		v5 = "200 OK"
-		v6 = "hello from laminar\x0a"
-	case "/count":
-		v19 := nextRequest(requests)
-		v5 = "200 OK"
-		v6 = "request number " + formatNumber(v19) + "\x0a"
-	case "/mandelbrot":
-		v30 := art(0.0)
-		v5 = "200 OK"
-		v6 = v30
-	case "/slow":
-		hostSleep(1000.0)
-		v5 = "200 OK"
-		v6 = "that took a second, and nobody waited for it\x0a"
-	default:
-		v5 = "404 Not Found"
-		v6 = "no page at " + path + "\x0a"
+	if chars.tag == List_String_nil {
+		v5 = ""
+	} else if chars.tag == List_String_cons && (*chars.v1).item0 == " " {
+		v5 = ""
+	} else if chars.tag == List_String_cons && (*chars.v1).item0 == "\x0d" {
+		v5 = ""
+	} else if chars.tag == List_String_cons && (*chars.v1).item0 == "\x0a" {
+		v5 = ""
+	} else if chars.tag == List_String_cons {
+		v18 := *chars.v1
+		c := v18.item0
+		rest := v18.item1
+		v29 := untilSpace(rest)
+		v5 = c + v29
+	} else {
+		panic("unmatched case")
 	}
-	return Tuple_String_String{item0: v5, item1: v6}
+	return v5
 }
 
-func counter(requests float64, count float64) Unit {
-	for {
-		reply := hostChanRecv(requests)
-		hostChanSend(reply, count + 1.0)
-		count = count + 1.0
-		continue
-		return Unit{}
-	}
-}
-
-func afterMethod(chars List_String) List_String {
-	for {
-		var v5 List_String
-		if chars.tag == List_String_nil {
-			v5 = List_String{tag: List_String_nil, v0: Unit{}}
-		} else if chars.tag == List_String_cons && (*chars.v1).item0 == " " {
-			v8 := *chars.v1
-			v5 = v8.item1
-		} else if chars.tag == List_String_cons {
-			v13 := *chars.v1
-			rest_2 := v13.item1
-			chars = rest_2
-			continue
-		} else {
-			panic("unmatched case")
-		}
-		return v5
-	}
+func workers_closure(environment any) Unit {
+	v0 := environment.(*Environment_float64_float64_9207126699).capture0
+	v1 := environment.(*Environment_float64_float64_9207126699).capture1
+	worker(v1, v0)
+	return Unit{}
 }
 
 func art(y float64) string {
@@ -182,20 +107,6 @@ func art(y float64) string {
 		v11 = v22 + "\x0a" + v35
 	}
 	return v11
-}
-
-func recvFrom(conn Lens_Conn) string {
-	v2 := *conn.read
-	var v4 string
-	switch v2.tag {
-	case Conn_Conn:
-		v5 := v2.v0
-		v15 := hostRecv(v5)
-		v19 := Conn{tag: Conn_Conn, v0: v5}
-		v4 = v15
-		*conn.read = v19
-	}
-	return v4
 }
 
 func serveOne(listener float64, requests float64) Unit {
@@ -227,30 +138,29 @@ func artRow(x float64, y float64) string {
 	return v11
 }
 
-func workers_closure(environment any) Unit {
-	v0 := environment.(*Environment_float64_float64_8a48597dc5).capture0
-	v1 := environment.(*Environment_float64_float64_8a48597dc5).capture1
-	worker(v1, v0)
-	return Unit{}
+func escape(cr float64, ci float64, zr float64, zi float64, n float64) float64 {
+	for {
+		var v11 bool
+		if n >= 40.0 {
+			v11 = true
+		} else {
+			v11 = zr * zr + zi * zi > 4.0
+		}
+		var v50 float64
+		if v11 {
+			v50 = n
+		} else {
+			zr, zi, n = zr * zr - zi * zi + cr, 2.0 * zr * zi + ci, n + 1.0
+			continue
+		}
+		return v50
+	}
 }
 
 func nextRequest(requests float64) float64 {
 	reply := hostChanNew()
 	hostChanSend(requests, reply)
-	return hostChanRecv(reply)
-}
-
-func worker(listener float64, requests float64) Unit {
-	for {
-		serveOne(listener, requests)
-		continue
-		return Unit{}
-	}
-}
-
-func pathOf(request string) string {
-	v11 := afterMethod(char_list_List_String(request))
-	return untilSpace(v11)
+	return hostChanRecv[float64](reply)
 }
 
 func glyph(steps float64) string {
@@ -275,56 +185,147 @@ func glyph(steps float64) string {
 	return v11
 }
 
-func untilSpace(chars List_String) string {
-	var v5 string
-	if chars.tag == List_String_nil {
-		v5 = ""
-	} else if chars.tag == List_String_cons && (*chars.v1).item0 == " " {
-		v5 = ""
-	} else if chars.tag == List_String_cons && (*chars.v1).item0 == "\x0d" {
-		v5 = ""
-	} else if chars.tag == List_String_cons && (*chars.v1).item0 == "\x0a" {
-		v5 = ""
-	} else if chars.tag == List_String_cons {
-		v18 := *chars.v1
-		c := v18.item0
-		rest := v18.item1
-		v29 := untilSpace(rest)
-		v5 = c + v29
-	} else {
-		panic("unmatched case")
-	}
-	return v5
+func closure(environment any) Unit {
+	v0 := environment.(*Environment_float64_9717602ee7).capture0
+	counter(v0, 0.0)
+	return Unit{}
 }
 
-func escape(cr float64, ci float64, zr float64, zi float64, n float64) float64 {
+func page(path string, requests float64) Tuple_String_String {
+	var v5 string
+	var v6 string
+	switch path {
+	case "/":
+		v5 = "200 OK"
+		v6 = "hello from laminar\x0a"
+	case "/count":
+		v19 := nextRequest(requests)
+		v5 = "200 OK"
+		v6 = "request number " + formatNumber(v19) + "\x0a"
+	case "/mandelbrot":
+		v30 := art(0.0)
+		v5 = "200 OK"
+		v6 = v30
+	case "/slow":
+		hostSleep(1000.0)
+		v5 = "200 OK"
+		v6 = "that took a second, and nobody waited for it\x0a"
+	default:
+		v5 = "404 Not Found"
+		v6 = "no page at " + path + "\x0a"
+	}
+	return Tuple_String_String{item0: v5, item1: v6}
+}
+
+func workers(n float64, listener float64, requests float64) Unit {
 	for {
-		var v11 bool
-		if n >= 40.0 {
-			v11 = true
+		if (n == 0.0) {
 		} else {
-			v11 = zr * zr + zi * zi > 4.0
-		}
-		var v50 float64
-		if v11 {
-			v50 = n
-		} else {
-			zr, zi, n = zr * zr - zi * zi + cr, 2.0 * zr * zi + ci, n + 1.0
+			v26 := Callable_Value_28c65e294d{environment: &Environment_float64_float64_9207126699{capture0: requests, capture1: listener }}
+			go func() { workers_closure(v26.environment) }()
+			n = n - 1.0
 			continue
 		}
-		return v50
+		return Unit{}
 	}
 }
 
-func entry() float64 {
+func connection(listener float64) Lens_Conn {
+	v6 := hostAccept(listener)
+	v8 := Conn{tag: Conn_Conn, v0: v6}
+	v10 := v8
+	v11 := Lens_Conn{read: &v10}
+	v11.restore = func(_ any, replacement Conn) Unit {
+		conn := replacement
+		switch conn.tag {
+		case Conn_Conn:
+			v14 := conn.v0
+			hostClose(v14)
+		}
+		return Unit{}
+	}
+	return v11
+}
+
+func afterMethod(chars List_String) List_String {
+	for {
+		var v5 List_String
+		if chars.tag == List_String_nil {
+			v5 = List_String{tag: List_String_nil, v0: Unit{}}
+		} else if chars.tag == List_String_cons && (*chars.v1).item0 == " " {
+			v8 := *chars.v1
+			v5 = v8.item1
+		} else if chars.tag == List_String_cons {
+			v13 := *chars.v1
+			rest_2 := v13.item1
+			chars = rest_2
+			continue
+		} else {
+			panic("unmatched case")
+		}
+		return v5
+	}
+}
+
+func pathOf(request string) string {
+	v11 := afterMethod(char_list_List_String(request))
+	return untilSpace(v11)
+}
+
+func counter(requests float64, count float64) Unit {
+	for {
+		reply := hostChanRecv[float64](requests)
+		hostChanSend(reply, count + 1.0)
+		count = count + 1.0
+		continue
+		return Unit{}
+	}
+}
+
+func worker(listener float64, requests float64) Unit {
+	for {
+		serveOne(listener, requests)
+		continue
+		return Unit{}
+	}
+}
+
+func recvFrom(conn Lens_Conn) string {
+	v2 := *conn.read
+	var v4 string
+	switch v2.tag {
+	case Conn_Conn:
+		v5 := v2.v0
+		v15 := hostRecv(v5)
+		v19 := Conn{tag: Conn_Conn, v0: v5}
+		v4 = v15
+		*conn.read = v19
+	}
+	return v4
+}
+
+func sendTo(text string, conn Lens_Conn) Unit {
+	v2 := *conn.read
+	switch v2.tag {
+	case Conn_Conn:
+		v5 := v2.v0
+		hostSend(v5, text)
+		v23 := Conn{tag: Conn_Conn, v0: v5}
+		*conn.read = v23
+	}
+	return Unit{}
+}
+
+func entry() Unit {
 	listener := hostListen(8080.0)
 	requests := hostChanNew()
 	hostPrint_Unit("listening on http://localhost:8080 with 8 workers")
-	v23 := Callable_Value_28c65e294d{environment: &Environment_float64_1d1d36f0ff{capture0: requests }}
+	v23 := Callable_Value_28c65e294d{environment: &Environment_float64_9717602ee7{capture0: requests }}
 	go func() { closure(v23.environment) }()
 	workers(8.0, listener, requests)
 	v50 := hostChanNew()
-	return hostChanRecv(v50)
+	hostChanRecv[Unit](v50)
+	return Unit{}
 }
 
 func hostRegister(object any) float64 {
@@ -341,11 +342,29 @@ func hostLookup(handle float64) any {
 	return hostObjects[handle]
 }
 
-func hostSend(handle float64, text string) Unit {
-	connection, ok := hostLookup(handle).(net.Conn)
-	if ok {
-		connection.Write([]byte(text))
+func hostChanNew() float64 {
+	return hostRegister(make(chan any))
+}
+
+func hostChanSend(handle float64, value any) Unit {
+	channel, ok := hostLookup(handle).(chan any)
+	if !ok {
+		panic("not a channel handle")
 	}
+	channel <- value
+	return Unit{}
+}
+
+func hostChanRecv[T any](handle float64) T {
+	channel, ok := hostLookup(handle).(chan any)
+	if !ok {
+		panic("not a channel handle")
+	}
+	return (<-channel).(T)
+}
+
+func hostSleep(milliseconds float64) Unit {
+	time.Sleep(time.Duration(milliseconds * float64(time.Millisecond)))
 	return Unit{}
 }
 
@@ -375,42 +394,6 @@ func hostClose(handle float64) Unit {
 	return Unit{}
 }
 
-func hostSleep(milliseconds float64) Unit {
-	time.Sleep(time.Duration(milliseconds * float64(time.Millisecond)))
-	return Unit{}
-}
-
-func hostChanRecv(handle float64) float64 {
-	channel, ok := hostLookup(handle).(chan float64)
-	if !ok {
-		panic("not a channel handle")
-	}
-	return <-channel
-}
-
-func hostChanSend(handle float64, value float64) Unit {
-	channel, ok := hostLookup(handle).(chan float64)
-	if !ok {
-		panic("not a channel handle")
-	}
-	channel <- value
-	return Unit{}
-}
-
-func hostRecv(handle float64) string {
-	connection, ok := hostLookup(handle).(net.Conn)
-	if !ok {
-		return ""
-	}
-	buffer := make([]byte, 8192)
-	n, _ := connection.Read(buffer)
-	return string(buffer[:n])
-}
-
-func hostChanNew() float64 {
-	return hostRegister(make(chan float64))
-}
-
 func char_list_List_String(value string) List_String {
 	starts := []int{}
 	for i := range value {
@@ -427,6 +410,24 @@ func char_list_List_String(value string) List_String {
 	return out
 }
 
+func hostRecv(handle float64) string {
+	connection, ok := hostLookup(handle).(net.Conn)
+	if !ok {
+		return ""
+	}
+	buffer := make([]byte, 8192)
+	n, _ := connection.Read(buffer)
+	return string(buffer[:n])
+}
+
+func hostSend(handle float64, text string) Unit {
+	connection, ok := hostLookup(handle).(net.Conn)
+	if ok {
+		connection.Write([]byte(text))
+	}
+	return Unit{}
+}
+
 func hostListen(port float64) float64 {
 	if !(port >= 0 && port < 65536 && port == math.Floor(port)) {
 		panic("listen needs a port from 0 to 65535")
@@ -441,20 +442,6 @@ func hostListen(port float64) float64 {
 func hostPrint_Unit(value string) Unit {
 	fmt.Print(value + "\n")
 	return Unit{}
-}
-
-func printNumber(x float64) {
-	if math.IsNaN(x) {
-		fmt.Print("{\"number\":\"NaN\"}")
-	} else if math.IsInf(x, 1) {
-		fmt.Print("{\"number\":\"Infinity\"}")
-	} else if math.IsInf(x, -1) {
-		fmt.Print("{\"number\":\"-Infinity\"}")
-	} else if x == 0 && math.Signbit(x) {
-		fmt.Print("{\"number\":\"-0\"}")
-	} else {
-		fmt.Print(strconv.FormatFloat(x, 'g', -1, 64))
-	}
 }
 
 func formatNumber(x float64) string {
@@ -512,8 +499,8 @@ func formatNumber(x float64) string {
 }
 
 func main() {
-	result0 := entry()
+	entry()
 	fmt.Print("\x1e")
-	printNumber(result0)
+	fmt.Print("null")
 	fmt.Println()
 }
