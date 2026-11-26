@@ -1,3 +1,4 @@
+import { sourceEscapes } from '../display.ts';
 import { BackendDiagnostic } from '../backend/target.ts';
 import { utf8 } from '../c/strings.ts';
 import type { GoFunction } from './syntax.ts';
@@ -16,6 +17,12 @@ export function goBytes(text: string): string {
 /** Go strings are immutable UTF-8 bytes under GC, so drop and `dup` need no code. */
 export function goStringRuntime(): GoFunction[] {
     return [
+        {
+            signature: 'func quoteDisplay(s string) string',
+            body: [
+                `return ${goBytes('"')} + strings.NewReplacer(${sourceEscapes.flatMap((pair) => pair.map(goBytes)).join(', ')}).Replace(s) + ${goBytes('"')}`,
+            ],
+        },
         {
             // ECMAScript Number::toString over the shortest round-tripping digits.
             signature: 'func formatNumber(x float64) string',

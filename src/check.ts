@@ -1,3 +1,5 @@
+import type { Bound } from './constraints.ts';
+import { freezeTree } from './elaborated.ts';
 import type { Decl, File, Linear, TypeDecl } from './ast.ts';
 import { linearToExpr, type Scope } from './decompose.ts';
 import type { Expr } from './expr.ts';
@@ -37,22 +39,22 @@ export class Checker {
             scheme: Scheme;
             definitionId: string;
             elaboration: Elaboration;
-            /** Type variables that must not be instantiated at a linear type. */
-            copyBounds: Set<string>;
             acceptsLinear: ReadonlySet<number>;
             imports: IRScheme[];
         }
     >();
     constructor(
-        environment: TypeEnvironment = builtinTypes(),
+        environment: TypeEnvironment | undefined = undefined,
         constructors: TypeEnvironment = constructorTypes(),
         private unitId = 'unit',
         /** Where the pure and dual languages differ; the checker consults it in later phases. */
         readonly policy: Policy = pureMode,
     ) {
-        this.environment = structuredClone(new Map(environment));
+        this.environment = structuredClone(
+            new Map(environment ?? builtinTypes(policy.linearTypes)),
+        );
         this.constructors = structuredClone(new Map(constructors));
-        for (const name of environment.keys()) this.definitionIds.set(name, `native/${name}`);
+        for (const name of this.environment.keys()) this.definitionIds.set(name, `native/${name}`);
     }
     get definitions(): TypeEnvironment {
         return structuredClone(this.environment);
@@ -62,115 +64,40 @@ export class Checker {
     get constructorDefinitions(): TypeEnvironment {
         return structuredClone(this.constructors);
     }
+    private constructorImports(): IRScheme[] {
+        return [...this.constructors].map(([name, scheme]) => {
+            const entry = importScheme(`constructor/${name}`, scheme);
+            const t = entry.type;
+            if (
+                t.tag === 'fn' &&
+                t.result.tag === 'plain' &&
+                t.result.value.tag === 'con' &&
+                this.declaredLinear(t.result.value.name)
+            )
+                entry.linearResult = true;
+            return entry;
+        });
+    }
     /** Typed-IR imports: the natives this checker started with, plus every constructor. */
     get imports(): IRScheme[] {
         return [
             ...[...this.environment]
                 .filter(([name]) => this.definitionIds.get(name) === `native/${name}`)
                 .map(([name, scheme]) => importScheme(`native/${name}`, scheme)),
-            ...[...this.constructors].map(([name, scheme]) =>
-                importScheme(`constructor/${name}`, scheme),
-            ),
+            ...this.constructorImports(),
         ];
     }
-    /** Per published definition: the type variables its plain bindings and `dup`s copy. */
-    private copyBounds = new Map<string, Set<string>>();
     /** Per published definition: the parameters that consume a linear closure. */
     private acceptsLinear = new Map<string, ReadonlySet<number>>();
-    /** Type variables of a definition's parameters that it drops, so they cannot be linear. */
-    private dropBounds = new Map<string, Set<string>>();
     private declaredLinear = (name: string): boolean => {
         const definition = this.types.get(name);
         return definition?.kind === 'union' && !!definition.linear;
     };
 
-    /** `==` and `!=` compare any data, but not functions. */
-    private checkComparable(elaboration: Elaboration): void {
-        for (const inst of elaboration.instantiations) {
-            if (inst.definition !== 'native/==' && inst.definition !== 'native/!=') continue;
-            if (inst.type.tag !== 'fn') continue;
-            const argument = inst.type.args[0];
-            const read = argument?.tag === 'flow' ? argument.read : argument?.value;
-            if (read && holdsFunction(read))
-                throw new TypeDiagnostic(
-                    'not-comparable',
-                    elaboration.nodes.find((n) => n.id === inst.node)?.loc ?? 0,
-                    'Functions cannot be compared with == or !=',
-                );
-        }
-    }
-
-    /** Dual mode: a linear value is neither copied nor left unconsumed at the end of its scope. */
-    private checkLinear(elaboration: Elaboration, plainBinders: Set<number>): Set<string> {
+    /** Variables whose values can be discarded along an exit path. */
+    private dropRequirements(elaboration: Elaboration): Set<string> {
         const loc = (node: string) => elaboration.nodes.find((n) => n.id === node)?.loc ?? 0;
-        for (const b of elaboration.bindings)
-            if (
-                b.kind === 'local' &&
-                b.declaration &&
-                plainBinders.has(loc(b.declaration)) &&
-                isLinear(b.initialType, this.declaredLinear)
-            )
-                throw new TypeDiagnostic(
-                    'linear-plain',
-                    loc(b.declaration),
-                    `${b.name} holds a linear value, so it must be declared \`mut\``,
-                );
-        // Type variables whose values this definition copies, so they cannot be linear.
-        const copied = new Set<string>();
-        const copy = (type: SemanticType, what: string, node: string) => {
-            if (isLinear(type, this.declaredLinear))
-                throw new TypeDiagnostic(
-                    'dup-linear',
-                    loc(node),
-                    `${what} cannot copy a linear value`,
-                );
-            variables(type).forEach((id) => copied.add(id));
-        };
-        for (const b of elaboration.bindings)
-            if (b.kind === 'local' && b.declaration && plainBinders.has(loc(b.declaration)))
-                variables(b.initialType).forEach((id) => copied.add(id));
-        // Type variables whose values this definition may lose, so they cannot be linear.
         const lost = new Set<string>();
-        for (const inst of elaboration.instantiations) {
-            if (inst.definition === 'native/dup' && inst.type.tag === 'fn') {
-                const argument = inst.type.args[0];
-                const read = argument?.tag === 'flow' ? argument.read : argument?.value;
-                if (read) copy(read, 'dup', inst.node);
-                continue;
-            }
-            if (
-                (inst.definition === 'native/==' || inst.definition === 'native/!=') &&
-                inst.type.tag === 'fn'
-            ) {
-                const argument = inst.type.args[0];
-                const read = argument?.tag === 'flow' ? argument.read : argument?.value;
-                if (read) copy(read, decodeURIComponent(inst.definition.slice(7)), inst.node);
-                continue;
-            }
-            const drops = this.dropBounds.get(inst.definition);
-            if (drops)
-                for (const argument of inst.arguments) {
-                    if (!drops.has(argument.parameter)) continue;
-                    if (isLinear(argument.type, this.declaredLinear))
-                        throw new TypeDiagnostic(
-                            'linear-unconsumed',
-                            loc(inst.node),
-                            `${decodeURIComponent(inst.definition.split('/').at(-1)!)}, or something it passes this to, can drop a value of this type, so the type cannot be linear. If it receives from a channel, check that it consumes everything it receives`,
-                        );
-                    // Passing a generic value on to a function that drops it drops it too.
-                    variables(argument.type).forEach((id) => lost.add(id));
-                }
-            const bounds = this.copyBounds.get(inst.definition);
-            if (!bounds) continue;
-            const name = decodeURIComponent(inst.definition.split('/').at(-1)!);
-            for (const argument of inst.arguments)
-                if (bounds.has(argument.parameter))
-                    copy(
-                        argument.type,
-                        `${name} (its plain bindings are copied, so it)`,
-                        inst.node,
-                    );
-        }
         for (const scope of elaboration.scopes) {
             const owned = new Set(
                 elaboration.bindings
@@ -238,7 +165,7 @@ export class Checker {
         }
         // A parameter the function owns and never consumes is dropped, so it cannot be linear:
         // a concrete linear type is an error here, and a type variable is bound like a copy's.
-        const dropped = lost;
+
         for (const f of elaboration.functions) {
             const owned = new Set(f.parameterPlaces.filter((_, i) => f.ownedParameters[i]).flat());
             for (const state of f.exit) {
@@ -250,14 +177,10 @@ export class Checker {
                         loc(f.node),
                         'A linear parameter must be consumed before the function ends',
                     );
-                variables(state.type).forEach((id) => dropped.add(id));
+                variables(state.type).forEach((id) => lost.add(id));
             }
         }
-        this.dropBounds.set(
-            elaboration.id,
-            new Set([...dropped].filter((id) => elaboration.signature.quantified.includes(id))),
-        );
-        return new Set([...copied].filter((id) => elaboration.signature.quantified.includes(id)));
+        return lost;
     }
 
     get typeDefinitions(): TypeDefinitions {
@@ -320,29 +243,47 @@ export class Checker {
             this.constructors,
             { id, definitions: this.definitionIds },
             this.types,
-            { linearTypes: this.policy.linearTypes, acceptsLinear: this.acceptsLinear },
+            {
+                linearTypes: this.policy.linearTypes,
+                plainBinders,
+                acceptsLinear: this.acceptsLinear,
+            },
         ).infer(ast, declaration);
         verifyElaboration(inference.elaboration);
-        this.checkComparable(inference.elaboration);
-        const copyBounds = this.policy.linearTypes
-            ? this.checkLinear(inference.elaboration, plainBinders)
-            : new Set<string>();
-        const result = { ...inference, ast: inference.elaboration.source };
+        const bounds: Bound[] = [...(inference.scheme.bounds ?? [])];
+        if (this.policy.linearTypes) {
+            const lost = this.dropRequirements(inference.elaboration);
+            inference.elaboration.signature.quantified.forEach((id, parameter) => {
+                if (
+                    lost.has(id) &&
+                    !bounds.some((b) => b.parameter === parameter && b.predicate === 'Droppable')
+                )
+                    bounds.unshift({ predicate: 'Droppable', parameter });
+            });
+        }
+        const scheme = bounds.length ? { ...inference.scheme, bounds } : inference.scheme;
+        const elaboration = bounds.length
+            ? freezeTree({
+                  ...inference.elaboration,
+                  signature: {
+                      ...inference.elaboration.signature,
+                      bounds: structuredClone(bounds),
+                  },
+              })
+            : inference.elaboration;
+        const result = { ...inference, scheme, elaboration, ast: elaboration.source };
         this.checked.set(result, {
             ast: inference.elaboration.source,
             names: [...this.environment.keys()],
-            scheme: structuredClone(inference.scheme),
+            scheme: structuredClone(scheme),
             definitionId: inference.elaboration.id,
-            elaboration: inference.elaboration,
-            copyBounds,
+            elaboration,
             acceptsLinear: inference.acceptsLinear,
             imports: [
                 ...[...this.environment].map(([name, scheme]) =>
                     importScheme(this.definitionIds.get(name)!, scheme),
                 ),
-                ...[...this.constructors].map(([name, scheme]) =>
-                    importScheme(`constructor/${name}`, scheme),
-                ),
+                ...this.constructorImports(),
             ],
         });
         return result;
@@ -376,7 +317,6 @@ export class Checker {
             );
         this.environment.set(stored.ast.name, structuredClone(stored.scheme));
         this.definitionIds.set(stored.ast.name, stored.definitionId);
-        this.copyBounds.set(stored.definitionId, stored.copyBounds);
         this.acceptsLinear.set(stored.definitionId, stored.acceptsLinear);
     }
     define(
@@ -484,23 +424,6 @@ function findMut(tree: unknown): number | undefined {
     return Object.values(node)
         .map(findMut)
         .find((loc) => loc !== undefined);
-}
-
-/** Every type variable in a type. */
-/** Whether a function type appears in the structure of `type` (named data is not unfolded). */
-function holdsFunction(type: SemanticType): boolean {
-    switch (type.tag) {
-        case 'fn':
-            return true;
-        case 'con':
-            return type.args.some(holdsFunction);
-        case 'tuple':
-            return type.items.some(holdsFunction);
-        case 'record':
-            return type.fields.some((f) => holdsFunction(f.type));
-        case 'variable':
-            return false;
-    }
 }
 
 function project(type: SemanticType, path: number[]): SemanticType | undefined {

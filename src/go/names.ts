@@ -27,6 +27,7 @@ const runtime = new Set([
     'printNumber',
     'printString',
     'formatNumber',
+    'quoteDisplay',
     'laminarRound',
     'laminarMod',
     'hostInput',

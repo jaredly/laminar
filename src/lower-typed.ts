@@ -73,7 +73,12 @@ export function importScheme(definition: string, scheme: Scheme): IRScheme {
                       ? { owned: true as const }
                       : {}),
               };
-    return { definition, quantified: [...vars.values()], type: type(scheme.body) };
+    return {
+        definition,
+        ...(scheme.bounds && { bounds: structuredClone(scheme.bounds) }),
+        quantified: [...vars.values()],
+        type: type(scheme.body),
+    };
 }
 export function defaultIRImports(): IRScheme[] {
     return [
@@ -613,7 +618,11 @@ export function lowerTypedUnit(e: Elaboration): IRUnit {
     return freezeTree({
         id: e.id,
         definition: e.source.type === 'fn' && e.source.name ? e.id : undefined,
-        signature: { quantified: e.signature.quantified, type: e.signature.type },
+        signature: {
+            ...(e.signature.bounds && { bounds: e.signature.bounds }),
+            quantified: e.signature.quantified,
+            type: e.signature.type,
+        },
         origins: e.nodes.map((n) => ({ id: n.id, loc: n.loc })),
         bindings: e.bindings,
         loans: e.borrows,

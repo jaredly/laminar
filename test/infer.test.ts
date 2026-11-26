@@ -2,8 +2,18 @@ import { describe, expect, it } from 'bun:test';
 import { readLines } from '../parser-generator/lexer.ts';
 import { grammar } from '../src/laminar-parser.ts';
 import type { FileItem, Linear } from '../src/ast.ts';
+import { dualMode } from '../src/mode.ts';
 import { Checker, checkFile } from '../src/check.ts';
-import { Solver, TypeDiagnostic, con, tuple, fn, plain, printType } from '../src/types.ts';
+import {
+    Solver,
+    TypeDiagnostic,
+    con,
+    tuple,
+    fn,
+    plain,
+    printType,
+    printScheme,
+} from '../src/types.ts';
 import { runSnapshot } from './fixtures.ts';
 
 function parse(source: string): FileItem[] {
@@ -371,6 +381,17 @@ describe('AST inference', () => {
 });
 
 describe('checked compilation', () => {
+    it('publishes the constraints of the chosen checked handle', () => {
+        const checker = new Checker(undefined, undefined, 'test', dualMode);
+        const drops = checker.check(expression('fn f(mut x) { () }'));
+        checker.check(expression('fn f(mut x) { x }'));
+        checker.publish(drops);
+        expect(printScheme(checker.definitions.get('f')!)).toBe('(a) => () where Droppable(a)');
+        const decl = parse('type linear Fd { Fd(Number) }')[0]!;
+        if (decl.type !== 'union') throw Error('Expected union');
+        checker.addType(decl);
+        rejects('f(Fd(1))', 'linear-unconsumed', checker);
+    });
     it('exports the declared contract when it is narrower than the implementation', () => {
         const checker = new Checker();
         const [decl, ast] = parse('id :: (Number) => Number\nfn id(x) x');

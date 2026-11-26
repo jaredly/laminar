@@ -9,7 +9,7 @@ import { cSyntax, identifier, type Statement, type TranslationUnit } from './syn
 import { Locals } from '../backend/imperative/locals.ts';
 import { derefText, isExpr, memberText, same, type Expr } from '../backend/imperative/code.ts';
 import { isLocal, isScope, mapScope, visit } from '../backend/imperative/statements.ts';
-import { appendFunction, appendPart, cBytes, stringRuntime, stringType } from './strings.ts';
+import { appendFunction, cBytes, stringRuntime, stringType } from './strings.ts';
 import { importName, infixImports, requireImport, usesHost } from '../runtime-imports.ts';
 import { functionNames } from '../backend/names.ts';
 import { localNames, takesName } from '../backend/local-names.ts';
@@ -2355,23 +2355,37 @@ export function lowerC(
                             body.push(
                                 cc`${use('builder_bytes')}(&${builder}, ${head.literal}, ${head.length});`,
                             );
-                            for (const part of i.parts) {
-                                const tail = cBytes(part.tail);
-                                const appended = value(part.value);
-                                use(appendFunction(layout(outputLayouts.get(part.value)!).kind));
+                            const bytes = (text: string) => {
+                                const { literal, length } = cBytes(text);
                                 body.push(
-                                    locals.format(
-                                        (builder, appended) =>
-                                            appendPart(
-                                                builder,
-                                                layout(outputLayouts.get(part.value)!).kind,
-                                                appended,
-                                            ),
-                                        builder,
-                                        appended,
-                                    ),
-                                    cc`${use('builder_bytes')}(&${builder}, ${tail.literal}, ${tail.length});`,
+                                    cc`${use('builder_bytes')}(&${builder}, ${literal}, ${length});`,
                                 );
+                            };
+                            const append = (id: string, expr: Expr, nested: boolean) => {
+                                const l = layout(id);
+                                if (l.kind === 'unit') {
+                                    body.push(cc`(void)${expr};`);
+                                    bytes('()');
+                                } else if (l.kind === 'record') {
+                                    bytes('(');
+                                    l.fields.forEach((f, i) => {
+                                        if (f.kind !== 'value')
+                                            return unsupported('Invalid tuple display layout');
+                                        if (i) bytes(', ');
+                                        append(f.layout, dot(expr, f.name), true);
+                                    });
+                                    bytes(')');
+                                } else {
+                                    const name =
+                                        nested && l.kind === 'string'
+                                            ? 'builder_quoted'
+                                            : appendFunction(l.kind);
+                                    body.push(cc`${use(name)}(&${builder}, ${expr});`);
+                                }
+                            };
+                            for (const part of i.parts) {
+                                append(outputLayouts.get(part.value)!, value(part.value), false);
+                                bytes(part.tail);
                             }
                             expr = cc`${use('builder_finish')}(&${builder})`;
                             break;

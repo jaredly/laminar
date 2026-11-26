@@ -55,8 +55,8 @@ it('emits deterministic C and Go for the last top-level expression', () => {
 
 it('requires an entry expression and maps backend diagnostics', () => {
     expect(failure(() => compileSource('fn f(x) x', { target })).code).toBe('missing-entry');
-    const error = failure(() => compileSource('"${(1, 2)}"', { target }));
-    expect([error.stage, error.code]).toEqual(['backend', 'unsupported-c']);
+    const error = failure(() => compileSource('"${[1]}"', { target }));
+    expect([error.stage, error.code]).toEqual(['type', 'not-displayable']);
     expect(
         failure(() =>
             compileSource('getInput("> ")', {

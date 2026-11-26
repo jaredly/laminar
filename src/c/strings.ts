@@ -1,3 +1,4 @@
+import { sourceEscapes } from '../display.ts';
 import { BackendDiagnostic } from '../backend/target.ts';
 import type { Statement, TranslationUnit } from './syntax.ts';
 
@@ -112,6 +113,33 @@ export function stringRuntime(): {
                 },
                 'memcpy(b->bytes + b->length, bytes, length);',
                 'b->length += length;',
+            ],
+        },
+        {
+            name: 'builder_quoted',
+            uses: ['builder_bytes', 'string_drop'],
+            signature: `void builder_quoted(string_builder *b, ${stringType} *s)`,
+            body: [
+                `builder_bytes(b, ${cBytes('"').literal}, 1);`,
+                {
+                    head: 'for (size_t i = 0; s && i < s->length; i++)',
+                    body: [
+                        ...sourceEscapes.map(([key, escaped]) => ({
+                            head:
+                                key.length === 1
+                                    ? `if (s->bytes[i] == ${key.charCodeAt(0)})`
+                                    : `if (i + 1 < s->length && s->bytes[i] == 36 && s->bytes[i + 1] == 123)`,
+                            body: [
+                                `builder_bytes(b, ${cBytes(escaped).literal}, ${escaped.length});`,
+                                ...(key.length > 1 ? ['i++;'] : []),
+                                'continue;',
+                            ],
+                        })),
+                        'builder_bytes(b, (const char *)&s->bytes[i], 1);',
+                    ],
+                },
+                `builder_bytes(b, ${cBytes('"').literal}, 1);`,
+                'string_drop(s);',
             ],
         },
         {
@@ -272,9 +300,4 @@ export function appendFunction(kind: string): string {
                 'String interpolation supports String, Number and Bool parts',
             );
     }
-}
-
-/** The statement appending one interpolated part. */
-export function appendPart(builder: string, kind: string, expression: string): string {
-    return `${appendFunction(kind)}(&${builder}, ${expression});`;
 }

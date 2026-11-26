@@ -1,3 +1,4 @@
+import type { Bound } from './constraints.ts';
 import type { BindingRecord, DefinitionId, SemanticFlow, SemanticType } from './elaborated.ts';
 
 export type ValueId = string;
@@ -118,14 +119,20 @@ export type IRFunction = {
 export type IRUnit = {
     id: string;
     definition?: string;
-    signature: { quantified: string[]; type: SemanticType };
+    signature: { quantified: string[]; bounds?: Bound[]; type: SemanticType };
     origins: { id: string; loc?: number }[];
     bindings: BindingRecord[];
     loans: { id: string; place: string; path: number[]; parent?: string; owners?: SlotRef[] }[];
     functions: IRFunction[];
     entry: IRBlock;
 };
-export type IRScheme = { definition: string; quantified: string[]; type: SemanticType };
+export type IRScheme = {
+    definition: string;
+    linearResult?: true;
+    quantified: string[];
+    bounds?: Bound[];
+    type: SemanticType;
+};
 export type TypedProgram = { schemaVersion: 1; imports: IRScheme[]; units: IRUnit[] };
 
 export const irPlain = (value: SemanticType): SemanticFlow => ({ tag: 'plain', value });

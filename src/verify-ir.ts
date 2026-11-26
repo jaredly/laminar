@@ -1,3 +1,10 @@
+import {
+    comparableUnions,
+    requirements,
+    linearUnions,
+    type Bound,
+    type Predicate,
+} from './constraints.ts';
 import type { SemanticFlow, SemanticType } from './elaborated.ts';
 import { BackendDiagnostic } from './backend/target.ts';
 import {
@@ -168,7 +175,7 @@ export function verifyTypedProgram(program: TypedProgram): void {
         );
     if (program.schemaVersion !== 1) fail('Unknown IR version');
     const closedScheme = (
-        scheme: { quantified: string[]; type: SemanticType },
+        scheme: { quantified: string[]; bounds?: Bound[]; type: SemanticType },
         definition: string,
     ): void => {
         validType(scheme.type);
@@ -178,11 +185,21 @@ export function verifyTypedProgram(program: TypedProgram): void {
             scheme.quantified.some((p, i) => p !== `${definition}/q${i}`)
         )
             fail('Invalid quantified type parameters');
+        for (const b of scheme.bounds ?? [])
+            if (
+                !['Display', 'Comparable', 'Copyable', 'Droppable'].includes(b.predicate) ||
+                !Number.isInteger(b.parameter) ||
+                b.parameter < 0 ||
+                b.parameter >= scheme.quantified.length
+            )
+                fail('Invalid scheme constraint');
         mapSemantic(scheme.type, (id) => {
             if (!allowed.has(id)) fail('Unbound variable in exported signature');
             return undefined;
         });
     };
+    const nominal = comparableUnions(program.imports);
+    const linear = linearUnions(program.imports);
     const definitions = new Map<string, IRScheme>();
     for (const imported of program.imports) {
         if (definitions.has(imported.definition)) fail('Duplicate import');
@@ -755,6 +772,22 @@ export function verifyTypedProgram(program: TypedProgram): void {
             if (s.slots.has(place)) fail('Place allocated twice');
             s.slots.set(place, { type, empty: [], version: new Map() });
         };
+        const requireBound = (predicate: Predicate, type: SemanticType) => {
+            const remaining = requirements(predicate, type, nominal, (name) => linear.has(name));
+            if (
+                !remaining ||
+                remaining.some((id) => {
+                    const parameter = u.signature.quantified.indexOf(id);
+                    return (
+                        parameter >= 0 &&
+                        !u.signature.bounds?.some(
+                            (b) => b.parameter === parameter && b.predicate === predicate,
+                        )
+                    );
+                })
+            )
+                fail(`Unsatisfied ${predicate} constraint`);
+        };
         const instantiate = (i: Instance): SemanticType => {
             const scheme =
                 definitions.get(i.definition) ?? fail(`Unknown definition ${i.definition}`);
@@ -765,6 +798,8 @@ export function verifyTypedProgram(program: TypedProgram): void {
                 scheme.quantified.some((p) => !args.has(p))
             )
                 fail('Wrong specialization type arguments');
+            for (const b of scheme.bounds ?? [])
+                requireBound(b.predicate, args.get(scheme.quantified[b.parameter]!)!);
             const type = mapSemantic(scheme.type, (id) => args.get(id));
             eq(type, i.type);
             return type;
@@ -897,7 +932,7 @@ export function verifyTypedProgram(program: TypedProgram): void {
                         );
                         break;
                     case 'string':
-                        i.parts.forEach((p) => plain(take(s, p.value)));
+                        i.parts.forEach((p) => requireBound('Display', plain(take(s, p.value))));
                         feq(i.out.type, irPlain(irCon('String')));
                         break;
                     case 'tuple': {

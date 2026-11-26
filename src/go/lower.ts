@@ -552,6 +552,25 @@ ${joinCode(
             )}}`;
         return expr;
     };
+    const display = (id: string, expr: Expr, nested = false): Expr => {
+        const l = layout(id);
+        if (nested && l.kind === 'string') return go`quoteDisplay(${expr})`;
+        if (l.kind !== 'record' && l.kind !== 'unit') return stringPart(l.kind, expr);
+        const helper = vectorHelper('display', id, (name) => {
+            const parts: Expr[] = [goBytes('(')];
+            l.fields.forEach((f, i) => {
+                if (f.kind !== 'value') return unsupported('Invalid tuple display layout');
+                if (i) parts.push(goBytes(', '));
+                parts.push(display(f.layout, dot('v', f.name), true));
+            });
+            parts.push(goBytes(')'));
+            return {
+                signature: goText`func ${name}(v ${type(id)}) string`,
+                body: [go`return ${joinCode(parts, ' + ')}`],
+            };
+        });
+        return go`${helper}(${expr})`;
+    };
     /** The ABI argument layouts of a wrapper's native call. */
     const nativeParameters = (w: { abi: string }): readonly string[] =>
         program.abis.find((a) => a.id === w.abi)!.arguments;
@@ -2215,10 +2234,7 @@ ${joinCode(
                                 [
                                     goBytes(i.head),
                                     ...i.parts.flatMap((part) => [
-                                        stringPart(
-                                            layout(outputLayouts.get(part.value)!).kind,
-                                            value(part.value),
-                                        ),
+                                        display(outputLayouts.get(part.value)!, value(part.value)),
                                         goBytes(part.tail),
                                     ]),
                                 ].filter((piece) => !same(piece, '""')),
@@ -3416,7 +3432,7 @@ ${joinCode(
 
     return reachableGo({
         packageName: 'main',
-        imports: ['fmt', 'math', 'strconv', ...hostImports],
+        imports: [...new Set(['fmt', 'math', 'strconv', 'strings', ...hostImports])],
         declarations,
         functions,
     });

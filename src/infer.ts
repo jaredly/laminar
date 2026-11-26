@@ -1,3 +1,4 @@
+import { comparableUnions } from './constraints.ts';
 import {
     ElaborationBuilder,
     type Elaboration,
@@ -98,6 +99,7 @@ type View = {
 export type InferOptions = {
     /** Linear types exist, so a closure may take an owned lens or become linear. */
     linearTypes?: boolean;
+    plainBinders?: ReadonlySet<number>;
     /** Which parameters of a published definition consume a linear closure. */
     acceptsLinear?: ReadonlyMap<string, ReadonlySet<number>>;
 };
@@ -183,7 +185,7 @@ export class Inferencer {
                         (constructor ? 'constructor:' : 'value:') + name,
                         quantified.map((local, i) => ({ local, parameter: `${definition}/q${i}` })),
                     );
-                    return [name, { body, quantified }];
+                    return [name, { ...scheme, body, quantified }];
                 }),
             );
         this.globals = imports(globals);
@@ -236,6 +238,13 @@ export class Inferencer {
         kind: BindingRecord['kind'],
         definition?: string,
     ): void {
+        const initialType = this.get(b, 0);
+        const loc = (node as { loc?: number } | undefined)?.loc;
+        if (kind === 'local' && loc !== undefined && this.options.plainBinders?.has(loc))
+            this.solver.require('Copyable', initialType, loc, [
+                'linear-plain',
+                `${name} holds a linear value, so it must be declared \`mut\``,
+            ]);
         b.id = this.builder.binding({
             name,
             declaration: node ? this.builder.node(node) : undefined,
@@ -244,7 +253,7 @@ export class Inferencer {
             path: [...b.path],
             kind,
             borrow: b.permit?.id,
-            initialType: this.get(b, 0),
+            initialType,
         });
     }
     private state(root: Root): RawState {
@@ -279,7 +288,11 @@ export class Inferencer {
         this.builder.uses.push({ node: this.builder.node(node), binding: b.id!, mode });
     }
     private instantiate(name: string, scheme: Scheme, node: object, constructor = false): Ty {
-        const result = this.solver.instantiateWithArguments(scheme);
+        const result = this.solver.instantiateWithArguments(
+            scheme,
+            false,
+            (node as { loc: number }).loc,
+        );
         const recursive = !constructor && name === this.selfName;
         const parameters = recursive
             ? []
@@ -555,6 +568,17 @@ export class Inferencer {
             }
             scheme = contract;
         }
+        this.solver.finishBounds(
+            scheme,
+            bodyVariables,
+            comparableUnions(
+                [...this.constructors].map(([name, s]) => ({
+                    definition: `constructor/${name}`,
+                    type: s.body,
+                })),
+            ),
+            this.declaredLinear,
+        );
         const elaboration = this.builder.finish(
             ast,
             declaration,
@@ -869,7 +893,9 @@ export class Inferencer {
             case 'bool':
                 return con('Bool');
             case 'string':
-                n.interp.forEach((v) => this.linear(v.value, env));
+                n.interp.forEach(({ value }) =>
+                    this.solver.require('Display', this.linear(value, env), value.loc),
+                );
                 return con('String');
             case 'tuple':
                 return n.items.length === 1

@@ -1,3 +1,4 @@
+import { displayValue } from './display.ts';
 import type { SemanticType } from './elaborated.ts';
 import { freezeTree } from './elaborated.ts';
 import { decodeNumber } from './typed-ir.ts';
@@ -718,7 +719,7 @@ export function executeTypedProgram(
                 case 'string':
                     result =
                         i.head +
-                        i.parts.map((p) => String(data(take(f, p.value))) + p.tail).join('');
+                        i.parts.map((p) => displayValue(data(take(f, p.value))) + p.tail).join('');
                     break;
                 case 'tuple':
                     result = i.items.map((id) => owned(data(take(f, id))));

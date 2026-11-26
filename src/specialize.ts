@@ -1,3 +1,4 @@
+import { comparableUnions, linearUnions, requirements } from './constraints.ts';
 import { createHash } from 'node:crypto';
 import { freezeTree, type SemanticType } from './elaborated.ts';
 import { BackendDiagnostic, targetConfig, targetKey, type TargetConfig } from './backend/target.ts';
@@ -77,7 +78,9 @@ export function specializeProgram(
     options: { maxInstances?: number } = {},
 ): SpecializedProgram {
     const generic = freezeTree(eraseRecords(structuredClone(input)));
-    verifyTypedProgram(generic);
+    verifyTypedProgram(input);
+    const nominal = comparableUnions(input.imports);
+    const linear = linearUnions(input.imports);
     const config = targetConfig(target),
         targetIdentity = targetKey(config);
     const limit = options.maxInstances ?? 256;
@@ -124,6 +127,13 @@ export function specializeProgram(
                 `Wrong type argument count for ${source}`,
             );
         args = args.map(concrete);
+        for (const b of scheme.bounds ?? []) {
+            if (!requirements(b.predicate, args[b.parameter]!, nominal, (name) => linear.has(name)))
+                throw new BackendDiagnostic(
+                    'unsatisfied-constraint',
+                    `Parameter ${b.parameter + 1} of ${source} requires ${b.predicate}`,
+                );
+        }
         const identity = unit?.definition ?? unit?.id ?? source;
         const key = JSON.stringify([
             'semantic-specialization',
@@ -165,6 +175,7 @@ export function specializeProgram(
         copy.id = record.id;
         if (copy.definition) copy.definition = record.id;
         copy.signature.quantified = [];
+        delete copy.signature.bounds;
         // Global binding schemes are provenance only, and remain in `generic`.
         copy.bindings = copy.bindings.filter((b) => b.kind !== 'global');
         const specialized = rewrite(copy, substitute, (i) => {

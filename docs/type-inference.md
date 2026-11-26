@@ -127,3 +127,30 @@ borrowed-match subset. List/variant physical layout restrictions remain separate
 Compiler-generated reconstruction preserves the original owner's escape provenance.
 Returning a field of an owned local list or tuple remains rejected. The detached
 verifier enforces the same rule independently through reconstruction-owner capabilities.
+
+## Inferred constraints
+
+A top-level scheme can carry built-in predicates on its quantified parameters. Each
+use instantiates the predicates along with the parameter types. This also applies
+when a definition is used as a value, passed to a higher-order function, or
+exported with a narrower declaration. `printScheme` renders inferred bounds
+with `where`. There is no new annotation syntax.
+
+| Predicate | Operation requiring it |
+| --- | --- |
+| `Display(a)` | Interpolating an expression of type `a` |
+| `Comparable(a)` | Comparing two values with `==` or `!=` |
+| `Copyable(a)` | Copying a value or binding it as shared in dual mode |
+| `Droppable(a)` | Leaving an owned value unconsumed on a path in dual mode |
+
+`fn label(x) { "${x}" }` has pure-mode scheme `(a) => String where Display(a)`.
+String, Number, Bool, and tuples of displayable elements support interpolation.
+Unit displays as `()`. For example, interpolating `(1, ("hi", true))` produces
+`(1, ("hi", true))`, including the quotes. Nested strings escape quotes,
+backslashes, interpolation openers and the control sequences understood by the
+lexer. Interpolating a string directly preserves its contents. An interpolation
+hole evaluates its expression once, with the ordinary ownership rules.
+
+Equality inspects the payloads of every constructor in a union. A function
+payload makes the union ineligible, including through recursive definitions.
+A type parameter used only as a phantom imposes no comparison requirement.

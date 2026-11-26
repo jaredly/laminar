@@ -1,3 +1,4 @@
+import type { Bound } from './constraints.ts';
 import { normalizeBorrowed } from './normalize-borrowed.ts';
 import { normalizeVectors } from './normalize-vectors.ts';
 import type { Decl, Linear } from './ast.ts';
@@ -123,6 +124,7 @@ export type Elaboration = {
     }[];
     signature: {
         quantified: TypeVariableId[];
+        bounds?: Bound[];
         type: SemanticType;
         bodyType: SemanticType;
         bodyVariables: { variable: TypeVariableId; type: SemanticType }[];
@@ -398,6 +400,7 @@ export class ElaborationBuilder {
             })),
             signature: {
                 quantified,
+                ...(scheme.bounds && { bounds: scheme.bounds }),
                 type: type(scheme.body),
                 bodyType: body,
                 bodyVariables: [...bodyVariables].map(([id, t]) => ({

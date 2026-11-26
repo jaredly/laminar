@@ -1,3 +1,10 @@
+import {
+    requirements,
+    predicateErrors,
+    type comparableUnions,
+    type Bound,
+    type Predicate,
+} from './constraints.ts';
 /** Solver types are deliberately separate from parsed annotation syntax. */
 export type Ty =
     | { tag: 'meta'; id: number }
@@ -29,7 +36,7 @@ export type Ty =
 export type FlowTy =
     | { tag: 'plain'; value: Ty; mode: Ty }
     | { tag: 'flow'; read: Ty; write: Ty; replaceable: Ty; owned: Ty };
-export type Scheme = { quantified: number[]; body: Ty };
+export type Scheme = { quantified: number[]; bounds?: Bound[]; body: Ty };
 export const con = (name: string, ...args: Ty[]): Ty => ({ tag: 'con', name, args });
 export const tuple = (...items: Ty[]): Ty => ({ tag: 'tuple', items });
 export const record = (fields: { name: string; type: Ty }[]): Ty => ({
@@ -114,6 +121,44 @@ export function mapFlow(t: FlowTy, f: (t: Ty) => Ty): FlowTy {
 
 export class Solver {
     private next = 0;
+    private obligations: {
+        predicate: Predicate;
+        type: Ty;
+        loc: number;
+        diagnostic?: [string, string];
+    }[] = [];
+    require(predicate: Predicate, type: Ty, loc: number, diagnostic?: [string, string]): void {
+        this.obligations.push({ predicate, type, loc, diagnostic });
+    }
+    /** Discharge concrete obligations and export those on the final contract's parameters. */
+    finishBounds(
+        scheme: Scheme,
+        bodyVariables: Map<number, Ty>,
+        unions: ReturnType<typeof comparableUnions>,
+        linear: (name: string) => boolean,
+    ): void {
+        const bounds: Bound[] = [];
+        for (const { predicate, type, loc, diagnostic } of this.obligations) {
+            const resolved = mapType(this.resolve(type), (t) =>
+                t.tag === 'meta' ? bodyVariables.get(t.id) : undefined,
+            );
+            const remaining = requirements<number>(predicate, resolved, unions, linear);
+            if (!remaining) {
+                const [code, message] = diagnostic ?? predicateErrors[predicate];
+                throw new TypeDiagnostic(code, loc, message);
+            }
+            for (const variable of remaining) {
+                const parameter = scheme.quantified.indexOf(variable);
+                if (
+                    parameter >= 0 &&
+                    !bounds.some((b) => b.parameter === parameter && b.predicate === predicate)
+                )
+                    bounds.push({ predicate, parameter });
+            }
+        }
+        if (bounds.length) scheme.bounds = bounds;
+        this.obligations = [];
+    }
     private substitutions = new Map<number, Ty>();
     private modeMetas = new Set<number>();
     /** Variables standing for what a channel carries: any function they turn out to be is one-use. */
@@ -170,12 +215,26 @@ export class Solver {
     instantiate(s: Scheme, rigid = false): Ty {
         return this.instantiateWithArguments(s, rigid).type;
     }
-    instantiateWithArguments(s: Scheme, rigid = false): { type: Ty; arguments: Map<number, Ty> } {
+    instantiateWithArguments(
+        s: Scheme,
+        rigid = false,
+        loc = 0,
+    ): { type: Ty; arguments: Map<number, Ty> } {
         const vars = new Map(s.quantified.map((id) => [id, rigid ? this.rigid() : this.fresh()]));
         const type = mapType(this.resolve(s.body), (t) =>
             t.tag === 'meta' ? vars.get(t.id) : undefined,
         );
         this.channels(type);
+        for (const b of s.bounds ?? []) {
+            const value = vars.get(s.quantified[b.parameter]!);
+            if (!value)
+                throw new TypeDiagnostic(
+                    'open-signature',
+                    loc,
+                    'Constraint on an unquantified parameter',
+                );
+            this.require(b.predicate, value, loc);
+        }
         return { type, arguments: vars };
     }
     generalize(t: Ty, environment: Scheme[]): Scheme {
@@ -357,7 +416,11 @@ export class Solver {
     }
 }
 
-export function printType(t: Ty): string {
+export function printScheme(scheme: Scheme): string {
+    return printType(scheme.body, scheme);
+}
+
+export function printType(t: Ty, scheme?: Scheme): string {
     const names = new Map<number, string>();
     const show = (t: Ty): string => {
         switch (t.tag) {
@@ -386,5 +449,16 @@ export function printType(t: Ty): string {
         t.tag === 'plain'
             ? (t.mode.tag === 'con' && t.mode.name === SHARED_NAME ? '&' : '') + show(t.value)
             : `${t.owned.tag === 'con' && t.owned.name === OWNED_LENS_NAME ? 'mut ' : ''}${show(t.read)}/${t.replaceable.tag === 'con' && t.replaceable.name === FIXED_NAME ? '=' : ''}${show(t.write)}`;
-    return show(t);
+    const body = show(t);
+    if (!scheme?.bounds?.length) return body;
+    return (
+        body +
+        ' where ' +
+        scheme.bounds
+            .map(
+                (b) =>
+                    `${b.predicate}(${show({ tag: 'meta', id: scheme.quantified[b.parameter]! })})`,
+            )
+            .join(', ')
+    );
 }
