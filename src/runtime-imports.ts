@@ -432,6 +432,7 @@ const variables = (t: Ty | FlowTy, into = new Set<number>()): Set<number> => {
             break;
         case 'record':
             t.fields.forEach((f) => variables(f.type, into));
+            if (t.rest) variables(t.rest, into);
             break;
         case 'fn':
             t.args.forEach((a) => variables(a, into));

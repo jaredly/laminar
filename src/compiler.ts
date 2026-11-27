@@ -264,7 +264,10 @@ function holdsLinearClosure(type: SemanticType): boolean {
         case 'tuple':
             return type.items.some(holdsLinearClosure);
         case 'record':
-            return type.fields.some((f) => holdsLinearClosure(f.type));
+            return (
+                type.fields.some((f) => holdsLinearClosure(f.type)) ||
+                (!!type.rest && holdsLinearClosure(type.rest))
+            );
         case 'variable':
             return false;
     }

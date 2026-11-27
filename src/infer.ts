@@ -5,6 +5,7 @@ import {
     type ElaborationContext,
     type BindingRecord,
     type RawState,
+    type Step,
 } from './elaborated.ts';
 import { captureUses } from './captures.ts';
 import { isLinear } from './linear.ts';
@@ -19,6 +20,7 @@ import {
     type Decl,
     type Id,
     type TypeDecl,
+    type RecordItem,
 } from './ast.ts';
 import {
     Solver,
@@ -31,6 +33,7 @@ import {
     flow,
     mono,
     mapFlow,
+    printType,
     FIXED,
     OWNED,
     BORROWED_LENS,
@@ -43,9 +46,10 @@ import {
     type Ty,
     type FlowTy,
     type Scheme,
+    type RecordTy,
 } from './types.ts';
 
-type Borrow = { path: number[]; parent?: Borrow; id: string };
+type Borrow = { path: Step[]; parent?: Borrow; id: string };
 type OnceParameters = readonly number[] | undefined;
 const commonOnceParameters = (a: OnceParameters, b: OnceParameters): OnceParameters =>
     a && b && a.filter((i) => b.includes(i));
@@ -58,7 +62,12 @@ type Root = {
     protectedOwners?: Binding[];
     place?: string;
     type: Ty;
-    empty: number[][];
+    empty: Step[][];
+    /**
+     * The type each emptied path held when it was last moved out; a move leaves unit behind.
+     * Only read for a path that is empty now.
+     */
+    vacated?: Map<string, Ty>;
     borrows: Set<Borrow>;
     revisions: Map<string, number>;
     /**
@@ -72,7 +81,7 @@ type Root = {
 type Binding = {
     id?: string;
     root: Root;
-    path: number[];
+    path: Step[];
     scheme?: Scheme;
     permit?: Borrow;
     /**
@@ -84,10 +93,12 @@ type Binding = {
     replaceable?: Ty;
 };
 type Env = Map<string, Binding>;
+/** A spread's value: what it holds now, what it held before any moves, and the emptied fields. */
+type SpreadValue = { current: Ty; original: Ty; holes: Set<string> };
 type View = {
     /** Stage final focus contents now; the returned action completes restoration. */
     provenance?: Binding[];
-    empty?: number[][];
+    empty?: Step[][];
     read: Ty;
     put: (type: Ty) => void;
     targets: Binding[];
@@ -217,6 +228,7 @@ export class Inferencer {
             case 'record':
                 return record(
                     t.fields.map((f) => ({ name: f.name, type: this.replace(f.type, vars) })),
+                    t.rest && this.replace(t.rest, vars),
                 );
             case 'fn':
                 return fn(
@@ -296,6 +308,26 @@ export class Inferencer {
                 after: this.state(b.root),
             });
     }
+    private replaceAt(type: Ty, path: Step[], value: Ty, loc: number): Ty {
+        const [step, ...rest] = path;
+        if (step === undefined) return value;
+        const p = this.solver.prune(type);
+        if (typeof step === 'string') {
+            if (p.tag !== 'record' || !p.fields.some((f) => f.name === step))
+                return this.error('alias-shape', loc, 'Aliased record shape changed');
+            return record(
+                p.fields.map((f) =>
+                    f.name === step ? { ...f, type: this.replaceAt(f.type, rest, value, loc) } : f,
+                ),
+                p.rest,
+            );
+        }
+        if (p.tag !== 'tuple' || step >= p.items.length)
+            return this.error('alias-shape', loc, 'Aliased tuple shape changed');
+        return tuple(
+            ...p.items.map((v, i) => (i === step ? this.replaceAt(v, rest, value, loc) : v)),
+        );
+    }
     private use(node: object, b: Binding, mode: 'value' | 'lens'): void {
         this.bindings.set(node, b);
         this.builder.uses.push({ node: this.builder.node(node), binding: b.id!, mode });
@@ -326,10 +358,11 @@ export class Inferencer {
         return result.type;
     }
     private selfName?: string;
+    private sharedPattern = false;
     private lookup(env: Env, name: string, loc: number): Binding {
         return env.get(name) ?? this.error('unbound-name', loc, `Unbound name ${name}`);
     }
-    private overlaps(a: number[], b: number[]): boolean {
+    private overlaps(a: Step[], b: Step[]): boolean {
         return a.slice(0, Math.min(a.length, b.length)).every((v, i) => v === b[i]);
     }
     // A computed focus depends on its logical path, including ancestor and
@@ -371,20 +404,19 @@ export class Inferencer {
     }
     private get(b: Binding, loc: number): Ty {
         this.accessible(b, loc);
-        let t = b.root.type;
-        for (const i of b.path) {
+        return this.at(b.root.type, b.path, loc);
+    }
+    private at(type: Ty, path: Step[], loc: number): Ty {
+        let t = type;
+        for (const step of path) {
             const p = this.solver.prune(t);
-            const items =
-                p.tag === 'tuple'
-                    ? p.items
-                    : p.tag === 'record'
-                      ? p.fields.map((f) => f.type)
-                      : this.error(
-                            'alias-shape',
-                            loc,
-                            'Aliased tuple no longer has its original shape',
-                        );
-            t = items[i] ?? this.error('alias-shape', loc, 'Aliased tuple component is missing');
+            if (typeof step === 'string' ? p.tag !== 'record' : p.tag !== 'tuple')
+                this.error('alias-shape', loc, 'Aliased value no longer has its original shape');
+            t =
+                (typeof step === 'string'
+                    ? (p as RecordTy).fields.find((f) => f.name === step)?.type
+                    : (p as Ty & { tag: 'tuple' }).items[step]) ??
+                this.error('alias-shape', loc, 'Aliased component is missing');
         }
         return t;
     }
@@ -393,22 +425,8 @@ export class Inferencer {
         this.accessible(b, loc);
         if (b.scheme)
             this.error('immutable-definition', loc, 'Reusable definitions cannot be lens targets');
-        const update = (t: Ty, path: number[]): Ty => {
-            if (!path.length) return value;
-            const p = this.solver.prune(t);
-            if (p.tag === 'record' && path[0] < p.fields.length)
-                return {
-                    tag: 'record',
-                    fields: p.fields.map((f, i) =>
-                        i === path[0] ? { ...f, type: update(f.type, path.slice(1)) } : f,
-                    ),
-                };
-            if (p.tag !== 'tuple' || path[0] >= p.items.length)
-                return this.error('alias-shape', loc, 'Aliased tuple shape changed');
-            return tuple(...p.items.map((v, i) => (i === path[0] ? update(v, path.slice(1)) : v)));
-        };
         b.root.callsOnce = undefined;
-        b.root.type = update(b.root.type, b.path);
+        b.root.type = this.replaceAt(b.root.type, b.path, value, loc);
         const revisionPath = JSON.stringify(b.path);
         b.root.revisions.set(revisionPath, (b.root.revisions.get(revisionPath) ?? 0) + 1);
         b.root.empty = b.root.empty.filter((path) => !this.overlaps(path, b.path));
@@ -419,11 +437,15 @@ export class Inferencer {
         const type = this.get(b, loc);
         if (!this.available(b))
             this.error('use-after-move', loc, 'Value has already been consumed');
+        this.vacate(b, type, loc);
+        return type;
+    }
+    private vacate(b: Binding, type: Ty, loc: number): void {
         const before = this.state(b.root);
         this.put(b, tuple(), loc, false);
         b.root.empty.push(b.path);
+        (b.root.vacated ??= new Map()).set(JSON.stringify(b.path), type);
         this.transition('move', b, before);
-        return type;
     }
     private restored(b: Binding, loc: number): void {
         this.accessible(b, loc);
@@ -515,9 +537,18 @@ export class Inferencer {
                         item.loc,
                         `Constructor ${constructor} already exists`,
                     );
-                const args = (item.args ?? []).map((t) =>
-                    reads(this.valueAnnotation(t, params, true)),
-                );
+                const types = (item.args ?? []).map((t) => this.valueAnnotation(t, params, true));
+                const args = types.map((t) => reads(t));
+                for (const type of types)
+                    mapType(type, (t) => {
+                        if (t.tag === 'record' && t.rest)
+                            this.error(
+                                'open-record-in-union',
+                                item.loc,
+                                'A union constructor cannot hold an open record yet; make the whole record a type parameter',
+                            );
+                        return undefined;
+                    });
                 constructors.set(constructor, this.solver.generalize(fn(args, result), []));
             }
         } finally {
@@ -580,7 +611,13 @@ export class Inferencer {
                     ),
                 );
             }
-            scheme = contract;
+            // What the body needs a row to lack is part of the contract, as its bounds are.
+            const rows = this.solver.rowConstraints(
+                contract.quantified.map(
+                    (id) => (contractInstance.arguments.get(id) as Ty & { tag: 'rigid' }).id,
+                ),
+            );
+            scheme = rows.length ? { ...contract, rows } : contract;
         }
         this.solver.finishBounds(
             scheme,
@@ -708,15 +745,18 @@ export class Inferencer {
             }
             case 'tuple':
                 return plain(tuple(...t.items.map((v) => this.valueAnnotation(v, vars, closed))));
-            case 'record':
-                return plain(
-                    record(
-                        this.uniqueFields(t.fields, t.loc).map((f) => ({
-                            name: f.name,
-                            type: this.valueAnnotation(f.type, vars, closed),
-                        })),
-                    ),
-                );
+            case 'record': {
+                const fields = this.uniqueFields(t.fields, t.loc).map((f) => ({
+                    name: f.name,
+                    type: this.valueAnnotation(f.type, vars, closed),
+                }));
+                const rest = !t.rest
+                    ? undefined
+                    : t.rest.text === '_' && !closed
+                      ? this.solver.fresh()
+                      : this.valueAnnotation(t.rest, vars, closed);
+                return plain(this.solver.row(fields, rest, t.loc));
+            }
             case 'fn': {
                 const args = t.args.map((v) => this.annotation(v, vars, closed));
                 let result = this.annotation(t.body, vars, closed);
@@ -792,28 +832,49 @@ export class Inferencer {
                 return;
             }
             case 'record': {
-                // Patterns are exhaustive: every field is matched, `_` drops the ones not wanted.
+                if (source && p.rest)
+                    this.error(
+                        'unsupported-lens-rest',
+                        p.rest.loc,
+                        'A lens pattern cannot bind `...rest`; name the fields it focuses',
+                    );
+                if (p.rest && p.rest.type !== 'id' && p.rest.type !== 'drop')
+                    this.error('invalid-rest', p.rest.loc, '`...` takes a name or `_`');
                 const fields = this.uniqueFields(p.fields, p.loc).map((f) => ({
                     ...f,
                     type: this.solver.fresh(),
                 }));
-                this.solver.unify(
-                    type,
-                    record(fields.map((f) => ({ name: f.name, type: f.type }))),
-                    p.loc,
-                );
-                const order = [...fields].sort((a, b) => (a.name < b.name ? -1 : 1));
+                const types = fields.map((f) => ({ name: f.name, type: f.type }));
+                // The fields the pattern does not name.
+                const tail = p.exact ? undefined : this.solver.fresh();
+                const matched = this.solver.row(types, tail, p.loc);
+                try {
+                    this.solver.unify(type, matched, p.loc);
+                } catch (e) {
+                    if (p.exact && e instanceof TypeDiagnostic && e.code === 'type-mismatch')
+                        this.error(
+                            'type-mismatch',
+                            p.loc,
+                            `${e.message}. A borrowed match with constructors rebuilds its records, so a record pattern in it must list every field`,
+                        );
+                    throw e;
+                }
                 fields.forEach((f) =>
                     this.pattern(
                         f.pat,
                         f.type,
                         env,
-                        source
-                            ? { ...source, path: [...source.path, order.indexOf(f)] }
-                            : undefined,
+                        source ? { ...source, path: [...source.path, f.name] } : undefined,
                         seen,
                     ),
                 );
+                if (p.rest) this.pattern(p.rest, tail!, env, undefined, seen);
+                else if (tail && !source && !this.sharedPattern)
+                    this.dropped(
+                        tail,
+                        p.loc,
+                        'This pattern drops the fields it does not name, so they cannot be linear',
+                    );
                 return;
             }
             case 'constructor': {
@@ -835,6 +896,11 @@ export class Inferencer {
                     'Lens pattern is only valid as the final function parameter',
                 );
         }
+    }
+    /** A value of this type is discarded here. */
+    private dropped(type: Ty, loc: number, message: string): void {
+        if (this.options.linearTypes)
+            this.solver.require('Droppable', type, loc, ['linear-unconsumed', message]);
     }
     private constructorType(name: string, args: Ty[], result: Ty, loc: number, node: object): void {
         const scheme =
@@ -875,6 +941,8 @@ export class Inferencer {
                 return join(n.args);
             case 'record':
                 return join(n.fields.map((f) => f.value));
+            case 'update':
+                return join(n.items.flatMap((i) => (i.value ? [i.value] : [])));
             case 'let':
                 return this.modeOf(n.body);
             case 'case':
@@ -931,6 +999,8 @@ export class Inferencer {
                     n.fields.map((f) => ({ name: f.name, type: this.linear(f.value, env) })),
                 );
             }
+            case 'update':
+                return this.update(n, env);
             case 'constructor': {
                 const args = n.args.map((v) => this.linear(v, env)),
                     result = this.solver.fresh();
@@ -992,6 +1062,176 @@ export class Inferencer {
             case 'case':
                 return this.caseBody(n, env);
         }
+    }
+    /** `r` or `r.a.b` naming storage, as opposed to an expression that makes a new value. */
+    private isPlace(n: Linear, env: Env): boolean {
+        if (n.type === 'field') return this.isPlace(n.target, env);
+        if (n.type !== 'id') return false;
+        const b = env.get(n.text);
+        return !!b && !b.scheme;
+    }
+    /**
+     * Move a record out of a spread place. Fields may already be empty; the caller requires an
+     * operation to remove or replace each of those.
+     */
+    private takeSpread(n: Linear, env: Env): SpreadValue {
+        const b =
+            n.type === 'field' ? this.fieldPlace(n, env) : this.lookup(env, (n as Id).text, n.loc);
+        this.accessible(b, n.loc);
+        const within = (path: Step[]) =>
+            path.length > b.path.length && b.path.every((step, i) => path[i] === step);
+        if (b.root.empty.some((path) => !within(path) && this.overlaps(path, b.path)))
+            this.error('use-after-move', n.loc, 'Value has already been consumed');
+        if (!b.path.length && b.replaceable) this.requireFlag(b.replaceable, n.loc, 'move it out');
+        const current = this.get(b, n.loc);
+        const holes = b.root.empty.filter(within);
+        // Restore the moved parts' types, outermost first, to see what the record held.
+        let original = current;
+        for (const path of [...holes].sort((x, y) => x.length - y.length))
+            original = this.replaceAt(
+                original,
+                path.slice(b.path.length),
+                b.root.vacated?.get(JSON.stringify(path)) ?? tuple(),
+                n.loc,
+            );
+        this.use(n, b, 'value');
+        this.record(n, plain(current, OWNED));
+        this.modes.set(n, OWNED);
+        this.vacate(b, current, n.loc);
+        return {
+            current,
+            original,
+            holes: new Set(holes.map((path) => path[b.path.length] as string)),
+        };
+    }
+    /**
+     * `{...a, x: e, y = e, -z, -w = e}`: the items apply left to right to an empty record.
+     * Operands run first, then the spreads that are places are taken, so an operand can move
+     * a field out of a record that is about to be spread, if an operation replaces it.
+     */
+    private update(n: Linear & { type: 'update' }, env: Env): Ty {
+        if (!n.items.some((i) => i.kind === 'spread'))
+            this.error(
+                'record-literal-op',
+                n.loc,
+                'A record without a spread can only add fields, written `name: value`',
+            );
+        const values = new Map<RecordItem, SpreadValue>(),
+            operands = new Map<RecordItem, Ty>();
+        for (const item of n.items) {
+            if (item.kind === 'field') {
+                if (item.value) operands.set(item, this.linear(item.value, env));
+            } else if (!this.isPlace(item.value, env)) {
+                const type = this.linear(item.value, env);
+                values.set(item, { current: type, original: type, holes: new Set() });
+            }
+        }
+        for (const item of n.items)
+            if (item.kind === 'spread' && !values.has(item))
+                values.set(item, this.takeSpread(item.value, env));
+        const spreads = [...values.keys()];
+        const unknown = spreads.filter((item) => {
+            const t = this.solver.prune(values.get(item)!.original);
+            return t.tag === 'meta' || t.tag === 'rigid' || (t.tag === 'record' && !!t.rest);
+        });
+        if (spreads.length > 1 && unknown.length > 1)
+            this.error(
+                'unknown-spread',
+                unknown[1]!.loc,
+                'Records can be merged only when at most one of them has unknown fields at this point',
+            );
+        type Field = { type: Ty; current: Ty; hole: boolean };
+        const fields = new Map<string, Field>();
+        let rest: Ty | undefined;
+        const add = (name: string, field: Field, loc: number) => {
+            if (fields.has(name))
+                this.error('duplicate-field', loc, `Duplicate record field ${name}`);
+            if (rest) this.solver.requireLacks(rest, name, loc);
+            fields.set(name, field);
+        };
+        /** Move fields that unification has revealed out of the remainder. */
+        const settle = () => {
+            const t = rest && this.solver.prune(rest);
+            if (t?.tag !== 'record') return;
+            for (const f of t.fields)
+                fields.set(f.name, { type: f.type, current: f.type, hole: false });
+            rest = t.rest;
+        };
+        const require = (name: string, loc: number): Field => {
+            settle();
+            if (!fields.has(name)) {
+                const tail = rest && this.solver.prune(rest);
+                if (tail?.tag !== 'meta')
+                    this.error('unknown-field', loc, `Record has no field ${name}`);
+                this.requireField(tail!, name, loc);
+                settle();
+            }
+            return fields.get(name)!;
+        };
+        const drop = (field: Field, loc: number) =>
+            this.dropped(
+                field.current,
+                loc,
+                'This operation drops the old field value, so it cannot be linear',
+            );
+        for (const item of n.items) {
+            settle();
+            if (item.kind === 'spread') {
+                const value = values.get(item)!;
+                const t = this.solver.prune(value.original);
+                if (t.tag === 'record') {
+                    const current = this.solver.prune(value.current) as RecordTy;
+                    for (const f of t.fields)
+                        add(
+                            f.name,
+                            {
+                                type: f.type,
+                                current: current.fields.find((g) => g.name === f.name)!.type,
+                                hole: value.holes.has(f.name),
+                            },
+                            item.loc,
+                        );
+                }
+                const tail = t.tag === 'record' ? t.rest : t;
+                if (tail) {
+                    // Only one spread has unknown fields, so there is no remainder yet.
+                    const row = this.solver.prune(tail);
+                    if (row.tag !== 'meta' && row.tag !== 'rigid')
+                        this.error(
+                            'type-mismatch',
+                            item.loc,
+                            `Only a record can be spread, found ${printType(this.solver.resolve(row))}`,
+                        );
+                    this.solver.markRow(row as Ty & { tag: 'meta' | 'rigid' });
+                    for (const name of fields.keys()) this.solver.requireLacks(row, name, item.loc);
+                    rest = row;
+                }
+                continue;
+            }
+            const type = operands.get(item)!;
+            if (item.op === 'extend') {
+                add(item.name, { type, current: type, hole: false }, item.loc);
+                continue;
+            }
+            const old = require(item.name, item.loc);
+            if (item.op === 'update') this.solver.unify(old.type, type, item.loc);
+            drop(old, item.loc);
+            if (item.op === 'remove') fields.delete(item.name);
+            else fields.set(item.name, { type, current: type, hole: false });
+        }
+        settle();
+        for (const [name, field] of fields)
+            if (field.hole)
+                this.error(
+                    'use-after-move',
+                    n.loc,
+                    `Field ${name} was moved out, so the spread must remove or replace it`,
+                );
+        return this.solver.row(
+            [...fields].map(([name, f]) => ({ name, type: f.type })),
+            rest,
+            n.loc,
+        );
     }
     private lambda(n: Linear & { type: 'fn' }, env: Env): Ty {
         const bound = new Set(n.args.flatMap((a) => names(a.pat)));
@@ -1074,7 +1314,10 @@ export class Inferencer {
                 exits.push({ root, read, write });
                 type = flow(read, write, REPLACEABLE, a.ownedLens ? OWNED_LENS : BORROWED_LENS);
             } else {
+                // A plain parameter's value is not the function's to drop.
+                this.sharedPattern = !!a.shared;
                 this.pattern(a.pat, read, sub, undefined, seen);
+                this.sharedPattern = false;
                 type = plain(
                     read,
                     a.shared === undefined ? this.solver.freshMode() : a.shared ? SHARED : OWNED,
@@ -1202,7 +1445,7 @@ export class Inferencer {
     }
     /**
      * Resolve `r.a.b` (a variable followed by field names) to a binding at the field's
-     * path. Fields are projected by position, so the record's type must already be known.
+     * path. A value of unknown type becomes a record with at least that field.
      */
     private fieldPlace(n: (Linear | Lens) & { type: 'field' }, env: Env): Binding {
         const target = n.target;
@@ -1222,23 +1465,35 @@ export class Inferencer {
                 n.loc,
                 'Reusable definitions cannot be field-accessed',
             );
-        const type = this.solver.prune(this.get(base, n.loc));
-        if (type.tag !== 'record')
-            return this.error(
-                'unknown-record',
-                n.loc,
-                `Cannot access field ${n.name} on a value whose record type is not yet known`,
-            );
-        const index = type.fields.findIndex((f) => f.name === n.name);
-        if (index < 0)
-            return this.error(
-                'unknown-field',
-                n.loc,
-                `Record has no field ${n.name} (it has ${type.fields.map((f) => f.name).join(', ')})`,
-            );
-        const place: Binding = { ...base, id: undefined, path: [...base.path, index] };
+        this.requireField(this.get(base, n.loc), n.name, n.loc);
+        const place: Binding = { ...base, id: undefined, path: [...base.path, n.name] };
         this.declare(place, n.name, n, 'projection');
         return place;
+    }
+    /** Refine `type`, a record or an unknown, until it shows a field `name`. */
+    private requireField(type: Ty, name: string, loc: number): void {
+        const t = this.solver.prune(type);
+        const add = (row: Ty) =>
+            this.solver.unify(
+                row,
+                this.solver.row([{ name, type: this.solver.fresh() }], this.solver.fresh(), loc),
+                loc,
+            );
+        if (t.tag === 'meta') return add(t);
+        if (t.tag !== 'record')
+            return this.error(
+                'unknown-record',
+                loc,
+                `Cannot access field ${name} on ${printType(this.solver.resolve(t))}, which is not a record`,
+            );
+        if (t.fields.some((f) => f.name === name)) return;
+        const rest = t.rest && this.solver.prune(t.rest);
+        if (rest?.tag === 'meta') return add(rest);
+        this.error(
+            'unknown-field',
+            loc,
+            `Record has no field ${name} (it has ${t.fields.map((f) => f.name).join(', ') || 'none'})`,
+        );
     }
     private alias(n: Lens, env: Env): Binding {
         if (n.type === 'field') return this.fieldPlace(n, env);
@@ -1735,7 +1990,10 @@ export class Inferencer {
         if (t.tag === 'fn') return fn(t.args, t.result, true);
         if (t.tag === 'tuple') return tuple(...t.items.map((v) => this.sent(v)));
         if (t.tag === 'record')
-            return record(t.fields.map((f) => ({ name: f.name, type: this.sent(f.type) })));
+            return record(
+                t.fields.map((f) => ({ name: f.name, type: this.sent(f.type) })),
+                t.rest,
+            );
         if (t.tag === 'con' && t.name !== CHANNEL)
             return con(t.name, ...t.args.map((v) => this.sent(v)));
         return value;
@@ -1857,7 +2115,7 @@ export class Inferencer {
         const roots = [...new Set([...env.values()].map((b) => b.root))];
         type Snapshot = {
             type: Ty;
-            empty: number[][];
+            empty: Step[][];
             borrows: Set<Borrow>;
             revisions: Map<string, number>;
             moved?: boolean;
@@ -2042,7 +2300,7 @@ export class Inferencer {
         let joined:
             | {
                   type: Ty;
-                  empty: number[][];
+                  empty: Step[][];
                   revisions: Map<string, number>;
                   callsOnce: OnceParameters;
               }[]

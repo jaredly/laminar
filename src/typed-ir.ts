@@ -1,5 +1,14 @@
 import type { Bound } from './constraints.ts';
-import type { BindingRecord, DefinitionId, SemanticFlow, SemanticType } from './elaborated.ts';
+import {
+    semanticRecord,
+    type BindingRecord,
+    type DefinitionId,
+    type SemanticFlow,
+    type SemanticType,
+    type Step,
+} from './elaborated.ts';
+import type { RecordOp } from './ast.ts';
+import type { RowConstraint } from './types.ts';
 
 export type ValueId = string;
 export type EncodedNumber = number | { number: 'NaN' | 'Infinity' | '-Infinity' | '-0' };
@@ -25,7 +34,9 @@ export function decodeNumber(value: EncodedNumber): number {
               ? -Infinity
               : -0;
 }
-export type SlotRef = { place: string; path: number[]; permit?: string };
+export type SlotRef = { place: string; path: Step[]; permit?: string };
+/** A path in specialized IR, where records are gone and every step is a position. */
+export const positions = (path: Step[]): number[] => path as number[];
 export type IRPattern = {
     type: SemanticType;
     reconstructionOwner?: SlotRef;
@@ -35,14 +46,32 @@ export type IRPattern = {
     | { kind: 'drop' }
     | { kind: 'literal'; value: EncodedNumber | boolean | string }
     | { kind: 'tuple'; items: IRPattern[] }
+    /**
+     * Matches a record by field name. Without `rest`, the unnamed fields are dropped, or in a
+     * lens pattern left alone. Specialization turns it into a tuple pattern.
+     */
+    | { kind: 'record'; fields: { name: string; pattern: IRPattern }[]; rest?: IRPattern }
     | { kind: 'constructor'; name: string; items: IRPattern[]; instance: Instance }
 );
+/** The patterns nested directly in a record pattern. */
+export const subpatterns = (p: IRPattern & { kind: 'record' }): IRPattern[] => [
+    ...p.fields.map((f) => f.pattern),
+    ...(p.rest ? [p.rest] : []),
+];
 export type Instance = {
     definition: DefinitionId;
     arguments: { parameter: string; type: SemanticType }[];
     type: SemanticType;
 };
 export type IRValue = { id: ValueId; type: SemanticFlow };
+export type RecordPart =
+    | {
+          kind: 'spread';
+          source: { slot: SlotRef } | { value: ValueId };
+          /** What the source holds when it is taken; emptied parts are unit. */
+          type: SemanticType;
+      }
+    | { kind: 'field'; op: RecordOp; name: string; value?: ValueId };
 export type Cleanup =
     | { kind: 'drop-place'; slot: SlotRef }
     /** Run the restore of the owned lens held in this place: a `mut ~` parameter or capture. */
@@ -60,6 +89,12 @@ export type Instruction =
     | (Output & { op: 'constant'; value: EncodedNumber | boolean | null })
     | (Output & { op: 'string'; head: string; parts: { value: ValueId; tail: string }[] })
     | (Output & { op: 'tuple'; items: ValueId[] })
+    /**
+     * A record update: the parts apply in order to an empty record. A spread takes its source,
+     * a value or a place whose emptied fields a later part removes or replaces. Specialization
+     * expands it into moves and a tuple.
+     */
+    | (Output & { op: 'record'; parts: RecordPart[] })
     | (Output & { op: 'construct'; name: string; items: ValueId[]; instance: Instance })
     | (Output & { op: 'global'; instance: Instance })
     | (Output & { op: 'move'; slot: SlotRef })
@@ -119,10 +154,10 @@ export type IRFunction = {
 export type IRUnit = {
     id: string;
     definition?: string;
-    signature: Pick<IRScheme, 'quantified' | 'bounds' | 'callsOnce' | 'type'>;
+    signature: Pick<IRScheme, 'quantified' | 'bounds' | 'rows' | 'callsOnce' | 'type'>;
     origins: { id: string; loc?: number }[];
     bindings: BindingRecord[];
-    loans: { id: string; place: string; path: number[]; parent?: string; owners?: SlotRef[] }[];
+    loans: { id: string; place: string; path: Step[]; parent?: string; owners?: SlotRef[] }[];
     functions: IRFunction[];
     entry: IRBlock;
 };
@@ -131,6 +166,7 @@ export type IRScheme = {
     linearResult?: true;
     quantified: string[];
     bounds?: Bound[];
+    rows?: RowConstraint[];
     callsOnce?: readonly number[];
     type: SemanticType;
 };
@@ -156,13 +192,10 @@ export function mapSemantic(
         case 'tuple':
             return { ...type, items: type.items.map((t) => mapSemantic(t, variable)) };
         case 'record':
-            return {
-                tag: 'record',
-                fields: type.fields.map((f) => ({
-                    name: f.name,
-                    type: mapSemantic(f.type, variable),
-                })),
-            };
+            return semanticRecord(
+                type.fields.map((f) => ({ name: f.name, type: mapSemantic(f.type, variable) })),
+                type.rest && mapSemantic(type.rest, variable),
+            );
         case 'fn':
             return {
                 tag: 'fn',
@@ -196,7 +229,11 @@ export function typeKey(type: SemanticType): string {
         case 'tuple':
             return JSON.stringify(['tuple', type.items.map(typeKey)]);
         case 'record':
-            return JSON.stringify(['record', type.fields.map((f) => [f.name, typeKey(f.type)])]);
+            return JSON.stringify([
+                'record',
+                type.fields.map((f) => [f.name, typeKey(f.type)]),
+                type.rest ? typeKey(type.rest) : null,
+            ]);
         case 'fn':
             return JSON.stringify(['fn', type.args.map(flowKey), flowKey(type.result)]);
     }
@@ -211,14 +248,14 @@ export const valueKey = (type: SemanticFlow): string =>
 
 /**
  * Backends never see record types: a record is stored as the tuple of its
- * name-sorted fields, which is exactly how the IR already builds and matches it.
- * Field names only matter to the checker and the reference evaluator.
+ * name-sorted fields. Open records stay, for the generic program a specialization keeps
+ * beside its output; specialization itself erases only after substituting rows.
  */
 export function eraseRecords<T>(value: T): T {
     if (Array.isArray(value)) return value.map(eraseRecords) as T;
     if (!value || typeof value !== 'object') return value;
     const node = value as Record<string, unknown>;
-    if (node.tag === 'record' && Array.isArray(node.fields))
+    if (node.tag === 'record' && Array.isArray(node.fields) && !node.rest)
         return {
             tag: 'tuple',
             items: (node.fields as { type: unknown }[]).map((f) => eraseRecords(f.type)),

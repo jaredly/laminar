@@ -1,7 +1,7 @@
 import { displayValue } from './display.ts';
-import type { SemanticType } from './elaborated.ts';
+import type { SemanticType, Step } from './elaborated.ts';
 import { freezeTree } from './elaborated.ts';
-import { decodeNumber } from './typed-ir.ts';
+import { decodeNumber, subpatterns } from './typed-ir.ts';
 import { BackendDiagnostic } from './backend/target.ts';
 import type {
     TypedProgram,
@@ -60,7 +60,7 @@ type Lens = {
     replace(value: Data): Data;
     /** Ending a lens runs its producer's cleanup, which may block. */
     finish(): Run<void>;
-    project(path: number[]): Lens;
+    project(path: Step[]): Lens;
 };
 type Argument = Data | Lens;
 type Frame = {
@@ -94,6 +94,24 @@ export type ReferenceOptions = {
 };
 
 const nothing = function* (): Run<void> {};
+
+/**
+ * A record is the array of its fields in name order, the shape a result is reported in. The
+ * generic IR names fields, so the names travel beside the array.
+ */
+const fieldNames = new WeakMap<Data[], readonly string[]>();
+const named = (items: Data[], names: readonly string[]): Data[] => {
+    fieldNames.set(items, names);
+    return items;
+};
+/** `map` that keeps a record a record. */
+const mapItems = (items: Data[], f: (v: Data, i: number) => Data): Data[] => {
+    const names = fieldNames.get(items);
+    const result = items.map(f);
+    return names ? named(result, names) : result;
+};
+const position = (v: Data[], step: Step): number =>
+    typeof step === 'string' ? (fieldNames.get(v)?.indexOf(step) ?? -1) : step;
 
 /** One byte of stdin as a string, "" at end of input. Blocks: the timeout is ignored. */
 const readKey = (): string => {
@@ -147,7 +165,7 @@ export function executeTypedProgram(
         v === EMPTY
             ? null
             : Array.isArray(v)
-              ? v.map(logical)
+              ? mapItems(v, logical)
               : v && typeof v === 'object' && v.kind === 'variant'
                 ? { ...v, items: v.items.map(logical) }
                 : v;
@@ -157,18 +175,20 @@ export function executeTypedProgram(
         f.values.delete(id);
         return v;
     };
-    const getPath = (v: Data, path: number[]): Data => {
+    const getPath = (v: Data, path: Step[]): Data => {
         if (!path.length) return v;
-        if (!Array.isArray(v) || path[0] >= v.length)
+        const at = Array.isArray(v) ? position(v, path[0]!) : -1;
+        if (!Array.isArray(v) || at < 0 || at >= v.length)
             return error('Projection into missing tuple storage');
-        return getPath(v[path[0]], path.slice(1));
+        return getPath(v[at]!, path.slice(1));
     };
-    const setPath = (v: Data, path: number[], replacement: Data): Data => {
+    const setPath = (v: Data, path: Step[], replacement: Data): Data => {
         if (!path.length) return replacement;
-        if (!Array.isArray(v) || path[0] >= v.length)
+        const at = Array.isArray(v) ? position(v, path[0]!) : -1;
+        if (!Array.isArray(v) || at < 0 || at >= v.length)
             return error('Update of missing tuple storage');
-        return v.map((item, i) =>
-            i === path[0] ? setPath(item, path.slice(1), replacement) : item,
+        return mapItems(v, (item, i) =>
+            i === at ? setPath(item, path.slice(1), replacement) : item,
         );
     };
     const view = (
@@ -318,6 +338,26 @@ export function executeTypedProgram(
                 : Array.isArray(v)
                   ? v
                   : error('Tuple pattern shape mismatch');
+        if (p.kind === 'record') {
+            if (!Array.isArray(v)) return error('Record pattern shape mismatch');
+            const at = (name: string) => {
+                const i = position(v, name);
+                return i < 0 ? error('Record pattern names a missing field') : i;
+            };
+            const taken = new Set(p.fields.map((f) => at(f.name)));
+            const names = fieldNames.get(v)!;
+            const others = names.map((_, i) => i).filter((i) => !taken.has(i));
+            // Without `rest`, the other fields are dropped one at a time.
+            const unnamed = p.rest
+                ? [
+                      named(
+                          others.map((i) => v[i]!),
+                          others.map((i) => names[i]!),
+                      ),
+                  ]
+                : others.map((i) => v[i]!);
+            return [...p.fields.map((f) => v[at(f.name)]!), ...unnamed];
+        }
         if (p.kind === 'constructor') {
             if (p.name === 'nil') return [];
             if (p.name === 'cons' && Array.isArray(v) && v.length) return [v[0], v.slice(1)];
@@ -345,6 +385,11 @@ export function executeTypedProgram(
                     (Array.isArray(v) &&
                         v.length === p.items.length &&
                         p.items.every((q, i) => matches(q, v[i])))
+                );
+            case 'record':
+                return (
+                    Array.isArray(v) &&
+                    p.fields.every((f) => matches(f.pattern, v[position(v, f.name)]!))
                 );
             case 'constructor': {
                 if (p.name === 'nil') return Array.isArray(v) && !v.length;
@@ -386,6 +431,13 @@ export function executeTypedProgram(
                 p.items.forEach((q, i) => bind(f, q, parts[i]));
                 return;
             }
+            case 'record': {
+                const parts = patternParts(p, v),
+                    items = subpatterns(p);
+                items.forEach((q, i) => bind(f, q, parts[i]!));
+                parts.slice(items.length).forEach(dispose);
+                return;
+            }
         }
     };
     /** Only ending a lens runs program code; everything else a cleanup does is immediate. */
@@ -424,14 +476,18 @@ export function executeTypedProgram(
                 ? null
                 : error('Non-unit empty input to a call');
         if (t.tag === 'tuple' && t.items.length && Array.isArray(v))
-            return v.map((x, i) => materialize(x, t.items[i]));
+            return mapItems(v, (x, i) => materialize(x, t.items[i]!));
         // Records are stored as the tuple of their name-sorted fields.
+        // An open record's type does not list every field the value holds.
         if (t.tag === 'record' && Array.isArray(v))
-            return v.map((x, i) => materialize(x, t.fields[i].type));
+            return mapItems(v, (x, i) => {
+                const field = t.fields.find((f) => f.name === fieldNames.get(v)?.[i]);
+                return field ? materialize(x, field.type) : x;
+            });
         return v;
     };
     const copy = (v: Data): Data => {
-        if (Array.isArray(v)) return v.map(copy);
+        if (Array.isArray(v)) return mapItems(v, copy);
         if (v && typeof v === 'object') {
             if (v.kind === 'variant' || v.kind === 'vector')
                 return { ...v, items: v.items.map(copy) };
@@ -721,9 +777,45 @@ export function executeTypedProgram(
                         i.head +
                         i.parts.map((p) => displayValue(data(take(f, p.value))) + p.tail).join('');
                     break;
-                case 'tuple':
-                    result = i.items.map((id) => owned(data(take(f, id))));
+                case 'tuple': {
+                    const items = i.items.map((id) => owned(data(take(f, id))));
+                    result =
+                        i.out.type.tag === 'plain' && i.out.type.value.tag === 'record'
+                            ? named(
+                                  items,
+                                  i.out.type.value.fields.map((field) => field.name),
+                              )
+                            : items;
                     break;
+                }
+                case 'record': {
+                    const fields = new Map<string, Data>();
+                    for (const part of i.parts) {
+                        if (part.kind === 'field') {
+                            const value = part.value ? owned(data(take(f, part.value))) : undefined;
+                            if (part.op !== 'extend' && fields.has(part.name))
+                                dispose(fields.get(part.name)!);
+                            if (part.op === 'remove') fields.delete(part.name);
+                            else fields.set(part.name, value!);
+                            continue;
+                        }
+                        let source: Data;
+                        if ('slot' in part.source) {
+                            // Emptied fields are removed or replaced by a later part.
+                            source = reference(f, part.source.slot).replace(EMPTY);
+                        } else source = owned(data(take(f, part.source.value)));
+                        if (!Array.isArray(source)) return error('Spread of a non-record');
+                        const names = source.length ? fieldNames.get(source) : [];
+                        if (!names) return error('Spread of a non-record', i.origin);
+                        names.forEach((name, n) => fields.set(name, (source as Data[])[n]!));
+                    }
+                    const names = [...fields.keys()].sort();
+                    result = named(
+                        names.map((name) => fields.get(name)!),
+                        names,
+                    );
+                    break;
+                }
                 case 'construct':
                     result = construct(
                         i.name,

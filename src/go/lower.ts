@@ -10,7 +10,7 @@ import {
     type Leaf,
     type View,
 } from './storage.ts';
-import { decodeNumber, type IRPattern, type SlotRef } from '../typed-ir.ts';
+import { decodeNumber, type IRPattern, type SlotRef, positions } from '../typed-ir.ts';
 import { verifyConcreteProgram } from '../verify-concrete.ts';
 import { BackendDiagnostic } from '../backend/target.ts';
 import {
@@ -1649,7 +1649,7 @@ ${joinCode(
         };
 
         const ref = (s: SlotRef) =>
-            storage.project(places.get(s.place) ?? unsupported('Unavailable Go place'), s.path);
+            storage.project(places.get(s.place) ?? unsupported('Unavailable Go place'), positions(s.path));
 
         // Adapt input/output backing at calls.
         const homogeneous = (id: string): boolean => {

@@ -31,7 +31,7 @@ const ids = (pat: Pat): Id[] => {
         case 'constructor':
             return pat.args.flatMap(ids);
         case 'record':
-            return pat.fields.flatMap((f) => ids(f.pat));
+            return pat.fields.flatMap((f) => ids(f.pat)).concat(pat.rest ? ids(pat.rest) : []);
         case 'lens':
             return ids(pat.inner);
         default:
@@ -139,6 +139,13 @@ export function desugarPlain(source: Linear): PlainResult {
                     ...n,
                     fields: n.fields.map((f) => ({ ...f, value: linear(f.value, scope) })),
                 };
+            case 'update':
+                return {
+                    ...n,
+                    items: n.items.map((i) =>
+                        i.value ? { ...i, value: linear(i.value, scope) } : i,
+                    ),
+                };
             case 'assign':
                 place(n.lens, scope);
                 return { ...n, lens: lens(n.lens, scope), value: linear(n.value, scope) };
@@ -239,6 +246,13 @@ export function desugarPlain(source: Linear): PlainResult {
                 return {
                     ...n,
                     fields: n.fields.map((f) => ({ ...f, value: unshared(f.value) as Linear })),
+                };
+            case 'update':
+                return {
+                    ...n,
+                    items: n.items.map((i) =>
+                        i.value ? { ...i, value: unshared(i.value) as Linear } : i,
+                    ),
                 };
             case 'constructor':
                 return { ...n, args: n.args.map((v) => unshared(v) as Linear) };

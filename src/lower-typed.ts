@@ -1,6 +1,6 @@
 import type { Linear, Lens, Pat } from './ast.ts';
 import type { Elaboration, SemanticFlow, SemanticType, BindingRecord } from './elaborated.ts';
-import { freezeTree } from './elaborated.ts';
+import { freezeTree, semanticRecord } from './elaborated.ts';
 import { Solver, type Ty, type Scheme } from './types.ts';
 import { builtinTypes, constructorTypes } from './builtins.ts';
 import { BackendDiagnostic } from './backend/target.ts';
@@ -9,6 +9,8 @@ import { verifyTypedProgram } from './verify-ir.ts';
 import {
     encodeNumber,
     irPlain,
+    subpatterns,
+    type RecordPart,
     type TypedProgram,
     type IRUnit,
     type IRBlock,
@@ -49,10 +51,10 @@ export function importScheme(definition: string, scheme: Scheme): IRScheme {
             case 'tuple':
                 return { ...t, items: t.items.map(type) };
             case 'record':
-                return {
-                    tag: 'record',
-                    fields: t.fields.map((f) => ({ name: f.name, type: type(f.type) })),
-                };
+                return semanticRecord(
+                    t.fields.map((f) => ({ name: f.name, type: type(f.type) })),
+                    t.rest && type(t.rest),
+                );
             case 'fn':
                 return {
                     tag: 'fn',
@@ -76,6 +78,7 @@ export function importScheme(definition: string, scheme: Scheme): IRScheme {
     return {
         definition,
         ...(scheme.bounds && { bounds: structuredClone(scheme.bounds) }),
+        ...(scheme.rows && { rows: structuredClone(scheme.rows) }),
         ...(scheme.callsOnce && { callsOnce: scheme.callsOnce }),
         quantified: [...vars.values()],
         type: type(scheme.body),
@@ -186,13 +189,11 @@ export function lowerTypedUnit(e: Elaboration): IRUnit {
             case 'tuple':
                 return { kind: 'tuple', type: t, items: p.items.map(pattern) };
             case 'record':
-                // Records are tuples of their name-sorted fields in the IR.
                 return {
-                    kind: 'tuple',
+                    kind: 'record',
                     type: t,
-                    items: [...p.fields]
-                        .sort((a, b) => (a.name < b.name ? -1 : 1))
-                        .map((f) => pattern(f.pat)),
+                    fields: p.fields.map((f) => ({ name: f.name, pattern: pattern(f.pat) })),
+                    ...(p.rest ? { rest: pattern(p.rest) } : {}),
                 };
             case 'constructor':
                 return {
@@ -209,7 +210,9 @@ export function lowerTypedUnit(e: Elaboration): IRUnit {
             ? [p.slot]
             : p.kind === 'tuple' || p.kind === 'constructor'
               ? p.items.flatMap(slots)
-              : [];
+              : p.kind === 'record'
+                ? subpatterns(p).flatMap(slots)
+                : [];
     const drops = (p: IRPattern): Cleanup[] =>
         [...new Set(slots(p).map((s) => s.place))].map((place) => ({
             kind: 'drop-place',
@@ -314,6 +317,36 @@ export function lowerTypedUnit(e: Elaboration): IRUnit {
                 return emit(b, n, {
                     op: 'tuple',
                     items: [...values.keys()].sort().map((name) => values.get(name)!),
+                });
+            }
+            case 'update': {
+                const place = (v: Linear) =>
+                    v.type === 'field' || (v.type === 'id' && !binding(v).definition);
+                // Operands first, in source order; spread places are taken by the instruction.
+                const values = n.items.map((item) =>
+                    item.value && !(item.kind === 'spread' && place(item.value))
+                        ? linear(item.value, b)
+                        : undefined,
+                );
+                return emit(b, n, {
+                    op: 'record',
+                    parts: n.items.map((item, i): RecordPart => {
+                        const value = values[i];
+                        if (item.kind === 'field')
+                            return {
+                                kind: 'field',
+                                op: item.op,
+                                name: item.name,
+                                ...(value ? { value: value.id } : {}),
+                            };
+                        return {
+                            kind: 'spread',
+                            source: value
+                                ? { value: value.id }
+                                : { slot: ref(binding(item.value)) },
+                            type: plainType(item.value),
+                        };
+                    }),
                 });
             }
             case 'constructor':
@@ -553,7 +586,8 @@ export function lowerTypedUnit(e: Elaboration): IRUnit {
                 const refutable = (p: IRPattern): boolean =>
                     p.kind === 'literal' ||
                     p.kind === 'constructor' ||
-                    (p.kind === 'tuple' && p.items.some(refutable));
+                    (p.kind === 'tuple' && p.items.some(refutable)) ||
+                    (p.kind === 'record' && subpatterns(p).some(refutable));
                 if (refutable(p)) {
                     const matched = block(n.body);
                     matched.result = linear(n.body, matched).id;
@@ -624,6 +658,7 @@ export function lowerTypedUnit(e: Elaboration): IRUnit {
         definition: e.source.type === 'fn' && e.source.name ? e.id : undefined,
         signature: {
             ...(e.signature.bounds && { bounds: e.signature.bounds }),
+            ...(e.signature.rows && { rows: e.signature.rows }),
             ...(e.signature.callsOnce && { callsOnce: e.signature.callsOnce }),
             quantified: e.signature.quantified,
             type: e.signature.type,

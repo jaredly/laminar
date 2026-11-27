@@ -9,6 +9,7 @@ type Shape = {
     args?: Shape[];
     items?: Shape[];
     fields?: { type: Shape }[];
+    rest?: Shape;
     linear?: boolean;
 };
 
@@ -24,7 +25,10 @@ export function isLinear(type: Shape, isDeclaredLinear: (name: string) => boolea
         case 'tuple':
             return any(type.items);
         case 'record':
-            return any(type.fields?.map((f) => f.type));
+            return (
+                any(type.fields?.map((f) => f.type)) ||
+                (!!type.rest && isLinear(type.rest, isDeclaredLinear))
+            );
         case 'fn':
             return !!type.linear;
         default:

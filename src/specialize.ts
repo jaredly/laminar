@@ -11,6 +11,7 @@ import {
     type TypedProgram,
 } from './typed-ir.ts';
 import { verifyTypedProgram } from './verify-ir.ts';
+import { eraseRecordForms } from './erase-records.ts';
 
 export type SpecializationRoot = { unit: string; arguments: SemanticType[] };
 export type SemanticSpecialization = {
@@ -61,7 +62,7 @@ function rewrite<T>(
         if (Array.isArray(value)) return value.map(visit);
         if (!value || typeof value !== 'object') return value;
         const object = value as Record<string, unknown>;
-        if (['variable', 'con', 'tuple', 'fn'].includes(String(object.tag)))
+        if (['variable', 'con', 'tuple', 'record', 'fn'].includes(String(object.tag)))
             return type(value as SemanticType);
         if (instance && 'definition' in object && 'arguments' in object && 'type' in object)
             return instance(value as Instance);
@@ -94,11 +95,12 @@ export function specializeProgram(
             'invalid-specialization-root',
             'Explicit entry roots are required',
         );
-    const units = new Map(generic.units.map((u) => [u.id, u]));
+    // Records stay until a unit's rows are substituted, so each instance has its own layout.
+    const units = new Map(input.units.map((u) => [u.id, u]));
     const definitions = new Map(
-        generic.units.filter((u) => u.definition).map((u) => [u.definition!, u]),
+        input.units.filter((u) => u.definition).map((u) => [u.definition!, u]),
     );
-    const imports = new Map(generic.imports.map((s) => [s.definition, s]));
+    const imports = new Map(input.imports.map((s) => [s.definition, s]));
     const cache = new Map<string, SemanticSpecialization>();
     const emitted: IRUnit[] = [],
         usedImports = new Set<string>();
@@ -132,6 +134,18 @@ export function specializeProgram(
                 throw new BackendDiagnostic(
                     'unsatisfied-constraint',
                     `Parameter ${b.parameter + 1} of ${source} requires ${b.predicate}`,
+                );
+        }
+        for (const r of scheme.rows ?? []) {
+            const row = args[r.parameter]!;
+            const empty = row.tag === 'tuple' && !row.items.length;
+            if (
+                !empty &&
+                (row.tag !== 'record' || row.fields.some((f) => r.lacks.includes(f.name)))
+            )
+                throw new BackendDiagnostic(
+                    'unsatisfied-constraint',
+                    `Parameter ${r.parameter + 1} of ${source} must be a record without ${r.lacks.join(', ') || 'other constraints'}`,
                 );
         }
         const identity = unit?.definition ?? unit?.id ?? source;
@@ -176,6 +190,7 @@ export function specializeProgram(
         if (copy.definition) copy.definition = record.id;
         copy.signature.quantified = [];
         delete copy.signature.bounds;
+        delete copy.signature.rows;
         // Global binding schemes are provenance only, and remain in `generic`.
         copy.bindings = copy.bindings.filter((b) => b.kind !== 'global');
         const specialized = rewrite(copy, substitute, (i) => {
@@ -206,11 +221,11 @@ export function specializeProgram(
         return record;
     };
     const rootIds = roots.map((r) => request(r.unit, r.arguments, [], true).id);
-    const program: TypedProgram = {
+    const program: TypedProgram = eraseRecordForms({
         schemaVersion: 1,
-        imports: generic.imports.filter((i) => usedImports.has(i.definition)),
+        imports: input.imports.filter((i) => usedImports.has(i.definition)),
         units: emitted,
-    };
+    });
     // Self recursion is visible before verification of a unit; dependencies precede consumers.
     verifyTypedProgram(program);
     return freezeTree({
@@ -219,6 +234,6 @@ export function specializeProgram(
         generic,
         program,
         roots: rootIds,
-        instances: [...cache.values()].sort((a, b) => a.id.localeCompare(b.id)),
+        instances: eraseRecords([...cache.values()].sort((a, b) => a.id.localeCompare(b.id))),
     });
 }

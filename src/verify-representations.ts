@@ -1,5 +1,5 @@
 import { layoutSchemaKey, scatterVariants } from './layout-definitions.ts';
-import { mapSemantic, type Instance, type IRFunction } from './typed-ir.ts';
+import { mapSemantic, type Instance, type IRFunction, positions } from './typed-ir.ts';
 import { createHash } from 'node:crypto';
 import type { SemanticType, SemanticFlow } from './elaborated.ts';
 import { BackendDiagnostic, targetKey } from './backend/target.ts';
@@ -492,7 +492,7 @@ export function verifyRepresentations(
                         s.knownPlaces.delete(i.slot.place);
                         const base = s.lenses.get(i.slot.place);
                         if (base) {
-                            const projected = projectedShape(base, i.slot.path);
+                            const projected = projectedShape(base, positions(i.slot.path));
                             // A scattered lens's place can be acquired as an empty or refilled thin slot.
                             if (!(projected.kind === 'sum' && lens(v).kind === 'thin'))
                                 topology(projected, lens(v));

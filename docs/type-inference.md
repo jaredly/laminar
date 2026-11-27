@@ -46,6 +46,45 @@ Assignment returns the value currently in its target when the swap happens. If t
 
 Run `bun test test/infer.test.ts` for inference/checked integration tests, `bun test` for the full suite, and `bunx tsc --noEmit` for TypeScript checking. The design background and remaining restoration work are described in [the research note](type-inference-research.md).
 
+## Records
+
+Records are structural and order-independent, with unique field names. There is no width
+subtyping: `{x: Number}` and `{x: Number, y: Bool}` are different types. A row variable stands for
+the fields a type does not list, so definitions can work on any record that has, or lacks, certain
+fields.
+
+| Expression | Needs of `m` | Result |
+| --- | --- | --- |
+| `{...m, name: v}` | no `name` | adds `name` |
+| `{...m, name = v}` | `name` of the type of `v` | replaces its value |
+| `{...m, -name}` | `name` | removes it |
+| `{...m, -name = v}` | `name` | replaces value and type |
+| `m.name`, `~m.name` | `name` | the field |
+
+- `fn setName(m) { {...m, name = "Yes"} }` has scheme
+  `({name: String, ...a}) => {name: String, ...a}`. Only top-level definitions are polymorphic.
+- Items apply left to right. With several spreads, at most one may have unknown fields at that
+  point (`unknown-spread`), and no two may share a field.
+- Operands, and spreads that are not places, run first in source order. Spreads that are places
+  (`m`, `m.inner`) are taken afterwards. So `{...m, -old, new: m.old}` moves one field to another
+  name. A field emptied this way must be removed or replaced by the update.
+- `name = v` keeps the field's type, including the type it had before being moved out.
+- A dropped field needs `Droppable` (dual mode). So does the unknown remainder of a record when a
+  pattern or function drops it.
+- A pattern `{x, y: p}` matches a record with at least those fields. `{x, ...rest}` binds the
+  others. A lens pattern leaves unnamed fields in place and cannot use `...rest`. A borrowed match
+  with constructors still has to name every field of the records in it.
+- Signatures write `{name: String, ...r}`, `{...r}` or `{x: Number, ..._}`, and type aliases can
+  splice a parameter: `type Named(r) = {name: String, ...r}`. Labels a row must lack are not
+  written. Those the types do not show print as `where a lacks tmp`, and a declared signature
+  keeps whatever the body needs.
+- Union constructors cannot hold open records yet.
+
+Backends never see rows. Specialization substitutes them, then stores each record as the tuple of
+its fields in name order, so one definition can get a different layout at each use. Natively an
+empty record prints as unit does. The legacy decomposition supports only closed records with
+complete patterns. See [the plan](row-polymorphic-records-plan.md).
+
 ## Vectors
 
 `[:a, b, c:]` builds a homogeneous `Vector<a>` (`[::]` is `Vector<a>`),

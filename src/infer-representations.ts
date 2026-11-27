@@ -13,7 +13,7 @@ import {
     type Backing,
 } from './representations.ts';
 import type { SpecializedProgram } from './specialize.ts';
-import type { IRUnit, IRBlock } from './typed-ir.ts';
+import { type IRUnit, type IRBlock, positions } from './typed-ir.ts';
 import { typeKey } from './typed-ir.ts';
 import { verifyTypedProgram } from './verify-ir.ts';
 import { memberKey, representationKey } from './representation-key.ts';
@@ -457,6 +457,8 @@ export function inferRepresentations(
             }
             let out: ValueRepresentation;
             switch (i.op) {
+                case 'record':
+                    return fail('Specialization erases records');
                 case 'constant':
                 case 'string':
                 case 'construct':
@@ -477,7 +479,9 @@ export function inferRepresentations(
                     s.knownPlaces.delete(i.slot.place);
                     if (i.out.type.tag !== 'flow') return fail('Acquire produced data');
                     let base = s.lenses.get(i.slot.place);
-                    if (base) for (const index of i.slot.path) base = reps.project(base, index);
+                    if (base)
+                        for (const index of positions(i.slot.path))
+                            base = reps.project(base, index);
                     out = {
                         kind: 'lens',
                         shape: base

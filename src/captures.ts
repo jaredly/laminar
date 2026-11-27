@@ -1,4 +1,4 @@
-import { names, type Linear, type Lens, type Pat, type Term } from './ast.ts';
+import { itemValues, names, type Linear, type Lens, type Pat, type Term } from './ast.ts';
 
 /** Preserve value/lens positions through nested calls; a lens callee is still a value use. */
 export function captureUses(body: Term, bound: Set<string>) {
@@ -46,6 +46,9 @@ export function captureUses(body: Term, bound: Set<string>) {
                 return;
             case 'record':
                 n.fields.forEach((f) => linear(f.value, scope));
+                return;
+            case 'update':
+                itemValues(n.items).forEach((v) => linear(v, scope));
                 return;
             case 'assign':
                 lens(n.lens, scope);

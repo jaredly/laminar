@@ -273,6 +273,8 @@ export function lconcrete(program: ConcreteProgram, options: ConcretePrintOption
                     return tuple(p.items.map(pattern));
                 case 'constructor':
                     return call(p.name, p.items.map(pattern));
+                case 'record':
+                    throw new Error('Specialization erases record patterns');
             }
         };
         const cleanup = (c: Cleanup): Node =>
@@ -415,6 +417,8 @@ export function lconcrete(program: ConcreteProgram, options: ConcretePrintOption
                     throw new Error('Moved lenses have no concrete form yet');
                 case 'lens-construct':
                     throw new Error('Constructor lenses have no concrete form yet');
+                case 'record':
+                    throw new Error('Specialization erases record updates');
                 default: {
                     const unknown: never = i;
                     throw new Error(`Unknown concrete operation: ${JSON.stringify(unknown)}`);

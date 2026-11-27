@@ -4,7 +4,7 @@ import {
     linearUnions,
     type Predicate,
 } from './constraints.ts';
-import type { SemanticFlow, SemanticType } from './elaborated.ts';
+import { semanticRecord, type SemanticFlow, type SemanticType, type Step } from './elaborated.ts';
 import { BackendDiagnostic } from './backend/target.ts';
 import {
     typeKey,
@@ -13,6 +13,7 @@ import {
     irCon,
     irUnit,
     mapSemantic,
+    subpatterns,
     type Instruction,
     type TypedProgram,
     type IRUnit,
@@ -25,7 +26,7 @@ import {
 } from './typed-ir.ts';
 
 type Revisions = Map<string, number>;
-type Slot = { type: SemanticType; empty: number[][]; version: Revisions };
+type Slot = { type: SemanticType; empty: Step[][]; version: Revisions };
 type Cap =
     | { kind: 'place'; slot: SlotRef }
     | { kind: 'tuple'; items: Cap[] }
@@ -42,7 +43,7 @@ type Cap =
           read: SemanticType;
           write: SemanticType;
           effects: { cap: Cap; type: SemanticType }[];
-          guards: { place: string; path: number[]; version: number }[];
+          guards: { place: string; path: Step[]; version: number }[];
       }
     | { kind: 'scope'; inner: Cap; cleanup: Cleanup[]; retire: string[] }
     | {
@@ -64,7 +65,7 @@ type Cap =
           places: string[];
           versions: Map<string, Revisions>;
           baseLoans: string[];
-          guards: { place: string; path: number[]; version: number }[];
+          guards: { place: string; path: Step[]; version: number }[];
           arms: { state: State; cap: Cap; restored: Cleanup[] }[];
       };
 type Value = { type: SemanticFlow; cap?: Cap };
@@ -76,8 +77,19 @@ type State = {
     held: Map<string, SemanticType>;
 };
 
+/**
+ * Told, for a path through a place that names record fields, which positions those fields have
+ * at that point of the program. A place can be reassigned a record of another shape.
+ */
+export type PositionObserver = (
+    unit: string,
+    place: string,
+    path: Step[],
+    positions: number[],
+) => void;
+
 /** Independent typed-IR validation: does not inspect source ASTs, inference state, or evaluator values. */
-export function verifyTypedProgram(program: TypedProgram): void {
+export function verifyTypedProgram(program: TypedProgram, observe?: PositionObserver): void {
     const fail = (message: string, origin?: string): never => {
         throw new BackendDiagnostic('invalid-ir', message, origin);
     };
@@ -99,7 +111,29 @@ export function verifyTypedProgram(program: TypedProgram): void {
             : t.tag === 'record'
               ? t.fields.map((f) => f.type)
               : fail('Expected a tuple type');
-    const isProduct = (t: SemanticType) => t.tag === 'tuple' || t.tag === 'record';
+    /**
+     * A row that no use constrains specializes to unit, which stands for the empty record.
+     * Specialization is the only source of a unit where a record is expected.
+     */
+    const asRecord = (t: SemanticType): SemanticType =>
+        t.tag === 'tuple' && !t.items.length ? { tag: 'record', fields: [] } : t;
+    /** What a pattern sees, where a bare row is a record showing none of its fields. */
+    const matchedRecord = (t: SemanticType): SemanticType =>
+        t.tag === 'variable' ? { tag: 'record', fields: [], rest: t } : asRecord(t);
+    /** The type one step into `t`, and its position in the tuple that stores `t`. */
+    const component = (
+        t: SemanticType,
+        step: Step,
+    ): { type: SemanticType; at: number } | undefined => {
+        if (typeof step === 'string') {
+            if (t.tag !== 'record') return undefined;
+            const at = t.fields.findIndex((f) => f.name === step);
+            return at < 0 ? undefined : { type: t.fields[at]!.type, at };
+        }
+        if (t.tag !== 'tuple') return undefined;
+        const type = t.items[step];
+        return type && { type, at: step };
+    };
     const validType = (t: SemanticType): void => {
         if (!t || typeof t !== 'object') fail('Missing semantic type');
         switch (t.tag) {
@@ -118,6 +152,11 @@ export function verifyTypedProgram(program: TypedProgram): void {
                 t.fields.forEach((f) => validType(f.type));
                 if (t.fields.some((f, i) => i && t.fields[i - 1].name >= f.name))
                     fail('Record fields must be unique and sorted');
+                if (t.rest) {
+                    if (t.rest.tag !== 'variable' || !t.fields.length)
+                        fail('A record remainder must be a row variable');
+                    validType(t.rest);
+                }
                 return;
             case 'fn':
                 t.args.forEach(validFlow);
@@ -145,12 +184,12 @@ export function verifyTypedProgram(program: TypedProgram): void {
         validFlow(b);
         if (valueKey(a) !== valueKey(b)) fail('Value/lens type mismatch', origin);
     };
-    const prefix = (a: number[], b: number[]) =>
+    const prefix = (a: Step[], b: Step[]) =>
         a.length <= b.length && a.every((v, i) => v === b[i]);
-    const overlap = (a: number[], b: number[]) => prefix(a, b) || prefix(b, a);
+    const overlap = (a: Step[], b: Step[]) => prefix(a, b) || prefix(b, a);
     // Each exact write path has a counter. A focus observes writes to itself,
     // descendants, and ancestors, but not disjoint siblings of the same root.
-    const revision = (versions: Revisions | undefined, path: number[]): number =>
+    const revision = (versions: Revisions | undefined, path: Step[]): number =>
         versions
             ? [...versions].reduce(
                   (n, [key, count]) => n + (overlap(JSON.parse(key), path) ? count : 0),
@@ -200,6 +239,13 @@ export function verifyTypedProgram(program: TypedProgram): void {
                 b.parameter >= scheme.quantified.length
             )
                 fail('Invalid scheme constraint');
+        for (const r of scheme.rows ?? [])
+            if (
+                !Number.isInteger(r.parameter) ||
+                r.parameter < 0 ||
+                r.parameter >= scheme.quantified.length
+            )
+                fail('Invalid row constraint');
         mapSemantic(scheme.type, (id) => {
             if (!allowed.has(id)) fail('Unbound variable in exported signature');
             return undefined;
@@ -255,6 +301,7 @@ export function verifyTypedProgram(program: TypedProgram): void {
                 reconstructionPatterns.set(p.reconstructionId!, p);
             }
             if (p.kind === 'tuple' || p.kind === 'constructor') p.items.forEach(indexPattern);
+            if (p.kind === 'record') subpatterns(p).forEach(indexPattern);
         };
         const backingPlaces = new Set<string>();
         const backingTransfers = new Set<Instruction>();
@@ -329,7 +376,12 @@ export function verifyTypedProgram(program: TypedProgram): void {
                           ]
                         : p.kind === 'tuple'
                           ? p.items.map(patternKey)
-                          : null,
+                          : p.kind === 'record'
+                            ? [
+                                  p.fields.map((f) => [f.name, patternKey(f.pattern)]),
+                                  p.rest ? patternKey(p.rest) : null,
+                              ]
+                            : null,
             ]);
         indexBlock(u.entry);
         u.functions.forEach((f) => indexBlock(f.body));
@@ -364,12 +416,15 @@ export function verifyTypedProgram(program: TypedProgram): void {
                     matchFields(p.items[0]!, final, initial);
                     return;
                 }
+                // A record's parts stay in the order the pattern names them.
                 const items =
                     p.kind === 'literal'
                         ? []
                         : p.kind === 'tuple' || p.kind === 'constructor'
                           ? p.items
-                          : fail('Reconstruction discards an unmatched field');
+                          : p.kind === 'record' && !p.rest
+                            ? p.fields.map((f) => f.pattern)
+                            : fail('Reconstruction discards an unmatched field');
                 if (
                     !items.length &&
                     final.kind === 'tuple' &&
@@ -401,6 +456,18 @@ export function verifyTypedProgram(program: TypedProgram): void {
                 } else if (p.kind === 'tuple' && !p.items.length) {
                     if (i!.op !== 'constant' || i!.value !== null)
                         fail('Reconstruction constructor or shape changed');
+                } else if (p.kind === 'record') {
+                    // The rebuilt record is stored in name order.
+                    if (i!.op !== 'tuple' || i!.items.length !== p.fields.length)
+                        fail('Reconstruction constructor or shape changed');
+                    [...p.fields]
+                        .sort((a, b) => (a.name < b.name ? -1 : 1))
+                        .forEach((field, n) =>
+                            rebuild(
+                                field.pattern,
+                                (i as Extract<Instruction, { op: 'tuple' }>).items[n]!,
+                            ),
+                        );
                 } else if (p.kind === 'constructor' || p.kind === 'tuple') {
                     if (
                         (p.kind === 'constructor'
@@ -483,7 +550,8 @@ export function verifyTypedProgram(program: TypedProgram): void {
         const cap = (v: Value): Cap =>
             v.type.tag === 'flow' && v.cap ? v.cap : fail('Expected a lens capability');
         const access = (s: State, r: SlotRef): Slot => {
-            if (r.path.some((p) => !Number.isSafeInteger(p) || p < 0)) fail('Invalid slot path');
+            if (r.path.some((p) => typeof p !== 'string' && (!Number.isSafeInteger(p) || p < 0)))
+                fail('Invalid slot path');
             const slot = s.slots.get(r.place) ?? fail(`Unknown or retired place ${r.place}`);
             const permits = new Set<string>();
             let id = r.permit;
@@ -510,34 +578,40 @@ export function verifyTypedProgram(program: TypedProgram): void {
         };
         const focus = (s: State, r: SlotRef): SemanticType => {
             let type = access(s, r).type;
-            for (const index of r.path) {
-                if (!isProduct(type) || !tupleItems(type)[index]) fail('Invalid focus projection');
-                type = tupleItems(type)[index];
+            const positions: number[] = [];
+            for (const step of r.path) {
+                const next = component(type, step) ?? fail('Invalid focus projection');
+                positions.push(next.at);
+                type = next.type;
             }
+            observe?.(u.id, r.place, r.path, positions);
             return type;
         };
         const full = (s: State, r: SlotRef) => !access(s, r).empty.some((p) => overlap(p, r.path));
         const write = (s: State, r: SlotRef, value: SemanticType, empty = false): void => {
             const slot = access(s, r);
-            const update = (t: SemanticType, path: number[]): SemanticType => {
+            const positions: number[] = [];
+            const update = (t: SemanticType, path: Step[]): SemanticType => {
                 if (!path.length) return value;
-                if (!isProduct(t) || !tupleItems(t)[path[0]])
-                    return fail('Cannot update this projection');
-                if (t.tag === 'record')
-                    return {
-                        tag: 'record',
-                        fields: t.fields.map((f, i) =>
-                            i === path[0] ? { ...f, type: update(f.type, path.slice(1)) } : f,
-                        ),
-                    };
-                return {
-                    tag: 'tuple',
-                    items: (t as SemanticType & { tag: 'tuple' }).items.map((v, i) =>
-                        i === path[0] ? update(v, path.slice(1)) : v,
-                    ),
-                };
+                const next = component(t, path[0]!) ?? fail('Cannot update this projection');
+                positions.push(next.at);
+                const inner = update(next.type, path.slice(1));
+                return t.tag === 'record'
+                    ? {
+                          ...t,
+                          fields: t.fields.map((f, i) =>
+                              i === next.at ? { ...f, type: inner } : f,
+                          ),
+                      }
+                    : {
+                          tag: 'tuple',
+                          items: (t as SemanticType & { tag: 'tuple' }).items.map((v, i) =>
+                              i === next.at ? inner : v,
+                          ),
+                      };
             };
             slot.type = update(slot.type, r.path);
+            observe?.(u.id, r.place, r.path, positions);
             slot.empty = slot.empty.filter((p) => !overlap(p, r.path));
             if (empty) slot.empty.push(r.path);
             const key = JSON.stringify(r.path);
@@ -582,7 +656,7 @@ export function verifyTypedProgram(program: TypedProgram): void {
                       : c.kind === 'scope'
                         ? read(s, c.inner)
                         : c.read;
-        const empty = (s: State, c: Cap): number[][] => {
+        const empty = (s: State, c: Cap): Step[][] => {
             switch (c.kind) {
                 case 'place':
                     return access(s, c.slot)
@@ -608,7 +682,7 @@ export function verifyTypedProgram(program: TypedProgram): void {
                 for (const other of branches.slice(1)) {
                     const slot = other.slots.get(place) ?? fail('Branch retired outer storage');
                     eq(first.type, slot.type);
-                    const paths = (ps: number[][]) =>
+                    const paths = (ps: Step[][]) =>
                         [...new Set(ps.map((p) => JSON.stringify(p)))].sort().join(';');
                     if (paths(first.empty) !== paths(slot.empty))
                         fail('Branch availability was not normalized with edge drops');
@@ -807,6 +881,11 @@ export function verifyTypedProgram(program: TypedProgram): void {
                 fail('Wrong specialization type arguments');
             for (const b of scheme.bounds ?? [])
                 requireBound(b.predicate, args.get(scheme.quantified[b.parameter]!)!);
+            for (const r of scheme.rows ?? []) {
+                const row = args.get(scheme.quantified[r.parameter]!)!;
+                if (row.tag === 'record' && row.fields.some((f) => r.lacks.includes(f.name)))
+                    fail('Row argument has a field it must lack');
+            }
             const type = mapSemantic(scheme.type, (id) => args.get(id));
             eq(type, i.type);
             return type;
@@ -816,7 +895,8 @@ export function verifyTypedProgram(program: TypedProgram): void {
             p: IRPattern,
             t: SemanticType,
             alias?: string,
-            path: number[] = [],
+            path: Step[] = [],
+            at: number[] = [],
         ): void => {
             eq(p.type, t);
             switch (p.kind) {
@@ -827,6 +907,7 @@ export function verifyTypedProgram(program: TypedProgram): void {
                             JSON.stringify(p.slot.path) !== JSON.stringify(path)
                         )
                             fail('Lens parameter binding has an invalid projection');
+                        observe?.(u.id, p.slot.place, p.slot.path, at);
                     } else {
                         if (p.slot.path.length || p.slot.permit)
                             fail('Owned pattern binding is not an owning slot');
@@ -854,10 +935,41 @@ export function verifyTypedProgram(program: TypedProgram): void {
                     );
                     return;
                 case 'tuple':
-                    if (!isProduct(t) || tupleItems(t).length !== p.items.length)
+                    if (t.tag !== 'tuple' || tupleItems(t).length !== p.items.length)
                         fail('Tuple pattern arity mismatch');
-                    p.items.forEach((v, i) => pattern(s, v, tupleItems(t)[i], alias, [...path, i]));
+                    p.items.forEach((v, i) =>
+                        pattern(s, v, tupleItems(t)[i]!, alias, [...path, i], [...at, i]),
+                    );
                     return;
+                case 'record': {
+                    const matched = matchedRecord(t);
+                    if (matched.tag !== 'record')
+                        return fail('Record pattern on a value that is not one');
+                    for (const f of p.fields) {
+                        const part =
+                            component(matched, f.name) ?? fail('Record pattern names a missing field');
+                        pattern(
+                            s,
+                            f.pattern,
+                            part.type,
+                            alias,
+                            [...path, f.name],
+                            [...at, part.at],
+                        );
+                    }
+                    if (new Set(p.fields.map((f) => f.name)).size !== p.fields.length)
+                        fail('Record pattern repeats a field');
+                    if (p.rest) {
+                        if (alias) fail('A lens pattern cannot bind the other fields');
+                        const others = semanticRecord(
+                            matched.fields.filter((f) => !p.fields.some((g) => g.name === f.name)),
+                            matched.rest,
+                        );
+                        eq(asRecord(p.rest.type), asRecord(others));
+                        pattern(s, p.rest, p.rest.type);
+                    }
+                    return;
+                }
                 case 'constructor': {
                     if (alias) fail('Constructor alias patterns are unsupported');
                     if (p.instance.definition !== `constructor/${p.name}`)
@@ -950,6 +1062,72 @@ export function verifyTypedProgram(program: TypedProgram): void {
                                 fail('Record construction arity mismatch', i.origin);
                             tupleItems(out).forEach((t, n) => eq(t, items[n], i.origin));
                         } else feq(i.out.type, irPlain({ tag: 'tuple', items }));
+                        break;
+                    }
+                    case 'record': {
+                        // Operands are read before any spread place is taken.
+                        const fields = new Map<string, { type: SemanticType; hole: boolean }>();
+                        let rest: SemanticType | undefined;
+                        const add = (name: string, type: SemanticType, hole = false) => {
+                            if (fields.has(name)) fail('Record update repeats a field', i.origin);
+                            fields.set(name, { type, hole });
+                        };
+                        for (const part of i.parts) {
+                            if (part.kind === 'field') {
+                                const value = part.value ? plain(take(s, part.value)) : undefined;
+                                if ((part.op === 'remove') !== !value)
+                                    fail('Record operation has the wrong operand');
+                                if (part.op === 'extend') {
+                                    add(part.name, value!);
+                                    continue;
+                                }
+                                const old =
+                                    fields.get(part.name) ??
+                                    fail('Record operation on a missing field', i.origin);
+                                // The type an emptied field had is not retained.
+                                if (part.op === 'update' && !old.hole) eq(old.type, value!);
+                                if (part.op === 'remove') fields.delete(part.name);
+                                else fields.set(part.name, { type: value!, hole: false });
+                                continue;
+                            }
+                            let type: SemanticType,
+                                holes: Step[] = [];
+                            if ('slot' in part.source) {
+                                const slot = part.source.slot;
+                                lexicalPlace(slot.place);
+                                const depth = slot.path.length;
+                                const empty = access(s, slot).empty.filter((p) =>
+                                    overlap(p, slot.path),
+                                );
+                                if (empty.some((p) => p.length <= depth))
+                                    fail('Use after move', i.origin);
+                                holes = empty.map((p) => p[depth]!);
+                                type = focus(s, slot);
+                                write(s, slot, irUnit(), true);
+                            } else type = plain(take(s, part.source.value));
+                            eq(part.type, type);
+                            type = asRecord(type);
+                            if (type.tag === 'record') {
+                                for (const f of type.fields)
+                                    add(f.name, f.type, holes.includes(f.name));
+                                if (type.rest) {
+                                    if (rest) fail('Record update merges two open records');
+                                    rest = type.rest;
+                                }
+                            } else if (type.tag === 'variable') {
+                                if (rest) fail('Record update merges two open records');
+                                rest = type;
+                            } else fail('Only a record can be spread', i.origin);
+                        }
+                        if ([...fields.values()].some((f) => f.hole))
+                            fail('Record update keeps an emptied field', i.origin);
+                        eq(
+                            asRecord(valueType(i.out.type)),
+                            semanticRecord(
+                                [...fields].map(([name, f]) => ({ name, type: f.type })),
+                                rest,
+                            ),
+                        );
                         break;
                     }
                     case 'construct': {
@@ -1346,7 +1524,7 @@ export function verifyTypedProgram(program: TypedProgram): void {
                                     b = other.state.slots.get(id)!;
                                 eq(a.type, b.type);
                                 a.version = joinVersions([a.version, b.version]);
-                                const paths = (ps: number[][]) =>
+                                const paths = (ps: Step[][]) =>
                                     [...new Set(ps.map((p) => JSON.stringify(p)))].sort().join(';');
                                 if (paths(a.empty) !== paths(b.empty))
                                     fail('Branch availability was not normalized with edge drops');

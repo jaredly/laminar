@@ -12,7 +12,7 @@ type Shape<V> =
     | { tag: 'meta' | 'rigid' | 'variable'; id: V }
     | { tag: 'fn'; linear?: boolean }
     | { tag: 'tuple'; items: Shape<V>[] }
-    | { tag: 'record'; fields: { type: Shape<V> }[] }
+    | { tag: 'record'; fields: { type: Shape<V> }[]; rest?: Shape<V> }
     | { tag: 'con'; name: string; args: Shape<V>[] };
 /** Return the variable obligations, or undefined when the concrete shape cannot satisfy it. */
 export function requirements<V>(
@@ -35,7 +35,9 @@ export function requirements<V>(
             break;
         case 'record':
             if (predicate === 'Display') return undefined;
+            // The remainder is a variable until it is known, so it carries the obligation.
             children = type.fields.map((f) => f.type);
+            if (type.rest) children.push(type.rest);
             break;
         case 'con': {
             if (predicate === 'Display')

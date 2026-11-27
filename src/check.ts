@@ -14,7 +14,7 @@ import { builtinTypes, constructorTypes } from './builtins.ts';
 import { TypeDiagnostic, type Scheme } from './types.ts';
 import { desugarRecords } from './desugar-records.ts';
 import { verifyElaboration } from './backend/verify-elaboration.ts';
-import type { Elaboration, SemanticType } from './elaborated.ts';
+import type { Elaboration, SemanticType, Step } from './elaborated.ts';
 import { importScheme, lowerTypedProgram, lowerTypedUnit } from './lower-typed.ts';
 import type { IRScheme, IRUnit, TypedProgram } from './typed-ir.ts';
 import { verifyTypedProgram } from './verify-ir.ts';
@@ -304,7 +304,16 @@ export class Checker {
         );
         if (stored.ast.type === 'fn' && stored.ast.name)
             scope[stored.ast.name] = { type: 'builtin' };
-        return linearToExpr({ scope, counter: { current: 0 } }, desugarRecords(stored.ast));
+        const types = new Map(stored.elaboration.nodes.map((n) => [n.id, n.type]));
+        const fieldCount = (node: object) => {
+            const type = types.get((node as { nodeId: string }).nodeId);
+            if (type?.tag !== 'plain' || type.value.tag !== 'record') return undefined;
+            return type.value.rest ? Infinity : type.value.fields.length;
+        };
+        return linearToExpr(
+            { scope, counter: { current: 0 } },
+            desugarRecords(stored.ast, fieldCount),
+        );
     }
     lowerTyped(expression: CheckedExpression): IRUnit {
         const stored = this.checked.get(expression);
@@ -433,15 +442,17 @@ function findMut(tree: unknown): number | undefined {
         .find((loc) => loc !== undefined);
 }
 
-function project(type: SemanticType, path: number[]): SemanticType | undefined {
+function project(type: SemanticType, path: Step[]): SemanticType | undefined {
     if (!path.length) return type;
-    const items =
-        type.tag === 'tuple'
-            ? type.items
-            : type.tag === 'record'
-              ? type.fields.map((f) => f.type)
+    const [step] = path;
+    const item =
+        typeof step === 'string'
+            ? type.tag === 'record'
+                ? type.fields.find((f) => f.name === step)?.type
+                : undefined
+            : type.tag === 'tuple'
+              ? type.items[step!]
               : undefined;
-    const item = items?.[path[0]];
     return item && project(item, path.slice(1));
 }
 
@@ -455,7 +466,10 @@ function variables(type: SemanticType): string[] {
         case 'tuple':
             return type.items.flatMap(variables);
         case 'record':
-            return type.fields.flatMap((f) => variables(f.type));
+            return [
+                ...type.fields.flatMap((f) => variables(f.type)),
+                ...(type.rest ? variables(type.rest) : []),
+            ];
         case 'fn':
             return [];
     }

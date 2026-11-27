@@ -2,7 +2,7 @@ import { Declaration, References, reachableNames, typeDependencies } from '../ba
 import type { ConcreteProgram, ConcreteBlock } from '../concrete-ir.ts';
 import type { SemanticFlow } from '../elaborated.ts';
 import { Storage, type Cell, type Data, type Leaf, type View } from './storage.ts';
-import { decodeNumber, type IRPattern, type SlotRef } from '../typed-ir.ts';
+import { decodeNumber, type IRPattern, type SlotRef, positions } from '../typed-ir.ts';
 import { verifyConcreteProgram } from '../verify-concrete.ts';
 import { BackendDiagnostic } from '../backend/target.ts';
 import { cSyntax, identifier, type Statement, type TranslationUnit } from './syntax.ts';
@@ -1503,7 +1503,10 @@ export function lowerC(
             const flushParameters = (body: Statement[]) =>
                 parameters.forEach((p) => flush(p.expression, p.layout, storage.get(p.view), body));
             const ref = (s: SlotRef) =>
-                storage.project(places.get(s.place) ?? unsupported('Unavailable C place'), s.path);
+                storage.project(
+                    places.get(s.place) ?? unsupported('Unavailable C place'),
+                    positions(s.path),
+                );
             const value = (id: string) =>
                 values.get(id) ?? unsupported('Indirect/function value requires phase 6');
             // A lens needs no restoration when every endpoint is a plain read pointer.

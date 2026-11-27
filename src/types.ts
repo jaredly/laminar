@@ -11,8 +11,12 @@ export type Ty =
     | { tag: 'rigid'; id: number }
     | { tag: 'con'; name: string; args: Ty[] }
     | { tag: 'tuple'; items: Ty[] }
-    /** Closed structural record. Fields are sorted by name, so a field's index is its path step. */
-    | { tag: 'record'; fields: { name: string; type: Ty }[] }
+    /**
+     * Structural record. Fields are unique and sorted by name. `rest` is a row variable (a meta
+     * or rigid) standing for the other fields; absent means closed. An open record always has a
+     * field: a record that is only its remainder is written as the row variable itself.
+     */
+    | { tag: 'record'; fields: { name: string; type: Ty }[]; rest?: Ty }
     /**
      * `linear` marks a closure that captured a linear value or an owned lens, so it cannot be
      * dropped or copied. It is decided where the closure is written, never inferred.
@@ -41,14 +45,22 @@ export type Scheme = {
     bounds?: Bound[];
     /** Callback parameters this callable invokes or forwards exactly once on every path. */
     callsOnce?: readonly number[];
+    /** Quantified parameters that are row variables, with the labels each must lack. */
+    rows?: RowConstraint[];
     body: Ty;
 };
+export type RowConstraint = { parameter: number; lacks: string[] };
 export const con = (name: string, ...args: Ty[]): Ty => ({ tag: 'con', name, args });
 export const tuple = (...items: Ty[]): Ty => ({ tag: 'tuple', items });
-export const record = (fields: { name: string; type: Ty }[]): Ty => ({
-    tag: 'record',
-    fields: [...fields].sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0)),
-});
+const byName = (a: { name: string }, b: { name: string }) =>
+    a.name < b.name ? -1 : a.name > b.name ? 1 : 0;
+/** Build a record, absorbing a remainder that is already known. Use `Solver.row` to check lacks. */
+export const record = (fields: { name: string; type: Ty }[], rest?: Ty): Ty => {
+    if (rest?.tag === 'record') return record([...fields, ...rest.fields], rest.rest);
+    if (rest && !fields.length) return rest;
+    return { tag: 'record', fields: [...fields].sort(byName), ...(rest ? { rest } : {}) };
+};
+export type RecordTy = Ty & { tag: 'record' };
 export const plain = (value: Ty, mode: Ty = OWNED): FlowTy => ({ tag: 'plain', value, mode });
 /** A parameter that only reads its argument, so it accepts shared and owned values alike. */
 export const reads = (value: Ty): FlowTy => plain(value, SHARED);
@@ -110,7 +122,10 @@ export function mapType(t: Ty, replace: (t: Ty) => Ty | undefined): Ty {
         case 'tuple':
             return tuple(...t.items.map((a) => mapType(a, replace)));
         case 'record':
-            return record(t.fields.map((f) => ({ name: f.name, type: mapType(f.type, replace) })));
+            return record(
+                t.fields.map((f) => ({ name: f.name, type: mapType(f.type, replace) })),
+                t.rest && mapType(t.rest, replace),
+            );
         case 'fn':
             return fn(
                 t.args.map((a) => mapFlow(a, (v) => mapType(v, replace))),
@@ -167,6 +182,8 @@ export class Solver {
     }
     private substitutions = new Map<number, Ty>();
     private modeMetas = new Set<number>();
+    /** Row variables, metas and rigids alike, with the labels each must lack. */
+    private lacks = new Map<number, Set<string>>();
     /** Variables standing for what a channel carries: any function they turn out to be is one-use. */
     private carriedMetas = new Set<number>();
     fresh(): Ty {
@@ -186,8 +203,10 @@ export class Solver {
         if (t.tag === 'meta') this.carriedMetas.add(t.id);
         else if (t.tag === 'fn') t.linear = true;
         else if (t.tag === 'tuple') t.items.forEach((v) => this.carried(v));
-        else if (t.tag === 'record') t.fields.forEach((f) => this.carried(f.type));
-        else if (t.tag === 'con' && t.name !== CHANNEL) t.args.forEach((v) => this.carried(v));
+        else if (t.tag === 'record') {
+            t.fields.forEach((f) => this.carried(f.type));
+            if (t.rest) this.carried(t.rest);
+        } else if (t.tag === 'con' && t.name !== CHANNEL) t.args.forEach((v) => this.carried(v));
     }
     /** Apply `carried` to what every channel type within `t` carries. */
     channels(t: Ty): void {
@@ -197,12 +216,122 @@ export class Solver {
         });
     }
     prune(t: Ty): Ty {
+        if (t.tag === 'record') {
+            if (!t.rest) return t;
+            const rest = this.prune(t.rest);
+            return rest === t.rest ? t : record(t.fields, rest);
+        }
         if (t.tag !== 'meta') return t;
         const value = this.substitutions.get(t.id);
         if (!value) return t;
         const result = this.prune(value);
         this.substitutions.set(t.id, result);
         return result;
+    }
+    /** The labels a row variable must lack, or undefined for a variable that is not a row. */
+    rowLacks(id: number): ReadonlySet<string> | undefined {
+        return this.lacks.get(id);
+    }
+    /** Require that `row` is a record, or a row variable, without a field `label`. */
+    requireLacks(row: Ty, label: string, loc: number): void {
+        const t = this.prune(row);
+        if (t.tag === 'record') {
+            if (t.fields.some((f) => f.name === label))
+                throw new TypeDiagnostic(
+                    'row-lacks',
+                    loc,
+                    `Record already has a field ${label}, which this use requires it to lack`,
+                );
+            if (t.rest) this.requireLacks(t.rest, label, loc);
+        } else if (t.tag === 'meta' || t.tag === 'rigid') {
+            this.markRow(t).add(label);
+        } else
+            throw new TypeDiagnostic(
+                'type-mismatch',
+                loc,
+                `Expected a record, found ${printType(this.resolve(t))}`,
+            );
+    }
+    /** Record that a variable stands for the fields of a record. */
+    markRow(t: Ty & { tag: 'meta' | 'rigid' }): Set<string> {
+        let set = this.lacks.get(t.id);
+        if (!set) this.lacks.set(t.id, (set = new Set()));
+        return set;
+    }
+    /** An open or closed record whose remainder lacks every one of `fields`. */
+    row(fields: { name: string; type: Ty }[], rest: Ty | undefined, loc: number): Ty {
+        if (!rest) return record(fields);
+        const tail = this.prune(rest);
+        if (tail.tag === 'meta' || tail.tag === 'rigid') this.markRow(tail);
+        else if (tail.tag !== 'record')
+            throw new TypeDiagnostic(
+                'type-mismatch',
+                loc,
+                `Expected a record, found ${printType(this.resolve(tail))}`,
+            );
+        for (const f of fields) this.requireLacks(tail, f.name, loc);
+        return record(fields, tail);
+    }
+    private unifyRecords(a: Ty, b: Ty, loc: number): void {
+        const mismatch = (): never => {
+            throw new TypeDiagnostic(
+                'type-mismatch',
+                loc,
+                `Cannot unify ${printType(this.resolve(a))} with ${printType(this.resolve(b))}`,
+            );
+        };
+        const left = this.prune(a),
+            right = this.prune(b);
+        // A field's payload may settle either remainder, so decompose again until none does.
+        if (left.tag !== 'record' || right.tag !== 'record') return this.unify(left, right, loc);
+        const other = new Map(right.fields.map((f) => [f.name, f.type]));
+        for (const f of left.fields) {
+            const match = other.get(f.name);
+            if (match) this.unify(f.type, match, loc);
+        }
+        if (this.prune(left) !== left || this.prune(right) !== right)
+            return this.unifyRecords(left, right, loc);
+        const onlyLeft = left.fields.filter((f) => !other.has(f.name)),
+            onlyRight = right.fields.filter((f) => !left.fields.some((g) => g.name === f.name));
+        const l = left.rest,
+            r = right.rest;
+        if (!l && !r) {
+            if (onlyLeft.length || onlyRight.length) mismatch();
+            return;
+        }
+        if (!l || !r) {
+            // The closed side cannot gain a field, so the open side's remainder is the surplus.
+            const [open, missing, surplus] = l
+                ? [l, onlyLeft, onlyRight]
+                : [r!, onlyRight, onlyLeft];
+            if (missing.length || open.tag !== 'meta') mismatch();
+            return this.unify(open, record(surplus), loc);
+        }
+        if ((l.tag === 'meta' || l.tag === 'rigid') && (r.tag === 'meta' || r.tag === 'rigid')) {
+            if (l.id === r.id) {
+                if (onlyLeft.length || onlyRight.length) mismatch();
+                return;
+            }
+        }
+        if (!onlyLeft.length && !onlyRight.length)
+            return l.tag === 'meta' ? this.unify(l, r, loc) : this.unify(r, l, loc);
+        if (l.tag === 'rigid' && r.tag === 'rigid') mismatch();
+        // A rigid side cannot gain a field, so the flexible side may bring none of its own.
+        if (l.tag === 'rigid') {
+            if (onlyRight.length) mismatch();
+            return this.unify(r, this.row(onlyLeft, l, loc), loc);
+        }
+        if (r.tag === 'rigid') {
+            if (onlyLeft.length) mismatch();
+            return this.unify(l, this.row(onlyRight, r, loc), loc);
+        }
+        // With one side's surplus empty, its remainder is all of the other side.
+        if (!onlyLeft.length) return this.unify(l, this.row(onlyRight, r, loc), loc);
+        if (!onlyRight.length) return this.unify(r, this.row(onlyLeft, l, loc), loc);
+        const tail = this.fresh() as Ty & { tag: 'meta' };
+        this.markRow(tail);
+        this.unify(l, this.row(onlyRight, tail, loc), loc);
+        this.unify(r, this.row(onlyLeft, tail, loc), loc);
     }
     resolve(t: Ty): Ty {
         return mapType(t, (v) => {
@@ -231,6 +360,17 @@ export class Solver {
             t.tag === 'meta' ? vars.get(t.id) : undefined,
         );
         this.channels(type);
+        for (const r of s.rows ?? []) {
+            const value = vars.get(s.quantified[r.parameter]!);
+            if (!value || (value.tag !== 'meta' && value.tag !== 'rigid'))
+                throw new TypeDiagnostic(
+                    'open-signature',
+                    loc,
+                    'Row constraint on an unquantified parameter',
+                );
+            const lacks = this.markRow(value);
+            r.lacks.forEach((label) => lacks.add(label));
+        }
         for (const b of s.bounds ?? []) {
             const value = vars.get(s.quantified[b.parameter]!);
             if (!value)
@@ -252,10 +392,15 @@ export class Solver {
         // A mode nothing decided is owned, and it is not a type parameter.
         for (const id of this.free(t))
             if (this.modeMetas.has(id) && !excluded.has(id)) this.substitutions.set(id, OWNED);
-        return {
-            body: this.resolve(t),
-            quantified: [...this.free(t)].filter((id) => !excluded.has(id)),
-        };
+        const quantified = [...this.free(t)].filter((id) => !excluded.has(id));
+        const rows = this.rowConstraints(quantified);
+        return { body: this.resolve(t), quantified, ...(rows.length ? { rows } : {}) };
+    }
+    rowConstraints(ids: readonly number[]): RowConstraint[] {
+        return ids.flatMap((id, parameter) => {
+            const lacks = this.lacks.get(id);
+            return lacks ? [{ parameter, lacks: [...lacks].sort() }] : [];
+        });
     }
     /** `unknown` while the flag is still a meta; callers decide how to treat it. */
     replaceability(t: FlowTy & { tag: 'flow' }): 'replaceable' | 'fixed' | 'unknown' {
@@ -366,6 +511,18 @@ export class Solver {
             const value = a.tag === 'meta' ? b : a;
             if (this.free(value).has(variable.id))
                 throw new TypeDiagnostic('infinite-type', loc, 'Type contains itself');
+            // A row variable only ever becomes fields of a record, and keeps what it lacks.
+            const required = this.lacks.get(variable.id);
+            if (required) {
+                if (value.tag === 'meta' || value.tag === 'rigid') this.markRow(value);
+                else if (value.tag !== 'record')
+                    throw new TypeDiagnostic(
+                        'type-mismatch',
+                        loc,
+                        `Expected a record, found ${printType(this.resolve(value))}`,
+                    );
+                required.forEach((label) => this.requireLacks(value, label, loc));
+            }
             this.substitutions.set(variable.id, value);
             if (this.carriedMetas.has(variable.id)) this.carried(value);
             if (value.tag === 'con' && value.name === CHANNEL) this.channels(value);
@@ -388,15 +545,7 @@ export class Solver {
             a.items.forEach((v, i) => this.unify(v, b.items[i], loc));
             return;
         }
-        if (
-            a.tag === 'record' &&
-            b.tag === 'record' &&
-            a.fields.length === b.fields.length &&
-            a.fields.every((f, i) => f.name === b.fields[i].name)
-        ) {
-            a.fields.forEach((f, i) => this.unify(f.type, b.fields[i].type, loc));
-            return;
-        }
+        if (a.tag === 'record' && b.tag === 'record') return this.unifyRecords(a, b, loc);
         if (a.tag === 'fn' && b.tag === 'fn') {
             if (a.args.length !== b.args.length)
                 throw new TypeDiagnostic(
@@ -428,7 +577,12 @@ export function printScheme(scheme: Scheme): string {
 
 export function printType(t: Ty, scheme?: Scheme): string {
     const names = new Map<number, string>();
-    const show = (t: Ty): string => {
+    /** Row parameters print as the records they stand for; labels a record shows are implied. */
+    const rows = new Map(
+        (scheme?.rows ?? []).map((r) => [scheme!.quantified[r.parameter]!, new Set(r.lacks)]),
+    );
+    const shown = new Map<number, Set<string>>();
+    const show = (t: Ty, asRest = false): string => {
         switch (t.tag) {
             case 'meta':
             case 'rigid': {
@@ -439,14 +593,25 @@ export function printType(t: Ty, scheme?: Scheme): string {
                         String.fromCharCode(97 + (n % 26)) + (n >= 26 ? Math.floor(n / 26) : ''),
                     );
                 }
-                return (t.tag === 'rigid' ? '!' : '') + names.get(t.id);
+                const name = (t.tag === 'rigid' ? '!' : '') + names.get(t.id);
+                return !asRest && rows.has(t.id) ? `{...${name}}` : name;
             }
             case 'con':
-                return t.name + (t.args.length ? `<${t.args.map(show).join(', ')}>` : '');
+                return t.name + (t.args.length ? `<${t.args.map((a) => show(a)).join(', ')}>` : '');
             case 'tuple':
-                return `(${t.items.map(show).join(', ')})`;
-            case 'record':
-                return `{${t.fields.map((f) => `${f.name}: ${show(f.type)}`).join(', ')}}`;
+                return `(${t.items.map((a) => show(a)).join(', ')})`;
+            case 'record': {
+                const parts = t.fields.map((f) => `${f.name}: ${show(f.type)}`);
+                if (t.rest) {
+                    if (t.rest.tag === 'meta' || t.rest.tag === 'rigid') {
+                        const labels = shown.get(t.rest.id) ?? new Set<string>();
+                        t.fields.forEach((f) => labels.add(f.name));
+                        shown.set(t.rest.id, labels);
+                    }
+                    parts.push(`...${show(t.rest, true)}`);
+                }
+                return `{${parts.join(', ')}}`;
+            }
             case 'fn':
                 return `${t.linear ? 'linear ' : ''}(${t.args.map(sf).join(', ')}) => ${sf(t.result)}`;
         }
@@ -456,15 +621,14 @@ export function printType(t: Ty, scheme?: Scheme): string {
             ? (t.mode.tag === 'con' && t.mode.name === SHARED_NAME ? '&' : '') + show(t.value)
             : `${t.owned.tag === 'con' && t.owned.name === OWNED_LENS_NAME ? 'mut ' : ''}${show(t.read)}/${t.replaceable.tag === 'con' && t.replaceable.name === FIXED_NAME ? '=' : ''}${show(t.write)}`;
     const body = show(t);
-    if (!scheme?.bounds?.length) return body;
-    return (
-        body +
-        ' where ' +
-        scheme.bounds
-            .map(
-                (b) =>
-                    `${b.predicate}(${show({ tag: 'meta', id: scheme.quantified[b.parameter]! })})`,
-            )
-            .join(', ')
+    const parameter = (id: number) => show({ tag: 'meta', id }, true);
+    const where = (scheme?.bounds ?? []).map(
+        (b) => `${b.predicate}(${parameter(scheme!.quantified[b.parameter]!)})`,
     );
+    for (const [id, lacks] of rows) {
+        const hidden = [...lacks].filter((label) => !shown.get(id)?.has(label));
+        if (hidden.length && names.has(id))
+            where.push(`${parameter(id)} lacks ${hidden.join(' ')}`);
+    }
+    return where.length ? `${body} where ${where.join(', ')}` : body;
 }

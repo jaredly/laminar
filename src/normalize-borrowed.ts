@@ -41,6 +41,15 @@ export function normalizeBorrowed(source: Linear): Linear {
     const prepare = (
         p: Pat,
     ): { owned: Pat; public: Pat; initial: Linear; final: Pat; restore: Linear } => {
+        if (p.type === 'record' && p.rest)
+            throw new TypeDiagnostic(
+                'inexact-borrowed-record',
+                p.loc,
+                'A borrowed match with constructors rebuilds its records, so a record pattern in it must list every field',
+            );
+        // The parts of a record are rebuilt in name order, the order it is stored in.
+        if (p.type === 'record')
+            p = { ...p, fields: [...p.fields].sort((a, b) => (a.name < b.name ? -1 : 1)) };
         if (p.type === 'constructor' || p.type === 'tuple' || p.type === 'record') {
             const children = (
                 p.type === 'constructor'
@@ -58,6 +67,8 @@ export function normalizeBorrowed(source: Linear): Linear {
                         : p.type === 'record'
                           ? {
                                 ...p,
+                                // Rebuilt from the named fields, so there must be no others.
+                                exact: true,
                                 fields: p.fields.map((f, i) => ({ ...f, pat: children[i].owned })),
                             }
                           : { ...p, items: children.map((c) => c.owned) },
