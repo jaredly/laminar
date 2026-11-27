@@ -113,8 +113,8 @@ lenses](owned-lenses.md) describes the rule as built. Two limits matter for this
   shared-result slot.
 
 In pure mode no function value can be copied by `dup` or `array`. Dependencies are the one
-exception, since each `#name` read copies the entry: `inject` accepts a function only if it can be
-seen to capture nothing.
+exception, since each `#name` read copies the entry: the only functions `inject` accepts are
+top-level ones, named at the `inject`.
 
 `array(n, value)` copies its value but had no copy requirement, so in dual mode it could duplicate a
 linear value. It now has the requirement `dup` has.

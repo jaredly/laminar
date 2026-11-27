@@ -1,8 +1,8 @@
 /**
  * A closure that captured a `mut` value may change it, so two holders of one closure would see
  * each other's writes. In dual mode it is called once, and is never shared or copied
- * (docs/owned-lenses.md). In pure mode no function value is ever copied, except that a function
- * seen to capture nothing may be a dependency, which each read of it copies.
+ * (docs/owned-lenses.md). In pure mode no function value is ever copied. The only functions a
+ * dependency can hold, which each read of it copies, are top-level ones.
  */
 import { describe, expect, it } from 'bun:test';
 import { spawnSync } from 'node:child_process';
@@ -154,58 +154,42 @@ describe('pure mode: a function value is used once', () => {
     });
 });
 
-describe('pure mode: a dependency holds only functions that capture nothing', () => {
-    const body = (statements: string) =>
-        `${pureTop}fn pick() { fn (x) { x } }\n{\n ${statements}\n}`;
+describe('pure mode: the only functions a dependency holds are top-level ones', () => {
+    const body = (statements: string) => `${pureTop}{\n ${statements}\n}`;
     it.each([
-        ['a closure from a call', 'inject f = mk()\n 0'],
-        ['any function from a call', 'inject f = pick()\n 0'],
-        ['a lambda that captures a number', 'let n = 1\n inject f = fn () { n }\n 0'],
-        ['a lambda that captures a function', 'let g = inc\n inject f = fn (x) { g(x) }\n 0'],
-        ['a variable holding such a closure', 'let n = 1\n let g = fn () { n }\n inject f = g\n 0'],
-        ['a variable since assigned one', 'let g = fn () { [:0:] }\n g := mk()\n inject f = g\n 0'],
+        ['a lambda, even one without captures', 'inject f = fn (x) { x }\n 0'],
+        ['a lambda that captures', 'let n = 1\n inject f = fn () { n }\n 0'],
+        ['a function from a call', 'inject f = mk()\n 0'],
+        ['a local that names a definition', 'let g = inc\n inject f = g\n 0'],
+        ['another dependency', 'inject f = inc\n inject g = #f\n 0'],
         [
-            'a variable one branch assigned',
-            'let g = fn () { [:0:] }\n let _ = match true { true -> {\n g := mk()\n 0 }\n false -> 0 }\n inject f = g\n 0',
+            'a branch between definitions',
+            'inject f = match true { true -> inc\n false -> inc }\n 0',
         ],
-        [
-            'the old value of a swap',
-            'let g = mk()\n let old = g := fn () { [:0:] }\n inject f = old\n 0',
-        ],
-        [
-            'a branch where one side captures',
-            'let n = [:1:]\n inject f = match true { true -> fn () { [:0:] }\n false -> fn () { n } }\n 0',
-        ],
-        ['a pair holding one', 'inject f = (inc, mk())\n 0'],
-        ['a record holding one', 'inject f = {a: inc, b: mk()}\n 0'],
-        ['a vector holding one', 'inject f = [:mk():]\n 0'],
-        ['a union holding one', 'inject f = Box(mk())\n 0'],
+        ['a record holding a lambda', 'inject f = {a: inc, b: (fn (x) { x })}\n 0'],
+        ['a pair holding a local', 'let g = inc\n inject f = (inc, g)\n 0'],
+        ['a vector holding a function from a call', 'inject f = [:mk():]\n 0'],
+        ['a union holding a function from a call', 'inject f = Box(mk())\n 0'],
     ])('refuses %s', (_, statements) => {
-        expect(code(body(statements))).toBe('capturing-dependency');
+        expect(code(body(statements))).toBe('local-function-dependency');
     });
     it('refuses a function through a generic injector', () => {
-        const source = `${pureTop}fn give(x) {\n inject k = x\n 0\n}\n{\n give(mk())\n}`;
+        const source = `${pureTop}fn give(x) {\n inject k = x\n 0\n}\n{\n give(inc)\n}`;
         expect(code(source)).toBe('function-copy');
+    });
+    it('does not mistake a local for the definition it shadows', () => {
+        expect(code(body('let inc = mk()\n inject f = inc\n 0'))).toBe('local-function-dependency');
     });
     it.each<[string, string, unknown]>([
         ['a definition', 'inject f = inc\n (#f(1), #f(2))', [2, 3]],
         ['a built-in', 'inject f = round\n (#f(1.2), #f(2.8))', [1, 3]],
-        ['a lambda without captures', 'inject f = fn (x) { x * 2 }\n (#f(1), #f(2))', [2, 4]],
-        ['a variable naming a definition', 'let g = inc\n inject f = g\n #f(1)', 2],
-        ['another dependency', 'inject f = inc\n inject g = #f\n (#g(1), #f(1))', [2, 2]],
-        ['a field of one', 'inject r = {f: inc}\n inject g = #r.f\n #g(1)', 2],
         [
-            'either of two such branches',
-            'inject f = match true { true -> inc\n false -> fn (x) { x } }\n #f(1)',
-            2,
+            'a record of definitions and data',
+            'inject r = {f: inc, n: 4}\n let f = #r.f\n (f(1), #r.n)',
+            [2, 4],
         ],
-        ['a union holding one', 'inject j = Job(inc)\n match #j { Job(f) -> f(1) }', 2],
+        ['a union holding a definition', 'inject j = Job(inc)\n match #j { Job(f) -> f(1) }', 2],
         ['data from a call', 'inject n = inc(1)\n (#n, #n)', [2, 2]],
-        [
-            'a variable assigned one',
-            'let g = mk()\n let old = g := fn () { [:7:] }\n inject f = g\n (#f(), #f())',
-            [[7], [7]],
-        ],
     ])('accepts %s', (_, statements, result) => {
         const checked = checkSource(body(statements));
         expect(executeTypedProgram(checked, { stdout: () => {} })).toEqual(result as never);

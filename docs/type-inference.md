@@ -120,8 +120,8 @@ fn main() {
   at the `#name`).
 - Entries are read any number of times, so they cannot be linear. A function stored in one cannot
   need dependencies itself. Injecting a function that has needs supplies them there and then.
-  In pure mode an injected function must also be seen to capture nothing
-  ([why](owned-lenses.md)), so wrapping an outer entry in a new closure needs dual mode.
+  In pure mode the only functions that can be injected are top-level ones
+  ([details](owned-lenses.md)).
 - Signatures: `=>` is inferred, `={}>` needs nothing, `={Http, Clock}>` merges record aliases,
   `={log: (String) => (), ...e}>` lists fields and a row, and `={e}>` is exactly a row. On a
   definition, a closed list limits the body, and callers may hold more. Calling a value with a

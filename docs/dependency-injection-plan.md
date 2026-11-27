@@ -272,9 +272,9 @@ These differ from the text above, or were found while building it.
   specialization. A union with a row parameter compiles when every use of it needs nothing.
 - **A closed list also covers the callbacks the body calls.** Under `={}>`, calling a callback
   parameter makes that callback need nothing.
-- **Pure mode entries hold only functions that capture nothing.** Otherwise reading an entry would
-  copy a closure, and Go shares what such a copy captured. The plan's example of a wrapper that
-  captures the outer logger needs dual mode.
+- **The only functions in pure mode entries are top-level ones,** named at the `inject`. Reading an
+  entry copies it, and pure mode copies no other function. Examples here that inject a lambda, or
+  wrap an outer entry in one, need dual mode or a top-level function.
 - **A lens cleanup cannot use a dependency** (`dependency-in-cleanup`). It runs when the lens ends,
   perhaps outside the block that created it. Read the entry into a binding before the lens.
 - **An injected function that has needs takes only plain parameters.**

@@ -66,8 +66,6 @@ const commonOnceParameters = (a: OnceParameters, b: OnceParameters): OnceParamet
 type Root = {
     /** Evidence for the function value currently occupying this whole place. */
     callsOnce?: OnceParameters;
-    /** Pure mode: any function in the value occupying this whole place captured nothing. */
-    captureFree?: boolean;
     /** Provenance retained while this computed focus owns deferred restoration. */
     owners?: Binding[];
     // Exclusive protection is independent of permission to retain owned backing.
@@ -182,8 +180,6 @@ export class Inferencer {
     private rootFunction?: object;
     private rootDeclaration?: Decl;
     private callsOnce = new WeakMap<object, OnceParameters>();
-    /** Names, reads and lambdas known to hold no function that captured anything. */
-    private bareNodes = new WeakSet<object>();
     private valueTypes = new WeakMap<object, Ty>();
     /**
      * Checks that need every type known. A function can turn out to be one-use after a call
@@ -459,7 +455,6 @@ export class Inferencer {
         if (b.scheme)
             this.error('immutable-definition', loc, 'Reusable definitions cannot be lens targets');
         b.root.callsOnce = undefined;
-        b.root.captureFree = undefined;
         b.root.type = this.replaceAt(b.root.type, b.path, value, loc);
         const revisionPath = JSON.stringify(b.path);
         b.root.revisions.set(revisionPath, (b.root.revisions.get(revisionPath) ?? 0) + 1);
@@ -1152,8 +1147,6 @@ export class Inferencer {
             case 'op': {
                 const b = this.lookup(env, n.text, n.loc);
                 this.use(n, b, 'value');
-                // A definition captures nothing.
-                if (b.scheme || (!b.path.length && b.root.captureFree)) this.bareNodes.add(n);
                 this.callsOnce.set(
                     n,
                     b.scheme?.callsOnce ?? (!b.path.length ? b.root.callsOnce : undefined),
@@ -1189,14 +1182,13 @@ export class Inferencer {
             case 'need': {
                 const type = this.solver.requireEntry(this.ambient, n.name, n.loc);
                 this.copyableDependency(type, n.loc);
-                this.bareNodes.add(n);
                 return type;
             }
             case 'inject': {
                 const entry = this.bindNeeds(this.linear(n.value, env), n.value.loc);
                 this.solver.selfContained(entry, n.value.loc);
                 if (this.options.linearTypes) this.copyableDependency(entry, n.value.loc);
-                else this.requireCaptureFree(n.value, entry);
+                else this.onlyTopLevelFunctions(n.value, entry, env);
                 const outer = this.ambient;
                 // In front of any outer entry of the same name, which it hides.
                 this.ambient = needs([{ name: n.name, type: entry }], outer);
@@ -1220,7 +1212,6 @@ export class Inferencer {
             case 'field': {
                 const b = this.fieldPlace(n, env);
                 this.use(n, b, 'value');
-                if (b.root.captureFree) this.bareNodes.add(n);
                 return this.consume(b, n.loc);
             }
             case 'index':
@@ -1256,13 +1247,9 @@ export class Inferencer {
                 const target =
                     n.lens.type === 'id' ? this.lookup(env, n.lens.text, n.loc) : undefined;
                 if (target && !target.path.length) this.callsOnce.set(n, target.root.callsOnce);
-                const wasBare = target && !target.path.length && target.root.captureFree;
                 view.put(value);
-                if (target && !target.path.length) {
+                if (target && !target.path.length)
                     target.root.callsOnce = this.callsOnce.get(n.value);
-                    target.root.captureFree = this.isCaptureFree(n.value);
-                }
-                if (wasBare) this.bareNodes.add(n);
                 return previous;
             }
             case 'let':
@@ -1273,38 +1260,14 @@ export class Inferencer {
                 return this.caseBody(n, env);
         }
     }
-    /** Whether this expression's value is seen to hold no function that captured anything. */
-    private isCaptureFree(n: Linear): boolean {
-        const all = (values: Linear[]) => values.every((v) => this.isCaptureFree(v));
-        switch (n.type) {
-            case 'number':
-            case 'bool':
-            case 'string':
-                return true;
-            case 'tuple':
-                return all(n.items);
-            case 'record':
-                return all(n.fields.map((f) => f.value));
-            case 'vector':
-                return all(n.items);
-            case 'constructor':
-                return all(n.args);
-            case 'let':
-            case 'inject':
-                return this.isCaptureFree(n.body as Linear);
-            case 'case':
-                return n.cases.every((arm) => this.isCaptureFree(arm.body as Linear));
-            default:
-                return this.bareNodes.has(n);
-        }
-    }
     /**
-     * Pure mode: `#name` copies an entry each time, and no function is ever copied, with one
-     * exception. A function that captured nothing holds nothing two copies could share, so
-     * reading it is like naming a definition again. Anything else must hold no function.
+     * Pure mode: `#name` copies an entry each time, and a function value is never copied. A
+     * top-level function is the exception, since it can always be used again. So the only
+     * functions in an entry are ones named at the `inject`, alone or in data built there;
+     * whatever else goes in must hold no function.
      */
-    private requireCaptureFree(n: Linear, type: Ty): void {
-        if (this.isCaptureFree(n)) return;
+    private onlyTopLevelFunctions(n: Linear, type: Ty, env: Env): void {
+        if ((n.type === 'id' || n.type === 'op') && this.lookup(env, n.text, n.loc).scheme) return;
         const parts =
             n.type === 'tuple' || n.type === 'vector'
                 ? n.items
@@ -1314,12 +1277,13 @@ export class Inferencer {
                     ? n.args
                     : undefined;
         if (parts) {
-            parts.forEach((v) => this.requireCaptureFree(v, this.valueTypes.get(v)!));
+            for (const part of parts)
+                this.onlyTopLevelFunctions(part, this.valueTypes.get(part)!, env);
             return;
         }
         this.solver.require('Copyable', type, n.loc, [
-            'capturing-dependency',
-            'In pure mode a dependency can hold a function only if it can be seen to capture nothing: a definition, a lambda without captures, or another dependency',
+            'local-function-dependency',
+            'In pure mode the only functions a dependency can hold are top-level ones, named at the `inject`',
         ]);
     }
     private copyableDependency(type: Ty, loc: number): void {
@@ -1681,11 +1645,9 @@ export class Inferencer {
             const b = this.lookup(env, name, n.loc);
             if (!b.scheme) {
                 const once = !b.path.length ? b.root.callsOnce : undefined;
-                const bare = !b.path.length ? b.root.captureFree : undefined;
                 const type = this.consume(b, n.loc),
                     captured = this.freshBinding(type);
                 captured.root.callsOnce = once;
-                captured.root.captureFree = bare;
                 this.declare(captured, name, n, 'capture');
                 this.builder.captures.push({
                     node: this.builder.node(n),
@@ -1804,7 +1766,6 @@ export class Inferencer {
                 ? 'state'
                 : undefined;
         this.ambient = surrounding;
-        if (!lensCaptures.size && !captureTypes.length) this.bareNodes.add(n);
         return fn(args, result, capture, limited?.type ?? needed);
     }
     /**
@@ -2014,11 +1975,7 @@ export class Inferencer {
                 'A plain (shared) value cannot initialize a `mut` binding; `dup(x)` it first',
             );
         this.pattern(p, type, sub);
-        if (p.type === 'id') {
-            const root = sub.get(p.text)!.root;
-            root.callsOnce = this.callsOnce.get(n.value);
-            root.captureFree = this.isCaptureFree(n.value as Linear);
-        }
+        if (p.type === 'id') sub.get(p.text)!.root.callsOnce = this.callsOnce.get(n.value);
         // First-class functions are affine monotypes; only top-level definitions are reusable schemes.
         const close = () =>
             this.builder.scopes.push({
@@ -2584,7 +2541,6 @@ export class Inferencer {
             revisions: Map<string, number>;
             moved?: boolean;
             callsOnce?: OnceParameters;
-            captureFree?: boolean;
         }[];
         const snapshot = (): Snapshot =>
             roots.map((r) => ({
@@ -2594,7 +2550,6 @@ export class Inferencer {
                 revisions: new Map(r.revisions),
                 moved: r.moved,
                 callsOnce: r.callsOnce,
-                captureFree: r.captureFree,
             }));
         const restore = (states: Snapshot) =>
             roots.forEach((r, i) =>
@@ -2647,7 +2602,6 @@ export class Inferencer {
                     empty,
                     moved: states[0][i].moved,
                     callsOnce: states.map((s) => s[i].callsOnce).reduce(commonOnceParameters),
-                    captureFree: states.every((s) => s[i].captureFree),
                     borrows: new Set(initial[i].borrows),
                     revisions: this.joinRevisions(states.map((s) => s[i].revisions)),
                 };
@@ -2760,7 +2714,6 @@ export class Inferencer {
             revisions: new Map(r.revisions),
             moved: r.moved,
             callsOnce: r.callsOnce,
-            captureFree: r.captureFree,
         }));
         // Per outer place: whether some arm moved it, and whether some arm left it unrestorable.
         const moved = roots.map(() => false),
@@ -2771,7 +2724,6 @@ export class Inferencer {
                   empty: Step[][];
                   revisions: Map<string, number>;
                   callsOnce: OnceParameters;
-                  captureFree?: boolean;
               }[]
             | undefined;
         for (const branch of n.cases) {
@@ -2781,7 +2733,6 @@ export class Inferencer {
                 r.revisions = new Map(initial[i].revisions);
                 r.moved = initial[i].moved;
                 r.callsOnce = initial[i].callsOnce;
-                r.captureFree = initial[i].captureFree;
             });
             const sub = new Map(env);
             this.pattern(branch.pat, scrutinee, sub);
@@ -2808,7 +2759,6 @@ export class Inferencer {
                 joined = roots.map((r) => ({
                     type: r.type,
                     callsOnce: r.callsOnce,
-                    captureFree: r.captureFree,
                     empty: [...r.empty],
                     revisions: new Map(r.revisions),
                 }));
@@ -2838,7 +2788,6 @@ export class Inferencer {
                         this.solver.unify(type, erase(r.type), n.loc);
                         joined![i] = {
                             callsOnce: commonOnceParameters(joined![i].callsOnce, r.callsOnce),
-                            captureFree: !!joined![i].captureFree && !!r.captureFree,
                             type,
                             empty,
                             revisions: this.joinRevisions([joined![i].revisions, r.revisions]),
@@ -2857,7 +2806,6 @@ export class Inferencer {
         roots.forEach((r, i) => {
             r.type = joined![i].type;
             r.callsOnce = joined![i].callsOnce;
-            r.captureFree = joined![i].captureFree;
             r.empty = joined![i].empty;
             r.revisions = new Map(joined![i].revisions);
             // Moved on one path is moved afterwards; the other paths end it at the branch edge.

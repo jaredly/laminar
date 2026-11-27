@@ -81,12 +81,12 @@ describe('dependencies: inferred needs', () => {
         ],
         // A callback under `inject` needs the injected entry in front of the outer one.
         [
-            'fn quietly(job) {\n let loud = #log\n inject log = loud\n job()\n }',
-            '(() ={log: a, log: a, ...b}> c) ={log: a, ...b}> c',
+            'fn quiet(m) { 0 }\nfn quietly(job) {\n let loud = #log\n inject log = quiet\n (loud, job())\n }',
+            '(() ={log: (a) => Number, log: b, ...c}> d) ={log: b, ...c}> (b, d)',
         ],
         // An injected function's needs are supplied there, so they become the injector's.
         [
-            'fn go() {\n inject log = fn (m) { "${#now()} ${m}" }\n #log("x")\n }',
+            'fn stamp(m) { "${#now()} ${m}" }\nfn go() {\n inject log = stamp\n #log("x")\n }',
             '() ={now: () => a, ...b}> String where Display(a), Display(String)',
         ],
         [
@@ -255,9 +255,11 @@ const programs: [name: string, source: string, result: unknown][] = [
 fn fetch(url) {
     (log("get \${dup(~url)}"), #get(url))
 }
+fn noon() { "noon" }
+fn contents(url) { "contents of \${url}" }
 fn main() {
-    inject now = fn () { "noon" }
-    inject get = fn (url) { "contents of \${url}" }
+    inject now = noon
+    inject get = contents
     fetch("a")
 }
 main()`,
@@ -366,10 +368,13 @@ fn job() { #log("hi") }
     ],
     [
         'an injected function is bound at its inject',
-        `fn go() {
-    inject now = fn () { "noon" }
-    inject log = fn (m) { "\${#now()} \${m}" }
-    inject now = fn () { "night" }
+        `fn noon() { "noon" }
+fn night() { "night" }
+fn stamp(m) { "\${#now()} \${m}" }
+fn go() {
+    inject now = noon
+    inject log = stamp
+    inject now = night
     (#log("a"), #now())
 }
 go()`,
@@ -378,8 +383,9 @@ go()`,
     [
         'an injected definition with needs',
         `fn stamped(m) { "\${#now()} \${m}" }
+fn noon() { "noon" }
 fn go() {
-    inject now = fn () { "noon" }
+    inject now = noon
     inject log = stamped
     #log("b")
 }
@@ -388,8 +394,9 @@ go()`,
     ],
     [
         'a record of functions as an entry',
-        `fn go() {
-    inject http = {get: (fn (u) { "got \${u}" }), tag: "t"}
+        `fn got(u) { "got \${u}" }
+fn go() {
+    inject http = {get: got, tag: "t"}
     #http.get("x")
 }
 go()`,
@@ -426,9 +433,10 @@ fn g() { (f(), #b) }
 f :: (() ={Clock}> String) ={Clock, a: String}> (String, String)
 fn f(g) { (#a, g()) }
 fn tick() { "tick \${#now()}" }
+fn noon() { "noon" }
 {
     inject a = "A"
-    inject now = fn () { "noon" }
+    inject now = noon
     f(tick)
 }`,
         ['A', 'tick noon'],
