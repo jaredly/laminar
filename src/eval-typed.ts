@@ -30,6 +30,8 @@ type FunctionValue = {
     lenses: Map<string, Lens>;
     reusable: boolean;
     used: boolean;
+    /** Dependencies supplied where it was injected; otherwise its caller's. */
+    supplied?: ReadonlyMap<string, Data>;
 };
 type NativeValue = { kind: 'native'; name: string };
 /** Elements are always initialized: index lenses keep every element full. */
@@ -69,12 +71,15 @@ type Frame = {
     loans: Map<string, Lens>;
     /** Owned lenses this call was handed, by place, until it ends or moves them. */
     held: Map<string, Lens>;
+    /** The dependencies the code running here can read. */
+    needs: ReadonlyMap<string, Data>;
 };
 const frame = (): Frame => ({
     places: new Map(),
     values: new Map(),
     loans: new Map(),
     held: new Map(),
+    needs: new Map(),
 });
 export type ReferenceOptions = {
     /** Execution trace is useful for checking sequencing and diagnosing reference failures. */
@@ -139,7 +144,7 @@ export function executeTypedProgram(
         const index = (b: IRBlock): void =>
             b.instructions.forEach((i) => {
                 if ('out' in i) types.set(i.out.id, i.out.type);
-                if (i.op === 'scope') index(i.body);
+                if (i.op === 'scope' || i.op === 'inject') index(i.body);
                 else if (i.op === 'aslens') index(i.cleanup);
                 else if (i.op === 'case') i.cases.forEach((c) => index(c.body));
             });
@@ -491,6 +496,8 @@ export function executeTypedProgram(
         if (v && typeof v === 'object') {
             if (v.kind === 'variant' || v.kind === 'vector')
                 return { ...v, items: v.items.map(copy) };
+            // An import holds nothing.
+            if (v.kind === 'native') return v;
             // A closure is consumed by its call, so each copy owns its own captures. A reusable
             // definition has none to consume.
             if (v.kind === 'function' && !v.lenses.size)
@@ -562,6 +569,7 @@ export function executeTypedProgram(
     const invoke = (
         callee: Data,
         args: Argument[],
+        needs: ReadonlyMap<string, Data>,
     ): { run: Run<Argument> } | { value: Argument } => {
         if (
             !callee ||
@@ -570,7 +578,8 @@ export function executeTypedProgram(
             (callee.kind !== 'function' && callee.kind !== 'native')
         )
             return error('Calling a non-function');
-        if (callee.kind === 'function') return { run: call(callee, args) };
+        if (callee.kind === 'function')
+            return { run: call(callee, args, callee.supplied ?? needs) };
         if (waits.has(callee.name)) return { run: wait(callee.name, args) };
         return { value: native(callee.name, args) };
     };
@@ -713,10 +722,15 @@ export function executeTypedProgram(
                 );
         }
     };
-    const call = function* (callee: FunctionValue, args: Argument[]): Run<Argument> {
+    const call = function* (
+        callee: FunctionValue,
+        args: Argument[],
+        needs: ReadonlyMap<string, Data>,
+    ): Run<Argument> {
         if (!callee.reusable && callee.used) return error('Closure invoked twice');
         if (!callee.reusable) callee.used = true;
         const f = frame();
+        f.needs = needs;
         const hold = (place: string, owner: Lens) => {
             f.places.set(place, owner);
             f.held.set(place, owner);
@@ -921,10 +935,14 @@ export function executeTypedProgram(
                             return error('A spawned task must return ()', i.origin);
                         const origin = i.origin;
                         // The task is read here, on the spawning task; its call runs on its own.
+                        // The task gets its own copy of what it can read.
+                        const supplied = new Map<string, Data>(
+                            [...f.needs].map(([name, v]) => [name, copy(v)]),
+                        );
                         yield {
                             op: 'spawn',
                             task: (function* (): Run<void> {
-                                const called = invoke(fn, args);
+                                const called = invoke(fn, args, supplied);
                                 const returned =
                                     'run' in called ? yield* enter(called.run) : called.value;
                                 // Generic code only shows what it returns here.
@@ -935,7 +953,7 @@ export function executeTypedProgram(
                         result = null;
                         break;
                     }
-                    const called = invoke(fn, args);
+                    const called = invoke(fn, args, f.needs);
                     result = 'run' in called ? yield* enter(called.run) : called.value;
                     // An owned argument is the callee's to end.
                     const borrowed = args.filter((arg, n): arg is Lens => {
@@ -966,6 +984,35 @@ export function executeTypedProgram(
                 case 'scope':
                     result = yield* enter(executeBlock(u, i.body, f));
                     break;
+                case 'need': {
+                    const held = f.needs.get(i.name);
+                    if (held === undefined) return error(`No dependency ${i.name}`, i.origin);
+                    result = copy(held);
+                    break;
+                }
+                case 'supply': {
+                    const value = owned(data(take(f, i.value)));
+                    result =
+                        value &&
+                        typeof value === 'object' &&
+                        !Array.isArray(value) &&
+                        value.kind === 'function'
+                            ? { ...value, supplied: new Map(f.needs) }
+                            : value;
+                    break;
+                }
+                case 'widen':
+                    result = take(f, i.value);
+                    break;
+                case 'inject': {
+                    const value = owned(data(take(f, i.value)));
+                    const surrounding = f.needs;
+                    f.needs = new Map(surrounding).set(i.name, value);
+                    result = yield* enter(executeBlock(u, i.body, f));
+                    f.needs = surrounding;
+                    dispose(value);
+                    break;
+                }
                 case 'case': {
                     const value = owned(data(take(f, i.value))),
                         arm = i.cases.find((c) => matches(c.pattern, value));

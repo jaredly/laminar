@@ -21,6 +21,7 @@ import {
     type Id,
     type TypeDecl,
     type RecordItem,
+    type NeedsItem,
 } from './ast.ts';
 import {
     Solver,
@@ -29,6 +30,7 @@ import {
     tuple,
     record,
     fn,
+    fn as fnType,
     plain,
     flow,
     mono,
@@ -43,12 +45,20 @@ import {
     CHANNEL,
     reads,
     mapType,
+    needs,
+    NO_NEEDS,
+    type Need,
     type Ty,
     type FlowTy,
     type Scheme,
     type RecordTy,
 } from './types.ts';
 
+/** Whether a written type lists needs anywhere. */
+const statesNeeds = (type: unknown): boolean =>
+    !!type &&
+    typeof type === 'object' &&
+    ((type as { needs?: unknown }).needs !== undefined || Object.values(type).some(statesNeeds));
 type Borrow = { path: Step[]; parent?: Borrow; id: string };
 type OnceParameters = readonly number[] | undefined;
 const commonOnceParameters = (a: OnceParameters, b: OnceParameters): OnceParameters =>
@@ -185,6 +195,7 @@ export class Inferencer {
         private options: InferOptions = {},
     ) {
         this.builder = new ElaborationBuilder(context);
+        this.solver.plainEntries = !!options.linearTypes;
         // Re-home externally supplied variables so solver IDs never collide.
         const imports = (table: TypeEnvironment, constructor = false) =>
             new Map(
@@ -235,6 +246,12 @@ export class Inferencer {
                     t.args.map((v) => mapFlow(v, (t) => this.replace(t, vars))),
                     mapFlow(t.result, (t) => this.replace(t, vars)),
                     t.linear,
+                    t.needs && this.replace(t.needs, vars),
+                );
+            case 'needs':
+                return needs(
+                    t.entries.map((e) => ({ ...e, type: this.replace(e.type, vars) })),
+                    t.rest && this.replace(t.rest, vars),
                 );
         }
     }
@@ -359,6 +376,16 @@ export class Inferencer {
     }
     private selfName?: string;
     private sharedPattern = false;
+    /** The expression being called, which is not used as a value of its own. */
+    private callee?: object;
+    /** The row of dependencies the code being checked may use. */
+    private ambient: Ty = NO_NEEDS;
+    /** A closed list the definition declares for its body, and the open row of its type. */
+    private limit?: { body: Ty; type: Ty };
+    /** Whether an arrow that says nothing about needs has them inferred. */
+    private inferOmitted = true;
+    /** Collects the rows made for such arrows while a signature is read. */
+    private omitted?: number[];
     private lookup(env: Env, name: string, loc: number): Binding {
         return env.get(name) ?? this.error('unbound-name', loc, `Unbound name ${name}`);
     }
@@ -528,6 +555,8 @@ export class Inferencer {
         // Unions are nominal, so constructors may refer to the union itself.
         const previous = this.typeDefinitions;
         this.typeDefinitions = new Map(previous).set(name, definition);
+        // A constructor has nothing to infer needs from, so a bare arrow needs nothing.
+        this.inferOmitted = false;
         try {
             for (const item of node.items) {
                 const constructor = item.name.text;
@@ -553,6 +582,7 @@ export class Inferencer {
             }
         } finally {
             this.typeDefinitions = previous;
+            this.inferOmitted = true;
         }
         return { definition, constructors };
     }
@@ -563,6 +593,30 @@ export class Inferencer {
         declaration = prepared.declaration;
         const env = this.env();
         const bodyVariables = new Map<number, Ty>();
+        // Evaluating a top-level item can use no dependency but those it injects itself.
+        const root = (this.ambient = this.solver.fresh());
+        this.limit = undefined;
+        if (
+            declaration?.ann.type === 'fn' &&
+            declaration.ann.needs?.every((item) => this.isClosedNeed(item)) &&
+            ast.type === 'fn'
+        ) {
+            const stated = this.annotation(declaration.ann, new Map());
+            const body =
+                stated.tag === 'plain' && stated.value.tag === 'fn'
+                    ? (stated.value.needs ?? NO_NEEDS)
+                    : NO_NEEDS;
+            // The list limits the body. The function's type is open, so a caller may hold more.
+            const rest = this.solver.fresh() as Ty & { tag: 'meta' };
+            this.solver.frozen.add(rest.id);
+            const row = this.solver.prune(body);
+            const entries = row.tag === 'needs' ? row.entries : [];
+            if (!entries.length) this.solver.frozen.delete(rest.id);
+            this.limit = {
+                body,
+                type: entries.length ? needs(entries, rest) : NO_NEEDS,
+            };
+        }
         let self: Ty | undefined;
         if (ast.type === 'fn' && ast.name) {
             self = this.solver.fresh();
@@ -578,6 +632,8 @@ export class Inferencer {
         const type = this.linear(ast, env);
         if (self) this.solver.unify(self, type, ast.loc);
         this.deferred.forEach((check) => check());
+        this.requireNoNeeds(root, ast.loc);
+        this.closeOwnNeeds(type);
         let scheme = this.solver.generalize(type, [...this.globals.values()]);
         if (declaration) {
             if (ast.type !== 'fn' || ast.name !== declaration.name.text)
@@ -586,23 +642,63 @@ export class Inferencer {
                     declaration.loc,
                     'Declaration must name its implementation',
                 );
+            const omitted: number[] = (this.omitted = []);
             const declared = this.annotation(declaration.ann, new Map());
+            this.omitted = undefined;
             if (declared.tag !== 'plain')
                 this.error(
                     'annotation-mismatch',
                     declaration.loc,
                     'Definition signature must be a value type',
                 );
-            const contract = this.solver.generalize(declared.value, []);
+            const stated =
+                this.limit && declared.value.tag === 'fn'
+                    ? { ...declared.value, needs: this.limit.type }
+                    : declared.value;
             const inferredInstance = this.solver.instantiateWithArguments(scheme);
-            const contractInstance = this.solver.instantiateWithArguments(contract, true);
-            this.solver.unify(inferredInstance.type, contractInstance.type, declaration.loc);
-            const contractVariables = new Map(
-                [...contractInstance.arguments].map(([id, t]) => [
-                    (t as Ty & { tag: 'rigid' }).id,
-                    { tag: 'meta' as const, id },
-                ]),
+            // As elsewhere, an annotation says nothing about who owns the definition's own
+            // parameters and result, so those come from the body.
+            const body = this.solver.prune(inferredInstance.type);
+            const owned = (said: FlowTy, found: FlowTy): FlowTy =>
+                said.tag === 'plain' && found.tag === 'plain'
+                    ? plain(said.value, found.mode)
+                    : said;
+            const written = this.solver.generalize(
+                stated.tag === 'fn' && body.tag === 'fn' && stated.args.length === body.args.length
+                    ? {
+                          ...stated,
+                          args: stated.args.map((a, i) => owned(a, body.args[i]!)),
+                          result: owned(stated.result, body.result),
+                      }
+                    : stated,
+                [],
             );
+            // Needs the signature does not state are inferred, so they stay open.
+            const contractInstance = this.solver.instantiateWithArguments(
+                written,
+                true,
+                declaration.loc,
+                new Set(omitted),
+            );
+            this.solver.unify(inferredInstance.type, contractInstance.type, declaration.loc);
+            const rigid = [...contractInstance.arguments].flatMap(([id, t]) =>
+                t.tag === 'rigid' ? [[t.id, id] as const] : [],
+            );
+            const contractVariables = new Map(
+                rigid.map(([from, id]) => [from, { tag: 'meta' as const, id }]),
+            );
+            const named = (t: Ty) =>
+                mapType(this.solver.resolve(t), (v) =>
+                    v.tag === 'rigid' ? contractVariables.get(v.id) : undefined,
+                );
+            // What the body needs a row to lack is part of the contract, as its bounds are.
+            for (const [from, id] of rigid)
+                for (const label of this.solver.rowLacks(from) ?? [])
+                    this.solver.requireLacks({ tag: 'meta', id }, label, declaration.loc);
+            for (const [from, id] of rigid)
+                if (this.solver.rowLacks(from)) this.solver.markRow({ tag: 'meta', id });
+            this.solver.frozen.clear();
+            const contract = this.solver.generalize(named(contractInstance.type), []);
             for (const [id, instance] of inferredInstance.arguments) {
                 bodyVariables.set(
                     id,
@@ -611,13 +707,7 @@ export class Inferencer {
                     ),
                 );
             }
-            // What the body needs a row to lack is part of the contract, as its bounds are.
-            const rows = this.solver.rowConstraints(
-                contract.quantified.map(
-                    (id) => (contractInstance.arguments.get(id) as Ty & { tag: 'rigid' }).id,
-                ),
-            );
-            scheme = rows.length ? { ...contract, rows } : contract;
+            scheme = contract;
         }
         this.solver.finishBounds(
             scheme,
@@ -677,6 +767,8 @@ export class Inferencer {
                         : value(),
                 ),
                 n.body.type === 'lens' ? lens(this.resultOwnership(n)) : value(),
+                false,
+                this.limit?.type ?? this.solver.fresh(),
             ),
             n.loc,
         );
@@ -759,6 +851,12 @@ export class Inferencer {
             }
             case 'fn': {
                 const args = t.args.map((v) => this.annotation(v, vars, closed));
+                let needed: Ty | undefined;
+                if (t.needs) needed = this.needsAnnotation(t.needs, vars, closed);
+                else if (this.inferOmitted) {
+                    needed = this.solver.fresh();
+                    this.omitted?.push((needed as Ty & { tag: 'meta' }).id);
+                }
                 let result = this.annotation(t.body, vars, closed);
                 if (result.tag === 'flow') {
                     const borrows = args.some(
@@ -767,9 +865,76 @@ export class Inferencer {
                     // The signature decides it, so a result is only ever written `~A`.
                     result = { ...result, owned: borrows ? BORROWED_LENS : OWNED_LENS };
                 }
-                return plain(fn(args, result));
+                return plain(fn(args, result, false, needed));
             }
         }
+    }
+    /** Whether an item of `={...}>` names particular entries, rather than a row variable. */
+    private isClosedNeed(item: NeedsItem): boolean {
+        if ('rest' in item) return false;
+        return 'name' in item || !this.isRowName(item.include);
+    }
+    private isRowName(type: Type): type is Id {
+        return (
+            type.type === 'id' &&
+            /^[a-z]/.test(type.text) &&
+            !isBuiltinTypeName(type.text) &&
+            !this.typeDefinitions.has(type.text)
+        );
+    }
+    /** `={...}>`: record aliases and fields, merged, and at most one row variable. */
+    private needsAnnotation(items: NeedsItem[], vars: Map<string, Ty>, closed: boolean): Ty {
+        const entries: Need[] = [];
+        let rest: Ty | undefined;
+        const add = (name: string, type: Ty, loc: number) => {
+            if (entries.some((e) => e.name === name))
+                this.error('duplicate-dependency', loc, `The dependency ${name} is listed twice`);
+            entries.push({ name, type: this.dependencyType(type, loc), from: loc });
+        };
+        const remainder = (id: Id) => {
+            if (rest) this.error('invalid-needs', id.loc, 'At most one row variable can be listed');
+            rest =
+                id.text === '_' && !closed
+                    ? this.solver.fresh()
+                    : this.valueAnnotation(id, vars, closed);
+        };
+        for (const item of items) {
+            if ('rest' in item) remainder(item.rest);
+            else if ('name' in item)
+                add(item.name, this.valueAnnotation(item.type, vars, closed), item.loc);
+            else if (this.isRowName(item.include)) remainder(item.include);
+            else {
+                const type = this.solver.prune(this.valueAnnotation(item.include, vars, closed));
+                if (type.tag !== 'record' || type.rest)
+                    this.error(
+                        'invalid-needs',
+                        item.loc,
+                        'A list of needs names closed record types, fields and one row variable',
+                    );
+                else type.fields.forEach((f) => add(f.name, f.type, item.loc));
+            }
+        }
+        return needs(entries, rest);
+    }
+    /** A written dependency type: its functions need nothing and, in dual mode, read arguments. */
+    private dependencyType(type: Ty, loc: number): Ty {
+        const stored = !this.options.linearTypes
+            ? type
+            : mapType(this.solver.resolve(type), function plainArguments(t): Ty | undefined {
+                  if (t.tag !== 'fn') return undefined;
+                  return fnType(
+                      t.args.map((a) =>
+                          a.tag === 'plain'
+                              ? plain(mapType(a.value, plainArguments), SHARED)
+                              : mapFlow(a, (v) => mapType(v, plainArguments)),
+                      ),
+                      mapFlow(t.result, (v) => mapType(v, plainArguments)),
+                      t.linear,
+                      t.needs,
+                  );
+              });
+        this.solver.selfContained(stored, loc);
+        return stored;
     }
     private valueAnnotation(t: Type, vars: Map<string, Ty>, closed = false): Ty {
         const a = this.annotation(t, vars, closed);
@@ -944,7 +1109,11 @@ export class Inferencer {
             case 'update':
                 return join(n.items.flatMap((i) => (i.value ? [i.value] : [])));
             case 'let':
+            case 'inject':
                 return this.modeOf(n.body);
+            case 'need':
+                // A plain binding's reads are shared; a dependency is read the same way.
+                return this.options.linearTypes ? SHARED : OWNED;
             case 'case':
                 return join(n.cases.map((c) => c.body));
             default:
@@ -977,7 +1146,11 @@ export class Inferencer {
                     n,
                     b.scheme?.callsOnce ?? (!b.path.length ? b.root.callsOnce : undefined),
                 );
-                return b.scheme ? this.instantiate(n.text, b.scheme, n) : this.consume(b, n.loc);
+                if (!b.scheme) return this.consume(b, n.loc);
+                const instance = this.instantiate(n.text, b.scheme, n);
+                return n === this.callee || n.text === this.selfName
+                    ? instance
+                    : this.widen(instance);
             }
             case 'number':
                 return con('Number');
@@ -1001,6 +1174,24 @@ export class Inferencer {
             }
             case 'update':
                 return this.update(n, env);
+            case 'need': {
+                const type = this.solver.requireEntry(this.ambient, n.name, n.loc);
+                this.copyableDependency(type, n.loc);
+                return type;
+            }
+            case 'inject': {
+                const entry = this.bindNeeds(this.linear(n.value, env), n.value.loc);
+                this.solver.selfContained(entry, n.value.loc);
+                this.copyableDependency(entry, n.value.loc);
+                const outer = this.ambient;
+                // In front of any outer entry of the same name, which it hides.
+                this.ambient = needs([{ name: n.name, type: entry }], outer);
+                try {
+                    return this.linear(n.body, env);
+                } finally {
+                    this.ambient = outer;
+                }
+            }
             case 'constructor': {
                 const args = n.args.map((v) => this.linear(v, env)),
                     result = this.solver.fresh();
@@ -1062,6 +1253,117 @@ export class Inferencer {
             case 'case':
                 return this.caseBody(n, env);
         }
+    }
+    private copyableDependency(type: Ty, loc: number): void {
+        if (this.options.linearTypes)
+            this.solver.require('Copyable', type, loc, [
+                'linear-dependency',
+                'A dependency is read any number of times, so it cannot be linear',
+            ]);
+    }
+    /**
+     * `inject` supplies what an injected function needs, there and then: the function stored
+     * needs nothing. What is not known to be needed by now never will be.
+     */
+    private bindNeeds(value: Ty, loc: number): Ty {
+        const type = this.solver.prune(value);
+        if (type.tag !== 'fn' || !type.needs) return value;
+        let row = this.solver.prune(type.needs);
+        if (row.tag === 'meta') this.solver.unify(row, NO_NEEDS, loc);
+        else if (row.tag === 'needs' && row.rest) this.solver.unify(row.rest, NO_NEEDS, loc);
+        row = this.solver.prune(type.needs);
+        if (row.tag === 'needs' && row.entries.length) {
+            if (
+                type.args.some((a) => a.tag === 'flow' || this.solver.ownership(a) === 'owned') &&
+                (this.options.linearTypes || type.args.some((a) => a.tag === 'flow'))
+            )
+                this.error(
+                    'unsupported-dependency',
+                    loc,
+                    'A function with dependencies can only be injected if its parameters are plain',
+                );
+            this.requireEntries(row.entries, loc);
+        }
+        return fn(type.args, type.result, type.linear);
+    }
+    /** The surrounding code must hold the first entry of each name, at these types. */
+    private requireEntries(entries: Need[], loc: number): void {
+        const seen = new Set<string>();
+        for (const e of entries) {
+            if (seen.has(e.name)) continue;
+            seen.add(e.name);
+            this.solver.unify(
+                this.solver.requireEntry(this.ambient, e.name, loc, e.from ?? loc),
+                e.type,
+                loc,
+            );
+        }
+    }
+    /**
+     * What a call's callee needs. A callee whose needs are a closed list takes just those from
+     * the caller; otherwise the two rows are one, and the caller's record is passed on.
+     */
+    private calleeNeeds(callee: Ty, self: boolean, loc: number): Ty | undefined {
+        if (this.solver.isDependency(callee)) return undefined;
+        // A recursive call is held to the declared list.
+        if (self && this.limit) {
+            const row = this.solver.prune(this.limit.body);
+            if (row.tag === 'needs') this.requireEntries(row.entries, loc);
+            return this.limit.type;
+        }
+        const known = this.solver.prune(callee);
+        if (known.tag !== 'fn') return this.ambient;
+        if (!known.needs) return undefined;
+        const row = this.solver.prune(known.needs);
+        if (row.tag === 'needs' && !row.rest) {
+            this.requireEntries(row.entries, loc);
+            return row;
+        }
+        const ambient = this.solver.prune(this.ambient);
+        // Report an entry a closed list lacks by name.
+        if (ambient.tag === 'needs' && !ambient.rest && row.tag === 'needs')
+            this.requireEntries(row.entries, loc);
+        this.solver.unify(row, this.ambient, loc);
+        return this.ambient;
+    }
+    /**
+     * A function whose own needs nothing else mentions needs nothing. It can still go where a
+     * function with needs is expected: see `widen`.
+     */
+    private closeOwnNeeds(type: Ty): void {
+        const t = this.solver.prune(type);
+        const row = t.tag === 'fn' && t.needs && this.solver.prune(t.needs);
+        if (!row || row.tag !== 'meta' || this.solver.frozen.has(row.id)) return;
+        let uses = 0;
+        mapType(this.solver.resolve(t), (v) => {
+            if (v.tag === 'meta' && v.id === row.id) uses++;
+            return undefined;
+        });
+        if (uses === 1) this.solver.unify(row, NO_NEEDS, 0);
+    }
+    /**
+     * A definition or import that needs nothing, used as a value, may stand for a function with
+     * any needs: it ignores them. Lowering adds the adapter where one turns out to have some.
+     */
+    private widen(type: Ty): Ty {
+        const t = this.solver.prune(type);
+        return t.tag === 'fn' && !t.needs && t.args.every((a) => a.tag === 'plain')
+            ? { ...t, needs: this.solver.fresh() }
+            : type;
+    }
+    /** The item itself must need nothing: nothing supplies it. */
+    private requireNoNeeds(root: Ty, loc: number): void {
+        let row = this.solver.prune(root);
+        if (row.tag === 'needs' && row.entries.length) {
+            const listed = [...new Set(row.entries.map((e) => e.name))];
+            this.error(
+                'missing-dependency',
+                row.entries[0]!.from ?? loc,
+                `Nothing provides ${listed.join(', ')}, needed here; \`inject\` ${listed.length > 1 ? 'them' : 'it'} before this is reached`,
+            );
+        }
+        if (row.tag === 'needs' && row.rest) row = this.solver.prune(row.rest);
+        if (row.tag === 'meta') this.solver.unify(row, NO_NEEDS, loc);
     }
     /** `r` or `r.a.b` naming storage, as opposed to an expression that makes a new value. */
     private isPlace(n: Linear, env: Env): boolean {
@@ -1299,6 +1601,10 @@ export class Inferencer {
                 captureTypes.push(type);
             }
         }
+        const surrounding = this.ambient;
+        const limited = n === this.rootFunction ? this.limit : undefined;
+        // Creating a closure needs nothing: its caller supplies what its body uses.
+        const needed = (this.ambient = limited?.body ?? this.solver.fresh());
         const exits: { root: Binding; read: Ty; write: Ty }[] = [];
         const seen = new Set<string>();
         const parameters: string[][] = [],
@@ -1336,7 +1642,10 @@ export class Inferencer {
                 n === this.rootFunction && this.rootDeclaration?.ann.type === 'fn'
                     ? this.rootDeclaration.ann.args[i]
                     : undefined;
-            if (declared?.type === 'fn' && declared.args.some((t) => t.type === 'lens' && t.owned))
+            if (
+                declared?.type === 'fn' &&
+                (declared.args.some((t) => t.type === 'lens' && t.owned) || statesNeeds(declared))
+            )
                 this.solver.unifyFlow(type, this.annotation(declared, vars), a.pat.loc, false);
             return type;
         });
@@ -1389,7 +1698,8 @@ export class Inferencer {
             !!this.options.linearTypes &&
             (lensEnds.length > 0 ||
                 captureTypes.some((t) => isLinear(this.solver.resolve(t), this.declaredLinear)));
-        return fn(args, result, linear);
+        this.ambient = surrounding;
+        return fn(args, result, linear, limited?.type ?? needed);
     }
     /**
      * A function parameter takes a linear closure when the body can be seen to consume it:
@@ -1854,6 +2164,7 @@ export class Inferencer {
                 owned: this.solver.fresh(),
             });
         });
+        this.callee = n.fn;
         const callee = this.linear(n.fn, env);
         const signature = this.solver.prune(callee);
         for (const [i, { view }] of lenses) {
@@ -1868,6 +2179,7 @@ export class Inferencer {
         if (n.fn.type === 'id') this.consumingUses.add(this.builder.node(n.fn));
         const global =
             n.fn.type === 'id' && this.bindings.get(n.fn)?.scheme ? n.fn.text : undefined;
+        const recursive = global !== undefined && global === this.selfName;
         const accepts = this.callsOnce.get(n.fn);
         // A copy of a callable has the same callback contract as its source.
         const copied = global === 'dup' ? lenses.get(0)?.source : undefined;
@@ -1906,6 +2218,7 @@ export class Inferencer {
             replaceable = this.solver.fresh(),
             resultMode = this.solver.freshMode(),
             resultOwned = this.solver.fresh();
+        const needed = this.calleeNeeds(callee, recursive, n.loc);
         const known = this.solver.prune(callee);
         this.solver.unify(
             callee,
@@ -1913,6 +2226,7 @@ export class Inferencer {
                 args,
                 lensResult ? flow(read, write, replaceable, resultOwned) : plain(read, resultMode),
                 known.tag === 'fn' && known.linear,
+                needed,
             ),
             n.loc,
         );
@@ -1987,7 +2301,7 @@ export class Inferencer {
     /** What goes onto a channel: every function in it becomes one-use on the way. */
     private sent(value: Ty): Ty {
         const t = this.solver.prune(value);
-        if (t.tag === 'fn') return fn(t.args, t.result, true);
+        if (t.tag === 'fn') return fn(t.args, t.result, true, t.needs);
         if (t.tag === 'tuple') return tuple(...t.items.map((v) => this.sent(v)));
         if (t.tag === 'record')
             return record(
@@ -2050,10 +2364,12 @@ export class Inferencer {
         // Calling a function exactly once is always allowed, so one that need not be may go
         // where one that must be is expected.
         if (expected.linear)
-            return argument.linear ? value : fn(argument.args, argument.result, true);
+            return argument.linear
+                ? value
+                : fn(argument.args, argument.result, true, argument.needs);
         if (!argument.linear) return value;
         if (!accepts?.includes(index)) this.unaccepted(node);
-        return fn(argument.args, argument.result);
+        return fn(argument.args, argument.result, false, argument.needs);
     }
     private aslens(n: Lens & { type: 'aslens' }, env: Env): View {
         const read = this.linear(n.value, env);
@@ -2085,7 +2401,22 @@ export class Inferencer {
             const final = this.consume(temporary, n.loc);
             const sub = new Map(env);
             this.pattern(n.pat, final, sub);
-            this.linear(n.body, sub);
+            // A cleanup runs when its lens ends, perhaps outside the block that created it.
+            const surrounding = this.ambient;
+            this.ambient = NO_NEEDS;
+            try {
+                this.linear(n.body, sub);
+            } catch (e) {
+                if (e instanceof TypeDiagnostic && e.code === 'missing-dependency')
+                    this.error(
+                        'dependency-in-cleanup',
+                        e.loc,
+                        'The cleanup of a lens cannot use a dependency yet; read it into a binding before the lens',
+                    );
+                throw e;
+            } finally {
+                this.ambient = surrounding;
+            }
             const locals = names(n.pat).map((name) => sub.get(name)!);
             this.builder.scopes.push({
                 node: this.builder.node(n),

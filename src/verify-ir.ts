@@ -4,7 +4,7 @@ import {
     linearUnions,
     type Predicate,
 } from './constraints.ts';
-import { semanticRecord, type SemanticFlow, type SemanticType, type Step } from './elaborated.ts';
+import { semanticRecord, semanticNeeds, type SemanticFlow, type SemanticType, type Step } from './elaborated.ts';
 import { BackendDiagnostic } from './backend/target.ts';
 import {
     typeKey,
@@ -120,6 +120,28 @@ export function verifyTypedProgram(program: TypedProgram, observe?: PositionObse
     /** What a pattern sees, where a bare row is a record showing none of its fields. */
     const matchedRecord = (t: SemanticType): SemanticType =>
         t.tag === 'variable' ? { tag: 'record', fields: [], rest: t } : asRecord(t);
+    /** A row of dependencies as its visible entries, the first of each name, and remainder. */
+    const visible = (
+        row: SemanticType | undefined,
+    ): { entries: Map<string, SemanticType>; rest?: SemanticType } => {
+        const entries = new Map<string, SemanticType>();
+        if (!row || (row.tag === 'tuple' && !row.items.length)) return { entries };
+        if (row.tag === 'variable') return { entries, rest: row };
+        if (row.tag !== 'needs') return fail('Expected a row of dependencies');
+        for (const e of row.entries) if (!entries.has(e.name)) entries.set(e.name, e.type);
+        return { entries, rest: row.rest };
+    };
+    /** Code with `ambient` can call what needs `needed`: it holds each entry that can be read. */
+    const supplies = (ambient: SemanticType, needed: SemanticType | undefined, at?: string) => {
+        const has = visible(ambient),
+            want = visible(needed);
+        for (const [name, type] of want.entries) {
+            const held = has.entries.get(name);
+            if (!held || typeKey(held) !== typeKey(type)) fail(`Dependency ${name} is not supplied`, at);
+        }
+        if (want.rest && (!has.rest || typeKey(has.rest) !== typeKey(want.rest)))
+            fail('A row of dependencies is not supplied', at);
+    };
     /** The type one step into `t`, and its position in the tuple that stores `t`. */
     const component = (
         t: SemanticType,
@@ -161,6 +183,14 @@ export function verifyTypedProgram(program: TypedProgram, observe?: PositionObse
             case 'fn':
                 t.args.forEach(validFlow);
                 validFlow(t.result);
+                if (t.needs) validType(t.needs);
+                return;
+            case 'needs':
+                t.entries.forEach((e) => validType(e.type));
+                if (t.entries.some((e, n) => n && t.entries[n - 1]!.name > e.name))
+                    fail('Needs entries must be sorted');
+                if (t.rest && (t.rest.tag !== 'variable' || !t.entries.length))
+                    fail('A needs remainder must be a row variable');
                 return;
             default:
                 fail('Unknown semantic type');
@@ -309,7 +339,7 @@ export function verifyTypedProgram(program: TypedProgram, observe?: PositionObse
             const inputs = outputs(b.instructions);
             for (const i of b.instructions) {
                 if (i.op === 'bind') indexPattern(i.pattern);
-                else if (i.op === 'scope') indexBlock(i.body, selected);
+                else if (i.op === 'scope' || i.op === 'inject') indexBlock(i.body, selected);
                 else if (i.op === 'case')
                     for (const c of i.cases) {
                         if (c.pattern.reconstructionOwner) {
@@ -726,7 +756,12 @@ export function verifyTypedProgram(program: TypedProgram, observe?: PositionObse
                     return;
                 case 'aslens':
                     write(s, c.backing, type);
-                    plain(verifyBlock(c.cleanup, s));
+                    {
+                        const surrounding = ambient;
+                        ambient = irUnit();
+                        plain(verifyBlock(c.cleanup, s));
+                        ambient = surrounding;
+                    }
                     if (full(s, c.backing)) fail('Temporary backing was not consumed');
                     s.slots.delete(c.backing.place);
                     return;
@@ -985,6 +1020,8 @@ export function verifyTypedProgram(program: TypedProgram, observe?: PositionObse
                     fail('Unknown pattern kind');
             }
         };
+        /** What the block being verified needs: its function's row, plus what it injected. */
+        let ambient: SemanticType = irUnit();
         const verifyBlock = (b: IRBlock, s: State): Value => {
             source(b.origin);
             const oldPlaces = new Set(s.slots.keys()),
@@ -1272,6 +1309,7 @@ export function verifyTypedProgram(program: TypedProgram, observe?: PositionObse
                     case 'call': {
                         const f = functionType(plain(take(s, i.callee)));
                         if (f.args.length !== i.args.length) fail('Call arity mismatch');
+                        supplies(ambient, f.needs, i.origin);
                         const effects: { cap: Cap; type: SemanticType }[] = [];
                         const lent: SlotRef[] = [];
                         i.args.forEach((id, index) => {
@@ -1433,6 +1471,42 @@ export function verifyTypedProgram(program: TypedProgram, observe?: PositionObse
                         result = verifyBlock(i.body, s);
                         feq(result.type, i.out.type);
                         break;
+                    case 'need': {
+                        const held = visible(ambient).entries.get(i.name);
+                        if (!held) fail(`Dependency ${i.name} is not available`, i.origin);
+                        feq(i.out.type, irPlain(held!));
+                        break;
+                    }
+                    case 'supply': {
+                        const value = functionType(plain(take(s, i.value)));
+                        supplies(ambient, value.needs, i.origin);
+                        const { needs: _, ...supplied } = value;
+                        eq(valueType(i.out.type), supplied);
+                        break;
+                    }
+                    case 'widen': {
+                        const value = functionType(plain(take(s, i.value)));
+                        const out = functionType(valueType(i.out.type));
+                        if (value.needs) fail('Only a function that needs nothing can be widened');
+                        const { needs: _, ...ignoring } = out;
+                        eq(ignoring, value);
+                        break;
+                    }
+                    case 'inject': {
+                        const surrounding = ambient;
+                        const entry = { name: i.name, type: plain(take(s, i.value)) };
+                        ambient =
+                            surrounding.tag === 'variable'
+                                ? semanticNeeds([entry], surrounding)
+                                : semanticNeeds(
+                                      [entry, ...(surrounding.tag === 'needs' ? surrounding.entries : [])],
+                                      surrounding.tag === 'needs' ? surrounding.rest : undefined,
+                                  );
+                        result = verifyBlock(i.body, s);
+                        ambient = surrounding;
+                        feq(result.type, i.out.type);
+                        break;
+                    }
                     case 'case': {
                         const t = plain(take(s, i.value));
                         if (!i.cases.length) fail('Empty case');
@@ -1593,6 +1667,7 @@ export function verifyTypedProgram(program: TypedProgram, observe?: PositionObse
                     pattern(state, p.pattern, argument.value);
                 }
             });
+            ambient = f.type.needs ?? irUnit();
             const result = verifyBlock(f.body, state);
             feq(result.type, f.type.result);
             if (result.type.tag === 'flow') {
@@ -1644,6 +1719,7 @@ export function verifyTypedProgram(program: TypedProgram, observe?: PositionObse
                 u.entry.instructions[0].captures.length)
         )
             fail('A reusable definition must create one closed function');
+        ambient = irUnit();
         const state = fresh(),
             entry = verifyBlock(u.entry, state);
         feq(entry.type, irPlain(u.signature.type));

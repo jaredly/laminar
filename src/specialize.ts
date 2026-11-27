@@ -12,6 +12,7 @@ import {
 } from './typed-ir.ts';
 import { verifyTypedProgram } from './verify-ir.ts';
 import { eraseRecordForms } from './erase-records.ts';
+import { lowerImportNeeds, lowerNeeds } from './lower-needs.ts';
 
 export type SpecializationRoot = { unit: string; arguments: SemanticType[] };
 export type SemanticSpecialization = {
@@ -71,6 +72,37 @@ function rewrite<T>(
     return visit(input) as T;
 }
 
+/** The quantified variables of a scheme that stand for rows of dependencies. */
+export function needsParameters(scheme: { type: SemanticType }): Set<string> {
+    const found = new Set<string>();
+    const row = (t: SemanticType | undefined) => {
+        const rest = t?.tag === 'needs' ? t.rest : t;
+        if (rest?.tag === 'variable') found.add(rest.id);
+    };
+    const visit = (value: unknown): void => {
+        if (!value || typeof value !== 'object') return;
+        const t = value as SemanticType;
+        if (t.tag === 'fn') row(t.needs);
+        Object.values(value).forEach(visit);
+    };
+    visit(scheme.type);
+    return found;
+}
+
+/**
+ * Type arguments for a root, which may leave out those that are rows of dependencies: nothing
+ * outside the program can supply any, so they are empty.
+ */
+export function withEmptyNeeds(
+    scheme: { quantified: string[]; type: SemanticType },
+    args: SemanticType[],
+): SemanticType[] {
+    const rows = needsParameters(scheme);
+    if (args.length !== scheme.quantified.length - rows.size) return args;
+    const given = [...args];
+    return scheme.quantified.map((p) => (rows.has(p) ? unitType : given.shift()!));
+}
+
 /** Reachable semantic specialization. Representation arguments and concrete ABIs are a later pass. */
 export function specializeProgram(
     input: TypedProgram,
@@ -78,7 +110,11 @@ export function specializeProgram(
     roots: readonly SpecializationRoot[],
     options: { maxInstances?: number } = {},
 ): SpecializedProgram {
-    const generic = freezeTree(eraseRecords(structuredClone(input)));
+    const detached = structuredClone(input);
+    // Layouts are derived from these, so they must say what the specialized program does.
+    const generic = freezeTree(
+        eraseRecords({ ...detached, imports: lowerImportNeeds(detached.imports) }),
+    );
     verifyTypedProgram(input);
     const nominal = comparableUnions(input.imports);
     const linear = linearUnions(input.imports);
@@ -123,6 +159,8 @@ export function specializeProgram(
         // unsolved body variables are. Definition roots still need explicit arguments.
         if (root && unit && !unit.definition && !args.length)
             args = scheme.quantified.map(() => unitType);
+        // An entry stands alone: a row of dependencies it is generic in is empty.
+        if (root) args = withEmptyNeeds(scheme, args);
         if (scheme.quantified.length !== args.length)
             throw new BackendDiagnostic(
                 'invalid-specialization-arguments',
@@ -221,11 +259,16 @@ export function specializeProgram(
         return record;
     };
     const rootIds = roots.map((r) => request(r.unit, r.arguments, [], true).id);
-    const program: TypedProgram = eraseRecordForms({
-        schemaVersion: 1,
-        imports: input.imports.filter((i) => usedImports.has(i.definition)),
-        units: emitted,
-    });
+    const program: TypedProgram = eraseRecordForms(
+        lowerNeeds(
+            {
+                schemaVersion: 1,
+                imports: input.imports.filter((i) => usedImports.has(i.definition)),
+                units: emitted,
+            },
+            input.imports,
+        ),
+    );
     // Self recursion is visible before verification of a unit; dependencies precede consumers.
     verifyTypedProgram(program);
     return freezeTree({
@@ -234,6 +277,14 @@ export function specializeProgram(
         generic,
         program,
         roots: rootIds,
-        instances: eraseRecords([...cache.values()].sort((a, b) => a.id.localeCompare(b.id))),
+        instances: eraseRecords(
+            [...cache.values()]
+                .sort((a, b) => a.id.localeCompare(b.id))
+                .map((i) => ({
+                    ...i,
+                    type: lowerImportNeeds([{ definition: i.id, quantified: [], type: i.type }])[0]!
+                        .type,
+                })),
+        ),
     });
 }

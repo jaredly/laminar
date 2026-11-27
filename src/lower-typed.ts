@@ -1,6 +1,6 @@
 import type { Linear, Lens, Pat } from './ast.ts';
 import type { Elaboration, SemanticFlow, SemanticType, BindingRecord } from './elaborated.ts';
-import { freezeTree, semanticRecord } from './elaborated.ts';
+import { freezeTree, semanticRecord, semanticNeeds, needsProperty } from './elaborated.ts';
 import { Solver, type Ty, type Scheme } from './types.ts';
 import { builtinTypes, constructorTypes } from './builtins.ts';
 import { BackendDiagnostic } from './backend/target.ts';
@@ -61,7 +61,13 @@ export function importScheme(definition: string, scheme: Scheme): IRScheme {
                     args: t.args.map(flow),
                     result: flow(t.result),
                     ...(t.linear ? { linear: true as const } : {}),
+                    ...needsProperty(t.needs && type(t.needs)),
                 };
+            case 'needs':
+                return semanticNeeds(
+                    t.entries.map((e) => ({ name: e.name, type: type(e.type) })),
+                    t.rest && type(t.rest),
+                );
         }
     };
     const flow = (f: import('./types.ts').FlowTy): SemanticFlow =>
@@ -285,13 +291,24 @@ export function lowerTypedUnit(e: Elaboration): IRUnit {
             case 'id':
             case 'op': {
                 const bound = binding(n);
-                return emit(
-                    b,
-                    n,
-                    bound.definition
-                        ? { op: 'global', instance: instance(n) }
-                        : { op: 'move', slot: ref(bound) },
-                );
+                if (!bound.definition) return emit(b, n, { op: 'move', slot: ref(bound) });
+                const global = instance(n),
+                    used = type(n);
+                // One that needs nothing, used where its type has needs, gets an adapter.
+                if (
+                    used.tag === 'plain' &&
+                    used.value.tag === 'fn' &&
+                    used.value.needs &&
+                    global.type.tag === 'fn' &&
+                    !global.type.needs
+                ) {
+                    const value = emit(b, n, { op: 'global', instance: global }, {
+                        ...used,
+                        value: global.type,
+                    } as SemanticFlow);
+                    return emit(b, n, { op: 'widen', value: value.id });
+                }
+                return emit(b, n, { op: 'global', instance: global });
             }
             case 'string':
                 return emit(b, n, {
@@ -348,6 +365,23 @@ export function lowerTypedUnit(e: Elaboration): IRUnit {
                         };
                     }),
                 });
+            }
+            case 'need':
+                return emit(b, n, { op: 'need', name: n.name });
+            case 'inject': {
+                let value = linear(n.value, b);
+                const type = value.type.tag === 'plain' ? value.type.value : undefined;
+                // The function stored needs nothing: what it did need is supplied here.
+                if (type?.tag === 'fn' && type.needs) {
+                    const { needs: _, ...supplied } = type;
+                    value = emit(b, n.value, { op: 'supply', value: value.id }, {
+                        ...value.type,
+                        value: supplied,
+                    } as SemanticFlow);
+                }
+                const body = block(n.body);
+                body.result = linear(n.body, body).id;
+                return emit(b, n, { op: 'inject', name: n.name, value: value.id, body });
             }
             case 'constructor':
                 return emit(b, n, {

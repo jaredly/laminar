@@ -11,6 +11,7 @@ import type { Elaboration } from './elaborated.ts';
 import type { TypedProgram } from './typed-ir.ts';
 import type { ConcreteProgram } from './concrete-ir.ts';
 import { compileConcreteProgram } from './lower-concrete.ts';
+import { withEmptyNeeds } from './specialize.ts';
 import { BackendDiagnostic, type TargetConfig } from './backend/target.ts';
 import { TypeDiagnostic } from './types.ts';
 import { emitC } from './c/emit.ts';
@@ -269,6 +270,7 @@ function holdsLinearClosure(type: SemanticType): boolean {
                 (!!type.rest && holdsLinearClosure(type.rest))
             );
         case 'variable':
+        case 'needs':
             return false;
     }
 }
@@ -304,7 +306,13 @@ export function compileLibrary(
                 'unsupported-export',
                 `${e.name} returns a closure that must be called, which a host could drop instead`,
             );
-        const args = e.typeArguments ?? [];
+        if (type.needs?.tag === 'needs')
+            throw new CompileError(
+                'backend',
+                'unsupported-export',
+                `${e.name} needs ${type.needs.entries.map((n) => n.name).join(', ')}, which a host cannot supply yet`,
+            );
+        const args = withEmptyNeeds(unit.signature, e.typeArguments ?? []);
         if (args.length !== unit.signature.quantified.length)
             throw new CompileError(
                 'backend',

@@ -1,6 +1,8 @@
 import type { Bound } from './constraints.ts';
 import {
     semanticRecord,
+    semanticNeeds,
+    needsProperty,
     type BindingRecord,
     type DefinitionId,
     type SemanticFlow,
@@ -95,6 +97,14 @@ export type Instruction =
      * expands it into moves and a tuple.
      */
     | (Output & { op: 'record'; parts: RecordPart[] })
+    /** A copy of the visible entry `name` of what the enclosing function needs. */
+    | (Output & { op: 'need'; name: string })
+    /** Run `body` needing `name` too: the value goes in front, hiding any other of that name. */
+    | (Output & { op: 'inject'; name: string; value: ValueId; body: IRBlock })
+    /** Supply a function what it needs, from here: the result needs nothing. */
+    | (Output & { op: 'supply'; value: ValueId })
+    /** The converse: a function that needs nothing, as one with needs, which it ignores. */
+    | (Output & { op: 'widen'; value: ValueId })
     | (Output & { op: 'construct'; name: string; items: ValueId[]; instance: Instance })
     | (Output & { op: 'global'; instance: Instance })
     | (Output & { op: 'move'; slot: SlotRef })
@@ -202,7 +212,13 @@ export function mapSemantic(
                 args: type.args.map((t) => mapSemanticFlow(t, variable)),
                 result: mapSemanticFlow(type.result, variable),
                 ...(type.linear ? { linear: true as const } : {}),
+                ...needsProperty(type.needs && mapSemantic(type.needs, variable)),
             };
+        case 'needs':
+            return semanticNeeds(
+                type.entries.map((e) => ({ name: e.name, type: mapSemantic(e.type, variable) })),
+                type.rest && mapSemantic(type.rest, variable),
+            );
     }
 }
 export function mapSemanticFlow(
@@ -235,7 +251,18 @@ export function typeKey(type: SemanticType): string {
                 type.rest ? typeKey(type.rest) : null,
             ]);
         case 'fn':
-            return JSON.stringify(['fn', type.args.map(flowKey), flowKey(type.result)]);
+            return JSON.stringify([
+                'fn',
+                type.args.map(flowKey),
+                flowKey(type.result),
+                ...(type.needs ? [typeKey(type.needs)] : []),
+            ]);
+        case 'needs':
+            return JSON.stringify([
+                'needs',
+                type.entries.map((e) => [e.name, typeKey(e.type)]),
+                type.rest ? typeKey(type.rest) : null,
+            ]);
     }
 }
 export const flowKey = (type: SemanticFlow): string =>

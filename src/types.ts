@@ -20,8 +20,18 @@ export type Ty =
     /**
      * `linear` marks a closure that captured a linear value or an owned lens, so it cannot be
      * dropped or copied. It is decided where the closure is written, never inferred.
+     * `needs` is the row of dependencies a call supplies; absent means the function needs none.
      */
-    | { tag: 'fn'; args: FlowTy[]; result: FlowTy; linear?: true };
+    | { tag: 'fn'; args: FlowTy[]; result: FlowTy; linear?: true; needs?: Ty }
+    /**
+     * A row of dependencies (docs/dependency-injection-plan.md). Unlike a record's fields, a
+     * name may repeat: the first entry hides the later ones. Sorted by name, keeping the order
+     * of equal names. `rest` is a row variable; a row that is only its remainder is written as
+     * the variable.
+     */
+    | { tag: 'needs'; entries: Need[]; rest?: Ty };
+/** `from` is the offset of the `#name` that first required an entry, for diagnostics. */
+export type Need = { name: string; type: Ty; from?: number };
 /**
  * `replaceable` says whether the whole value of the lens can be replaced (`:=`, move-out,
  * a stored-lens argument). It is a `Ty` so that it unifies, generalizes and instantiates
@@ -91,11 +101,22 @@ export const flow = (
     replaceable,
     owned,
 });
-export const fn = (args: FlowTy[], result: FlowTy, linear?: boolean): Ty => ({
+/** Build a row of dependencies, absorbing a remainder that is already known. */
+export const needs = (entries: Need[], rest?: Ty): Ty => {
+    if (rest?.tag === 'needs') return needs([...entries, ...rest.entries], rest.rest);
+    if (rest && !entries.length) return rest;
+    // A stable sort: entries of one name keep their order.
+    return { tag: 'needs', entries: [...entries].sort(byName), ...(rest ? { rest } : {}) };
+};
+export const NO_NEEDS: Ty = needs([]);
+export const isNothing = (t: Ty | undefined): boolean =>
+    !t || (t.tag === 'needs' && !t.entries.length && !t.rest);
+export const fn = (args: FlowTy[], result: FlowTy, linear?: boolean, needed?: Ty): Ty => ({
     tag: 'fn',
     args,
     result,
     ...(linear ? { linear: true as const } : {}),
+    ...(isNothing(needed) ? {} : { needs: needed }),
 });
 export const mono = (body: Ty): Scheme => ({ quantified: [], body });
 
@@ -131,6 +152,12 @@ export function mapType(t: Ty, replace: (t: Ty) => Ty | undefined): Ty {
                 t.args.map((a) => mapFlow(a, (v) => mapType(v, replace))),
                 mapFlow(t.result, (v) => mapType(v, replace)),
                 t.linear,
+                t.needs && mapType(t.needs, replace),
+            );
+        case 'needs':
+            return needs(
+                t.entries.map((e) => ({ ...e, type: mapType(e.type, replace) })),
+                t.rest && mapType(t.rest, replace),
             );
     }
 }
@@ -184,6 +211,15 @@ export class Solver {
     private modeMetas = new Set<number>();
     /** Row variables, metas and rigids alike, with the labels each must lack. */
     private lacks = new Map<number, Set<string>>();
+    /** Variables that may not be bound while a body is checked against a limit on its needs. */
+    readonly frozen = new Set<number>();
+    private isRigid(t: Ty): boolean {
+        return t.tag === 'rigid' || (t.tag === 'meta' && this.frozen.has(t.id));
+    }
+    /** Variables standing for part of a dependency's type: see `selfContained`. */
+    private entryMetas = new Set<number>();
+    /** Dual mode: a function stored as a dependency reads its plain arguments. */
+    plainEntries = false;
     /** Variables standing for what a channel carries: any function they turn out to be is one-use. */
     private carriedMetas = new Set<number>();
     fresh(): Ty {
@@ -208,6 +244,155 @@ export class Solver {
             if (t.rest) this.carried(t.rest);
         } else if (t.tag === 'con' && t.name !== CHANNEL) t.args.forEach((v) => this.carried(v));
     }
+    /**
+     * `t` is part of a dependency. A function there cannot itself need dependencies, or the
+     * type of what it needs could contain itself; and in dual mode its plain parameters are
+     * shared ones. This applies to whatever its variables turn out to be.
+     */
+    selfContained(t: Ty, loc: number): void {
+        const p = this.prune(t);
+        switch (p.tag) {
+            case 'meta':
+                this.entryMetas.add(p.id);
+                return;
+            case 'rigid':
+                return;
+            case 'fn':
+                if (p.needs) this.requireNothing(p.needs, loc);
+                for (const a of [...p.args, p.result])
+                    if (a.tag === 'plain') this.selfContained(a.value, loc);
+                    else {
+                        this.selfContained(a.read, loc);
+                        this.selfContained(a.write, loc);
+                    }
+                if (this.plainEntries)
+                    for (const a of p.args) {
+                        if (a.tag !== 'plain') continue;
+                        if (this.modeOf(a.mode) === 'owned')
+                            throw new TypeDiagnostic(
+                                'unsupported-dependency',
+                                loc,
+                                'A function stored in a dependency takes plain arguments, not `mut` ones',
+                            );
+                        this.unifyMode(a.mode, SHARED, loc);
+                    }
+                return;
+            case 'tuple':
+                p.items.forEach((v) => this.selfContained(v, loc));
+                return;
+            case 'record':
+                p.fields.forEach((f) => this.selfContained(f.type, loc));
+                if (p.rest) this.selfContained(p.rest, loc);
+                return;
+            case 'con':
+                p.args.forEach((v) => this.selfContained(v, loc));
+                return;
+            case 'needs':
+                return;
+        }
+    }
+    /** Whether a value of this type is already known to be part of a dependency. */
+    isDependency(t: Ty): boolean {
+        const p = this.prune(t);
+        return p.tag === 'meta' && this.entryMetas.has(p.id);
+    }
+    private requireNothing(row: Ty, loc: number): void {
+        const t = this.prune(row);
+        if (t.tag === 'needs' && t.entries.length)
+            throw new TypeDiagnostic(
+                'needy-dependency',
+                loc,
+                `A function stored in a dependency cannot need dependencies itself, but this one needs ${t.entries.map((e) => e.name).join(', ')}`,
+            );
+        this.unify(t, NO_NEEDS, loc);
+    }
+    /**
+     * The type of the first entry `name` of `row`, which gains one if its remainder allows.
+     * `from` is where the need arose.
+     */
+    requireEntry(row: Ty, name: string, loc: number, from: number = loc): Ty {
+        const t = this.prune(row);
+        const entry = t.tag === 'needs' ? t.entries.find((e) => e.name === name) : undefined;
+        if (entry) return entry.type;
+        const open = t.tag === 'meta' ? t : t.tag === 'needs' ? t.rest && this.prune(t.rest) : null;
+        if (!open || open.tag !== 'meta' || this.frozen.has(open.id))
+            throw new TypeDiagnostic(
+                'missing-dependency',
+                loc,
+                `The dependency ${name} is not among what this function may need`,
+            );
+        const type = this.fresh();
+        this.unify(open, needs([{ name, type, from }], this.fresh()), loc);
+        this.selfContained(type, loc);
+        return type;
+    }
+    private unifyNeeds(a: Ty, b: Ty, loc: number): void {
+        const mismatch = (): never => {
+            throw new TypeDiagnostic(
+                'needs-mismatch',
+                loc,
+                `These functions need different dependencies: ${printNeeds(this.resolve(a))} and ${printNeeds(this.resolve(b))}`,
+            );
+        };
+        const left = this.prune(a),
+            right = this.prune(b);
+        if (left.tag !== 'needs' || right.tag !== 'needs') return this.unify(left, right, loc);
+        // Entries of one name match in order; what is left over goes to the other remainder.
+        const unmatched = (from: Need[], other: Need[]) => {
+            const seen = new Map<string, number>();
+            return from.filter((e) => {
+                const n = seen.get(e.name) ?? 0;
+                seen.set(e.name, n + 1);
+                const match = other.filter((o) => o.name === e.name)[n];
+                return !match;
+            });
+        };
+        const used = new Map<string, number>();
+        for (const e of left.entries) {
+            const n = used.get(e.name) ?? 0;
+            used.set(e.name, n + 1);
+            const match = right.entries.filter((o) => o.name === e.name)[n];
+            if (match) this.unify(e.type, match.type, loc);
+        }
+        if (this.prune(left) !== left || this.prune(right) !== right)
+            return this.unifyNeeds(left, right, loc);
+        const onlyLeft = unmatched(left.entries, right.entries),
+            onlyRight = unmatched(right.entries, left.entries);
+        const l = left.rest,
+            r = right.rest;
+        if (!l && !r) {
+            if (onlyLeft.length || onlyRight.length) mismatch();
+            return;
+        }
+        if (!l || !r) {
+            const [open, missing, surplus] = l
+                ? [l, onlyLeft, onlyRight]
+                : [r!, onlyRight, onlyLeft];
+            if (missing.length || open.tag !== 'meta' || this.isRigid(open)) mismatch();
+            return this.unify(open, needs(surplus), loc);
+        }
+        if ((l.tag === 'meta' || l.tag === 'rigid') && (r.tag === 'meta' || r.tag === 'rigid'))
+            if (l.id === r.id) {
+                // Different leftovers on one remainder would never stop being rewritten.
+                if (onlyLeft.length || onlyRight.length) mismatch();
+                return;
+            }
+        if (!onlyLeft.length && !onlyRight.length) return this.unify(l, r, loc);
+        if (this.isRigid(l) && this.isRigid(r)) mismatch();
+        if (this.isRigid(l)) {
+            if (onlyRight.length) mismatch();
+            return this.unify(r, needs(onlyLeft, l), loc);
+        }
+        if (this.isRigid(r)) {
+            if (onlyLeft.length) mismatch();
+            return this.unify(l, needs(onlyRight, r), loc);
+        }
+        if (!onlyLeft.length) return this.unify(l, needs(onlyRight, r), loc);
+        if (!onlyRight.length) return this.unify(r, needs(onlyLeft, l), loc);
+        const tail = this.fresh();
+        this.unify(l, needs(onlyRight, tail), loc);
+        this.unify(r, needs(onlyLeft, tail), loc);
+    }
     /** Apply `carried` to what every channel type within `t` carries. */
     channels(t: Ty): void {
         mapType(t, (v) => {
@@ -220,6 +405,11 @@ export class Solver {
             if (!t.rest) return t;
             const rest = this.prune(t.rest);
             return rest === t.rest ? t : record(t.fields, rest);
+        }
+        if (t.tag === 'needs') {
+            if (!t.rest) return t;
+            const rest = this.prune(t.rest);
+            return rest === t.rest ? t : needs(t.entries, rest);
         }
         if (t.tag !== 'meta') return t;
         const value = this.substitutions.get(t.id);
@@ -354,8 +544,15 @@ export class Solver {
         s: Scheme,
         rigid = false,
         loc = 0,
+        /** Quantified variables that stay open in a rigid instance. */
+        flexible?: ReadonlySet<number>,
     ): { type: Ty; arguments: Map<number, Ty> } {
-        const vars = new Map(s.quantified.map((id) => [id, rigid ? this.rigid() : this.fresh()]));
+        const vars = new Map(
+            s.quantified.map((id) => [
+                id,
+                rigid && !flexible?.has(id) ? this.rigid() : this.fresh(),
+            ]),
+        );
         const type = mapType(this.resolve(s.body), (t) =>
             t.tag === 'meta' ? vars.get(t.id) : undefined,
         );
@@ -506,9 +703,10 @@ export class Solver {
                 a.id === (b as typeof a).id)
         )
             return;
-        if (a.tag === 'meta' || b.tag === 'meta') {
-            const variable = a.tag === 'meta' ? a : (b as Ty & { tag: 'meta' });
-            const value = a.tag === 'meta' ? b : a;
+        const bindable = (t: Ty) => t.tag === 'meta' && !this.frozen.has(t.id);
+        if (bindable(a) || bindable(b)) {
+            const variable = (bindable(a) ? a : b) as Ty & { tag: 'meta' };
+            const value = variable === a ? b : a;
             if (this.free(value).has(variable.id))
                 throw new TypeDiagnostic('infinite-type', loc, 'Type contains itself');
             // A row variable only ever becomes fields of a record, and keeps what it lacks.
@@ -524,6 +722,7 @@ export class Solver {
                 required.forEach((label) => this.requireLacks(value, label, loc));
             }
             this.substitutions.set(variable.id, value);
+            if (this.entryMetas.has(variable.id)) this.selfContained(value, loc);
             if (this.carriedMetas.has(variable.id)) this.carried(value);
             if (value.tag === 'con' && value.name === CHANNEL) this.channels(value);
             return;
@@ -546,6 +745,7 @@ export class Solver {
             return;
         }
         if (a.tag === 'record' && b.tag === 'record') return this.unifyRecords(a, b, loc);
+        if (a.tag === 'needs' && b.tag === 'needs') return this.unifyNeeds(a, b, loc);
         if (a.tag === 'fn' && b.tag === 'fn') {
             if (a.args.length !== b.args.length)
                 throw new TypeDiagnostic(
@@ -561,6 +761,7 @@ export class Solver {
                 );
             a.args.forEach((v, i) => this.unifyFlow(v, b.args[i], loc));
             this.unifyFlow(a.result, b.result, loc);
+            this.unify(a.needs ?? NO_NEEDS, b.needs ?? NO_NEEDS, loc);
             return;
         }
         throw new TypeDiagnostic(
@@ -571,6 +772,11 @@ export class Solver {
     }
 }
 
+/** A row of dependencies on its own, for diagnostics. */
+const printNeeds = (row: Ty): string =>
+    row.tag === 'needs'
+        ? `{${[...row.entries.map((e) => e.name), ...(row.rest ? ['...'] : [])].join(', ')}}`
+        : '{...}';
 export function printScheme(scheme: Scheme): string {
     return printType(scheme.body, scheme);
 }
@@ -582,6 +788,25 @@ export function printType(t: Ty, scheme?: Scheme): string {
         (scheme?.rows ?? []).map((r) => [scheme!.quantified[r.parameter]!, new Set(r.lacks)]),
     );
     const shown = new Map<number, Set<string>>();
+    /** A needs row that appears nowhere else says nothing, so it is not printed. */
+    const occurrences = new Map<number, number>();
+    mapType(t, function count(v): Ty | undefined {
+        if (v.tag === 'meta' || v.tag === 'rigid')
+            occurrences.set(v.id, (occurrences.get(v.id) ?? 0) + 1);
+        return undefined;
+    });
+    const arrow = (row: Ty | undefined): string => {
+        if (!row) return '=>';
+        if ((row.tag === 'meta' || row.tag === 'rigid') && occurrences.get(row.id) === 1)
+            return '=>';
+        return `=${showNeeds(row)}>`;
+    };
+    const showNeeds = (row: Ty): string => {
+        if (row.tag !== 'needs') return `{${show(row, true)}}`;
+        const parts = row.entries.map((e) => `${e.name}: ${show(e.type)}`);
+        if (row.rest) parts.push(`...${show(row.rest, true)}`);
+        return `{${parts.join(', ')}}`;
+    };
     const show = (t: Ty, asRest = false): string => {
         switch (t.tag) {
             case 'meta':
@@ -612,8 +837,14 @@ export function printType(t: Ty, scheme?: Scheme): string {
                 }
                 return `{${parts.join(', ')}}`;
             }
-            case 'fn':
-                return `${t.linear ? 'linear ' : ''}(${t.args.map(sf).join(', ')}) => ${sf(t.result)}`;
+            case 'fn': {
+                // Named in the order they are read.
+                const args = `(${t.args.map(sf).join(', ')})`;
+                const sign = arrow(t.needs);
+                return `${t.linear ? 'linear ' : ''}${args} ${sign} ${sf(t.result)}`;
+            }
+            case 'needs':
+                return showNeeds(t);
         }
     };
     const sf = (t: FlowTy): string =>

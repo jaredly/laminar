@@ -41,7 +41,11 @@ export type Type =
     | { type: 'tuple'; items: Type[] }
     /** `rest` names the row of other fields; `_` is an anonymous one. */
     | { type: 'record'; fields: { name: string; type: Type; loc: Loc }[]; rest?: Id; loc: Loc }
-    | { type: 'fn'; args: Type[]; body: Type };
+    /** `needs` absent means inferred; empty means the function needs nothing. */
+    | { type: 'fn'; args: Type[]; needs?: NeedsItem[]; body: Type };
+/** One part of `={...}>`: a field, `...row`, or a record alias or row variable by name. */
+export type NeedsItem = TypeField | { include: Type; loc: Loc };
+export type Needs = NeedsItem[];
 
 export type TypeDecl =
     | { type: 'type-alias'; name: Id; alias: Type; loc: Loc; args?: Id[]; linear?: boolean }
@@ -164,6 +168,10 @@ export type Linear =
     | { type: 'tuple'; items: Linear[]; loc: Loc }
     | { type: 'vector'; items: Linear[]; loc: Loc }
     | { type: 'record'; fields: { name: string; value: Linear; loc: Loc }[]; loc: Loc }
+    /** `#name`: the entry `name` of what the enclosing function needs. */
+    | { type: 'need'; name: string; loc: Loc }
+    /** `inject name = value`: `body` runs with that entry added or replaced. */
+    | { type: 'inject'; name: string; value: Linear; body: Linear; loc: Loc }
     /** A record built from spreads and field operations, applied left to right. */
     | { type: 'update'; items: RecordItem[]; loc: Loc }
     | { type: 'constructor'; name: string; args: Linear[]; loc: Loc }
@@ -269,6 +277,10 @@ export const free = (expr: Term | Lens): string[] => {
             return expr.fields.flatMap((f) => free(f.value));
         case 'update':
             return itemValues(expr.items).flatMap(free);
+        case 'need':
+            return [];
+        case 'inject':
+            return free(expr.value).concat(free(expr.body));
         case 'assign': {
             return free(expr.value).concat(free(expr.lens));
         }
@@ -358,6 +370,12 @@ export const getFree = (
             return;
         case 'update':
             itemValues(expr.items).forEach((v) => getFree(bound, v, ref, deref));
+            return;
+        case 'need':
+            return;
+        case 'inject':
+            getFree(bound, expr.value, ref, deref);
+            getFree(bound, expr.body, ref, deref);
             return;
         case 'assign': {
             getFree(bound, expr.value, ref, deref);

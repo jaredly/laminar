@@ -63,7 +63,8 @@ describe('row records: inferred schemes', () => {
         ['fn rename(m) { {...m, -old, new: m.old} }', '({old: a, ...b}) => {new: a, ...b}'],
         [
             'fn mapName(f, m) { {...m, -name = f(m.name)} }',
-            '((a) => b, {name: a, ...c}) => {name: b, ...c}',
+            // The callback's needs are the caller's, so both show them.
+            '((a) ={b}> c, {name: a, ...d}) ={b}> {name: c, ...d}',
         ],
         [
             'fn addX(r) { {...r, x: 1} }\nfn addY(r) { {...r, y: true} }\nfn addBoth(r) { addX(addY(r)) }',

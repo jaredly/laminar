@@ -85,6 +85,40 @@ its fields in name order, so one definition can get a different layout at each u
 empty record prints as unit does. The legacy decomposition supports only closed records with
 complete patterns. See [the plan](row-polymorphic-records-plan.md).
 
+## Dependencies
+
+A function type says which dependencies a call needs. `#name` reads one, and `inject name = value`
+adds or replaces one for the rest of a block.
+
+```
+fn greet(who) { "${#now()} ${who}" }    // needs now
+fn main() {
+    inject now = fn () { "noon" }
+    greet("Lam")
+}
+```
+
+- Needs are inferred. A function's needs include those of everything it calls, so callbacks and
+  their caller share one set. Schemes print them as `(a) ={now: () => b, ...c}> d`. An arrow stays
+  `=>` when the function needs nothing, or when its needs are a row nothing else mentions.
+- A closure's needs come from whoever calls it, not from where it was created.
+- Nothing supplies a top-level expression, so it must need nothing (`missing-dependency`, reported
+  at the `#name`).
+- Entries are read any number of times, so they cannot be linear. A function stored in one cannot
+  need dependencies itself. Injecting a function that has needs supplies them there and then. In
+  dual mode, entry functions take plain arguments.
+- Signatures: `=>` is inferred, `={}>` needs nothing, `={Http, Clock}>` merges record aliases,
+  `={log: (String) => (), ...e}>` lists fields and a row, and `={e}>` is exactly a row. On a
+  definition, a closed list limits the body, and callers may hold more. Calling a value with a
+  closed list passes just those entries. In a union declaration `=>` means no needs, and a union
+  parameter can stand for a row: `type Job(e) { Job(() ={e}> ()) }`.
+- Recursion is not polymorphic, so a function that recurses under an `inject` needs a declared
+  closed list.
+- Compiled code passes what a function needs as a hidden first parameter, a record. Functions that
+  need nothing have none.
+
+See [the plan](dependency-injection-plan.md), including its list of current limits.
+
 ## Vectors
 
 `[:a, b, c:]` builds a homogeneous `Vector<a>` (`[::]` is `Vector<a>`),

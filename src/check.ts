@@ -21,6 +21,7 @@ import { verifyTypedProgram } from './verify-ir.ts';
 import { pureMode, type Policy } from './mode.ts';
 import { isLinear } from './linear.ts';
 import { desugarPlain } from './desugar-plain.ts';
+import { normalizeNeeds } from './normalize-needs.ts';
 
 export type CheckedExpression = Inference & { readonly ast: Linear };
 
@@ -241,6 +242,7 @@ export class Checker {
             ast.type === 'fn' && ast.name
                 ? `${this.unitId}/definition/${encodeURIComponent(ast.name)}`
                 : `${this.unitId}/expression/${this.nextExpression++}`;
+        ast = normalizeNeeds(ast);
         let plainBinders = new Set<number>();
         if (this.policy.plainBindings) ({ ast, plainBinders } = desugarPlain(ast));
         else {
@@ -471,6 +473,7 @@ function variables(type: SemanticType): string[] {
                 ...(type.rest ? variables(type.rest) : []),
             ];
         case 'fn':
+        case 'needs':
             return [];
     }
 }

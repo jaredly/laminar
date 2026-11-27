@@ -72,6 +72,11 @@ export class LayoutTable {
                 'unsupported-layout',
                 'Record types are erased to tuples before layout',
             );
+        if (type.tag === 'needs')
+            throw new BackendDiagnostic(
+                'unsupported-layout',
+                'Specialization passes dependencies as an ordinary parameter',
+            );
         if (type.tag === 'fn') storage = 'callable';
         else if (type.tag === 'tuple') {
             storage = type.items.length ? 'tuple' : 'unit';

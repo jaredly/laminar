@@ -13,6 +13,7 @@ type Shape<V> =
     | { tag: 'fn'; linear?: boolean }
     | { tag: 'tuple'; items: Shape<V>[] }
     | { tag: 'record'; fields: { type: Shape<V> }[]; rest?: Shape<V> }
+    | { tag: 'needs' }
     | { tag: 'con'; name: string; args: Shape<V>[] };
 /** Return the variable obligations, or undefined when the concrete shape cannot satisfy it. */
 export function requirements<V>(
@@ -30,6 +31,9 @@ export function requirements<V>(
             return [type.id];
         case 'fn':
             return ownership && !type.linear ? [] : undefined;
+        case 'needs':
+            // A row a union takes as a parameter; no value of it is ever held.
+            return [];
         case 'tuple':
             children = type.items;
             break;

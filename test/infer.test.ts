@@ -334,7 +334,7 @@ describe('AST inference', () => {
     it('infers flow endpoints for swaps and returned tuple lenses', () => {
         expect(type('fn (~x) {x := ()}')).toBe('(a/()) => a');
         expect(type('fn (~(x, y)) ~x')).toBe('((a, b)/(c, b)) => a/c');
-        expect(type('fn (f, ~x) {x := f(x)}')).toBe('((a) => b, a/b) => ()');
+        expect(type('fn (f, ~x) {x := f(x)}')).toBe('((a) ={b}> c, a/c) ={b}> ()');
         expect(type('fn (~x, y) y')).toBe('(a/a, b) => b');
         expect(type('fn (~x, ~y) ()')).toBe('(a/a, b/b) => ()');
         rejects('round(~x)', 'unbound-name');

@@ -50,6 +50,11 @@ export function verifyElaboration(e: Elaboration): void {
             case 'fn':
                 t.args.forEach(flow);
                 flow(t.result);
+                if (t.needs) type(t.needs);
+                return;
+            case 'needs':
+                t.entries.forEach((e) => type(e.type));
+                if (t.rest) type(t.rest);
                 return;
             default:
                 fail('Unknown semantic type');

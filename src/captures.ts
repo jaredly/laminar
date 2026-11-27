@@ -50,6 +50,12 @@ export function captureUses(body: Term, bound: Set<string>) {
             case 'update':
                 itemValues(n.items).forEach((v) => linear(v, scope));
                 return;
+            case 'need':
+                return;
+            case 'inject':
+                linear(n.value, scope);
+                linear(n.body, scope);
+                return;
             case 'assign':
                 lens(n.lens, scope);
                 linear(n.value, scope);

@@ -22,6 +22,8 @@ export function desugarRecords(
         };
         if (node.type === 'field')
             throw new Error('Field access is not supported by the legacy decomposition');
+        if (node.type === 'need' || node.type === 'inject')
+            throw new Error('Dependency injection is not supported by the legacy decomposition');
         if (node.type === 'update')
             throw new Error('Record updates are not supported by the legacy decomposition');
         if (node.type !== 'record' || !node.fields) return node;

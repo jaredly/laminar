@@ -146,6 +146,10 @@ export function desugarPlain(source: Linear): PlainResult {
                         i.value ? { ...i, value: linear(i.value, scope) } : i,
                     ),
                 };
+            case 'need':
+                return n;
+            case 'inject':
+                return { ...n, value: linear(n.value, scope), body: linear(n.body, scope) };
             case 'assign':
                 place(n.lens, scope);
                 return { ...n, lens: lens(n.lens, scope), value: linear(n.value, scope) };

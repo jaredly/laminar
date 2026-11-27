@@ -8,6 +8,27 @@ export type NodeId = string;
 export type BindingId = string;
 export type DefinitionId = string;
 export type PlaceId = string;
+const byName = (a: { name: string }, b: { name: string }) =>
+    a.name < b.name ? -1 : a.name > b.name ? 1 : 0;
+/** A row of dependencies, absorbing a remainder that substitution has made known. */
+export function semanticNeeds(
+    entries: { name: string; type: SemanticType }[],
+    rest?: SemanticType,
+): SemanticType {
+    if (rest?.tag === 'needs') return semanticNeeds([...entries, ...rest.entries], rest.rest);
+    if (rest?.tag === 'tuple' && !rest.items.length) rest = undefined;
+    if (rest && !entries.length) return rest;
+    // Stable, so entries of one name keep their order.
+    return { tag: 'needs', entries: [...entries].sort(byName), ...(rest ? { rest } : {}) };
+}
+/** A function type's `needs` property: omitted when it needs nothing. */
+export const needsProperty = (row: SemanticType | undefined): { needs?: SemanticType } =>
+    !row ||
+    (row.tag === 'needs' && !row.entries.length && !row.rest) ||
+    // An unconstrained row specializes to unit.
+    (row.tag === 'tuple' && !row.items.length)
+        ? {}
+        : { needs: row };
 /** A record type, absorbing a remainder that substitution has made known. */
 export function semanticRecord(
     fields: { name: string; type: SemanticType }[],
@@ -30,8 +51,20 @@ export type SemanticType =
      * replaces it, after which the runtime shape is the tuple of the fields in name order.
      */
     | { tag: 'record'; fields: { name: string; type: SemanticType }[]; rest?: SemanticType }
-    /** `linear`: a closure that cannot be dropped or copied. Not part of type identity. */
-    | { tag: 'fn'; args: SemanticFlow[]; result: SemanticFlow; linear?: true };
+    /**
+     * `linear`: a closure that cannot be dropped or copied. Not part of type identity.
+     * `needs`: the dependencies a call supplies; absent means none. Specialization turns them
+     * into an ordinary first parameter.
+     */
+    | {
+          tag: 'fn';
+          args: SemanticFlow[];
+          result: SemanticFlow;
+          linear?: true;
+          needs?: SemanticType;
+      }
+    /** A row of dependencies. A name may repeat; the first entry hides the later ones. */
+    | { tag: 'needs'; entries: { name: string; type: SemanticType }[]; rest?: SemanticType };
 export type SemanticFlow =
     /** `mode: 'shared'` marks a plain (shared, immutable) position; absent means owned (`mut`). */
     | { tag: 'plain'; value: SemanticType; mode?: 'shared' }
@@ -322,7 +355,13 @@ export class ElaborationBuilder {
                         args: t.args.map(flow),
                         result: flow(t.result),
                         ...(t.linear ? { linear: true as const } : {}),
+                        ...needsProperty(t.needs && type(t.needs)),
                     };
+                case 'needs':
+                    return semanticNeeds(
+                        t.entries.map((e) => ({ name: e.name, type: type(e.type) })),
+                        t.rest && type(t.rest),
+                    );
             }
         };
         const flow = (f: FlowTy): SemanticFlow =>
@@ -356,9 +395,13 @@ export class ElaborationBuilder {
             else if (t.tag === 'record') {
                 t.fields.forEach((f) => scan(f.type));
                 if (t.rest) scan(t.rest);
+            } else if (t.tag === 'needs') {
+                t.entries.forEach((e) => scan(e.type));
+                if (t.rest) scan(t.rest);
             } else {
                 t.args.forEach(scanFlow);
                 scanFlow(t.result);
+                if (t.needs) scan(t.needs);
             }
         };
         const scanFlow = (f: SemanticFlow) =>

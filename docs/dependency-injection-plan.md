@@ -1,6 +1,6 @@
 # Plan: dependency injection
 
-Status: approved, not yet implemented. This replaces the effects half of
+Status: implemented, apart from the differences listed under [As built](#as-built). This replaces the effects half of
 [row-polymorphism-and-effects.md](row-polymorphism-and-effects.md) for now. There is no `resume`.
 Abort and checked exceptions are wanted later and are not planned here. It builds on
 [row-polymorphic records](row-polymorphic-records-plan.md).
@@ -257,6 +257,35 @@ Confirmed.
    program that prints, so it deserves its own step. Channels and `spawn` are harder. `chanSend` and
    `chanRecv` work at any type, and an entry has one type per record. `spawn` is syntax, not a
    function. Until then, `={}>` does not mean free of I/O.
+
+## As built
+
+These differ from the text above, or were found while building it.
+
+- **A definition that needs nothing is given no needs row.** Rather than staying generic in a row
+  it never mentions, it is typed like a runtime import. So existing type-argument counts, host
+  exports and compiled output did not change. Used as a value, either one may stand for a function
+  with any needs, and gets the adapter described for imports. So adapters are not only for imports.
+  This is only done for functions with no lens parameters.
+- **A union holding a function that needs dependencies checks and runs in the reference evaluator,
+  but does not compile** (`unsupported-needs-in-union`): union layouts are derived before
+  specialization. A union with a row parameter compiles when every use of it needs nothing.
+- **A closed list also covers the callbacks the body calls.** Under `={}>`, calling a callback
+  parameter makes that callback need nothing.
+- **A lens cleanup cannot use a dependency** (`dependency-in-cleanup`). It runs when the lens ends,
+  perhaps outside the block that created it. Read the entry into a binding before the lens.
+- **An injected function that has needs takes only plain parameters.**
+- **The step that writes dependencies out is** [`lower-needs.ts`](../src/lower-needs.ts). The typed
+  IR has a fourth operation, `widen`, beside reading, injecting and supplying.
+- **`#a.b` copies the whole entry** and then reads the field from the copy.
+- **Fixed along the way:** in dual mode, any declaration of a function with a plain parameter was a
+  `mode-mismatch`. A declaration now takes the ownership of the definition's own parameters and
+  result from its body.
+- **Older limits that remain.** In either mode, an import with plain parameters, such as `round`,
+  cannot be passed to a parameter whose type is inferred from its use, so adapters for imports are
+  only tested with one that takes nothing. In dual mode, outside a dependency, a written
+  `(String) => String` still means an owned parameter, so such a value cannot be injected.
+- Infix expressions, `if` and `fn` after `name:` in a record still need parentheses.
 
 ## Not in this plan
 

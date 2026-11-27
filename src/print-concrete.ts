@@ -76,6 +76,8 @@ export function lconcrete(program: ConcreteProgram, options: ConcretePrintOption
                 return l.i(t.id);
             case 'con':
                 return t.args.length ? call(t.name, t.args.map(semantic)) : l.i(t.name);
+            case 'needs':
+                throw new Error('Specialization passes dependencies as arguments');
             case 'tuple':
                 return tuple(t.items.map(semantic));
             case 'record':
@@ -419,6 +421,11 @@ export function lconcrete(program: ConcreteProgram, options: ConcretePrintOption
                     throw new Error('Constructor lenses have no concrete form yet');
                 case 'record':
                     throw new Error('Specialization erases record updates');
+                case 'need':
+                case 'inject':
+                case 'supply':
+                case 'widen':
+                    throw new Error('Specialization passes dependencies as arguments');
                 default: {
                     const unknown: never = i;
                     throw new Error(`Unknown concrete operation: ${JSON.stringify(unknown)}`);

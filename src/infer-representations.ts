@@ -459,6 +459,11 @@ export function inferRepresentations(
             switch (i.op) {
                 case 'record':
                     return fail('Specialization erases records');
+                case 'need':
+                case 'inject':
+                case 'supply':
+                case 'widen':
+                    return fail('Specialization passes dependencies as arguments');
                 case 'constant':
                 case 'string':
                 case 'construct':
