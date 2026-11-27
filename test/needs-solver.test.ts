@@ -74,11 +74,11 @@ describe('dependency rows', () => {
         const s = new Solver(),
             row = s.fresh();
         const entry = s.requireEntry(row, 'log', 0);
-        s.unify(entry, fn([plain(int)], plain(int), false, s.fresh()), 0);
+        s.unify(entry, fn([plain(int)], plain(int), undefined, s.fresh()), 0);
         expect(printType(s.resolve(entry))).toBe('(Number) => Number');
         const other = s.requireEntry(row, 'now', 0);
         expect(
-            code(() => s.unify(other, fn([], plain(int), false, needs([need('clock')])), 0)),
+            code(() => s.unify(other, fn([], plain(int), undefined, needs([need('clock')])), 0)),
         ).toBe('needy-dependency');
     });
 });

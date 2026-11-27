@@ -10,7 +10,7 @@ type Shape = {
     items?: Shape[];
     fields?: { type: Shape }[];
     rest?: Shape;
-    linear?: boolean;
+    capture?: string;
 };
 
 /** `isDeclaredLinear` says whether a named union was declared `type linear`. */
@@ -30,7 +30,7 @@ export function isLinear(type: Shape, isDeclaredLinear: (name: string) => boolea
                 (!!type.rest && isLinear(type.rest, isDeclaredLinear))
             );
         case 'fn':
-            return !!type.linear;
+            return type.capture === 'linear';
         default:
             return false;
     }

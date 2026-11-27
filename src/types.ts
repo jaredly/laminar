@@ -1,4 +1,5 @@
 import {
+    type Capture,
     requirements,
     predicateErrors,
     type comparableUnions,
@@ -18,11 +19,11 @@ export type Ty =
      */
     | { tag: 'record'; fields: { name: string; type: Ty }[]; rest?: Ty }
     /**
-     * `linear` marks a closure that captured a linear value or an owned lens, so it cannot be
-     * dropped or copied. It is decided where the closure is written, never inferred.
+     * `capture` restricts a closure because of what it captured (see `Capture`). It is decided
+     * where the closure is written, never inferred.
      * `needs` is the row of dependencies a call supplies; absent means the function needs none.
      */
-    | { tag: 'fn'; args: FlowTy[]; result: FlowTy; linear?: true; needs?: Ty }
+    | { tag: 'fn'; args: FlowTy[]; result: FlowTy; capture?: Capture; needs?: Ty }
     /**
      * A row of dependencies (docs/dependency-injection-plan.md). Unlike a record's fields, a
      * name may repeat: the first entry hides the later ones. Sorted by name, keeping the order
@@ -111,14 +112,17 @@ export const needs = (entries: Need[], rest?: Ty): Ty => {
 export const NO_NEEDS: Ty = needs([]);
 export const isNothing = (t: Ty | undefined): boolean =>
     !t || (t.tag === 'needs' && !t.entries.length && !t.rest);
-export const fn = (args: FlowTy[], result: FlowTy, linear?: boolean, needed?: Ty): Ty => ({
+export const fn = (args: FlowTy[], result: FlowTy, capture?: Capture, needed?: Ty): Ty => ({
     tag: 'fn',
     args,
     result,
-    ...(linear ? { linear: true as const } : {}),
+    ...(capture ? { capture } : {}),
     ...(isNothing(needed) ? {} : { needs: needed }),
 });
 export const mono = (body: Ty): Scheme => ({ quantified: [], body });
+
+const STATEFUL_CLOSURE =
+    'A closure that captured a `mut` value may change it, so it is called once and cannot be shared or copied. Keep it `mut`, and pass it to a `mut` parameter that calls it exactly once on every path';
 
 export class TypeDiagnostic extends Error {
     constructor(
@@ -151,7 +155,7 @@ export function mapType(t: Ty, replace: (t: Ty) => Ty | undefined): Ty {
             return fn(
                 t.args.map((a) => mapFlow(a, (v) => mapType(v, replace))),
                 mapFlow(t.result, (v) => mapType(v, replace)),
-                t.linear,
+                t.capture,
                 t.needs && mapType(t.needs, replace),
             );
         case 'needs':
@@ -190,8 +194,29 @@ export class Solver {
             const resolved = mapType(this.resolve(type), (t) =>
                 t.tag === 'meta' ? bodyVariables.get(t.id) : undefined,
             );
-            const remaining = requirements<number>(predicate, resolved, unions, linear);
+            const copiesNoFunction = this.singleUseFunctions && predicate === 'Copyable';
+            const remaining = requirements<number>(
+                predicate,
+                resolved,
+                unions,
+                linear,
+                copiesNoFunction,
+            );
             if (!remaining) {
+                if (copiesNoFunction) {
+                    // A caller with a more particular reason to refuse says so.
+                    const [code, message] = diagnostic ?? [
+                        'function-copy',
+                        'In pure mode a function value is used once, so it cannot be copied, and neither can a value that holds one',
+                    ];
+                    throw new TypeDiagnostic(code, loc, message);
+                }
+                // Such a closure may be dropped: if dropping is fine, copying it is what failed.
+                if (
+                    predicate === 'Copyable' &&
+                    requirements<number>('Droppable', resolved, unions, linear)
+                )
+                    throw new TypeDiagnostic('shared-closure', loc, STATEFUL_CLOSURE);
                 const [code, message] = diagnostic ?? predicateErrors[predicate];
                 throw new TypeDiagnostic(code, loc, message);
             }
@@ -218,6 +243,8 @@ export class Solver {
     }
     /** Variables standing for part of a dependency's type: see `selfContained`. */
     private entryMetas = new Set<number>();
+    /** Pure mode: a function value is used once, so nothing that holds one can be copied. */
+    singleUseFunctions = false;
     /** Dual mode: a function stored as a dependency reads its plain arguments. */
     plainEntries = false;
     /** Variables standing for what a channel carries: any function they turn out to be is one-use. */
@@ -237,7 +264,7 @@ export class Solver {
     private carried(value: Ty): void {
         const t = this.prune(value);
         if (t.tag === 'meta') this.carriedMetas.add(t.id);
-        else if (t.tag === 'fn') t.linear = true;
+        else if (t.tag === 'fn') t.capture = 'linear';
         else if (t.tag === 'tuple') t.items.forEach((v) => this.carried(v));
         else if (t.tag === 'record') {
             t.fields.forEach((f) => this.carried(f.type));
@@ -246,8 +273,8 @@ export class Solver {
     }
     /**
      * `t` is part of a dependency. A function there cannot itself need dependencies, or the
-     * type of what it needs could contain itself; and in dual mode its plain parameters are
-     * shared ones. This applies to whatever its variables turn out to be.
+     * type of what it needs could contain itself; and in dual mode a parameter nothing says is
+     * `mut` only reads. This applies to whatever its variables turn out to be.
      */
     selfContained(t: Ty, loc: number): void {
         const p = this.prune(t);
@@ -266,16 +293,9 @@ export class Solver {
                         this.selfContained(a.write, loc);
                     }
                 if (this.plainEntries)
-                    for (const a of p.args) {
-                        if (a.tag !== 'plain') continue;
-                        if (this.modeOf(a.mode) === 'owned')
-                            throw new TypeDiagnostic(
-                                'unsupported-dependency',
-                                loc,
-                                'A function stored in a dependency takes plain arguments, not `mut` ones',
-                            );
-                        this.unifyMode(a.mode, SHARED, loc);
-                    }
+                    for (const a of p.args)
+                        if (a.tag === 'plain' && this.modeOf(a.mode) === 'unknown')
+                            this.unifyMode(a.mode, SHARED, loc);
                 return;
             case 'tuple':
                 p.items.forEach((v) => this.selfContained(v, loc));
@@ -753,12 +773,18 @@ export class Solver {
                     loc,
                     `Expected ${a.args.length} arguments, found ${b.args.length}`,
                 );
-            if (a.linear !== b.linear)
-                throw new TypeDiagnostic(
-                    'linear-closure-mismatch',
-                    loc,
-                    'A closure that captured a linear value or an owned lens must be called, or passed to a function that is known to consume it',
-                );
+            if (a.capture !== b.capture)
+                throw a.capture === 'linear' || b.capture === 'linear'
+                    ? new TypeDiagnostic(
+                          'linear-closure-mismatch',
+                          loc,
+                          'A closure that captured a linear value or an owned lens must be called, or passed to a function that is known to consume it',
+                      )
+                    : new TypeDiagnostic(
+                          'stateful-closure-mismatch',
+                          loc,
+                          'One of these functions captured a `mut` value, so it is called only once, and the other can be called again. They cannot be mixed yet',
+                      );
             a.args.forEach((v, i) => this.unifyFlow(v, b.args[i], loc));
             this.unifyFlow(a.result, b.result, loc);
             this.unify(a.needs ?? NO_NEEDS, b.needs ?? NO_NEEDS, loc);
@@ -841,7 +867,8 @@ export function printType(t: Ty, scheme?: Scheme): string {
                 // Named in the order they are read.
                 const args = `(${t.args.map(sf).join(', ')})`;
                 const sign = arrow(t.needs);
-                return `${t.linear ? 'linear ' : ''}${args} ${sign} ${sf(t.result)}`;
+                const kind = t.capture === 'state' ? 'once ' : t.capture ? 'linear ' : '';
+                return `${kind}${args} ${sign} ${sf(t.result)}`;
             }
             case 'needs':
                 return showNeeds(t);

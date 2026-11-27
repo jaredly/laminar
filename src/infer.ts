@@ -1,4 +1,4 @@
-import { comparableUnions } from './constraints.ts';
+import { comparableUnions, type Capture } from './constraints.ts';
 import {
     ElaborationBuilder,
     type Elaboration,
@@ -66,6 +66,8 @@ const commonOnceParameters = (a: OnceParameters, b: OnceParameters): OnceParamet
 type Root = {
     /** Evidence for the function value currently occupying this whole place. */
     callsOnce?: OnceParameters;
+    /** Pure mode: any function in the value occupying this whole place captured nothing. */
+    captureFree?: boolean;
     /** Provenance retained while this computed focus owns deferred restoration. */
     owners?: Binding[];
     // Exclusive protection is independent of permission to retain owned backing.
@@ -180,6 +182,9 @@ export class Inferencer {
     private rootFunction?: object;
     private rootDeclaration?: Decl;
     private callsOnce = new WeakMap<object, OnceParameters>();
+    /** Names, reads and lambdas known to hold no function that captured anything. */
+    private bareNodes = new WeakSet<object>();
+    private valueTypes = new WeakMap<object, Ty>();
     /**
      * Checks that need every type known. A function can turn out to be one-use after a call
      * that passed it has been checked, when a channel carries it further on.
@@ -196,6 +201,7 @@ export class Inferencer {
     ) {
         this.builder = new ElaborationBuilder(context);
         this.solver.plainEntries = !!options.linearTypes;
+        this.solver.singleUseFunctions = !options.linearTypes;
         // Re-home externally supplied variables so solver IDs never collide.
         const imports = (table: TypeEnvironment, constructor = false) =>
             new Map(
@@ -245,7 +251,7 @@ export class Inferencer {
                 return fn(
                     t.args.map((v) => mapFlow(v, (t) => this.replace(t, vars))),
                     mapFlow(t.result, (t) => this.replace(t, vars)),
-                    t.linear,
+                    t.capture,
                     t.needs && this.replace(t.needs, vars),
                 );
             case 'needs':
@@ -453,6 +459,7 @@ export class Inferencer {
         if (b.scheme)
             this.error('immutable-definition', loc, 'Reusable definitions cannot be lens targets');
         b.root.callsOnce = undefined;
+        b.root.captureFree = undefined;
         b.root.type = this.replaceAt(b.root.type, b.path, value, loc);
         const revisionPath = JSON.stringify(b.path);
         b.root.revisions.set(revisionPath, (b.root.revisions.get(revisionPath) ?? 0) + 1);
@@ -634,30 +641,33 @@ export class Inferencer {
         this.deferred.forEach((check) => check());
         this.requireNoNeeds(root, ast.loc);
         this.closeOwnNeeds(type);
+        const omitted: number[] = (this.omitted = []);
+        const declared = declaration && this.annotation(declaration.ann, new Map());
+        this.omitted = undefined;
+        if (declared?.tag === 'plain') this.statedModes(declared.value, type);
         let scheme = this.solver.generalize(type, [...this.globals.values()]);
-        if (declaration) {
+        if (declaration && declared) {
             if (ast.type !== 'fn' || ast.name !== declaration.name.text)
                 this.error(
                     'declaration-name',
                     declaration.loc,
                     'Declaration must name its implementation',
                 );
-            const omitted: number[] = (this.omitted = []);
-            const declared = this.annotation(declaration.ann, new Map());
-            this.omitted = undefined;
-            if (declared.tag !== 'plain')
-                this.error(
-                    'annotation-mismatch',
-                    declaration.loc,
-                    'Definition signature must be a value type',
-                );
+            const signature =
+                declared.tag === 'plain'
+                    ? declared.value
+                    : this.error(
+                          'annotation-mismatch',
+                          declaration.loc,
+                          'Definition signature must be a value type',
+                      );
             const stated =
-                this.limit && declared.value.tag === 'fn'
-                    ? { ...declared.value, needs: this.limit.type }
-                    : declared.value;
+                this.limit && signature.tag === 'fn'
+                    ? { ...signature, needs: this.limit.type }
+                    : signature;
             const inferredInstance = this.solver.instantiateWithArguments(scheme);
-            // As elsewhere, an annotation says nothing about who owns the definition's own
-            // parameters and result, so those come from the body.
+            // A signature says which of the definition's own parameters are `mut`. Nothing
+            // says who owns its result, so that comes from the body.
             const body = this.solver.prune(inferredInstance.type);
             const owned = (said: FlowTy, found: FlowTy): FlowTy =>
                 said.tag === 'plain' && found.tag === 'plain'
@@ -667,7 +677,6 @@ export class Inferencer {
                 stated.tag === 'fn' && body.tag === 'fn' && stated.args.length === body.args.length
                     ? {
                           ...stated,
-                          args: stated.args.map((a, i) => owned(a, body.args[i]!)),
                           result: owned(stated.result, body.result),
                       }
                     : stated,
@@ -767,7 +776,7 @@ export class Inferencer {
                         : value(),
                 ),
                 n.body.type === 'lens' ? lens(this.resultOwnership(n)) : value(),
-                false,
+                undefined,
                 this.limit?.type ?? this.solver.fresh(),
             ),
             n.loc,
@@ -849,8 +858,14 @@ export class Inferencer {
                       : this.valueAnnotation(t.rest, vars, closed);
                 return plain(this.solver.row(fields, rest, t.loc));
             }
+            case 'mut':
+                this.error(
+                    'invalid-mut',
+                    t.loc,
+                    '`mut` marks a parameter in a function type, as in `(mut a) => b`',
+                );
             case 'fn': {
-                const args = t.args.map((v) => this.annotation(v, vars, closed));
+                const args = t.args.map((v) => this.parameterType(v, vars, closed));
                 let needed: Ty | undefined;
                 if (t.needs) needed = this.needsAnnotation(t.needs, vars, closed);
                 else if (this.inferOmitted) {
@@ -865,9 +880,22 @@ export class Inferencer {
                     // The signature decides it, so a result is only ever written `~A`.
                     result = { ...result, owned: borrows ? BORROWED_LENS : OWNED_LENS };
                 }
-                return plain(fn(args, result, false, needed));
+                return plain(fn(args, result, undefined, needed));
             }
         }
+    }
+    /**
+     * A parameter of a written function type. In dual mode, as in a definition, an unmarked one
+     * only reads its argument and a `mut` one takes ownership of it. A lens says so itself.
+     */
+    private parameterType(t: Type, vars: Map<string, Ty>, closed: boolean): FlowTy {
+        const dual = this.options.linearTypes;
+        if (t.type === 'mut') {
+            if (!dual) this.error('dual-only', t.loc, '`mut` needs dual mode');
+            return plain(this.valueAnnotation(t.value, vars, closed), OWNED);
+        }
+        const a = this.annotation(t, vars, closed);
+        return dual && a.tag === 'plain' ? plain(a.value, SHARED) : a;
     }
     /** Whether an item of `={...}>` names particular entries, rather than a row variable. */
     private isClosedNeed(item: NeedsItem): boolean {
@@ -889,7 +917,8 @@ export class Inferencer {
         const add = (name: string, type: Ty, loc: number) => {
             if (entries.some((e) => e.name === name))
                 this.error('duplicate-dependency', loc, `The dependency ${name} is listed twice`);
-            entries.push({ name, type: this.dependencyType(type, loc), from: loc });
+            this.solver.selfContained(type, loc);
+            entries.push({ name, type, from: loc });
         };
         const remainder = (id: Id) => {
             if (rest) this.error('invalid-needs', id.loc, 'At most one row variable can be listed');
@@ -915,26 +944,6 @@ export class Inferencer {
             }
         }
         return needs(entries, rest);
-    }
-    /** A written dependency type: its functions need nothing and, in dual mode, read arguments. */
-    private dependencyType(type: Ty, loc: number): Ty {
-        const stored = !this.options.linearTypes
-            ? type
-            : mapType(this.solver.resolve(type), function plainArguments(t): Ty | undefined {
-                  if (t.tag !== 'fn') return undefined;
-                  return fnType(
-                      t.args.map((a) =>
-                          a.tag === 'plain'
-                              ? plain(mapType(a.value, plainArguments), SHARED)
-                              : mapFlow(a, (v) => mapType(v, plainArguments)),
-                      ),
-                      mapFlow(t.result, (v) => mapType(v, plainArguments)),
-                      t.linear,
-                      t.needs,
-                  );
-              });
-        this.solver.selfContained(stored, loc);
-        return stored;
     }
     private valueAnnotation(t: Type, vars: Map<string, Ty>, closed = false): Ty {
         const a = this.annotation(t, vars, closed);
@@ -1130,6 +1139,7 @@ export class Inferencer {
                 this.callsOnce.set(n, this.callsOnce.get(n.items[0]!));
             const mode = this.expressionMode(n);
             this.modes.set(n, mode);
+            this.valueTypes.set(n, t);
             this.record(n, plain(t, mode));
             return t;
         } finally {
@@ -1142,6 +1152,8 @@ export class Inferencer {
             case 'op': {
                 const b = this.lookup(env, n.text, n.loc);
                 this.use(n, b, 'value');
+                // A definition captures nothing.
+                if (b.scheme || (!b.path.length && b.root.captureFree)) this.bareNodes.add(n);
                 this.callsOnce.set(
                     n,
                     b.scheme?.callsOnce ?? (!b.path.length ? b.root.callsOnce : undefined),
@@ -1177,12 +1189,14 @@ export class Inferencer {
             case 'need': {
                 const type = this.solver.requireEntry(this.ambient, n.name, n.loc);
                 this.copyableDependency(type, n.loc);
+                this.bareNodes.add(n);
                 return type;
             }
             case 'inject': {
                 const entry = this.bindNeeds(this.linear(n.value, env), n.value.loc);
                 this.solver.selfContained(entry, n.value.loc);
-                this.copyableDependency(entry, n.value.loc);
+                if (this.options.linearTypes) this.copyableDependency(entry, n.value.loc);
+                else this.requireCaptureFree(n.value, entry);
                 const outer = this.ambient;
                 // In front of any outer entry of the same name, which it hides.
                 this.ambient = needs([{ name: n.name, type: entry }], outer);
@@ -1206,6 +1220,7 @@ export class Inferencer {
             case 'field': {
                 const b = this.fieldPlace(n, env);
                 this.use(n, b, 'value');
+                if (b.root.captureFree) this.bareNodes.add(n);
                 return this.consume(b, n.loc);
             }
             case 'index':
@@ -1241,9 +1256,13 @@ export class Inferencer {
                 const target =
                     n.lens.type === 'id' ? this.lookup(env, n.lens.text, n.loc) : undefined;
                 if (target && !target.path.length) this.callsOnce.set(n, target.root.callsOnce);
+                const wasBare = target && !target.path.length && target.root.captureFree;
                 view.put(value);
-                if (target && !target.path.length)
+                if (target && !target.path.length) {
                     target.root.callsOnce = this.callsOnce.get(n.value);
+                    target.root.captureFree = this.isCaptureFree(n.value);
+                }
+                if (wasBare) this.bareNodes.add(n);
                 return previous;
             }
             case 'let':
@@ -1253,6 +1272,55 @@ export class Inferencer {
             case 'case':
                 return this.caseBody(n, env);
         }
+    }
+    /** Whether this expression's value is seen to hold no function that captured anything. */
+    private isCaptureFree(n: Linear): boolean {
+        const all = (values: Linear[]) => values.every((v) => this.isCaptureFree(v));
+        switch (n.type) {
+            case 'number':
+            case 'bool':
+            case 'string':
+                return true;
+            case 'tuple':
+                return all(n.items);
+            case 'record':
+                return all(n.fields.map((f) => f.value));
+            case 'vector':
+                return all(n.items);
+            case 'constructor':
+                return all(n.args);
+            case 'let':
+            case 'inject':
+                return this.isCaptureFree(n.body as Linear);
+            case 'case':
+                return n.cases.every((arm) => this.isCaptureFree(arm.body as Linear));
+            default:
+                return this.bareNodes.has(n);
+        }
+    }
+    /**
+     * Pure mode: `#name` copies an entry each time, and no function is ever copied, with one
+     * exception. A function that captured nothing holds nothing two copies could share, so
+     * reading it is like naming a definition again. Anything else must hold no function.
+     */
+    private requireCaptureFree(n: Linear, type: Ty): void {
+        if (this.isCaptureFree(n)) return;
+        const parts =
+            n.type === 'tuple' || n.type === 'vector'
+                ? n.items
+                : n.type === 'record'
+                  ? n.fields.map((f) => f.value)
+                  : n.type === 'constructor'
+                    ? n.args
+                    : undefined;
+        if (parts) {
+            parts.forEach((v) => this.requireCaptureFree(v, this.valueTypes.get(v)!));
+            return;
+        }
+        this.solver.require('Copyable', type, n.loc, [
+            'capturing-dependency',
+            'In pure mode a dependency can hold a function only if it can be seen to capture nothing: a definition, a lambda without captures, or another dependency',
+        ]);
     }
     private copyableDependency(type: Ty, loc: number): void {
         if (this.options.linearTypes)
@@ -1284,7 +1352,7 @@ export class Inferencer {
                 );
             this.requireEntries(row.entries, loc);
         }
-        return fn(type.args, type.result, type.linear);
+        return fn(type.args, type.result, type.capture);
     }
     /** The surrounding code must hold the first entry of each name, at these types. */
     private requireEntries(entries: Need[], loc: number): void {
@@ -1350,6 +1418,31 @@ export class Inferencer {
         return t.tag === 'fn' && !t.needs && t.args.every((a) => a.tag === 'plain')
             ? { ...t, needs: this.solver.fresh() }
             : type;
+    }
+    /**
+     * A call of a parameter says nothing about whether it takes ownership, so a signature may:
+     * whatever it states settles the parameter modes the body left open, before they default.
+     */
+    private statedModes(said: Ty, found: Ty): void {
+        const a = this.solver.prune(said),
+            b = this.solver.prune(found);
+        const each = (left: Ty[], right: Ty[]) =>
+            left.forEach((t, i) => right[i] && this.statedModes(t, right[i]!));
+        if (a.tag === 'fn' && b.tag === 'fn')
+            a.args.forEach((x, i) => {
+                const y = b.args[i];
+                if (x.tag !== 'plain' || y?.tag !== 'plain') return;
+                if (this.solver.modeOf(y.mode) === 'unknown')
+                    this.solver.unifyMode(y.mode, x.mode, 0);
+                this.statedModes(x.value, y.value);
+            });
+        else if (a.tag === 'tuple' && b.tag === 'tuple') each(a.items, b.items);
+        else if (a.tag === 'con' && b.tag === 'con') each(a.args, b.args);
+        else if (a.tag === 'record' && b.tag === 'record')
+            for (const f of a.fields) {
+                const match = b.fields.find((g) => g.name === f.name);
+                if (match) this.statedModes(f.type, match.type);
+            }
     }
     /** The item itself must need nothing: nothing supplies it. */
     private requireNoNeeds(root: Ty, loc: number): void {
@@ -1554,6 +1647,8 @@ export class Inferencer {
             lensCaptures.set(name, b);
         }
         const captureTypes: Ty[] = [];
+        // Captured `mut` values, which the closure holds on to and may change.
+        const stateTypes: Ty[] = [];
         // An owned lens is captured whole, by move: the closure now ends it.
         const lensEnds: { captured: Binding; final: Ty }[] = [];
         for (const [name, b] of lensCaptures) {
@@ -1586,9 +1681,11 @@ export class Inferencer {
             const b = this.lookup(env, name, n.loc);
             if (!b.scheme) {
                 const once = !b.path.length ? b.root.callsOnce : undefined;
+                const bare = !b.path.length ? b.root.captureFree : undefined;
                 const type = this.consume(b, n.loc),
                     captured = this.freshBinding(type);
                 captured.root.callsOnce = once;
+                captured.root.captureFree = bare;
                 this.declare(captured, name, n, 'capture');
                 this.builder.captures.push({
                     node: this.builder.node(n),
@@ -1599,6 +1696,8 @@ export class Inferencer {
                 sub.set(name, captured);
                 captureRoots.push(captured.root);
                 captureTypes.push(type);
+                // The dual rewrite's own copy of a plain capture is plain again in the body.
+                if (!name.startsWith('$plain')) stateTypes.push(type);
             }
         }
         const surrounding = this.ambient;
@@ -1638,13 +1737,15 @@ export class Inferencer {
             if (a.typ) this.solver.unifyFlow(type, this.annotation(a.typ, vars), a.pat.loc, false);
             // A call to a parameter borrows unless its type is known, and a declaration is
             // otherwise only compared after the body. So it speaks first about owned lenses.
-            const declared =
+            const written =
                 n === this.rootFunction && this.rootDeclaration?.ann.type === 'fn'
                     ? this.rootDeclaration.ann.args[i]
                     : undefined;
+            const declared = written?.type === 'mut' ? written.value : written;
             if (
                 declared?.type === 'fn' &&
-                (declared.args.some((t) => t.type === 'lens' && t.owned) || statesNeeds(declared))
+                (declared.args.some((t) => t.type === 'mut' || (t.type === 'lens' && t.owned)) ||
+                    statesNeeds(declared))
             )
                 this.solver.unifyFlow(type, this.annotation(declared, vars), a.pat.loc, false);
             return type;
@@ -1694,15 +1795,39 @@ export class Inferencer {
         });
         if (this.options.linearTypes)
             this.callsOnce.set(n, this.acceptingParameters(n, args, parameters, sub, branchStart));
-        const linear =
-            !!this.options.linearTypes &&
-            (lensEnds.length > 0 ||
-                captureTypes.some((t) => isLinear(this.solver.resolve(t), this.declaredLinear)));
+        const capture: Capture | undefined = !this.options.linearTypes
+            ? undefined
+            : lensEnds.length > 0 ||
+                captureTypes.some((t) => isLinear(this.solver.resolve(t), this.declaredLinear))
+              ? 'linear'
+              : stateTypes.some((t) => this.mayChange(this.solver.resolve(t)))
+                ? 'state'
+                : undefined;
         this.ambient = surrounding;
-        return fn(args, result, linear, limited?.type ?? needed);
+        if (!lensCaptures.size && !captureTypes.length) this.bareNodes.add(n);
+        return fn(args, result, capture, limited?.type ?? needed);
     }
     /**
-     * A function parameter takes a linear closure when the body can be seen to consume it:
+     * Whether a value of this type might be changed by whoever holds it, so that two holders
+     * must not reach the same one. Anything not yet known might be.
+     */
+    private mayChange(t: Ty): boolean {
+        switch (t.tag) {
+            case 'con':
+                // A channel is a handle, shared between tasks, whatever it carries.
+                return !['Number', 'String', 'Bool', 'Chan'].includes(t.name);
+            case 'tuple':
+                return t.items.some((v) => this.mayChange(v));
+            case 'record':
+                return !!t.rest || t.fields.some((f) => this.mayChange(f.type));
+            case 'fn':
+                return !!t.capture;
+            default:
+                return true;
+        }
+    }
+    /**
+     * A function parameter takes a restricted closure when the body can be seen to consume it:
      * every use calls it or passes it to a parameter that does, and every path has a use.
      */
     private acceptingParameters(
@@ -1889,7 +2014,11 @@ export class Inferencer {
                 'A plain (shared) value cannot initialize a `mut` binding; `dup(x)` it first',
             );
         this.pattern(p, type, sub);
-        if (p.type === 'id') sub.get(p.text)!.root.callsOnce = this.callsOnce.get(n.value);
+        if (p.type === 'id') {
+            const root = sub.get(p.text)!.root;
+            root.callsOnce = this.callsOnce.get(n.value);
+            root.captureFree = this.isCaptureFree(n.value as Linear);
+        }
         // First-class functions are affine monotypes; only top-level definitions are reusable schemes.
         const close = () =>
             this.builder.scopes.push({
@@ -2225,7 +2354,7 @@ export class Inferencer {
             fn(
                 args,
                 lensResult ? flow(read, write, replaceable, resultOwned) : plain(read, resultMode),
-                known.tag === 'fn' && known.linear,
+                known.tag === 'fn' ? known.capture : undefined,
                 needed,
             ),
             n.loc,
@@ -2301,7 +2430,7 @@ export class Inferencer {
     /** What goes onto a channel: every function in it becomes one-use on the way. */
     private sent(value: Ty): Ty {
         const t = this.solver.prune(value);
-        if (t.tag === 'fn') return fn(t.args, t.result, true, t.needs);
+        if (t.tag === 'fn') return fn(t.args, t.result, 'linear', t.needs);
         if (t.tag === 'tuple') return tuple(...t.items.map((v) => this.sent(v)));
         if (t.tag === 'record')
             return record(
@@ -2328,22 +2457,27 @@ export class Inferencer {
         const parameter = known.args[index];
         if (parameter?.tag !== 'plain') return;
         const expected = this.solver.prune(parameter.value);
-        if (expected.tag !== 'fn' || expected.linear) return;
+        if (expected.tag !== 'fn' || expected.capture === 'linear') return;
+        // What the parameter takes now: the types may yet change, if one is sent on a channel.
+        const taken = expected.capture;
         this.deferred.push(() => {
             const argument = this.solver.prune(value);
-            if (argument.tag === 'fn' && argument.linear) this.unaccepted(node);
+            if (argument.tag === 'fn' && argument.capture && argument.capture !== taken)
+                this.unaccepted(node, argument.capture);
         });
     }
-    private unaccepted(node: Linear): never {
+    private unaccepted(node: Linear, capture: Capture): never {
         return this.error(
-            'linear-unconsumed',
+            capture === 'linear' ? 'linear-unconsumed' : 'shared-closure',
             (node as { loc: number }).loc,
-            'This closure must be called exactly once, and the function may drop or reuse it. Take it as a `mut` parameter and call it exactly once on every path',
+            capture === 'linear'
+                ? 'This closure must be called exactly once, and the function may drop or reuse it. Take it as a `mut` parameter and call it exactly once on every path'
+                : 'This closure captured a `mut` value, so it cannot be shared, and the function may share or reuse it. Take it as a `mut` parameter and call it exactly once on every path',
         );
     }
     /**
-     * Unification keeps linear closures apart from ordinary ones. A linear one may still go to
-     * a function parameter that is known to consume it.
+     * Unification keeps restricted closures apart from ordinary ones. One may still go to a
+     * function parameter that is known to call it exactly once.
      */
     private argumentType(
         callee: Ty,
@@ -2361,15 +2495,14 @@ export class Inferencer {
         const expected = this.solver.prune(parameter.value);
         // A type variable takes the closure as it is; the definition's drop and copy bounds apply.
         if (expected.tag !== 'fn') return value;
-        // Calling a function exactly once is always allowed, so one that need not be may go
-        // where one that must be is expected.
-        if (expected.linear)
-            return argument.linear
-                ? value
-                : fn(argument.args, argument.result, true, argument.needs);
-        if (!argument.linear) return value;
-        if (!accepts?.includes(index)) this.unaccepted(node);
-        return fn(argument.args, argument.result, false, argument.needs);
+        if (argument.capture === expected.capture) return value;
+        const as = (capture: Capture | undefined) =>
+            fn(argument.args, argument.result, capture, argument.needs);
+        // Calling a function once is always allowed, so a less restricted one may go where a
+        // more restricted one is expected.
+        if (expected.capture === 'linear' || !argument.capture) return as(expected.capture);
+        if (!accepts?.includes(index)) this.unaccepted(node, argument.capture);
+        return as(expected.capture);
     }
     private aslens(n: Lens & { type: 'aslens' }, env: Env): View {
         const read = this.linear(n.value, env);
@@ -2451,6 +2584,7 @@ export class Inferencer {
             revisions: Map<string, number>;
             moved?: boolean;
             callsOnce?: OnceParameters;
+            captureFree?: boolean;
         }[];
         const snapshot = (): Snapshot =>
             roots.map((r) => ({
@@ -2460,6 +2594,7 @@ export class Inferencer {
                 revisions: new Map(r.revisions),
                 moved: r.moved,
                 callsOnce: r.callsOnce,
+                captureFree: r.captureFree,
             }));
         const restore = (states: Snapshot) =>
             roots.forEach((r, i) =>
@@ -2512,6 +2647,7 @@ export class Inferencer {
                     empty,
                     moved: states[0][i].moved,
                     callsOnce: states.map((s) => s[i].callsOnce).reduce(commonOnceParameters),
+                    captureFree: states.every((s) => s[i].captureFree),
                     borrows: new Set(initial[i].borrows),
                     revisions: this.joinRevisions(states.map((s) => s[i].revisions)),
                 };
@@ -2624,6 +2760,7 @@ export class Inferencer {
             revisions: new Map(r.revisions),
             moved: r.moved,
             callsOnce: r.callsOnce,
+            captureFree: r.captureFree,
         }));
         // Per outer place: whether some arm moved it, and whether some arm left it unrestorable.
         const moved = roots.map(() => false),
@@ -2634,6 +2771,7 @@ export class Inferencer {
                   empty: Step[][];
                   revisions: Map<string, number>;
                   callsOnce: OnceParameters;
+                  captureFree?: boolean;
               }[]
             | undefined;
         for (const branch of n.cases) {
@@ -2643,6 +2781,7 @@ export class Inferencer {
                 r.revisions = new Map(initial[i].revisions);
                 r.moved = initial[i].moved;
                 r.callsOnce = initial[i].callsOnce;
+                r.captureFree = initial[i].captureFree;
             });
             const sub = new Map(env);
             this.pattern(branch.pat, scrutinee, sub);
@@ -2669,6 +2808,7 @@ export class Inferencer {
                 joined = roots.map((r) => ({
                     type: r.type,
                     callsOnce: r.callsOnce,
+                    captureFree: r.captureFree,
                     empty: [...r.empty],
                     revisions: new Map(r.revisions),
                 }));
@@ -2698,6 +2838,7 @@ export class Inferencer {
                         this.solver.unify(type, erase(r.type), n.loc);
                         joined![i] = {
                             callsOnce: commonOnceParameters(joined![i].callsOnce, r.callsOnce),
+                            captureFree: !!joined![i].captureFree && !!r.captureFree,
                             type,
                             empty,
                             revisions: this.joinRevisions([joined![i].revisions, r.revisions]),
@@ -2716,6 +2857,7 @@ export class Inferencer {
         roots.forEach((r, i) => {
             r.type = joined![i].type;
             r.callsOnce = joined![i].callsOnce;
+            r.captureFree = joined![i].captureFree;
             r.empty = joined![i].empty;
             r.revisions = new Map(joined![i].revisions);
             // Moved on one path is moved afterwards; the other paths end it at the branch edge.

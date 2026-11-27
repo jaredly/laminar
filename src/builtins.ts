@@ -12,7 +12,11 @@ export function builtinTypes(linearTypes = false): Map<string, Scheme> {
         const scheme = s.generalize(type, []);
         if (entry.name === '==' || entry.name === '!=')
             scheme.bounds = [{ predicate: 'Comparable', parameter: 0 }];
-        if (linearTypes && ['dup', '==', '!='].includes(entry.name))
+        // `dup` and `array` copy in either language. Pure comparison consumes its operands.
+        if (
+            ['dup', 'array'].includes(entry.name) ||
+            (linearTypes && ['==', '!='].includes(entry.name))
+        )
             (scheme.bounds ??= []).push({ predicate: 'Copyable', parameter: 0 });
         result.set(entry.name, scheme);
     }

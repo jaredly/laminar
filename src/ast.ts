@@ -38,6 +38,8 @@ export type Type =
      */
     | { type: 'lens'; left: Type; right?: Type; replaceable?: boolean; owned?: boolean }
     | { type: 'constr'; name: Id; args?: Type[]; loc: Loc }
+    /** `mut T`, a parameter of a function type that its callee takes ownership of. */
+    | { type: 'mut'; value: Type; loc: Loc }
     | { type: 'tuple'; items: Type[] }
     /** `rest` names the row of other fields; `_` is an anonymous one. */
     | { type: 'record'; fields: { name: string; type: Type; loc: Loc }[]; rest?: Id; loc: Loc }

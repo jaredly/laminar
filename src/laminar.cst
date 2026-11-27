@@ -145,6 +145,10 @@ Type {
     text:id -> ({type: "id", text: text.text, loc: node.loc})
     ["" "~" left:Type] -> ({type: "lens", left})
     [" " "mut" ["" "~" left:Type]] -> ({type: "lens", left, owned: true})
+    // `mut (a) => b` lexes with `mut` binding first, so the arrow holds it.
+    [" " "mut" ["(," ...args:Type] "=>" body:Type] -> ({type: "mut", value: {type: "fn", args, body}, loc: node.loc} as Type)
+    [" " "mut" ["(," ...args:Type] ["" "=" needs:Needs ">"] body:Type] -> ({type: "mut", value: {type: "fn", args, needs, body}, loc: node.loc} as Type)
+    [" " "mut" value:Type] -> ({type: "mut", value, loc: node.loc})
     ["" "=" left:Type] -> ({type: "lens", left, replaceable: false})
     ["" left:Type "/" right:Type] -> ({type: "lens", left, right})
     ["" left:Type "/=" right:Type] -> ({type: "lens", left, right, replaceable: false})

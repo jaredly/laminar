@@ -211,7 +211,7 @@ export function mapSemantic(
                 tag: 'fn',
                 args: type.args.map((t) => mapSemanticFlow(t, variable)),
                 result: mapSemanticFlow(type.result, variable),
-                ...(type.linear ? { linear: true as const } : {}),
+                ...(type.capture ? { capture: type.capture } : {}),
                 ...needsProperty(type.needs && mapSemantic(type.needs, variable)),
             };
         case 'needs':

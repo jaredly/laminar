@@ -259,7 +259,7 @@ export type CompiledLibrary = {
 function holdsLinearClosure(type: SemanticType): boolean {
     switch (type.tag) {
         case 'fn':
-            return !!type.linear;
+            return type.capture === 'linear';
         case 'con':
             return type.args.some(holdsLinearClosure);
         case 'tuple':

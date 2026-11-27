@@ -357,7 +357,7 @@ ${use}
     // unannotated, the call borrows, so the connection is still here afterwards
     expect(each('', 'peek(~conn)\n ()')).toBe('ok');
     expect(each('', '()', 'each(1, drain)')).toBe('lens-ownership-mismatch');
-    const owned = 'each :: (Number, (mut ~Number) => ()) => ()';
+    const owned = 'each :: (mut Number, mut (mut ~Number) => ()) => ()';
     expect(each(owned, '()', 'each(1, drain)')).toBe('ok');
     expect(each(owned, 'peek(~conn)\n ()')).toBe('use-after-move');
 });
@@ -367,7 +367,7 @@ it('reads a declared result as owned exactly when no lens is borrowed', () => {
     expect(code(`through :: (~Number) => ~Number\n${through}\n0`)).toBe('ok');
     const made = 'fn made(mut x) ~{lens v <- x\n let _ = v\n () }';
     const moved = '{let h = ~made(1)\n handle("a", ~h)\n 0}';
-    expect(code(`${net}made :: (Number) => ~Number\n${made}\n${moved}`)).toBe('ok');
+    expect(code(`${net}made :: (mut Number) => ~Number\n${made}\n${moved}`)).toBe('ok');
 });
 
 it('moves owned lenses through recursion and nested producers', () => {

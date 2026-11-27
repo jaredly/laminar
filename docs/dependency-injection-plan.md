@@ -272,19 +272,25 @@ These differ from the text above, or were found while building it.
   specialization. A union with a row parameter compiles when every use of it needs nothing.
 - **A closed list also covers the callbacks the body calls.** Under `={}>`, calling a callback
   parameter makes that callback need nothing.
+- **Pure mode entries hold only functions that capture nothing.** Otherwise reading an entry would
+  copy a closure, and Go shares what such a copy captured. The plan's example of a wrapper that
+  captures the outer logger needs dual mode.
 - **A lens cleanup cannot use a dependency** (`dependency-in-cleanup`). It runs when the lens ends,
   perhaps outside the block that created it. Read the entry into a binding before the lens.
 - **An injected function that has needs takes only plain parameters.**
 - **The step that writes dependencies out is** [`lower-needs.ts`](../src/lower-needs.ts). The typed
   IR has a fourth operation, `widen`, beside reading, injecting and supplying.
 - **`#a.b` copies the whole entry** and then reads the field from the copy.
-- **Fixed along the way:** in dual mode, any declaration of a function with a plain parameter was a
-  `mode-mismatch`. A declaration now takes the ownership of the definition's own parameters and
-  result from its body.
-- **Older limits that remain.** In either mode, an import with plain parameters, such as `round`,
-  cannot be passed to a parameter whose type is inferred from its use, so adapters for imports are
-  only tested with one that takes nothing. In dual mode, outside a dependency, a written
-  `(String) => String` still means an owned parameter, so such a value cannot be injected.
+- **Changed later:** written function types can now say `mut`. In dual mode an unmarked parameter
+  in one only reads its argument, wherever it is written, so entry types need no rule of their own
+  and an entry may take `mut` parameters. An injected function that has needs still may not. A
+  signature must agree with its definition about `mut`; only the result's ownership comes from the
+  body.
+- **Limits that remain.** In pure mode an import that only reads, such as `round`, cannot be passed
+  where a function type is written or inferred from a call. In dual mode, a parameter's ownership
+  that is inferred only from calls still comes out `mut` when the call passes a temporary. A
+  written result type means an owned result, so a function that returns its argument does not
+  match one.
 - Infix expressions, `if` and `fn` after `name:` in a record still need parentheses.
 
 ## Not in this plan

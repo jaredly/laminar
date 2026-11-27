@@ -1,3 +1,4 @@
+import type { Capture } from './constraints.ts';
 import type { Bound } from './constraints.ts';
 import { normalizeBorrowed } from './normalize-borrowed.ts';
 import { normalizeVectors } from './normalize-vectors.ts';
@@ -52,7 +53,7 @@ export type SemanticType =
      */
     | { tag: 'record'; fields: { name: string; type: SemanticType }[]; rest?: SemanticType }
     /**
-     * `linear`: a closure that cannot be dropped or copied. Not part of type identity.
+     * `capture`: a closure restricted by what it captured. Not part of type identity.
      * `needs`: the dependencies a call supplies; absent means none. Specialization turns them
      * into an ordinary first parameter.
      */
@@ -60,7 +61,7 @@ export type SemanticType =
           tag: 'fn';
           args: SemanticFlow[];
           result: SemanticFlow;
-          linear?: true;
+          capture?: Capture;
           needs?: SemanticType;
       }
     /** A row of dependencies. A name may repeat; the first entry hides the later ones. */
@@ -354,7 +355,7 @@ export class ElaborationBuilder {
                         tag: 'fn',
                         args: t.args.map(flow),
                         result: flow(t.result),
-                        ...(t.linear ? { linear: true as const } : {}),
+                        ...(t.capture ? { capture: t.capture } : {}),
                         ...needsProperty(t.needs && type(t.needs)),
                     };
                 case 'needs':

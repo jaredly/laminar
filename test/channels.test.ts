@@ -242,7 +242,7 @@ const cases: [name: string, expected: string, body: string][] = [
     [
         'declared channel type',
         'ok',
-        'f :: (Chan(Number)) => ()\nfn f(mut ch) { chanSend(ch, 1) }\n0',
+        'f :: (mut Chan(Number)) => ()\nfn f(mut ch) { chanSend(ch, 1) }\n0',
     ],
     [
         'chanSend taken as a value',
@@ -262,7 +262,7 @@ const cases: [name: string, expected: string, body: string][] = [
     [
         'channel of jobs in a signature',
         'ok',
-        'work :: (Chan(() => ())) => ()\nfn work(mut jobs) { let mut job = chanRecv(jobs)\n job() }\n0',
+        'work :: (mut Chan(() => ())) => ()\nfn work(mut jobs) { let mut job = chanRecv(jobs)\n job() }\n0',
     ],
     // names that bind a value and then leave it
     [

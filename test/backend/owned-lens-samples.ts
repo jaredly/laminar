@@ -86,7 +86,7 @@ const cases: [string, string, string][] = [
     ],
     [
         'a handler chosen at run time takes the lens',
-        'fn one(mut ~c) {handle("one", ~c)}\nfn two(mut ~c) {handle("two", ~c)}\neach :: (Number, (mut ~Number) => ()) => ()\nfn each(mut n, mut handler) {let conn = ~connection(n)\n handler(~conn)\n print("returned")}\n{each(13, if true then two else one)\n print("after")}',
+        'fn one(mut ~c) {handle("one", ~c)}\nfn two(mut ~c) {handle("two", ~c)}\neach :: (mut Number, mut (mut ~Number) => ()) => ()\nfn each(mut n, mut handler) {let conn = ~connection(n)\n handler(~conn)\n print("returned")}\n{each(13, if true then two else one)\n print("after")}',
         lines(...used('two', 13), 'close 13', 'returned', 'after'),
     ],
     [

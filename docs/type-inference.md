@@ -85,6 +85,20 @@ its fields in name order, so one definition can get a different layout at each u
 empty record prints as unit does. The legacy decomposition supports only closed records with
 complete patterns. See [the plan](row-polymorphic-records-plan.md).
 
+## Ownership in function types
+
+In dual mode a written function type says what a definition would: an unmarked parameter only reads
+its argument, and `mut` takes ownership of it, as in `(mut String) => String` or
+`(mut (a) => b, c) => d`. This holds in signatures, union fields, record aliases and dependency
+types. A signature must agree with its definition about which parameters are `mut`. Pure mode has
+no `mut`.
+
+- A result cannot be marked. A written result is owned, except that a definition's own result takes
+  its ownership from the body.
+- Printed schemes show it the other way round: `&T` is a parameter that only reads, and an unmarked
+  one is `mut`.
+- Without a written type, calling a parameter decides: passing it a temporary makes it `mut`.
+
 ## Dependencies
 
 A function type says which dependencies a call needs. `#name` reads one, and `inject name = value`
@@ -105,8 +119,9 @@ fn main() {
 - Nothing supplies a top-level expression, so it must need nothing (`missing-dependency`, reported
   at the `#name`).
 - Entries are read any number of times, so they cannot be linear. A function stored in one cannot
-  need dependencies itself. Injecting a function that has needs supplies them there and then. In
-  dual mode, entry functions take plain arguments.
+  need dependencies itself. Injecting a function that has needs supplies them there and then.
+  In pure mode an injected function must also be seen to capture nothing
+  ([why](owned-lenses.md)), so wrapping an outer entry in a new closure needs dual mode.
 - Signatures: `=>` is inferred, `={}>` needs nothing, `={Http, Clock}>` merges record aliases,
   `={log: (String) => (), ...e}>` lists fields and a row, and `={e}>` is exactly a row. On a
   definition, a closed list limits the body, and callers may hold more. Calling a value with a

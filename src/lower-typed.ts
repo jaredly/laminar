@@ -60,7 +60,7 @@ export function importScheme(definition: string, scheme: Scheme): IRScheme {
                     tag: 'fn',
                     args: t.args.map(flow),
                     result: flow(t.result),
-                    ...(t.linear ? { linear: true as const } : {}),
+                    ...(t.capture ? { capture: t.capture } : {}),
                     ...needsProperty(t.needs && type(t.needs)),
                 };
             case 'needs':

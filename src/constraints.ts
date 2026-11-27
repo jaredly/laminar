@@ -3,6 +3,12 @@ import type { Ty } from './types.ts';
 
 /** A parameter index is stable across solver renaming and serialized IR. */
 export type Predicate = 'Comparable' | 'Copyable' | 'Droppable' | 'Display';
+/**
+ * Why a closure is restricted. `linear`: it captured a linear value or an owned lens, so it must
+ * be called, and cannot be copied. `state`: it captured a `mut` value it may change, so it cannot
+ * be copied, though it may be dropped.
+ */
+export type Capture = 'linear' | 'state';
 export type Bound = { predicate: Predicate; parameter: number };
 type Nominal = { impossible: boolean; required: Set<number> };
 type Constructor = { definition: string; type: SemanticType };
@@ -10,7 +16,7 @@ type Constructor = { definition: string; type: SemanticType };
 // Solver variables have numeric identities; detached IR variables have namespaced strings.
 type Shape<V> =
     | { tag: 'meta' | 'rigid' | 'variable'; id: V }
-    | { tag: 'fn'; linear?: boolean }
+    | { tag: 'fn'; capture?: Capture }
     | { tag: 'tuple'; items: Shape<V>[] }
     | { tag: 'record'; fields: { type: Shape<V> }[]; rest?: Shape<V> }
     | { tag: 'needs' }
@@ -21,6 +27,8 @@ export function requirements<V>(
     type: Shape<V>,
     nominal: ReadonlyMap<string, Nominal>,
     linear: (name: string) => boolean,
+    /** Pure mode: no function, however it is held, can be copied. */
+    singleUseFunctions = false,
 ): V[] | undefined {
     const ownership = predicate === 'Copyable' || predicate === 'Droppable';
     let children: Shape<V>[];
@@ -30,7 +38,11 @@ export function requirements<V>(
         case 'variable':
             return [type.id];
         case 'fn':
-            return ownership && !type.linear ? [] : undefined;
+            if (singleUseFunctions) return undefined;
+            // A closure with state of its own may be dropped, but never copied.
+            if (type.capture === 'linear' || (type.capture && predicate === 'Copyable'))
+                return undefined;
+            return ownership ? [] : undefined;
         case 'needs':
             // A row a union takes as a parameter; no value of it is ever held.
             return [];
@@ -48,6 +60,8 @@ export function requirements<V>(
                 return ['Number', 'String', 'Bool'].includes(type.name) ? [] : undefined;
             if (ownership) {
                 if (linear(type.name)) return undefined;
+                // A union that cannot be compared is one with a function among its fields.
+                if (singleUseFunctions && nominal.get(type.name)?.impossible) return undefined;
                 children = type.name === 'Chan' ? [] : type.args;
             } else {
                 const summary = nominal.get(type.name);
@@ -61,7 +75,7 @@ export function requirements<V>(
     }
     const variables: V[] = [];
     for (const child of children) {
-        const needed = requirements(predicate, child, nominal, linear);
+        const needed = requirements(predicate, child, nominal, linear, singleUseFunctions);
         if (!needed) return undefined;
         variables.push(...needed);
     }

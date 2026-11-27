@@ -238,19 +238,35 @@ All six items above are in, with these decisions:
 - **Spelling** is `mut ~x`, and `mut ~A` for a parameter in a function type. A result is always
   written `~A`.
 - **Unknown callees borrow.** To take ownership, use a top-level declaration, which now speaks
-  before the body is checked: `each :: (Number, (mut ~Number) => ()) => ()`. A function type
-  after a parameter's `:` does not parse, and in dual mode a declaration needs every value parameter
-  to be `mut`. Both limits were already there.
+  before the body is checked: `each :: (mut Number, mut (mut ~Number) => ()) => ()`. A function type
+  after a parameter's `:` does not parse, a limit that was already there. In dual mode a
+  declaration marks the parameters its definition declares `mut`.
 - **Branches.** A lens moved in one branch is moved afterwards. The other branches must still hold a
   value, and end the lens at the branch edge. In a lens-valued `case`, every arm must agree.
 - **Typed IR** carries `owned` on lens positions and `linear` on function types. `owned` is part of
   a function type's identity, because the calling convention differs. `linear` is not.
 
-Linear closures are in; shared closures are not. Function types have two states, not three, and
-linearity is not inferred through unification:
+Linear closures and closures with state of their own are in; shared closures as a mode are not.
+A function type is ordinary, `state` or `linear`, and this is not inferred through unification:
 
 - A closure is linear when it captured a linear value or an owned lens. Two function types that
   differ in this do not unify (`linear-closure-mismatch`), so two branches cannot mix them.
+- A closure has state when it captured a `mut` value that it could change: anything but numbers,
+  strings, booleans, channels, ordinary functions, and tuples or closed records of these. A value of
+  a type not yet known counts. It may be dropped, but it cannot be shared or copied
+  (`shared-closure`): not bound plain, passed to a plain parameter, duplicated or injected. Two such
+  closures can meet in one branch; one cannot yet be mixed with a function that can be called again
+  (`stateful-closure-mismatch`), and a written function type means such a function. Schemes print it
+  as `once (…) => …`. Tests are in `test/stateful-closures.test.ts`.
+- Pure mode is simpler: every function value is used once, whatever it captured. `dup` and `array`
+  refuse a function, and any value that holds one (`function-copy`), including a union with a
+  function field. The one exception is a dependency, which every `#name` read copies. `inject`
+  accepts a function only if it can be seen to capture nothing (`capturing-dependency`): a
+  definition or built-in, a lambda without captures, another dependency, or a local that holds one
+  of these and has not been written since. Tuples, records, vectors, unions and branches of these
+  count too. A function returned by a call does not, since its captures are not tracked.
+- It reaches a parameter the same way a linear closure does, below. That is stricter than it needs
+  to be: a parameter that only might call it is refused too.
 - A function can receive a linear closure in a `mut` parameter when every path calls it
   exactly once or forwards it to another parameter with that guarantee. Named definitions
   export the verified parameter positions in their schemes. Local function literals and

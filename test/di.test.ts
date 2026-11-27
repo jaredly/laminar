@@ -81,8 +81,8 @@ describe('dependencies: inferred needs', () => {
         ],
         // A callback under `inject` needs the injected entry in front of the outer one.
         [
-            'fn quietly(job) {\n let loud = #log\n inject log = fn (m) { loud(m) }\n job()\n }',
-            '(() ={log: (a) => b, log: (a) => b, ...c}> d) ={log: (a) => b, ...c}> d',
+            'fn quietly(job) {\n let loud = #log\n inject log = loud\n job()\n }',
+            '(() ={log: a, log: a, ...b}> c) ={log: a, ...b}> c',
         ],
         // An injected function's needs are supplied there, so they become the injector's.
         [
@@ -109,7 +109,11 @@ describe('dependencies: rejections', () => {
         ['fn a() { #k + 1 }\nfn f() { (a(), #k == "s") }', 'type-mismatch', 'pure'],
         ['fn loop(n) {\n inject depth = n\n loop(1)\n }', 'infinite-type', 'pure'],
         ['fn c() ~{\n lens x <- 1\n print("${#a}")\n }', 'dependency-in-cleanup', 'pure'],
-        ['fn go() {\n inject f = fn (mut x) { x }\n 1\n }', 'unsupported-dependency', 'dual'],
+        [
+            'fn bump(mut x) { x := x + #k\n dup(~x) }\n{\n inject k = 1\n inject f = bump\n 1\n }',
+            'unsupported-dependency',
+            'dual',
+        ],
         [
             'type linear H {\n H(Number)\n }\nfn go() {\n inject h = H(1)\n 1\n }',
             'linear-dependency',
@@ -189,6 +193,45 @@ describe('dependencies: signatures', () => {
         ).toBe('accepted');
         // An annotation says nothing about who owns a definition's own parameters.
         expect(code('f :: (String) => String\nfn f(u) { u }', 'dual')).toBe('accepted');
+    });
+});
+
+describe('`mut` in written function types', () => {
+    const dual = (source: string) => code(source, 'dual');
+    const reads = 'fn show(s) { "x ${s}" }\n';
+    const takes = 'fn take(mut s) { "x ${s}" }\n';
+    const ap = (type: string) => `ap :: (${type}) => String\nfn ap(f) { f("a") }\n`;
+    it.each([
+        // An unmarked parameter only reads, as in a definition; `mut` takes ownership.
+        [ap('(String) => String') + reads + 'ap(show)', 'accepted'],
+        [ap('(String) => String') + 'ap(fn (s) { "x ${s}" })', 'accepted'],
+        [ap('(mut String) => String') + takes + 'ap(take)', 'accepted'],
+        [ap('(String) => String') + takes + 'ap(take)', 'mode-mismatch'],
+        [ap('(mut String) => String') + reads + 'ap(show)', 'mode-mismatch'],
+        ['type Op {\n Op((String) => String)\n }\n' + reads + 'Op(show)', 'accepted'],
+        ['type Op {\n Op((mut String) => String)\n }\n' + takes + 'Op(take)', 'accepted'],
+        [
+            'type Op = {run: (mut String) => String}\nx :: (Op) => String\nfn x(o) { match o { {run: r} -> r("a") } }\n1',
+            'accepted',
+        ],
+        // A signature must agree with its definition about `mut`.
+        ['f :: (mut Number) => Number\nfn f(mut x) { x }\n1', 'accepted'],
+        ['f :: (Number) => Number\nfn f(mut x) { x }\n1', 'mode-mismatch'],
+        ['f :: (mut Number) => Number\nfn f(x) { x }\n1', 'mode-mismatch'],
+        ['f :: (String) => String\nfn f(x) { x }\n1', 'accepted'],
+        [
+            'f :: (mut Number) => Number\nfn f(mut x) { x }\nx :: (mut Number) => mut Number\nfn x(mut n) { n }\n1',
+            'syntax',
+        ],
+    ])('%s', (source, expected) => {
+        if (expected === 'syntax') expect(() => dual(source)).toThrow();
+        else expect(dual(source)).toBe(expected);
+    });
+    it('needs dual mode', () => {
+        expect(code('f :: (mut Number) => Number\nfn f(x) { x }\n1')).toBe('dual-only');
+    });
+    it('is only for the parameters of a function type', () => {
+        expect(dual('f :: (Chan(mut Number)) => ()\nfn f(c) { () }\n1')).toBe('invalid-mut');
     });
 });
 
@@ -307,7 +350,9 @@ fn k() { #k }
     ],
     [
         'a callback under inject sees the injected entry',
-        `fn quietly(job) {
+        // The new logger captures the outer one, so pure mode would refuse it.
+        `// laminar: dual
+fn quietly(job) {
     let loud = #log
     inject log = fn (m) { loud("(quiet) \${m}") }
     job()
@@ -417,6 +462,25 @@ main()`,
         [
             ['noon get a', 'contents of a'],
             ['noon get b', 'contents of b'],
+        ],
+    ],
+    [
+        'dual: a callback that takes `mut`, written and stored',
+        dual +
+            `fn first(mut v) { v[0] := "changed"\n v }
+ap :: (mut (mut Vector(String)) => Vector(String)) ={step: (mut Vector(String)) => Vector(String)}> (Vector(String), Vector(String))
+fn ap(mut f) {
+    let v = [:"a", "b":]
+    (f(dup(v)), #step(dup(v)))
+}
+fn go() {
+    inject step = first
+    ap(first)
+}
+go()`,
+        [
+            ['changed', 'b'],
+            ['changed', 'b'],
         ],
     ],
     [
@@ -567,8 +631,10 @@ fn needy() { #a + 0 }
         ['yes', 'no'],
     ],
     [
-        'dup a needy closure',
-        'fn mk() { fn () { #a } }\n{\n    let f = mk()\n    inject a = 5\n    let g = dup(~f)\n    (g(), f())\n}',
+        // Pure mode never copies a function, so this is the dual language's shared closure.
+        'copy a needy closure',
+        dual +
+            'fn mk() { fn () { #a } }\nfn go() {\n let f = mk()\n inject a = 5\n let g = f\n (g(), f())\n }\ngo()',
         [5, 5],
     ],
     [

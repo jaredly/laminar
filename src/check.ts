@@ -164,7 +164,11 @@ export class Checker {
         // A closure that is not linear may be dropped, so what it holds must not be.
         for (const capture of elaboration.captures) {
             const closure = elaboration.nodes.find((n) => n.id === capture.node)?.type;
-            if (closure?.tag !== 'plain' || closure.value.tag !== 'fn' || closure.value.linear)
+            if (
+                closure?.tag !== 'plain' ||
+                closure.value.tag !== 'fn' ||
+                closure.value.capture === 'linear'
+            )
                 continue;
             if (isLinear(capture.type, this.declaredLinear))
                 throw new TypeDiagnostic(
@@ -213,6 +217,7 @@ export class Checker {
             this.constructors,
             undefined,
             this.types,
+            { linearTypes: this.policy.linearTypes },
         ).typeDeclaration(node);
         if (this.policy.linearTypes && !node.linear)
             for (const scheme of constructors.values())
