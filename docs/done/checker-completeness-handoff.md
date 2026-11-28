@@ -7,7 +7,7 @@ The scoped restoration work and the three follow-up slices are complete as of
 through C/Wasm, and constructor/literal `aslens` cleanup patterns. No explicitly
 scoped implementation task remains in this handoff. Use this document to preserve
 contracts and regression coverage; continue broader backend work through the
-[C codegen plan](c-codegen-plan.md), with the mapping below.
+[C codegen plan](../c-codegen-plan.md), with the mapping below.
 
 The latest full verification is **1136 pass / 39 existing skips / 0 failures across
 34 files**, with 38 inline snapshots. TypeScript and diff checks pass. Native
@@ -533,7 +533,7 @@ The shared temporary-focus corpus now has 21 cases.
 ## Separate broader work and C codegen plan mapping
 
 These are follow-up milestones, not unfinished scoped restoration tasks. The
-[codegen plan](c-codegen-plan.md) already schedules most of them:
+[codegen plan](../c-codegen-plan.md) already schedules most of them:
 
 | Follow-up | Existing plan coverage | Remaining boundary |
 | --- | --- | --- |

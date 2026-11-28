@@ -1,6 +1,9 @@
 # Owned lenses: moving a lens into a closure
 
-Status: proposal. Nothing here is implemented. It grew out of [concurrency.md](concurrency.md), where
+Status: owned lenses are implemented in the checker (see
+[What the checker does now](#what-the-checker-does-now)), on the Go and C backends and in the
+reference evaluator (see [What the backends do now](#what-the-backends-do-now)). The shared closure
+mode is not started. It grew out of [concurrency.md](concurrency.md), where
 a connection that should be a lens, with its cleanup owned by the library that produced it, cannot be
 handed to a task.
 
@@ -112,7 +115,11 @@ fn serve(listener, requests) {
 }
 ```
 
-(A lens argument must come last, so `requests` precedes `conn`.)
+A call may take several lenses. Their cleanups run in reverse setup order, like nested scopes, and
+a function ends the owned lens parameters it still holds from last to first. Moving one lens and
+borrowing another ends the moved one first, because its new holder ends it during the call. Two
+older cases still end in the order written: a tuple lens, and the owned lenses a closure captured
+and did not pass on.
 
 ## Checker work
 
@@ -122,7 +129,7 @@ All in the checker, testable without touching a backend.
    the `OWNED`/`SHARED` mode that plain types carry in `src/types.ts`. It has to unify, print and
    round-trip through `src/elaborated.ts` and the typed IR.
 2. **The `mut ~x` parameter.** `lambda` in `src/infer.ts` already handles `pat.type === 'lens'`,
-   including "Lens argument must be last" and the restore check at exit. An owned lens parameter
+   including the restore check at exit. An owned lens parameter
    skips the "borrowed from the caller" bookkeeping and gets its own place that it must end.
 3. **The producer rule.** A function whose result is an owned lens may take no borrowed lens
    parameter. An error otherwise, with a message that names the parameter.
@@ -150,7 +157,7 @@ Shared closures are what makes a handler reusable: `serveEach(listener, handler)
 closure that captures the request channel and call it for every connection, instead of a named
 top-level function.
 
-### What exists today
+### What existed before the checker work
 
 Checked against the compiler on all three backends:
 
@@ -197,7 +204,7 @@ let f = fn () { finish(c) }     // accepted; f is dropped and the connection is 
 0
 ```
 
-`src/linear.ts` notes it: "Closures are not yet considered."
+The checker now rejects it.
 
 ### What it needs
 
@@ -219,9 +226,112 @@ let f = fn () { finish(c) }     // accepted; f is dropped and the connection is 
   counts on the environment (`retain_context` exists for strings and vectors), atomic once tasks
   exist there. The reference evaluator needs to share a callable value instead of throwing.
 
-## Backend work
+## What the checker does now
 
-This is the harder half, and the reason to do the checker first.
+Dual mode only. Tests are in `test/owned-lenses.test.ts`.
+
+All six items above are in, with these decisions:
+
+- **The producer rule holds by construction.** A returned lens is owned exactly when the function
+  has no `~x` parameter. Nothing is inferred from the body, so there is no separate producer error:
+  moving the result of a borrowing function is `borrowed-lens-move` where the move is written.
+- **Spelling** is `mut ~x`, and `mut ~A` for a parameter in a function type. A result is always
+  written `~A`.
+- **Unknown callees borrow.** To take ownership, use a top-level declaration, which now speaks
+  before the body is checked: `each :: (mut Number, mut (mut ~Number) => ()) => ()`. A function type
+  after a parameter's `:` does not parse, a limit that was already there. In dual mode a
+  declaration marks the parameters its definition declares `mut`.
+- **Branches.** A lens moved in one branch is moved afterwards. The other branches must still hold a
+  value, and end the lens at the branch edge. In a lens-valued `case`, every arm must agree.
+- **Typed IR** carries `owned` on lens positions and `linear` on function types. `owned` is part of
+  a function type's identity, because the calling convention differs. `linear` is not.
+
+Linear closures and closures with state of their own are in; shared closures as a mode are not.
+A function type is ordinary, `state` or `linear`, and this is not inferred through unification:
+
+- A closure is linear when it captured a linear value or an owned lens. Two function types that
+  differ in this do not unify (`linear-closure-mismatch`), so two branches cannot mix them.
+- A closure has state when it captured a `mut` value that it could change: anything but numbers,
+  strings, booleans, channels, ordinary functions, and tuples or closed records of these. A value of
+  a type not yet known counts. It may be dropped, but it cannot be shared or copied
+  (`shared-closure`): not bound plain, passed to a plain parameter, duplicated or injected. Two such
+  closures can meet in one branch; one cannot yet be mixed with a function that can be called again
+  (`stateful-closure-mismatch`). It is written and printed as `once (…) => …`, and an unmarked
+  written type means a reusable function. Tests are in `test/stateful-closures.test.ts`.
+- Pure mode is simpler: every function value is used once, whatever it captured. `dup` and `array`
+  refuse a function, and any value that holds one (`function-copy`), including a union with a
+  function field. The one exception is a dependency, which every `#name` read copies. The only
+  functions `inject` accepts are top-level ones, definitions and built-ins, since those can always
+  be used again. Each must be named at the `inject`, alone or inside a tuple, record, vector or
+  union built there. Anything else must hold no function (`local-function-dependency`): not a
+  lambda, a local, another dependency or the result of a call.
+- It reaches a parameter the same way a linear closure does, below. That is stricter than it needs
+  to be: a parameter that only might call it is refused too.
+- A function can receive a linear closure in a `mut` parameter when every path calls it
+  exactly once or forwards it to another parameter with that guarantee. Named definitions
+  export the verified parameter positions in their schemes. Local function literals and
+  aliases carry the same evidence. After a branch, only guarantees shared by every arm
+  survive. Replacing a function in storage replaces its guarantee as well.
+  A direct `spawn(task)` counts as a call; `spawn` used as a value carries no guarantee.
+  A recursive self-call has no inferred guarantee while its body is being checked.
+- A generic closure that captures a value of unknown type can only be used at types that are not
+  linear.
+
+Linear closures needed four older leaks closed, which also changes how plain linear values check:
+`let _ = Conn(1)` (or any `_` over a linear value), a value consumed in only one branch, a generic
+wrapper around a function that drops its argument, and a generic `_` or one-sided branch used at a
+linear type are all `linear-unconsumed` now.
+
+## What the backends do now
+
+All three run moved lenses. The samples in `test/backend/owned-lens-samples.ts` make every cleanup
+print, so each checks when each lens ends, and all three must print the same thing
+(`test/owned-lens-execution.test.ts`). C runs them under ASan and UBSan at `-O0` and again at `-O2`,
+and its test program aborts if any allocation is still live at exit.
+
+- **One convention.** An argument to a `mut ~` parameter, or a captured owned lens, is one
+  self-contained lens struct whose `restore` runs everything still pending. The caller runs nothing
+  afterwards. A function that returns a lens already packed it this way.
+- **Typed IR** has a `give` instruction, which takes a lens out of a scope's loan, a parameter or a
+  capture without restoring it, and an `end` cleanup for a parameter or capture that is still held.
+  The scope that gave a lens away has no `release` for it. When one branch gives a lens away, the
+  others end it on their own edge, newest first.
+- **The IR verifier** checks that each owned lens ends or moves exactly once on every path, and
+  that a lens which moves borrows no caller storage.
+- **Shape.** An owned lens is never split into one pointer per field, because only the single
+  struct has a `restore`.
+- **Tail calls.** A restore is a Go closure. A function whose closures mention its own parameters
+  is already left as recursion, and one that only mentions locals gets fresh ones on each pass, so
+  an accept loop stays a loop.
+- **C** has no closures of its own, so the struct's `context` is a counted heap allocation holding
+  the focus and every local the pending cleanup reads. The restore function releases it. A function
+  that moves several lenses builds one context for each. A captured lens is moved out of the
+  environment and never copied, since a closure that holds one cannot be shared.
+- **C exports** reject a definition whose result holds a closure that must be called: a host could
+  drop the handle, skipping the cleanup. Lens parameters and results were already rejected.
+- **The reference evaluator** hands over the lens object itself, still unfinished. It runs the typed
+  IR directly, so it shares nothing with the backends' lowering. It fails if a lens is restored
+  twice, if a function returns still holding one, or if a closure that holds one is dropped.
+- **Branch joins.** A branch that ends or moves a lens clears that lens's storage in every arm
+  before joining them. Without that, C read freed memory when one arm wrote a string through a
+  lens and another moved it. Random programs compared against the reference found this; the
+  hand-written samples had not. `test/owned-lens-random.test.ts` keeps that comparison, with
+  fixed seeds; `LAMINAR_LENS_SEEDS=1000-1400` runs other ones.
+- **`examples/server.lm`** now moves each connection into its own task. Built with `go build -race`
+  and sent 200 `/count`, 100 `/mandelbrot` and 100 `/slow` requests at once, it answered all 400
+  in 1.1 seconds with counts 1 to 200, left only the listener open, and reported no races.
+
+Not yet:
+
+- C has no `spawn`. The reference evaluator has `spawn`, channels and `sleep`, so moves into tasks
+  are compared between it and Go. It has no sockets, so `examples/server.lm` runs only on Go.
+- The reference runs one interleaving of a program and cannot find a data race. That still takes
+  `go build -race`.
+- A lens cannot move inside a lens-valued `case`.
+
+## Backend plan
+
+This was the harder half, and the reason to do the checker first.
 
 A lens today is borrowed in a lexical scope. The typed IR emits `borrow` for the `let`, and the
 nested block carries a `release` cleanup, so the restore runs at the end of the `let`. In Go the
@@ -272,8 +382,9 @@ Rejected, each with its own code:
 - **Lenses in data.** Whether an owned lens can be stored in a tuple or record, or returned inside
   one. Nothing above needs it. Allowing it makes owned lenses first-class values, which is a bigger
   step than moving them into closures.
-- **Channels.** Sending an owned lens over a channel is the natural next step and needs typed
-  channels (`Chan(a)`), which do not exist yet.
+- **Channels.** Channels are typed now ([concurrency.md](concurrency.md#typed-channels)). A lens
+  still cannot be sent as itself, but a closure that captured one can, and its receiver must call
+  it. `examples/server-workers.lm` hands connections to workers that way.
 
 ## Not in this work
 

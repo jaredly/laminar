@@ -8,13 +8,12 @@
 // - `spawn(task)` runs a closure on its own task. A closure moves or shares what it
 //   captures and can never borrow, so a task cannot reach another task's mutable data.
 //   Two tasks incrementing one counter does not compile (`borrowed-capture`).
-// - A connection is a `linear` value. It is moved into the task that serves it, and that
-//   task must consume it, so it cannot be used twice or forgotten.
+// - A connection is a lens that `connection` produces, and `connection` owns its cleanup.
+//   It borrows nothing, so it can move into the task that serves it, and the cleanup moves
+//   with it: the connection closes when that task is done. The accept loop cannot use it
+//   again (`use-after-move`), and the closure holding it must run (`linear-unconsumed`).
 // - Plain values are immutable, so any number of tasks can read them. The only state that
 //   changes is the request count, and one task owns it: others ask it over a channel.
-type linear Conn {
-    Conn(Number)
-}
 
 // ---- reading the request ----
 
@@ -91,20 +90,41 @@ fn page(path, requests) {
 
 // ---- serving ----
 
-// consumes the connection: it is read, answered and closed here
-fn handle(mut conn, requests) {
-    match conn {
-        Conn(fd) -> {
-            let (status, body) = page(pathOf(recv(fd)), requests)
-            send(fd, "HTTP/1.1 ${status}\r\nContent-Type: text/plain\r\nConnection: close\r\n\r\n${body}")
-            closeHandle(fd)
-        }
+// a connection cannot be copied: dup(~conn) is a type error
+type linear Conn {
+    Conn(Number)
+}
+
+// these borrow the connection. A lens argument comes last.
+fn recvFrom(~conn) {
+    match ~conn {
+        Conn(fd) -> recv(dup(~fd))
     }
 }
 
+fn sendTo(text, ~conn) {
+    match ~conn {
+        Conn(fd) -> send(dup(~fd), text)
+    }
+}
+
+// the producer owns the cleanup. It borrows no lens, so the lens it returns is owned
+fn connection(listener) ~{
+    lens conn <- Conn(accept(listener))
+    match conn {
+        Conn(fd) -> closeHandle(fd)
+    }
+}
+
+// `mut ~` takes the lens: this function reads, answers, and the connection closes with it
+fn handle(requests, mut ~conn) {
+    let (status, body) = page(pathOf(recvFrom(~conn)), requests)
+    sendTo("HTTP/1.1 ${status}\r\nContent-Type: text/plain\r\nConnection: close\r\n\r\n${body}", ~conn)
+}
+
 fn serve(listener, requests) {
-    let mut conn = Conn(accept(listener))
-    spawn(fn () { handle(conn, requests) })
+    let conn = ~connection(listener)
+    spawn(fn () { handle(requests, ~conn) })
     serve(listener, requests)
 }
 

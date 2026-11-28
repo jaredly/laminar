@@ -1,5 +1,5 @@
 import { expect, it } from 'bun:test';
-import { mkdtempSync, readFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { checkSource } from '../src/compiler.ts';
@@ -58,7 +58,7 @@ it('mandelbrot: writes a well-formed bmp', () => {
         .replace('fn width() { 150 }', 'fn width() { 10 }')
         .replace('fn height() { 120 }', 'fn height() { 8 }')
         .replace('"mandelbrot.bmp"', JSON.stringify(path));
-    executeTypedProgram(checkSource(source), { stdout: () => {} });
+    executeTypedProgram(checkSource(source), { stdout: () => {}, writeFileSync });
     const bmp = readFileSync(path);
     expect(bmp.length).toBe(54 + 32 * 8);
     expect(bmp.subarray(0, 2).toString('latin1')).toBe('BM');

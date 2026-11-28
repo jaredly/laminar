@@ -1,14 +1,15 @@
 import { Declaration, References, reachableNames, typeDependencies } from '../backend/reachable.ts';
 import type { ConcreteProgram, ConcreteBlock } from '../concrete-ir.ts';
+import type { SemanticFlow } from '../elaborated.ts';
 import { Storage, type Cell, type Data, type Leaf, type View } from './storage.ts';
-import { decodeNumber, type IRPattern, type SlotRef } from '../typed-ir.ts';
+import { decodeNumber, type IRPattern, type SlotRef, positions } from '../typed-ir.ts';
 import { verifyConcreteProgram } from '../verify-concrete.ts';
 import { BackendDiagnostic } from '../backend/target.ts';
 import { cSyntax, identifier, type Statement, type TranslationUnit } from './syntax.ts';
 import { Locals } from '../backend/imperative/locals.ts';
 import { derefText, isExpr, memberText, same, type Expr } from '../backend/imperative/code.ts';
 import { isLocal, isScope, mapScope, visit } from '../backend/imperative/statements.ts';
-import { appendFunction, appendPart, cBytes, stringRuntime, stringType } from './strings.ts';
+import { appendFunction, cBytes, stringRuntime, stringType } from './strings.ts';
 import { importName, infixImports, requireImport, usesHost } from '../runtime-imports.ts';
 import { functionNames } from '../backend/names.ts';
 import { localNames, takesName } from '../backend/local-names.ts';
@@ -643,9 +644,7 @@ export function lowerC(
         const l = layout(id);
         if (l.kind === 'union' || l.kind === 'string' || l.kind === 'vector') return true;
         if (isCallable(id)) return true;
-        return (
-            l.kind === 'record' && l.fields.some((f) => f.kind === 'value' && reaches(f.layout))
-        );
+        return l.kind === 'record' && l.fields.some((f) => f.kind === 'value' && reaches(f.layout));
     };
     const shareValue = (expr: Expr, id: string): Expr => {
         const l = layout(id);
@@ -972,7 +971,10 @@ export function lowerC(
                         'FILE *file = fopen(name, "wb");',
                         { head: 'if (!file)', body: ['abort();'] },
                         'size_t written = fwrite(packed, 1, value.length, file);',
-                        { head: 'if (fclose(file) != 0 || written != value.length)', body: ['abort();'] },
+                        {
+                            head: 'if (fclose(file) != 0 || written != value.length)',
+                            body: ['abort();'],
+                        },
                         'free(packed);',
                         cc`${use('string_drop')}(path);`,
                     );
@@ -1270,7 +1272,8 @@ export function lowerC(
                 places = new Map<string, View>();
             const locals = new Locals(cSyntax);
             activeLocals = locals;
-            let counter = 0;
+            let counter = 0,
+                contexts = 0;
             const fresh = () => locals.reference(`v${counter++}`);
             const { parameterNames: sources, bindingName, versionName, hint } = naming.get(c.id)!;
             const parameterNames = ['environment', ...sources];
@@ -1280,6 +1283,15 @@ export function lowerC(
                 type: type(p.layout),
             }));
             const lensSlots = new Map<string, SlotRef>();
+            /** Owned lenses this function was handed, by place, until it ends or moves them. */
+            const held = new Map<string, Lens>();
+            const source = program.semantic.program.units
+                .find((u) => u.id === c.unit)
+                ?.functions.find((f) => f.id === c.function);
+            const ownsParameter = (n: number): boolean => {
+                const argument = source?.type.args[n];
+                return argument?.tag === 'flow' && !!argument.owned;
+            };
             const declare = (
                 id: string,
                 expression: Expr,
@@ -1468,6 +1480,8 @@ export function lowerC(
             // Incoming lenses as passed, so a call that needs the same lens can forward one.
             const physicalLenses: { expression: string; layout: string; data: Data }[] = [];
             c.parameters.forEach((p, i) => {
+                // An owned lens is not written back for the caller: it ends here, or moves on.
+                if (p.lensPlace && ownsParameter(i)) return;
                 if (p.lensPlace) {
                     const view = incoming(sources[i]!, p.layout);
                     places.set(p.lensPlace, view);
@@ -1489,7 +1503,10 @@ export function lowerC(
             const flushParameters = (body: Statement[]) =>
                 parameters.forEach((p) => flush(p.expression, p.layout, storage.get(p.view), body));
             const ref = (s: SlotRef) =>
-                storage.project(places.get(s.place) ?? unsupported('Unavailable C place'), s.path);
+                storage.project(
+                    places.get(s.place) ?? unsupported('Unavailable C place'),
+                    positions(s.path),
+                );
             const value = (id: string) =>
                 values.get(id) ?? unsupported('Indirect/function value requires phase 6');
             // A lens needs no restoration when every endpoint is a plain read pointer.
@@ -1532,6 +1549,8 @@ export function lowerC(
                 const h = helperCounter++,
                     context = `Restore${h}`,
                     restore = `restore${h}`;
+                // The context's local here; a function that moves lenses can build several.
+                const ctx = contexts++ ? `moved_context${h}` : 'ctx';
                 // This body hands out the restoration function and its context.
                 use(context);
                 use(restore);
@@ -1545,11 +1564,13 @@ export function lowerC(
                         // the matching member of that copy (valid whichever constructor it holds).
                         const r = `focus${path}`;
                         contextFields.push(cText`${type(scattered.union)} ${r};`);
-                        initial.push(cc`ctx->${r} = ${read(storage.get(view), scattered.union)};`);
-                        return cc`(${type(id)}){.tag=ctx->${r}.tag, ${joinCode(
+                        initial.push(
+                            cc`${ctx}->${r} = ${read(storage.get(view), scattered.union)};`,
+                        );
+                        return cc`(${type(id)}){.tag=${ctx}->${r}.tag, ${joinCode(
                             scattered.pointers.map(
                                 (p) =>
-                                    cc`.${member(p.name)}=&ctx->${r}.as.v${p.variant}${p.name.includes('_') ? cc`.item${p.index}` : ''}`,
+                                    cc`.${member(p.name)}=&${ctx}->${r}.as.v${p.variant}${p.name.includes('_') ? cc`.item${p.index}` : ''}`,
                             ),
                             ', ',
                         )}}`;
@@ -1560,10 +1581,10 @@ export function lowerC(
                         const r = `focus${path}`,
                             output = l.fields.find((f) => f.name === 'replacement');
                         contextFields.push(cText`${type(input.layout)} ${r};`);
-                        initial.push(cc`ctx->${r} = ${read(storage.get(view), input.layout)};`);
+                        initial.push(cc`${ctx}->${r} = ${read(storage.get(view), input.layout)};`);
                         if (output?.kind === 'pointer' && output.layout)
                             contextFields.push(cText`${type(output.layout)} ${r}out;`);
-                        return cc`(${type(id)}){.read=&ctx->${r}${output ? cc`, .replacement=&ctx->${r}out` : ''}}`;
+                        return cc`(${type(id)}){.read=&${ctx}->${r}${output ? cc`, .replacement=&${ctx}->${r}out` : ''}}`;
                     }
                     return cc`(${type(id)}){${
                         joinCode(
@@ -1642,17 +1663,19 @@ export function lowerC(
                         ],
                     });
                 });
-                body.push(`${context} *ctx = ${use('allocate_context')}(sizeof *ctx);`, {
+                body.push(`${context} *${ctx} = ${use('allocate_context')}(sizeof *${ctx});`, {
                     kind: 'if',
-                    arms: [{ condition: '!ctx', body: ['abort();'] }],
+                    arms: [{ condition: `!${ctx}`, body: ['abort();'] }],
                 });
-                captured.forEach((v) => body.push(cc`ctx->${locals.literal(v.name)} = ${v.name};`));
+                captured.forEach((v) =>
+                    body.push(cc`${ctx}->${locals.literal(v.name)} = ${v.name};`),
+                );
                 body.push(...initial);
                 const out = fresh();
                 body.push(
                     cc`${type(layoutId)} ${out} = ${resultExpression};`,
                     cc`${out}.restore = ${restore};`,
-                    cc`${out}.context = ctx;`,
+                    cc`${out}.context = ${ctx};`,
                 );
                 return out;
             };
@@ -2148,6 +2171,10 @@ export function lowerC(
                         if (c.kind === 'release') {
                             const lens = loans.get(c.loan);
                             if (lens) lens.finish(body);
+                        } else if (c.kind === 'end') {
+                            (held.get(c.slot.place) ?? unsupported('Missing owned lens')).finish(
+                                body,
+                            );
                         } else if (c.kind === 'drop-place') {
                             drop(storage.get(ref(c.slot)), body);
                             storage.put(ref(c.slot), {
@@ -2182,6 +2209,14 @@ export function lowerC(
                         // Only computed lenses introduce a new backing place.
                         if (loan!.owners) places.set(loan!.place, lens.view);
                         loans.set(i.loan, lens);
+                        continue;
+                    }
+                    if (i.op === 'give') {
+                        // The lens leaves with its pending restoration; nothing runs here.
+                        const [holder, key] =
+                            'loan' in i.from ? [loans, i.from.loan] : [held, i.from.place];
+                        lenses.set(i.out.id, holder.get(key) ?? unsupported('Missing owned lens'));
+                        holder.delete(key);
                         continue;
                     }
                     const hinted = hint(i, (id) => lensSlots.get(id));
@@ -2243,6 +2278,22 @@ export function lowerC(
                         }
                         case 'make-callable': {
                             const callable = program.callables.find((c) => c.id === i.callable)!;
+                            // A captured lens rides in the environment as a self-contained struct.
+                            const packed = new Map(
+                                i.captures.flatMap((capture, n) => {
+                                    const lens = lenses.get(capture.value);
+                                    if (!lens) return [];
+                                    const slot = layout(callable.environment).fields[n] as {
+                                        layout: string;
+                                    };
+                                    return [
+                                        [
+                                            capture.value,
+                                            closureLens(lens, slot.layout, body, false),
+                                        ],
+                                    ];
+                                }),
+                            );
                             const entries = callable.entries
                                 .map((e) => {
                                     const w = program.wrappers.find((w) => w.id === e.wrapper)!;
@@ -2280,7 +2331,7 @@ export function lowerC(
                             );
                             i.captures.forEach((capture, n) =>
                                 body.push(
-                                    cc`${environment}->capture${n} = ${value(capture.value)};`,
+                                    cc`${environment}->capture${n} = ${packed.get(capture.value) ?? value(capture.value)};`,
                                 ),
                             );
                             expr = cc`(${type(id)}){.environment=${environment}, .dispose=${use(disposers.get(callable.dispose)!)}${entries}}`;
@@ -2307,23 +2358,37 @@ export function lowerC(
                             body.push(
                                 cc`${use('builder_bytes')}(&${builder}, ${head.literal}, ${head.length});`,
                             );
-                            for (const part of i.parts) {
-                                const tail = cBytes(part.tail);
-                                const appended = value(part.value);
-                                use(appendFunction(layout(outputLayouts.get(part.value)!).kind));
+                            const bytes = (text: string) => {
+                                const { literal, length } = cBytes(text);
                                 body.push(
-                                    locals.format(
-                                        (builder, appended) =>
-                                            appendPart(
-                                                builder,
-                                                layout(outputLayouts.get(part.value)!).kind,
-                                                appended,
-                                            ),
-                                        builder,
-                                        appended,
-                                    ),
-                                    cc`${use('builder_bytes')}(&${builder}, ${tail.literal}, ${tail.length});`,
+                                    cc`${use('builder_bytes')}(&${builder}, ${literal}, ${length});`,
                                 );
+                            };
+                            const append = (id: string, expr: Expr, nested: boolean) => {
+                                const l = layout(id);
+                                if (l.kind === 'unit') {
+                                    body.push(cc`(void)${expr};`);
+                                    bytes('()');
+                                } else if (l.kind === 'record') {
+                                    bytes('(');
+                                    l.fields.forEach((f, i) => {
+                                        if (f.kind !== 'value')
+                                            return unsupported('Invalid tuple display layout');
+                                        if (i) bytes(', ');
+                                        append(f.layout, dot(expr, f.name), true);
+                                    });
+                                    bytes(')');
+                                } else {
+                                    const name =
+                                        nested && l.kind === 'string'
+                                            ? 'builder_quoted'
+                                            : appendFunction(l.kind);
+                                    body.push(cc`${use(name)}(&${builder}, ${expr});`);
+                                }
+                            };
+                            for (const part of i.parts) {
+                                append(outputLayouts.get(part.value)!, value(part.value), false);
+                                bytes(part.tail);
                             }
                             expr = cc`${use('builder_finish')}(&${builder})`;
                             break;
@@ -2761,8 +2826,18 @@ export function lowerC(
                             declare(id, zero(id), body, name);
                             const before = storage.snapshot(),
                                 outerVariables = variables.length;
+                            // Each arm starts with the same lenses, and ends or moves on its own.
+                            const pending = [loans, held].map((map) => ({
+                                map,
+                                entries: [...map],
+                                gone: new Set<string>(),
+                            }));
                             const arms = i.cases.map((arm, armIndex) => {
                                 storage.reset(before);
+                                for (const p of pending) {
+                                    p.map.clear();
+                                    p.entries.forEach(([key, lens]) => p.map.set(key, lens));
+                                }
                                 const nested: Statement[] = [];
                                 bind(
                                     arm.pattern,
@@ -2780,8 +2855,26 @@ export function lowerC(
                                 nested.push(locals.assign(name, result));
                                 const state = storage.snapshot();
                                 variables.length = outerVariables;
+                                for (const p of pending)
+                                    for (const [key] of p.entries)
+                                        if (!p.map.has(key)) p.gone.add(key);
                                 return { nested, state };
                             });
+                            // A lens that ended or moved leaves nothing to join. Its storage
+                            // may be freed, so no arm may be left reading it.
+                            for (const p of pending)
+                                for (const [key, lens] of p.entries) {
+                                    if (!p.gone.has(key)) continue;
+                                    p.map.delete(key);
+                                    for (const arm of arms) {
+                                        storage.reset(arm.state);
+                                        storage.put(lens.view, {
+                                            expression: zero(unit.id),
+                                            layout: unit.id,
+                                        });
+                                        arm.state = storage.snapshot();
+                                    }
+                                }
                             storage.reset(before);
                             // A single arm can also produce branch-local storage versions.
                             const merge = (data: Data[], previous?: Data): Data => {
@@ -2839,8 +2932,7 @@ export function lowerC(
                             continue;
                         }
                         case 'invoke': {
-                            if (i.detached)
-                                return unsupported('spawn has no C implementation');
+                            if (i.detached) return unsupported('spawn has no C implementation');
                             // An indirect call goes through the callee record's entry; a
                             // direct call invokes its known member's wrapper itself.
                             if (
@@ -2858,6 +2950,9 @@ export function lowerC(
                             const abi = program.abis.find((a) => a.id === i.abi)!;
                             const isLens = layout(id).fields.some((f) => f.name === 'restore');
                             const adapters: { finish: (body: Statement[]) => void }[] = [];
+                            // Lenses end like nested scopes, the last argument first.
+                            const finishAdapters = (body: Statement[]) =>
+                                [...adapters].reverse().forEach((a) => a.finish(body));
                             let args: Expr[] = [];
                             if (w?.kind === 'native' && w.definition === 'native/dup') {
                                 const lens = lenses.get(i.args[0]!)!;
@@ -2908,6 +3003,15 @@ export function lowerC(
                             } else {
                                 args = i.args.map((v, n) => {
                                     if (!lenses.has(v)) return value(v);
+                                    if (movesArgument(i.callee, n))
+                                        // The callee ends it: hand over its whole restoration
+                                        // and run nothing here after the call.
+                                        return closureLens(
+                                            lenses.get(v)!,
+                                            abi.arguments[n]!,
+                                            body,
+                                            false,
+                                        );
                                     const a = adapt(
                                         lenses.get(v)!,
                                         abi.arguments[n]!,
@@ -2959,13 +3063,12 @@ export function lowerC(
                             });
                             values.set(i.out.id, name);
                             if (isLens) {
-                                const rest = (body: Statement[]) =>
-                                    adapters.forEach((a) => a.finish(body));
+                                const rest = (body: Statement[]) => finishAdapters(body);
                                 lenses.set(i.out.id, {
                                     ...runtimeLens(name, id, rest),
                                     forwarded: { expression: name, rest },
                                 });
-                            } else adapters.forEach((a) => a.finish(body));
+                            } else finishAdapters(body);
                             continue;
                         }
                         default:
@@ -3007,11 +3110,22 @@ export function lowerC(
                 return value(b.result);
             };
             const outputLayouts = new Map<string, string>();
+            const outputTypes = new Map<string, SemanticFlow>();
+            /** Whether the callee in `value` takes argument `n` as an owned lens. */
+            const movesArgument = (value: string, n: number): boolean => {
+                const t = outputTypes.get(value);
+                if (t?.tag !== 'plain' || t.value.tag !== 'fn') return false;
+                const argument = t.value.args[n];
+                return argument?.tag === 'flow' && !!argument.owned;
+            };
             /** Values whose type is shared: other holders may reference their allocations. */
             const sharedValues = new Set<string>();
             const index = (b: ConcreteBlock) =>
                 b.instructions.forEach((i) => {
-                    if ('out' in i) outputLayouts.set(i.out.id, i.out.layout);
+                    if ('out' in i) {
+                        outputLayouts.set(i.out.id, i.out.layout);
+                        outputTypes.set(i.out.id, i.out.type);
+                    }
                     if ('out' in i && i.out.type.tag === 'plain' && i.out.type.mode === 'shared')
                         sharedValues.add(i.out.id);
                     if (i.op === 'scope') index(i.body);
@@ -3033,11 +3147,24 @@ export function lowerC(
             };
             markReturned(c.body, c.body.result);
             const body: Statement[] = [...setup];
+            const hold = (place: string, name: string, layoutId: string) => {
+                const lens = runtimeLens(name, layoutId, noFinish);
+                held.set(place, lens);
+                places.set(place, lens.view);
+            };
+            c.parameters.forEach((p, i) => {
+                if (p.lensPlace && ownsParameter(i)) hold(p.lensPlace, sources[i]!, p.layout);
+            });
             c.captures.forEach((capture, i) => {
                 const base = bindingName({ place: capture.place, path: [] });
                 // The sole holder moves its captures out; a holder of a shared environment copies
                 // them, so each call owns what it uses and the others still see theirs.
                 const captured = cc`((${type(c.environment)} *)${'environment'})->capture${i}`;
+                if (source?.captures[i]?.lens) {
+                    // A closure holding a lens cannot be shared, so it is always moved out.
+                    hold(capture.place, declare(capture.layout, captured, body), capture.layout);
+                    return;
+                }
                 const name = declare(
                     capture.layout,
                     erasedEnvironment(c.captures)

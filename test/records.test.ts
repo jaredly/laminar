@@ -81,7 +81,8 @@ describe('records: types', () => {
     });
     it('rejects mismatches', () => {
         expect(code('{\n let {x, z} = {x: 1, y: 2}\n x\n}')).toBe('type-mismatch');
-        expect(code('{\n let {x} = {x: 1, y: 2}\n x\n}')).toBe('type-mismatch');
+        // A pattern may name only some of the fields.
+        expect(typeOf('{\n let {x} = {x: 1, y: 2}\n x\n}')).toBe('Number');
         expect(code('{x: 1, x: 2}')).toBe('duplicate-field');
         expect(code('{\n let {x, x} = {x: 1}\n x\n}')).toBe('duplicate-field');
     });
@@ -148,7 +149,8 @@ describe('records: attribute access', () => {
     });
     it('rejects unknown fields and unknown record types', () => {
         expect(code('{\n let r = {x: 1}\n r.z\n}')).toBe('unknown-field');
-        expect(code('fn f(r) { r.x }')).toBe('unknown-record');
+        // A value of unknown type becomes a record with at least that field.
+        expect(typeOf('fn f(r) { r.x }')).toBe('({x: a, ...b}) => a');
         expect(code('{\n let r = 1\n r.x\n}')).toBe('unknown-record');
         expect(code('f(1).x')).toBe('field-target');
     });

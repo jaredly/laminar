@@ -12,7 +12,7 @@ import {
     type FlowTy,
 } from '../src/types.ts';
 
-// Step 2 of docs/scattered-constructor-lenses.md: the `replaceable` flag on lens types.
+// Step 2 of docs/done/scattered-constructor-lenses.md: the `replaceable` flag on lens types.
 // Nothing sets it to FIXED yet (constructor lenses are step 3), so these tests drive the
 // solver directly.
 
@@ -116,7 +116,7 @@ describe('replaceable flag', () => {
     });
     it('prints a fixed lens with the /= syntax and leaves other lenses unchanged', () => {
         expect(printType(fn([flow(number, number)], flow(number, number)))).toBe(
-            '(Number/Number) => Number/Number',
+            '(~Number) => ~Number',
         );
         expect(printType(fn([plain(number)], flow(number, con('Bool'), FIXED)))).toBe(
             '(Number) => Number/=Bool',

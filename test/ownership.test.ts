@@ -82,9 +82,9 @@ it('makes a call whose callee is not known yet owned when it goes into mut stora
     expect(errorCode(`${run}fn g(p) {p}\n{run(g, (1, 2))}`)).toBe('mode-mismatch');
 });
 
-it('prints shared positions with & in function types', () => {
+it('prints owned positions with mut in function types', () => {
     expect(() => checkSource('fn f(x) {x + 1}\n{f(f)}', { mode: 'dual' })).toThrow(
-        '(&Number) => Number',
+        '(Number) => mut Number',
     );
 });
 

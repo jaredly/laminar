@@ -1,3 +1,4 @@
+import { displayValue } from './display.ts';
 import { Expr, Idd, Patd, Ref, Stmt } from './expr.ts';
 import { lexpr, lpat, unwrap } from './decompose.ts';
 import { Loc, stringify } from '../parser-generator/lexer.ts';
@@ -247,7 +248,7 @@ export type Mem = { stack: Frame[]; heap: Ctx['heap'] };
 export const evalExpr = (ctx: Ctx, expr: Expr): any => {
     switch (expr.type) {
         case 'string':
-            return expr.head + expr.interp.map((i) => evalExpr(ctx, i.value) + i.tail).join('');
+            return expr.head + expr.interp.map((i) => displayValue(evalExpr(ctx, i.value)) + i.tail).join('');
         case 'deref': {
             if (expr.inner.type === 'idd') {
                 // walk back through scopes

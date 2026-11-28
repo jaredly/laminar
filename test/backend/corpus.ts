@@ -18,12 +18,14 @@ export const backendCorpus = [
     {
         name: 'record-lens-update',
         phase: 4,
+        legacy: false, // the pattern is open, which the untyped legacy lowering cannot express
         source: 'fn inc(~c) {c := c + 1}\nfn bumpx(~{x, y}) {inc(~x)\n 2}\n{let r = {y: 10, x: 1}\n (bumpx(~r), r)}',
         expected: [2, [2, 10]],
     },
     {
         name: 'record-function',
         phase: 4,
+        legacy: false, // the pattern is open, which the untyped legacy lowering cannot express
         source: 'fn sum({a, b}) {a + b}\nfn mk(n) {{b: n, a: 1}}\nsum(mk(4))',
         expected: 5,
     },

@@ -1,7 +1,146 @@
 
-BTW we should allow the lens arg to be anywhere, not just the last of the fn (that's a relic of currying)
+---
 
-heyyy what if instead of `mut` we call it `my` lol. So it's owned, not shared.
+We need to organize our docs/ folder. Move everything that has been completed to docs/done/.
+
+---
+
+Ok my good people,
+let's do exception handling now.
+we're going to go with 'checked exceptions', with return-value wrapping under the hood.
+
+What's our syntax?
+Types need a syntax.
+We've already got `(arg, arg, arg) ={Effect, Effect}> result`
+Are we gonna glom exceptions into the effect morass?
+so what if `record type = DI, union type = error`?
+hmmm
+
+```lm
+type HttpError {
+    NotFound(Number)
+    Unauthorized(String)
+}
+
+somFn :: () ={HttpError}> Number
+fn someFn(input) {
+    if input < 12 {
+        throw NotFound(23)
+    }
+    15
+}
+
+try {
+    someFn(5)
+} catch {
+    NotFound(value) -> 10
+    Unauthorized(value) -> 14
+}
+```
+
+And we'd need to ... ensure that errors dont share names.
+Can we be polymorphic in error kinds? sure why not.
+
+- a `catch` must handle all elements .. hmm... Ok maybe I want polymorphic unions as welllll so that you can eliminate & include individual error constructors.
+
+---
+
+ooh what if i target ocaml lol
+or maybe BEAMVM?
+
+---
+
+We also gotta get int and float and char and stuff sorted out.
+
+---
+
+So, pure mode should have a 'lower the typed IR to value-passing-style', so we
+can look at it, and gain some intuition for "this really is linear".
+
+---
+
+DI not effects ideas
+
+For the effects, let's actually just start with dependency injection, so no need for resume or abort.
+
+3. can we resolve the non-spread elements before the spread? I would assume that record spread is most useful for dual mode shared values; but mut / plain values should definitely be supported too.
+4. yeah that sounds right
+6. yes please. also for record patterns, you should be able to only specify a subset of fields (the others being dropped if this is operating on a non-shared non-lens), and a ...rest form makes sense as well.
+7. yeah withName would be a top-level fn. `{}` for empty record (not empty block) works for me.
+
+
+5. again we'll be doing a very limited form of effects (just value map, no continuation magic)
+8. leaving out the effect should mean 'inferred'. (a) ={}> c​ means pure, no effects. (a) ={Http, Fs}> c​ means the union of the Http and Fs record types, for example type Http = {get: (string) => string, put: (string, string) => string}; type Fs = {readFile: (string) => string}​. A union constructor can have a type variable that shows up in the effect position for the fn. print, input, sockets, channels, spawn, yeah those are all good candidates. we'll leave traps out of it for now.
+
+
+---
+
+- [x] restriction that lens arg be final is arbitrary
+- [ ] can we return lens and nonlens data together?
+- [x] can we pass in multiple lenses?
+- [ ] rearrange files to make it better
+- [ ] make a web playground, w/ examples and such (incl playable snake game pls)
+- [x] can we do .attributes on lenses yet?
+- [ ] destructure record in Pat?
+- [ ] let {x,y} = ~pos?
+- [ ] HOW do we deal with differnet numbers? int vs float?
+    - and do we do implicit int/float conversion
+    - and how do we have / and + that work on int and float
+- [ ] let's add `if let Pat` for fun
+- [ ] `let Cons(v) = x` if it's a sole constructor
+
+I'd like to do some row polymorphism I thiiiink
+also what do we think about effects?
+is there a way to concieve of effects that lends
+themselves to nice performant implementation, in the same way that lenses can be pointers?
+
+
+More language wishlist:
+- checked exceptions
+- effortless dependency injection (#something -> get 'something' from the DI object that is transparently passed around; `inject something = value` put something into the DI object)
+- what would it take to make quicksort really really fast? `arr[i],arr[j]=arr[j],arr[i]` is tricky ... unless we have ... wait for it ... dependent types??? like a proof of i != j.
+    -> we could ... prepare for this, by having a notion of disjoint borrows for records. like call(~person.name, ~person.age)` being allowed.
+
+In order to correctly `type` the DI map, do we need row polymorphism?
+I'm trying to remember my most recent foray into row polymorphism, and what I liked about it.
+    -> hmm I think it was like called `Rose`?
+
+let x = {a: 1}
+let y = {...x, b: 2}
+
+let withName = (m) => {...m, name: "Yes"} // m lacks name
+let setName = (m) => {...m, name = "Yes"} // m has name: string
+let withoutName = (m) => {...m, -name} // m has name: a, and it's removed
+let replaceName = (m) => {...m, -name = "Yes"} // m has name: a, and it's replaced with string
+
+Yeah ok I think I can be happy with that?
+hmmmmohhhhhwaittt.
+const f = (g, h) => {
+    g()
+    h()
+}
+g and h might have independent effects (or DI objects)
+that need to be combined in ways that make sense.
+So multi-record-spread is in fact what needs doing.
+hmmmm.
+Ok so we can have 'all functions have a floating effect variable'
+yeah so that works.
+
+--
+
+- [x] BTW we should allow the lens arg to be anywhere, not just the last of the fn (that's a relic of currying)
+
+- [ ] heyyy what if instead of `mut` we call it `my` lol. So it's owned, not shared.
+yeah I like that.
+
+
+fn ok(my ~x) {}
+type Lensers { name: string, arr: ~x }
+
+
+
+
+
 
 ---
 

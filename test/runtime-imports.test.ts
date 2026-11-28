@@ -52,8 +52,11 @@ const probes: Record<string, string> = {
     spawn: '// laminar: dual\nspawn(fn () { () })',
     sleep: 'sleep(0)',
     chanNew: 'chanNew()',
-    chanSend: 'chanSend(0, 1)',
-    chanRecv: 'chanRecv(0)',
+    // a send and a receive need each other, and a task to be the other side
+    chanSend:
+        '// laminar: dual\n{let ch = chanNew()\n spawn(fn () {chanSend(ch, 1)})\n chanRecv(ch)}',
+    chanRecv:
+        '// laminar: dual\n{let ch = chanNew()\n spawn(fn () {chanSend(ch, 1)})\n chanRecv(ch)}',
     listen: 'listen(0)',
     accept: 'accept(0)',
     recv: 'recv(0)',

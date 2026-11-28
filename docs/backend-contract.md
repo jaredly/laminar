@@ -13,7 +13,8 @@ Empty places are not unit values. A move marks a place/path unavailable; a write
 ## Evaluation and resource order
 
 - Evaluate ordinary tuples and constructor arguments from left to right. Evaluate interpolated expressions in source order.
-- In a call with a final lens argument, perform its setup first, then evaluate the callee, then ordinary arguments from left to right; call once; run accumulated cleanup afterward. A lens-returning call carries restoration state until its result is restored.
+- In a call with lens arguments, wherever they are written, perform their setups first, from left to right, then evaluate the callee, then ordinary arguments from left to right; call once; run accumulated cleanup afterward. Lens arguments of one call never overlap. Their cleanups run like nested scopes, in reverse setup order. A lens-returning call carries restoration state until its result is restored.
+- A moved lens is ended by its new holder, so it ends before the caller restores the lenses that call only borrowed. A function ends the owned lens parameters it still holds at exit from last to first.
 - For assignment, set up the target lens before evaluating the RHS. Evaluate the RHS once, then swap: return the currently stored value, or unit if the RHS consumed it, and install the replacement. Do not reload a value consumed by the RHS.
 - For a let, finish evaluating its value before adding its pattern bindings. Pattern destructuring does not reevaluate the value. Persistent aliases borrow their owner through the body and release the borrow only after verifying restoration at scope exit.
 - Evaluate the case scrutinee once, choose the first matching arm, and execute only that arm. Unmatched cases trap. Join types and availability; a path moved in any arm cannot be read afterward without replenishment.

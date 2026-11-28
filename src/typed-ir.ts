@@ -1,4 +1,16 @@
-import type { BindingRecord, DefinitionId, SemanticFlow, SemanticType } from './elaborated.ts';
+import type { Bound } from './constraints.ts';
+import {
+    semanticRecord,
+    semanticNeeds,
+    needsProperty,
+    type BindingRecord,
+    type DefinitionId,
+    type SemanticFlow,
+    type SemanticType,
+    type Step,
+} from './elaborated.ts';
+import type { RecordOp } from './ast.ts';
+import type { RowConstraint } from './types.ts';
 
 export type ValueId = string;
 export type EncodedNumber = number | { number: 'NaN' | 'Infinity' | '-Infinity' | '-0' };
@@ -24,7 +36,9 @@ export function decodeNumber(value: EncodedNumber): number {
               ? -Infinity
               : -0;
 }
-export type SlotRef = { place: string; path: number[]; permit?: string };
+export type SlotRef = { place: string; path: Step[]; permit?: string };
+/** A path in specialized IR, where records are gone and every step is a position. */
+export const positions = (path: Step[]): number[] => path as number[];
 export type IRPattern = {
     type: SemanticType;
     reconstructionOwner?: SlotRef;
@@ -34,16 +48,36 @@ export type IRPattern = {
     | { kind: 'drop' }
     | { kind: 'literal'; value: EncodedNumber | boolean | string }
     | { kind: 'tuple'; items: IRPattern[] }
+    /**
+     * Matches a record by field name. Without `rest`, the unnamed fields are dropped, or in a
+     * lens pattern left alone. Specialization turns it into a tuple pattern.
+     */
+    | { kind: 'record'; fields: { name: string; pattern: IRPattern }[]; rest?: IRPattern }
     | { kind: 'constructor'; name: string; items: IRPattern[]; instance: Instance }
 );
+/** The patterns nested directly in a record pattern. */
+export const subpatterns = (p: IRPattern & { kind: 'record' }): IRPattern[] => [
+    ...p.fields.map((f) => f.pattern),
+    ...(p.rest ? [p.rest] : []),
+];
 export type Instance = {
     definition: DefinitionId;
     arguments: { parameter: string; type: SemanticType }[];
     type: SemanticType;
 };
 export type IRValue = { id: ValueId; type: SemanticFlow };
+export type RecordPart =
+    | {
+          kind: 'spread';
+          source: { slot: SlotRef } | { value: ValueId };
+          /** What the source holds when it is taken; emptied parts are unit. */
+          type: SemanticType;
+      }
+    | { kind: 'field'; op: RecordOp; name: string; value?: ValueId };
 export type Cleanup =
     | { kind: 'drop-place'; slot: SlotRef }
+    /** Run the restore of the owned lens held in this place: a `mut ~` parameter or capture. */
+    | { kind: 'end'; slot: SlotRef }
     | { kind: 'release'; loan: string }
     | { kind: 'restored'; slot: SlotRef; type: SemanticType };
 export type IRBlock = {
@@ -57,6 +91,20 @@ export type Instruction =
     | (Output & { op: 'constant'; value: EncodedNumber | boolean | null })
     | (Output & { op: 'string'; head: string; parts: { value: ValueId; tail: string }[] })
     | (Output & { op: 'tuple'; items: ValueId[] })
+    /**
+     * A record update: the parts apply in order to an empty record. A spread takes its source,
+     * a value or a place whose emptied fields a later part removes or replaces. Specialization
+     * expands it into moves and a tuple.
+     */
+    | (Output & { op: 'record'; parts: RecordPart[] })
+    /** A copy of the visible entry `name` of what the enclosing function needs. */
+    | (Output & { op: 'need'; name: string })
+    /** Run `body` needing `name` too: the value goes in front, hiding any other of that name. */
+    | (Output & { op: 'inject'; name: string; value: ValueId; body: IRBlock })
+    /** Supply a function what it needs, from here: the result needs nothing. */
+    | (Output & { op: 'supply'; value: ValueId })
+    /** The converse: a function that needs nothing, as one with needs, which it ignores. */
+    | (Output & { op: 'widen'; value: ValueId })
     | (Output & { op: 'construct'; name: string; items: ValueId[]; instance: Instance })
     | (Output & { op: 'global'; instance: Instance })
     | (Output & { op: 'move'; slot: SlotRef })
@@ -85,6 +133,11 @@ export type Instruction =
       })
     | (Output & { op: 'swap'; lens: ValueId; value: ValueId })
     /**
+     * Take an owned lens out of whatever holds it, a scope's loan or a place, without restoring
+     * it. Its restore leaves with the value, which a `mut ~` argument or a capture consumes.
+     */
+    | (Output & { op: 'give'; from: { loan: string } | { place: string } })
+    /**
      * `share` marks the read of a plain binding: the result is shared storage (the out type's
      * mode is `shared`) instead of a fresh owned copy. A backend may alias it; until then it
      * is still a `dup`.
@@ -103,21 +156,30 @@ export type IRFunction = {
     id: string;
     origin: string;
     type: SemanticType & { tag: 'fn' };
-    captures: { place: string; type: SemanticType }[];
+    /** `lens`: the capture is an owned lens focusing `type`, which must end holding `write`. */
+    captures: { place: string; type: SemanticType; lens?: { write: SemanticType } }[];
     parameters: { pattern: IRPattern; lensPlace?: string }[];
     body: IRBlock;
 };
 export type IRUnit = {
     id: string;
     definition?: string;
-    signature: { quantified: string[]; type: SemanticType };
+    signature: Pick<IRScheme, 'quantified' | 'bounds' | 'rows' | 'callsOnce' | 'type'>;
     origins: { id: string; loc?: number }[];
     bindings: BindingRecord[];
-    loans: { id: string; place: string; path: number[]; parent?: string; owners?: SlotRef[] }[];
+    loans: { id: string; place: string; path: Step[]; parent?: string; owners?: SlotRef[] }[];
     functions: IRFunction[];
     entry: IRBlock;
 };
-export type IRScheme = { definition: string; quantified: string[]; type: SemanticType };
+export type IRScheme = {
+    definition: string;
+    linearResult?: true;
+    quantified: string[];
+    bounds?: Bound[];
+    rows?: RowConstraint[];
+    callsOnce?: readonly number[];
+    type: SemanticType;
+};
 export type TypedProgram = { schemaVersion: 1; imports: IRScheme[]; units: IRUnit[] };
 
 export const irPlain = (value: SemanticType): SemanticFlow => ({ tag: 'plain', value });
@@ -140,19 +202,23 @@ export function mapSemantic(
         case 'tuple':
             return { ...type, items: type.items.map((t) => mapSemantic(t, variable)) };
         case 'record':
-            return {
-                tag: 'record',
-                fields: type.fields.map((f) => ({
-                    name: f.name,
-                    type: mapSemantic(f.type, variable),
-                })),
-            };
+            return semanticRecord(
+                type.fields.map((f) => ({ name: f.name, type: mapSemantic(f.type, variable) })),
+                type.rest && mapSemantic(type.rest, variable),
+            );
         case 'fn':
             return {
                 tag: 'fn',
                 args: type.args.map((t) => mapSemanticFlow(t, variable)),
                 result: mapSemanticFlow(type.result, variable),
+                ...(type.capture ? { capture: type.capture } : {}),
+                ...needsProperty(type.needs && mapSemantic(type.needs, variable)),
             };
+        case 'needs':
+            return semanticNeeds(
+                type.entries.map((e) => ({ name: e.name, type: mapSemantic(e.type, variable) })),
+                type.rest && mapSemantic(type.rest, variable),
+            );
     }
 }
 export function mapSemanticFlow(
@@ -160,12 +226,13 @@ export function mapSemanticFlow(
     variable: (id: string) => SemanticType | undefined,
 ): SemanticFlow {
     return type.tag === 'plain'
-        ? irPlain(mapSemantic(type.value, variable))
+        ? { ...type, value: mapSemantic(type.value, variable) }
         : {
               tag: 'flow',
               read: mapSemantic(type.read, variable),
               write: mapSemantic(type.write, variable),
               ...(type.replaceable === false ? { replaceable: false as const } : {}),
+              ...(type.owned ? { owned: true as const } : {}),
           };
 }
 /** Types are structural; property insertion order and solver-local identities do not participate. */
@@ -178,26 +245,94 @@ export function typeKey(type: SemanticType): string {
         case 'tuple':
             return JSON.stringify(['tuple', type.items.map(typeKey)]);
         case 'record':
-            return JSON.stringify(['record', type.fields.map((f) => [f.name, typeKey(f.type)])]);
+            return JSON.stringify([
+                'record',
+                type.fields.map((f) => [f.name, typeKey(f.type)]),
+                type.rest ? typeKey(type.rest) : null,
+            ]);
         case 'fn':
-            return JSON.stringify(['fn', type.args.map(flowKey), flowKey(type.result)]);
+            return JSON.stringify([
+                'fn',
+                type.args.map(flowKey),
+                flowKey(type.result),
+                ...(type.needs ? [typeKey(type.needs)] : []),
+            ]);
+        case 'needs':
+            return JSON.stringify([
+                'needs',
+                type.entries.map((e) => [e.name, typeKey(e.type)]),
+                type.rest ? typeKey(type.rest) : null,
+            ]);
     }
 }
 export const flowKey = (type: SemanticFlow): string =>
     type.tag === 'plain'
         ? `value:${typeKey(type.value)}`
-        : `lens${type.replaceable === false ? '!' : ''}:${typeKey(type.read)}:${typeKey(type.write)}`;
+        : `lens${type.replaceable === false ? '!' : ''}${type.owned ? 'own' : ''}:${typeKey(type.read)}:${typeKey(type.write)}`;
+/** `typeKey`, but telling apart which positions inside function types are shared. */
+export function ownershipKey(type: SemanticType): string {
+    const flows = (f: SemanticFlow) =>
+        f.tag === 'plain'
+            ? `${f.mode ?? 'owned'}:${ownershipKey(f.value)}`
+            : `lens:${ownershipKey(f.read)}:${ownershipKey(f.write)}`;
+    switch (type.tag) {
+        case 'variable':
+            return '_';
+        case 'con':
+            return `(${type.args.map(ownershipKey).join()})`;
+        case 'tuple':
+            return `[${type.items.map(ownershipKey).join()}]`;
+        case 'record':
+            return `{${type.fields.map((f) => `${f.name}:${ownershipKey(f.type)}`).join()}${type.rest ? ownershipKey(type.rest) : ''}}`;
+        case 'fn':
+            return `fn(${type.args.map(flows).join()})${flows(type.result)}${type.needs ? ownershipKey(type.needs) : ''}`;
+        case 'needs':
+            return `<${type.entries.map((e) => `${e.name}:${ownershipKey(e.type)}`).join()}${type.rest ? ownershipKey(type.rest) : ''}>`;
+    }
+}
+/**
+ * Whether a value of function type `from` may go where `into` is expected, the two having one
+ * `typeKey`. Its owned result may be taken as shared, and a parameter it only reads may be
+ * given something owned. Inside a parameter the directions reverse. Nothing but a function
+ * type converts, so a container of functions must match exactly.
+ */
+export function ownershipFits(from: SemanticType, into: SemanticType): boolean {
+    if (from.tag !== 'fn' || into.tag !== 'fn') return ownershipKey(from) === ownershipKey(into);
+    const same = (a: SemanticFlow, b: SemanticFlow) =>
+        a.tag === 'flow' &&
+        b.tag === 'flow' &&
+        ownershipKey(a.read) === ownershipKey(b.read) &&
+        ownershipKey(a.write) === ownershipKey(b.write);
+    const parameter = (f: SemanticFlow, i: SemanticFlow) =>
+        f.tag === 'plain' && i.tag === 'plain'
+            ? (f.mode === i.mode || (f.mode === 'shared' && !i.mode)) &&
+              ownershipFits(i.value, f.value)
+            : same(f, i);
+    const result = (f: SemanticFlow, i: SemanticFlow) =>
+        f.tag === 'plain' && i.tag === 'plain'
+            ? (f.mode === i.mode || (!f.mode && i.mode === 'shared')) &&
+              ownershipFits(f.value, i.value)
+            : same(f, i);
+    return (
+        from.args.every((a, n) => parameter(a, into.args[n]!)) &&
+        result(from.result, into.result) &&
+        (!from.needs || !into.needs || ownershipKey(from.needs) === ownershipKey(into.needs))
+    );
+}
+/** A lens value against the position it fills: ownership belongs to the position alone. */
+export const valueKey = (type: SemanticFlow): string =>
+    flowKey(type.tag === 'flow' ? { ...type, owned: undefined } : type);
 
 /**
  * Backends never see record types: a record is stored as the tuple of its
- * name-sorted fields, which is exactly how the IR already builds and matches it.
- * Field names only matter to the checker and the reference evaluator.
+ * name-sorted fields. Open records stay, for the generic program a specialization keeps
+ * beside its output; specialization itself erases only after substituting rows.
  */
 export function eraseRecords<T>(value: T): T {
     if (Array.isArray(value)) return value.map(eraseRecords) as T;
     if (!value || typeof value !== 'object') return value;
     const node = value as Record<string, unknown>;
-    if (node.tag === 'record' && Array.isArray(node.fields))
+    if (node.tag === 'record' && Array.isArray(node.fields) && !node.rest)
         return {
             tag: 'tuple',
             items: (node.fields as { type: unknown }[]).map((f) => eraseRecords(f.type)),

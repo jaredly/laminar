@@ -257,7 +257,7 @@ ir-> block{
     let *_1 = united'(&x0)
 }{*x0}{}
 
-makeunit :: (()) => ~()
+makeunit :: (()) => mut ~()
 fn makeunit(()) ~()
 
 ir-> (*())=>(&(), ()=>null)

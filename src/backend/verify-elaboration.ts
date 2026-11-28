@@ -1,4 +1,4 @@
-import type { Elaboration, PlaceState, SemanticFlow, SemanticType } from '../elaborated.ts';
+import type { Elaboration, PlaceState, SemanticFlow, SemanticType, Step } from '../elaborated.ts';
 import { BackendDiagnostic } from './target.ts';
 
 /** Validate retained metadata without depending on solver objects or JavaScript identity. */
@@ -43,12 +43,18 @@ export function verifyElaboration(e: Elaboration): void {
                 return;
             case 'record':
                 t.fields.forEach((f) => type(f.type));
+                if (t.rest) type(t.rest);
                 if (t.fields.some((f, i) => i && t.fields[i - 1].name >= f.name))
                     fail('Record fields must be unique and sorted');
                 return;
             case 'fn':
                 t.args.forEach(flow);
                 flow(t.result);
+                if (t.needs) type(t.needs);
+                return;
+            case 'needs':
+                t.entries.forEach((e) => type(e.type));
+                if (t.rest) type(t.rest);
                 return;
             default:
                 fail('Unknown semantic type');
@@ -61,8 +67,9 @@ export function verifyElaboration(e: Elaboration): void {
             type(f.write);
         } else fail('Unknown semantic mode');
     };
-    const path = (p: number[]) => {
-        if (p.some((i) => !Number.isSafeInteger(i) || i < 0)) fail('Invalid place projection');
+    const path = (p: Step[]) => {
+        if (p.some((i) => (typeof i === 'string' ? !i : !Number.isSafeInteger(i) || i < 0)))
+            fail('Invalid place projection');
     };
     const state = (s: PlaceState) => {
         // A wildcard lens parameter can own a place without declaring a binding.

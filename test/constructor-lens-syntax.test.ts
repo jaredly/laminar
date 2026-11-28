@@ -3,7 +3,7 @@ import { readLines } from '../parser-generator/lexer.ts';
 import { grammar } from '../src/laminar-parser.ts';
 import type { FileItem, Lens, Linear, Type } from '../src/ast.ts';
 
-// Step 1 of docs/scattered-constructor-lenses.md: grammar and AST only. Type checking is
+// Step 1 of docs/done/scattered-constructor-lenses.md: grammar and AST only. Type checking is
 // covered by constructor-lens.test.ts.
 
 const parse = (source: string): FileItem[] =>

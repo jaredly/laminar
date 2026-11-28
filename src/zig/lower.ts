@@ -4,7 +4,7 @@ import type {
     ConcreteLayout,
     ConcreteCode,
 } from '../concrete-ir.ts';
-import type { IRPattern, SlotRef } from '../typed-ir.ts';
+import { type IRPattern, type SlotRef, positions } from '../typed-ir.ts';
 import { verifyConcreteProgram } from '../verify-concrete.ts';
 import { BackendDiagnostic } from '../backend/target.ts';
 import { Storage, type Data, type View } from './storage.ts';
@@ -271,7 +271,10 @@ export function lowerZig(program: ConcreteProgram): ZigFile {
         });
 
         const ref = (s: SlotRef) =>
-            storage.project(places.get(s.place) ?? unsupported('Unavailable Zig place'), s.path);
+            storage.project(
+                places.get(s.place) ?? unsupported('Unavailable Zig place'),
+                positions(s.path),
+            );
         const value = (id: string) =>
             values.get(id) ?? unsupported('Missing value in Zig lowering');
 

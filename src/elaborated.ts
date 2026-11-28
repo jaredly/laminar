@@ -1,29 +1,93 @@
+import type { Capture } from './constraints.ts';
+import type { Bound } from './constraints.ts';
 import { normalizeBorrowed } from './normalize-borrowed.ts';
 import { normalizeVectors } from './normalize-vectors.ts';
 import type { Decl, Linear } from './ast.ts';
-import { type FlowTy, type Scheme, type Solver, type Ty } from './types.ts';
+import { type FlowTy, type RowConstraint, type Scheme, type Solver, type Ty } from './types.ts';
 
 export type NodeId = string;
 export type BindingId = string;
 export type DefinitionId = string;
 export type PlaceId = string;
+const byName = (a: { name: string }, b: { name: string }) =>
+    a.name < b.name ? -1 : a.name > b.name ? 1 : 0;
+/** A row of dependencies, absorbing a remainder that substitution has made known. */
+export function semanticNeeds(
+    entries: { name: string; type: SemanticType }[],
+    rest?: SemanticType,
+): SemanticType {
+    if (rest?.tag === 'needs') return semanticNeeds([...entries, ...rest.entries], rest.rest);
+    if (rest?.tag === 'tuple' && !rest.items.length) rest = undefined;
+    if (rest && !entries.length) return rest;
+    // Stable, so entries of one name keep their order.
+    return { tag: 'needs', entries: [...entries].sort(byName), ...(rest ? { rest } : {}) };
+}
+/** A function type's `needs` property: omitted when it needs nothing. */
+export const needsProperty = (row: SemanticType | undefined): { needs?: SemanticType } =>
+    !row ||
+    (row.tag === 'needs' && !row.entries.length && !row.rest) ||
+    // An unconstrained row specializes to unit.
+    (row.tag === 'tuple' && !row.items.length)
+        ? {}
+        : { needs: row };
+/** A record type, absorbing a remainder that substitution has made known. */
+export function semanticRecord(
+    fields: { name: string; type: SemanticType }[],
+    rest?: SemanticType,
+): SemanticType {
+    if (rest?.tag === 'record') return semanticRecord([...fields, ...rest.fields], rest.rest);
+    // An unconstrained row defaults to the unit type, which stands for no more fields.
+    if (rest?.tag === 'tuple' && !rest.items.length) rest = undefined;
+    if (rest && !fields.length) return rest;
+    const sorted = [...fields].sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
+    return { tag: 'record', fields: sorted, ...(rest ? { rest } : {}) };
+}
 export type TypeVariableId = string;
 export type SemanticType =
     | { tag: 'variable'; id: TypeVariableId; rigid: boolean }
     | { tag: 'con'; name: string; args: SemanticType[] }
     | { tag: 'tuple'; items: SemanticType[] }
-    /** Closed record, fields sorted by name. Its runtime shape is the tuple of its fields in that order. */
-    | { tag: 'record'; fields: { name: string; type: SemanticType }[] }
-    | { tag: 'fn'; args: SemanticFlow[]; result: SemanticFlow };
+    /**
+     * Record, fields sorted by name. `rest` is the row variable of an open record; specialization
+     * replaces it, after which the runtime shape is the tuple of the fields in name order.
+     */
+    | { tag: 'record'; fields: { name: string; type: SemanticType }[]; rest?: SemanticType }
+    /**
+     * `capture`: a closure restricted by what it captured. Not part of type identity.
+     * `needs`: the dependencies a call supplies; absent means none. Specialization turns them
+     * into an ordinary first parameter.
+     */
+    | {
+          tag: 'fn';
+          args: SemanticFlow[];
+          result: SemanticFlow;
+          capture?: Capture;
+          needs?: SemanticType;
+      }
+    /** A row of dependencies. A name may repeat; the first entry hides the later ones. */
+    | { tag: 'needs'; entries: { name: string; type: SemanticType }[]; rest?: SemanticType };
 export type SemanticFlow =
     /** `mode: 'shared'` marks a plain (shared, immutable) position; absent means owned (`mut`). */
     | { tag: 'plain'; value: SemanticType; mode?: 'shared' }
     /** `replaceable: false` marks a constructor of lenses, whose whole value has no storage. */
-    | { tag: 'flow'; read: SemanticType; write: SemanticType; replaceable?: false };
+    /**
+     * `owned: true` marks an owned lens position in a function type: its callee takes the lens
+     * and ends it. Part of a function type's identity, because the calling convention differs.
+     * A lens value itself carries no flag.
+     */
+    | {
+          tag: 'flow';
+          read: SemanticType;
+          write: SemanticType;
+          replaceable?: false;
+          owned?: true;
+      };
+/** One projection of a place: a tuple item by position, or a record field by name. */
+export type Step = number | string;
 export type PlaceState = {
     place: PlaceId;
     type: SemanticType;
-    empty: number[][];
+    empty: Step[][];
     borrows: string[];
 };
 export type BindingRecord = {
@@ -32,7 +96,7 @@ export type BindingRecord = {
     declaration?: NodeId;
     definition?: DefinitionId;
     place: PlaceId;
-    path: number[];
+    path: Step[];
     kind: 'global' | 'local' | 'alias' | 'capture' | 'projection';
     borrow?: string;
     initialType: SemanticType;
@@ -50,10 +114,10 @@ export type Elaboration = {
         id: string;
         node: NodeId;
         place: PlaceId;
-        path: number[];
+        path: Step[];
         parent?: string;
         /** Present for independent computed focuses; absent for direct aliases. */
-        owners?: { place: PlaceId; path: number[]; permit?: string }[];
+        owners?: { place: PlaceId; path: Step[]; permit?: string }[];
     }[];
     temporaryLenses: {
         node: NodeId;
@@ -72,10 +136,16 @@ export type Elaboration = {
         arguments: { parameter: TypeVariableId; type: SemanticType }[];
     }[];
     captures: { node: NodeId; from: BindingId; to: BindingId; type: SemanticType }[];
+    /**
+     * Bindings that give their owned lens away. `node` is the lens argument, or the closure
+     * that captures it; `write` is then what the closure's body leaves in it. A temporary lens
+     * moved straight into a call has no binding, so no entry.
+     */
+    lensMoves: { node: NodeId; binding: BindingId; write?: SemanticType }[];
     transitions: {
         node: NodeId;
         kind: 'move' | 'write' | 'borrow-open' | 'borrow-close';
-        path: number[];
+        path: Step[];
         before: PlaceState;
         after: PlaceState;
     }[];
@@ -105,6 +175,9 @@ export type Elaboration = {
     }[];
     signature: {
         quantified: TypeVariableId[];
+        bounds?: Bound[];
+        callsOnce?: readonly number[];
+        rows?: RowConstraint[];
         type: SemanticType;
         bodyType: SemanticType;
         bodyVariables: { variable: TypeVariableId; type: SemanticType }[];
@@ -154,10 +227,11 @@ export class ElaborationBuilder {
         arguments: { parameter: TypeVariableId; type: Ty }[];
     }[] = [];
     readonly captures: { node: NodeId; from: BindingId; to: BindingId; type: Ty }[] = [];
+    readonly lensMoves: { node: NodeId; binding: BindingId; write?: Ty }[] = [];
     readonly transitions: {
         node: NodeId;
         kind: Elaboration['transitions'][number]['kind'];
-        path: number[];
+        path: Step[];
         before: RawState;
         after: RawState;
     }[] = [];
@@ -271,13 +345,24 @@ export class ElaborationBuilder {
                     return { ...t, args: t.args.map(type) };
                 case 'tuple':
                     return { ...t, items: t.items.map(type) };
-                case 'record':
-                    return {
-                        tag: 'record',
-                        fields: t.fields.map((f) => ({ name: f.name, type: type(f.type) })),
-                    };
+                case 'record': {
+                    const fields = t.fields.map((f) => ({ name: f.name, type: type(f.type) }));
+                    // `type` may expand a body variable, so absorb a remainder that became known.
+                    return semanticRecord(fields, t.rest && type(t.rest));
+                }
                 case 'fn':
-                    return { tag: 'fn', args: t.args.map(flow), result: flow(t.result) };
+                    return {
+                        tag: 'fn',
+                        args: t.args.map(flow),
+                        result: flow(t.result),
+                        ...(t.capture ? { capture: t.capture } : {}),
+                        ...needsProperty(t.needs && type(t.needs)),
+                    };
+                case 'needs':
+                    return semanticNeeds(
+                        t.entries.map((e) => ({ name: e.name, type: type(e.type) })),
+                        t.rest && type(t.rest),
+                    );
             }
         };
         const flow = (f: FlowTy): SemanticFlow =>
@@ -294,6 +379,9 @@ export class ElaborationBuilder {
                       ...(solver.replaceability(f) === 'fixed'
                           ? { replaceable: false as const }
                           : {}),
+                      ...(solver.lensOwnership(f.owned) === 'owned'
+                          ? { owned: true as const }
+                          : {}),
                   };
         const state = (s: RawState): PlaceState => ({ ...s, type: type(s.type) });
         const quantified = scheme.quantified.map(variable);
@@ -305,10 +393,16 @@ export class ElaborationBuilder {
                 if (!generic.has(t.id)) unresolved.add(t.id);
             } else if (t.tag === 'con') t.args.forEach(scan);
             else if (t.tag === 'tuple') t.items.forEach(scan);
-            else if (t.tag === 'record') t.fields.forEach((f) => scan(f.type));
-            else {
+            else if (t.tag === 'record') {
+                t.fields.forEach((f) => scan(f.type));
+                if (t.rest) scan(t.rest);
+            } else if (t.tag === 'needs') {
+                t.entries.forEach((e) => scan(e.type));
+                if (t.rest) scan(t.rest);
+            } else {
                 t.args.forEach(scanFlow);
                 scanFlow(t.result);
+                if (t.needs) scan(t.needs);
             }
         };
         const scanFlow = (f: SemanticFlow) =>
@@ -342,6 +436,11 @@ export class ElaborationBuilder {
                 ).map((a) => ({ ...a, type: type(a.type) })),
             })),
             captures: this.captures.map((c) => ({ ...c, type: type(c.type) })),
+            lensMoves: this.lensMoves.map((m) => ({
+                node: m.node,
+                binding: m.binding,
+                ...(m.write ? { write: type(m.write) } : {}),
+            })),
             transitions: this.transitions.map((e) => ({
                 ...e,
                 before: state(e.before),
@@ -366,6 +465,9 @@ export class ElaborationBuilder {
             })),
             signature: {
                 quantified,
+                ...(scheme.bounds && { bounds: scheme.bounds }),
+                ...(scheme.rows && { rows: scheme.rows }),
+                ...(scheme.callsOnce && { callsOnce: scheme.callsOnce }),
                 type: type(scheme.body),
                 bodyType: body,
                 bodyVariables: [...bodyVariables].map(([id, t]) => ({
@@ -383,4 +485,4 @@ export class ElaborationBuilder {
     }
 }
 
-export type RawState = { place: PlaceId; type: Ty; empty: number[][]; borrows: string[] };
+export type RawState = { place: PlaceId; type: Ty; empty: Step[][]; borrows: string[] };

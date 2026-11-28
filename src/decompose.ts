@@ -1,5 +1,5 @@
 import { captureUses } from './captures.ts';
-import { free, Lens, Linear, names, Pat } from './ast.ts';
+import { free, Lens, Linear, names, Pat, type Term } from './ast.ts';
 import { Expr, Idd, Patd, Ref, Stmt } from './expr.ts';
 import { string } from '../parser-generator/grammar-lexer.ts';
 
@@ -189,34 +189,11 @@ export const linearToExpr = (ctx: Ctx, lin: Linear): Expr => {
                 args: lin.args.map((l) => linearToExpr(ctx, l)),
             };
         }
-        case 'apply': {
-            const last = lin.args[lin.args.length - 1];
-            if (last && last.type === 'lens') {
-                return lensToRvalue(ctx, last.lens, (value, cleanup) =>
-                    withCleanup(
-                        {
-                            ...lin,
-                            fn: linearToExpr(ctx, lin.fn),
-                            args: lin.args.map((arg, i) => {
-                                if (i === lin.args.length - 1) return eref(value);
-                                if (arg.type === 'lens')
-                                    throw new Error(`lens only allowed in final position`);
-                                return linearToExpr(ctx, arg);
-                            }),
-                        },
-                        cleanup,
-                    ),
-                );
-            }
-            return {
-                ...lin,
-                fn: linearToExpr(ctx, lin.fn),
-                args: lin.args.map((arg) => {
-                    if (arg.type === 'lens') throw new Error(`lens only allowed in final position`);
-                    return linearToExpr(ctx, arg);
-                }),
-            };
-        }
+        case 'apply':
+            return withLensArgs(ctx, lin.args, (args, cleanup) => {
+                const call: Expr = { ...lin, fn: linearToExpr(ctx, lin.fn), args: args() };
+                return cleanup ? withCleanup(call, cleanup) : call;
+            });
         case 'assign': {
             return lensToRvalue(ctx, lin.lens, (ref, cleanup) =>
                 withCleanup(
@@ -233,22 +210,16 @@ export const linearToExpr = (ctx: Ctx, lin: Linear): Expr => {
         case 'let':
             return letToExpr(ctx, lin);
         case 'fn': {
-            let last: Patd | null = null;
-            const args: Patd[] = [];
-            lin.args.forEach((arg, i) => {
-                if (arg.pat.type === 'lens') {
-                    if (i !== lin.args.length - 1) {
-                        throw new Error(`lens arg must be last`);
-                    }
-                    last = patToPatd(ctx, arg.pat.inner, true);
-                } else {
-                    args.push({
-                        type: 'deref',
-                        inner: patToPatd(ctx, arg.pat, false),
-                        loc: arg.pat.loc,
-                    });
-                }
-            });
+            // Parameters keep their order; a lens one is bound by reference.
+            const args = lin.args.map((arg): Patd =>
+                arg.pat.type === 'lens'
+                    ? pref(patToPatd(ctx, arg.pat.inner, true))
+                    : {
+                          type: 'deref',
+                          inner: patToPatd(ctx, arg.pat, false),
+                          loc: arg.pat.loc,
+                      },
+            );
             const argnames = lin.args.flatMap((v) => names(v.pat));
             const { values: ref } = captureUses(lin.body, new Set(argnames));
             const self = [...ref]
@@ -259,33 +230,21 @@ export const linearToExpr = (ctx: Ctx, lin: Linear): Expr => {
                     return { type: 'idd', id: id.id, text: name, loc: lin.loc };
                 })
                 .filter(notEmpty);
-            const result: Expr =
-                lin.body.type === 'lens'
-                    ? {
-                          type: 'fn',
-                          args: last ? args.concat([pref(last)]) : args,
-                          body: lensToRvalue(ctx, lin.body.lens, (inner, cleanup): Expr => {
+            const result: Expr = {
+                type: 'fn',
+                args,
+                body:
+                    lin.body.type === 'lens'
+                        ? lensToRvalue(ctx, lin.body.lens, (inner, cleanup): Expr => {
                               return {
                                   type: 'tuple',
                                   loc: lin.loc,
                                   items: [eref(inner), cleanupFn(cleanup, inner.loc)],
                               };
-                          }),
-                          loc: lin.loc,
-                      }
-                    : last
-                      ? {
-                            type: 'fn',
-                            args: args.concat([pref(last)]),
-                            body: linearToExpr(ctx, lin.body),
-                            loc: lin.loc,
-                        }
-                      : {
-                            type: 'fn',
-                            args: args,
-                            body: linearToExpr(ctx, lin.body),
-                            loc: lin.loc,
-                        };
+                          })
+                        : linearToExpr(ctx, lin.body),
+                loc: lin.loc,
+            };
             if (self.length) {
                 return {
                     type: 'closure',
@@ -444,6 +403,35 @@ export const lensAsRef = (ctx: Ctx, lens: Lens): Ref => {
 const withCleanup = (expr: Expr, cleanup: Expr[]): Expr =>
     cleanup.length ? { type: 'block', cleanup, result: expr, block: [], loc: expr.loc } : expr;
 
+/**
+ * Sets up a call's lens arguments, in the order written and ahead of everything else, then
+ * builds the call. Their cleanups, absent when there is no lens, run in the reverse order.
+ */
+const withLensArgs = (
+    ctx: Ctx,
+    terms: Term[],
+    call: (args: () => Expr[], cleanup?: Expr[]) => Expr,
+): Expr => {
+    const refs = new Map<Term, Ref>();
+    const setup = (i: number, cleanup?: Expr[]): Expr => {
+        const term = terms[i];
+        if (!term)
+            return call(
+                () =>
+                    terms.map((arg) =>
+                        arg.type === 'lens' ? eref(refs.get(arg)!) : linearToExpr(ctx, arg),
+                    ),
+                cleanup,
+            );
+        if (term.type !== 'lens') return setup(i + 1, cleanup);
+        return lensToRvalue(ctx, term.lens, (value, own) => {
+            refs.set(term, value);
+            return setup(i + 1, [...own, ...(cleanup ?? [])]);
+        });
+    };
+    return setup(0);
+};
+
 export const lensToRvalue = (
     ctx: Ctx,
     lin: Lens,
@@ -497,31 +485,9 @@ export const lensToRvalue = (
                     ]),
                     cleanup: [],
                 });
-            const last = lin.args.at(-1);
             // The returned lens must complete before its argument backing is
             // restored or released. Ordinary expression calls complete immediately.
-            if (last?.type === 'lens')
-                return lensToRvalue(ctx, last.lens, (value, cleanup) =>
-                    apply(
-                        () =>
-                            lin.args.map((arg, i) => {
-                                if (i === lin.args.length - 1) return eref(value);
-                                if (arg.type === 'lens')
-                                    throw new Error('lens only allowed in final position');
-                                return linearToExpr(ctx, arg);
-                            }),
-                        cleanup,
-                    ),
-                );
-            return apply(
-                () =>
-                    lin.args.map((arg) => {
-                        if (arg.type === 'lens')
-                            throw new Error('lens only allowed in final position');
-                        return linearToExpr(ctx, arg);
-                    }),
-                [],
-            );
+            return withLensArgs(ctx, lin.args, (args, cleanup) => apply(args, cleanup ?? []));
         }
         case 'tuple': {
             let next = (i: number, items: Ref[], cleanup: Expr[]): Expr => {

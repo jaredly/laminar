@@ -1,3 +1,4 @@
+import type { SemanticFlow } from '../elaborated.ts';
 import { Declaration, typeDependencies } from '../backend/reachable.ts';
 import { unionTagNames } from '../backend/type-names.ts';
 import type { ConcreteProgram, ConcreteBlock } from '../concrete-ir.ts';
@@ -9,7 +10,7 @@ import {
     type Leaf,
     type View,
 } from './storage.ts';
-import { decodeNumber, type IRPattern, type SlotRef } from '../typed-ir.ts';
+import { decodeNumber, type IRPattern, type SlotRef, positions } from '../typed-ir.ts';
 import { verifyConcreteProgram } from '../verify-concrete.ts';
 import { BackendDiagnostic } from '../backend/target.ts';
 import {
@@ -551,6 +552,25 @@ ${joinCode(
             )}}`;
         return expr;
     };
+    const display = (id: string, expr: Expr, nested = false): Expr => {
+        const l = layout(id);
+        if (nested && l.kind === 'string') return go`quoteDisplay(${expr})`;
+        if (l.kind !== 'record' && l.kind !== 'unit') return stringPart(l.kind, expr);
+        const helper = vectorHelper('display', id, (name) => {
+            const parts: Expr[] = [goBytes('(')];
+            l.fields.forEach((f, i) => {
+                if (f.kind !== 'value') return unsupported('Invalid tuple display layout');
+                if (i) parts.push(goBytes(', '));
+                parts.push(display(f.layout, dot('v', f.name), true));
+            });
+            parts.push(goBytes(')'));
+            return {
+                signature: goText`func ${name}(v ${type(id)}) string`,
+                body: [go`return ${joinCode(parts, ' + ')}`],
+            };
+        });
+        return go`${helper}(${expr})`;
+    };
     /** The ABI argument layouts of a wrapper's native call. */
     const nativeParameters = (w: { abi: string }): readonly string[] =>
         program.abis.find((a) => a.id === w.abi)!.arguments;
@@ -763,8 +783,9 @@ ${joinCode(
         }
         if (op === 'chanNew') {
             table();
+            // One Go channel type carries every `Chan(a)`: the checker keeps each to one type.
             hostFunction('hostChanNew', 'func hostChanNew() float64', [
-                'return hostRegister(make(chan float64))',
+                'return hostRegister(make(chan any))',
             ]);
             return go`hostChanNew()`;
         }
@@ -772,9 +793,9 @@ ${joinCode(
             table();
             hostFunction(
                 'hostChanSend',
-                goText`func hostChanSend(handle float64, value float64) ${type(result)}`,
+                goText`func hostChanSend(handle float64, value any) ${type(result)}`,
                 [
-                    'channel, ok := hostLookup(handle).(chan float64)',
+                    'channel, ok := hostLookup(handle).(chan any)',
                     { head: 'if !ok', body: ['panic("not a channel handle")'] },
                     'channel <- value',
                     unit,
@@ -784,12 +805,13 @@ ${joinCode(
         }
         if (op === 'chanRecv') {
             table();
-            hostFunction('hostChanRecv', 'func hostChanRecv(handle float64) float64', [
-                'channel, ok := hostLookup(handle).(chan float64)',
+            // The assertion is inside, so a discarded receive is still a call statement.
+            hostFunction('hostChanRecv', 'func hostChanRecv[T any](handle float64) T', [
+                'channel, ok := hostLookup(handle).(chan any)',
                 { head: 'if !ok', body: ['panic("not a channel handle")'] },
-                'return <-channel',
+                'return (<-channel).(T)',
             ]);
-            return go`hostChanRecv(${args[0]})`;
+            return go`hostChanRecv[${type(result)}](${args[0]})`;
         }
         if (op === 'listen') {
             table();
@@ -1145,6 +1167,15 @@ ${joinCode(
         const lenses = new Map<string, Lens>();
         const places = new Map<string, View>();
         const loans = new Map<string, Lens>();
+        /** Owned lenses this function was handed, by place, until it ends or moves them. */
+        const held = new Map<string, Lens>();
+        const source = program.semantic.program.units
+            .find((u) => u.id === c.unit)
+            ?.functions.find((f) => f.id === c.function);
+        const ownsParameter = (n: number): boolean => {
+            const argument = source?.type.args[n];
+            return argument?.tag === 'flow' && !!argument.owned;
+        };
         let counter = 0;
         const fresh = () => locals.reference(`v${counter++}`);
 
@@ -1402,6 +1433,8 @@ ${joinCode(
         };
 
         c.parameters.forEach((p, i) => {
+            // An owned lens is not written back for the caller: it ends here, or moves on.
+            if (p.lensPlace && ownsParameter(i)) return;
             if (p.lensPlace) {
                 const view = incoming(parameterNames[i]!, p.layout);
                 places.set(p.lensPlace, view);
@@ -1616,7 +1649,7 @@ ${joinCode(
         };
 
         const ref = (s: SlotRef) =>
-            storage.project(places.get(s.place) ?? unsupported('Unavailable Go place'), s.path);
+            storage.project(places.get(s.place) ?? unsupported('Unavailable Go place'), positions(s.path));
 
         // Adapt input/output backing at calls.
         const homogeneous = (id: string): boolean => {
@@ -1915,9 +1948,20 @@ ${joinCode(
         };
 
         const outputLayouts = new Map<string, string>();
+        const outputTypes = new Map<string, SemanticFlow>();
+        /** Whether the callee in `value` takes argument `n` as an owned lens. */
+        const movesArgument = (value: string, n: number): boolean => {
+            const t = outputTypes.get(value);
+            if (t?.tag !== 'plain' || t.value.tag !== 'fn') return false;
+            const argument = t.value.args[n];
+            return argument?.tag === 'flow' && !!argument.owned;
+        };
         const index = (b: ConcreteBlock) =>
             b.instructions.forEach((i) => {
-                if ('out' in i) outputLayouts.set(i.out.id, i.out.layout);
+                if ('out' in i) {
+                    outputLayouts.set(i.out.id, i.out.layout);
+                    outputTypes.set(i.out.id, i.out.type);
+                }
                 if (i.op === 'scope') index(i.body);
                 if (i.op === 'aslens') {
                     if (i.inPlace) inPlaceIds.add(i.inPlace);
@@ -2099,6 +2143,8 @@ ${joinCode(
                     if (cl.kind === 'release') {
                         const lens = loans.get(cl.loan);
                         if (lens) lens.finish(body);
+                    } else if (cl.kind === 'end') {
+                        (held.get(cl.slot.place) ?? unsupported('Missing owned lens')).finish(body);
                     } else if (cl.kind === 'drop-place') {
                         storage.put(ref(cl.slot), { expression: zero(unit.id), layout: unit.id });
                     }
@@ -2156,6 +2202,14 @@ ${joinCode(
                     loans.set(i.loan, lens);
                     continue;
                 }
+                if (i.op === 'give') {
+                    // The lens leaves with its pending restoration; nothing runs here.
+                    const [holder, key] =
+                        'loan' in i.from ? [loans, i.from.loan] : [held, i.from.place];
+                    lenses.set(i.out.id, holder.get(key) ?? unsupported('Missing owned lens'));
+                    holder.delete(key);
+                    continue;
+                }
 
                 const id = i.out.layout;
                 const hinted = hint(i, (id) => lensSlots.get(id));
@@ -2180,10 +2234,7 @@ ${joinCode(
                                 [
                                     goBytes(i.head),
                                     ...i.parts.flatMap((part) => [
-                                        stringPart(
-                                            layout(outputLayouts.get(part.value)!).kind,
-                                            value(part.value),
-                                        ),
+                                        display(outputLayouts.get(part.value)!, value(part.value)),
                                         goBytes(part.tail),
                                     ]),
                                 ].filter((piece) => !same(piece, '""')),
@@ -2458,6 +2509,19 @@ ${joinCode(
                     }
                     case 'make-callable': {
                         const callable = program.callables.find((cb) => cb.id === i.callable)!;
+                        // A captured lens rides in the environment as a self-contained struct.
+                        const packed = new Map(
+                            i.captures.flatMap((capture, n) => {
+                                const lens = lenses.get(capture.value);
+                                if (!lens) return [];
+                                const slot = layout(callable.environment).fields[n] as {
+                                    layout: string;
+                                };
+                                return [
+                                    [capture.value, closureLens(lens, slot.layout, body, false)],
+                                ];
+                            }),
+                        );
                         const entries = joinCode(
                             callable.entries.map((e) => {
                                 const w = program.wrappers.find((w) => w.id === e.wrapper)!;
@@ -2484,7 +2548,10 @@ ${joinCode(
                         }
                         expr = () =>
                             go`${type(id)}{environment: &${type(callable.environment)}{${joinCode(
-                                i.captures.map((c, n) => go`capture${n}: ${value(c.value)}`),
+                                i.captures.map(
+                                    (c, n) =>
+                                        go`capture${n}: ${packed.get(c.value) ?? value(c.value)}`,
+                                ),
                                 ', ',
                             )} }${entries}}`;
                         break;
@@ -2494,6 +2561,9 @@ ${joinCode(
                         const abi = program.abis.find((a) => a.id === i.abi)!;
                         const isLens = layout(id).fields.some((f) => f.name === 'restore');
                         const adapters: { finish: (body: Statement[]) => void }[] = [];
+                        // Lenses end like nested scopes, the last argument first.
+                        const finishAdapters = (body: Statement[]) =>
+                            [...adapters].reverse().forEach((a) => a.finish(body));
                         if (i.detached) {
                             if (layout(id).kind !== 'unit')
                                 return unsupported('A spawned task must return ()');
@@ -2638,6 +2708,15 @@ ${joinCode(
                         } else {
                             args = i.args.map((v, n) => {
                                 if (!lenses.has(v)) return value(v);
+                                if (movesArgument(i.callee, n))
+                                    // The callee ends it: hand over its whole restoration and
+                                    // run nothing here after the call.
+                                    return closureLens(
+                                        lenses.get(v)!,
+                                        abi.arguments[n]!,
+                                        body,
+                                        false,
+                                    );
                                 const a = adapt(lenses.get(v)!, abi.arguments[n]!, isLens, body);
                                 adapters.push(a);
                                 return a.expression;
@@ -2696,7 +2775,7 @@ ${joinCode(
                             if (i.detached) {
                                 body.push(go`go func() { ${call} }()`);
                                 values.set(i.out.id, zero(id));
-                                adapters.forEach((a) => a.finish(body));
+                                finishAdapters(body);
                                 continue;
                             }
                             const at: Statement[] = [call];
@@ -2716,14 +2795,13 @@ ${joinCode(
                             );
                         }
                         if (isLens) {
-                            const rest = (body: Statement[]) =>
-                                adapters.forEach((a) => a.finish(body));
+                            const rest = (body: Statement[]) => finishAdapters(body);
                             lenses.set(i.out.id, {
                                 ...runtimeLens(name, id, rest),
                                 forwarded: { expression: name, rest },
                             });
                         } else {
-                            adapters.forEach((a) => a.finish(body));
+                            finishAdapters(body);
                         }
                         continue;
                     }
@@ -2953,8 +3031,18 @@ ${joinCode(
                         const group: JoinGroup = { boundary: [] };
                         const resultData = phi(id, resultInputs, body);
                         const before = storage.snapshot();
+                        // Each arm starts with the same lenses, and ends or moves on its own.
+                        const pending = [loans, held].map((map) => ({
+                            map,
+                            entries: [...map],
+                            gone: new Set<string>(),
+                        }));
                         const arms = i.cases.map((arm, armIndex) => {
                             storage.reset(before);
+                            for (const p of pending) {
+                                p.map.clear();
+                                p.entries.forEach(([key, lens]) => p.map.set(key, lens));
+                            }
                             const nested: Statement[] = [];
                             if (arm.retains && movedFrom.has(i.value))
                                 retainedOwners.set(arm.retains, movedFrom.get(i.value)!);
@@ -2968,8 +3056,26 @@ ${joinCode(
                                 },
                                 body: nested,
                             });
+                            for (const p of pending)
+                                for (const [key] of p.entries)
+                                    if (!p.map.has(key)) p.gone.add(key);
                             return { nested, state: storage.snapshot() };
                         });
+                        // A lens that ended or moved leaves nothing to join. Its new holder may
+                        // be writing its storage, so no arm may be left reading it.
+                        for (const p of pending)
+                            for (const [key, lens] of p.entries) {
+                                if (!p.gone.has(key)) continue;
+                                p.map.delete(key);
+                                for (const arm of arms) {
+                                    storage.reset(arm.state);
+                                    storage.put(lens.view, {
+                                        expression: zero(unit.id),
+                                        layout: unit.id,
+                                    });
+                                    arm.state = storage.snapshot();
+                                }
+                            }
                         storage.reset(before);
                         // phi-join: for each cell, merge the per-arm states
                         const merge = (data: Data[], previous?: Data): Data => {
@@ -3087,7 +3193,28 @@ ${joinCode(
 
         const body: Statement[] = [...setup];
 
+        const hold = (place: string, name: string, layoutId: string) => {
+            const lens = runtimeLens(name, layoutId, noFinish);
+            held.set(place, lens);
+            places.set(place, lens.view);
+        };
+        c.parameters.forEach((p, i) => {
+            if (p.lensPlace && ownsParameter(i))
+                hold(p.lensPlace, parameterNames[i]!, p.layout);
+        });
         c.captures.forEach((capture, n) => {
+            if (source?.captures[n]?.lens) {
+                const name = fresh();
+                body.push(
+                    locals.declaration(
+                        name,
+                        type(capture.layout),
+                        go`environment.(*${type(c.environment)}).capture${n}`,
+                    ),
+                );
+                hold(capture.place, name, capture.layout);
+                return;
+            }
             const base = bindingName({ place: capture.place, path: [] });
             places.set(
                 capture.place,
@@ -3307,7 +3434,7 @@ ${joinCode(
 
     return reachableGo({
         packageName: 'main',
-        imports: ['fmt', 'math', 'strconv', ...hostImports],
+        imports: [...new Set(['fmt', 'math', 'strconv', 'strings', ...hostImports])],
         declarations,
         functions,
     });

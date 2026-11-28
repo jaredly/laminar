@@ -1,0 +1,149 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="theme-color" content="#f7f6ef">
+<title>Laminar · The type system</title>
+<style>
+:root{--paper:#f7f6ef;--ink:#172e28;--green:#28654f;--line:#c5cec1;--mono:ui-monospace,SFMono-Regular,Consolas,monospace;--serif:"Iowan Old Style","Palatino Linotype",Palatino,Georgia,serif}*{box-sizing:border-box}html{scroll-behavior:smooth;scroll-padding-top:1rem}body{margin:0;background:var(--paper);color:var(--ink);font:17px/1.6 system-ui,sans-serif}main,header,footer{width:min(1120px,92%);margin:auto}header{display:flex;align-items:center;justify-content:space-between;border-bottom:1px solid var(--ink);min-height:66px;font:13px var(--mono)}header b{font:600 23px var(--serif);display:flex;align-items:center;gap:10px}header i{width:24px;height:20px;background:repeating-linear-gradient(0deg,var(--green) 0 3px,transparent 3px 7px);transform:skew(-25deg)}header a,footer a{color:var(--green)}.hero{padding:clamp(40px,6vw,78px) 0 36px;display:grid;grid-template-columns:1.05fr 1fr;align-items:center;gap:6%}h1,h2,h3,p,figure{margin:0}h1,h2,h3{font-family:var(--serif);font-weight:500;line-height:1.08}h1{font-size:clamp(52px,6.2vw,86px);letter-spacing:-.055em}h2{font-size:clamp(36px,4.2vw,53px);letter-spacing:-.045em}h3{font-size:25px;letter-spacing:-.025em}.hero p{font-size:19px;line-height:1.52;margin-top:20px;max-width:48ch}.figure{background-color:#e8eee1;background-image:radial-gradient(#bccab7 .85px,transparent .85px);background-size:13px 13px;border:1px solid #b9c7b4;border-radius:4px;padding:25px}.label,figcaption,nav strong,.counter{font:600 11px/1.4 var(--mono);letter-spacing:.1em;text-transform:uppercase}.diagram{display:flex;align-items:center;justify-content:center;gap:9px;padding:27px 0 22px}.node{background:#fbfbf5;border:1px solid var(--green);border-radius:3px;text-align:center;min-width:0;flex:1;padding:12px 3px;box-shadow:3px 3px 0 #c5d3be}.node small,.node code{display:block}.node small{font:12px var(--mono);color:var(--green);margin-bottom:6px}.node code{font-size:clamp(13px,1.55vw,21px)}.arrow{color:var(--green);font-size:25px}.figure figcaption{letter-spacing:0;text-transform:none;font-size:12px;font-weight:400}.layout{display:grid;grid-template-columns:190px minmax(0,1fr);gap:6%;border-top:1px solid var(--ink);padding-top:40px}.toc{position:sticky;top:28px;align-self:start}.toc strong{display:block;margin-bottom:15px;color:var(--green)}.toc a{display:block;border-left:2px solid var(--line);padding:6px 13px;color:var(--ink);font-size:14px;text-decoration:none}.toc a:hover,.toc a[aria-current]{border-color:var(--green);color:var(--green);background:#e9eee3}.article{max-width:790px}section{padding:0 0 40px;margin-bottom:34px;border-bottom:1px solid var(--line);scroll-margin-top:20px}section h2{margin-bottom:17px}section h3{margin:22px 0 8px}section p+p,section pre+p{margin-top:14px}p code,td code,dd code,li code,summary code{background:#e7ece0;padding:.08em .26em;border-radius:3px}code,pre,samp{font-family:var(--mono);font-size:.88em}pre{background:#e9ede4;padding:17px 20px;border-left:3px solid #75947c;overflow:auto;line-height:1.65;tab-size:4}pre code{font-size:inherit}aside.note{margin-top:16px;padding-left:15px;border-left:2px solid #9da875;color:#385347}.lab{margin-top:21px;border:1px solid #a5b5a2;border-radius:5px;overflow:hidden;background:#edf1e7}.labhead,.controls{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:12px;padding:14px 18px}.labhead{background:#dee7d8}.labhead label{font:600 13px var(--mono)}select,button{font:inherit;color:var(--ink);background:var(--paper);border:1px solid #94a38e;border-radius:4px;padding:7px 11px}select{font-size:14px;max-width:100%}button{font-size:14px;cursor:pointer}button:disabled{opacity:.45;cursor:default}button:last-child{background:#254d3c;color:white}button:focus-visible,a:focus-visible,select:focus-visible,summary:focus-visible{outline:3px solid #c98127;outline-offset:2px}.lab pre{margin:0;background:#203b31;color:#f6f6e8;border:0;padding:18px 0}.line{display:block;padding:2px 20px;border-left:3px solid transparent}.line.active{background:#385744;border-color:#d0df8d}.state{padding:16px 20px 5px}.state dl{display:flex;flex-wrap:wrap;gap:16px 40px;margin:0 0 9px}.state dt{font:12px var(--mono);color:#48664f}.state dd{font:600 18px var(--mono);margin:3px 0}.state p{min-height:3.2em}.controls{border-top:1px solid #d1dbc9}.counter{color:#47634f}.controls button+button{margin-left:6px}details{border-bottom:1px solid var(--line);padding:12px 0}summary{cursor:pointer;font-weight:600}details p{padding-top:9px}.scroll{overflow:auto}table{width:100%;border-collapse:collapse;font-size:15px;margin:16px 0}th,td{padding:10px;text-align:left;vertical-align:top;border-bottom:1px solid var(--line)}th{background:#e8ede1}footer{display:flex;justify-content:space-between;padding:10px 0 28px;font-size:13px}a:hover{text-decoration:underline} @media(max-width:780px){.hero,.layout{grid-template-columns:1fr;gap:22px}.hero{padding:38px 0 24px}.toc{position:static;display:flex;gap:4px 10px;flex-wrap:wrap}.toc strong{width:100%;margin:0}.toc a{padding:4px 0;border:0;text-decoration:underline}.layout{padding-top:20px}.figure{padding:16px 20px}.diagram{padding:15px 0}.node code{font-size:18px}section{padding-bottom:28px;margin-bottom:24px}}@media(prefers-reduced-motion:reduce){html{scroll-behavior:auto}}@media print{.toc,.controls,select,header a,footer a{display:none}.layout,.hero{display:block}.figure{margin-top:15px}.lab,pre{break-inside:avoid}}
+</style></head>
+<body id="top"><header><b><i aria-hidden="true"></i>Laminar</b><a href="#contents">Language notes ↓</a></header>
+<main><div class="hero"><div><h1>The type system</h1><p>In Laminar, a call can return one type and leave its argument holding another. To read a signature, follow both the value and the place it came from.</p></div>
+<figure class="figure"><div class="label">A type-changing call</div><div class="diagram"><div class="node"><small>x before</small><code>Number</code></div><span class="arrow" aria-hidden="true">→</span><div class="node"><small>call</small><code>take(~x)</code></div><span class="arrow" aria-hidden="true">→</span><div class="node"><small>x after</small><code>()</code></div></div><figcaption>take :: (a/()) =&gt; a &nbsp;·&nbsp; Here the call returns Number.</figcaption></figure></div>
+<div class="layout"><nav class="toc" id="contents" aria-label="Contents"><strong>On this page</strong><a href="#schemes">Inference &amp; schemes</a><a href="#flow">Reading a flow type</a><a href="#moves">Moves &amp; swaps</a><a href="#borrowing">Borrowing &amp; restoration</a><a href="#joins">Branch joins</a><a href="#dual">Dual mode</a></nav>
+<div class="article">
+<section id="schemes"><h2>Inference &amp; schemes</h2><p>Start with ordinary first-order unification. A named top-level function gets a rank-1 scheme, freshly instantiated at each use. Its recursive calls share a monotype while its body is being checked.</p>
+<pre><code>fn id(x) x
+(id(1), id(true))</code></pre>
+<p>The result has type <code>(Number, Bool)</code>.</p>
+<p>Local bindings are monomorphic. In pure mode, the default, they are also <em>affine</em>. Bind <code>let f = id</code> and the first call to <code>f</code> consumes that local function value. Even two calls at the same type fail. Generalization and permission to reuse a value answer separate questions.</p>
+<p>A signature such as <code>id :: (Number) =&gt; Number</code> narrows what callers may use. A declared type variable is rigid while checking the definition, so a body that only works on numbers cannot satisfy <code>(a) =&gt; a</code>.</p>
+<details><summary>Which operations constrain a type variable?</summary><pre><code>fn label(x) { "${x}" }</code></pre><p>In pure mode the scheme prints as <code>(a) =&gt; String where Display(a)</code>. Each use of <code>label</code> must supply a displayable type, even when the function is passed through another function. Interpolating <code>(1, ("hi", true))</code> produces <code>(1, ("hi", true))</code>, with quoted strings inside the tuple. A string interpolated directly keeps its original text.</p><p>Equality introduces <code>Comparable</code>. In dual mode, copying or sharing a parameter can require <code>Copyable</code>, and leaving it unconsumed on an exit path can require <code>Droppable</code>. Moving a parameter straight to the result requires neither.</p></details>
+<details><summary>What unifies in a data type?</summary><p>Tuples unify position by position. Lists and vectors each have one element type. Record types are structural and closed: field order is irrelevant, but the field names must match exactly. A TypeScript function accepting <code>{x: number}</code> can receive a variable with extra fields. A Laminar parameter constrained to <code>{x: Number}</code> requires exactly that shape.</p><p>Type aliases are transparent. A declared union introduces a nominal type, and matching a constructor constrains both the scrutinee and its payload. Function arity is part of the type: one tuple argument and two separate arguments are distinct.</p></details>
+</section>
+<section id="flow"><h2>Reading a flow type</h2><p>Read <code>A/B</code> in a parameter as “the caller supplies a place holding <code>A</code>, and gets it back holding <code>B</code>.” The arrow still describes the result of the expression. The two outputs can be different.</p>
+<pre><code>take :: (a/()) =&gt; a
+fn take(~x) { x := () }
+
+apply :: ((a) =&gt; b, a/b) =&gt; ()
+fn apply(f, ~x) { x := f(x) }</code></pre>
+<p>In <code>apply</code>, reading <code>x</code> gives <code>f</code> its input of type <code>a</code>. The result of type <code>b</code> refills the same place. At the call site, <code>f</code> therefore determines how the caller’s type changes. A Rust <code>&amp;mut T</code> also grants exclusive access, but its referent keeps type <code>T</code> throughout the loan.</p>
+<p><code>~A</code> in an annotation abbreviates <code>A/A</code>. A lens argument comes last and its focus is set up before ordinary arguments are evaluated. A lens can also be the result of a function:</p>
+<pre><code>first :: ((a, b)/(c, b)) =&gt; a/c
+fn first(~(x, y)) ~x</code></pre>
+<p>Read the result endpoints from the client’s side. The client sees an <code>a</code> and can put back a <code>c</code>. That changes the first component of the original pair. The repeated <code>b</code> records the untouched sibling.</p></section>
+<section id="moves"><h2>Moves &amp; swaps</h2><p>A pure-mode read moves the current value out of its place. The binding survives, ready for another write. A swap evaluates its right-hand side and yields whatever is in the destination at the instant of replacement. If the right-hand side already moved that value, the swap yields unit.</p>
+<div class="lab"><div class="labhead"><label for="scenario">Trace a swap</label><select id="scenario"><option>Replace a full place</option><option>Move, then refill</option><option>Copy, then replace</option></select></div><pre aria-label="Pure-mode example"><code id="program"><span class="line">let x = 1</span><span class="line">let old = x := true</span><span class="line">(old, x)</span></code></pre><div class="state" aria-live="polite" aria-atomic="true"><dl><div><dt>Place x</dt><dd id="place">Number · 1</dd></div><div><dt id="resultLabel">Swap result</dt><dd id="result">—</dd></div></dl><p id="why">The binding owns the number 1. A write can exchange it for a value of another type.</p></div><div class="controls"><span class="counter" id="count">Step 1 of 3</span><div><button id="prev" disabled>← Back</button><button id="next">Next →</button></div></div></div>
+<noscript><p>With JavaScript disabled, the example above returns <code>(1, true)</code>. For <code>x := x + 1</code>, the right-hand side empties the place and the swap returns <code>()</code>. For <code>x := dup(~x) + 1</code>, the copy leaves the place full and the swap returns <code>1</code>.</p></noscript>
+<aside class="note">An empty place and a place containing <code>()</code> behave differently. Reading an empty place a second time is a use-after-move. A place initialized with unit still has a value to move.</aside></section>
+<section id="borrowing"><h2>Borrowing &amp; restoration</h2><p>A persistent alias gives its scope exclusive access to a focus. The owner becomes accessible again at scope exit, with its updated type. Moving from the focus is legal provided the focus is full again when the borrow ends.</p>
+<pre><code>{
+    let p = (1, "north")
+    {
+        let (x, y) = ~p
+        x := true
+    }
+    p
+}</code></pre>
+<p>The final pair has type <code>(Bool, String)</code>. The two component aliases can be used independently. Accessing <code>p</code> while they are live fails. Reborrowing <code>~x</code> suspends access through <code>x</code> until the inner borrow ends. Supplying the same place twice in a tuple lens would create overlapping writers.</p>
+<details><summary>Computed focuses and cleanup</summary><pre><code>fn shifted(~x) ~{
+    lens v &lt;- x + 2
+    x := v - 2
+}</code></pre><p>Starting with <code>x = 1</code>, setup moves the number out and lends the client a temporary holding <code>3</code>. If the client writes <code>5</code>, restoration binds <code>v</code> to that final value and writes <code>3</code> into the original place. Storage used by cleanup stays protected until restoration finishes. A raw lens into an owned local cannot escape its backing.</p></details>
+<details><summary>Constructor fields and vector elements</summary><p>In a borrowed match, field bindings focus parts of the selected constructor. The same constructor must be reconstructed with every moved field refilled. A lens assembled as <code>Some(x)</code> can expose a payload while fixing the tag. Its printed <code>/=</code> marks the restriction on replacing the whole constructor.</p><p>An index focus keeps a homogeneous vector intact. For an owned vector <code>v</code>, use <code>dup(~v[i])</code> to copy an element or <code>v[i] := replacement</code> to swap it. The replacement must have the element type. A free-standing <code>v[i]</code> cannot move a hole out of the vector.</p></details>
+</section>
+<section id="joins"><h2>Branch joins</h2><p>At a <code>match</code>, unifying the arm results is only the first check. The checker must also reconcile the state each arm leaves for the continuation.</p>
+<pre><code>fn choose(flag) {
+    let x = 1
+    match flag {
+        true  -&gt; { x := true
+                   () }
+        false -&gt; ()
+    }
+    x
+}</code></pre>
+<p>Both arms produce unit. Yet the true arm leaves <code>x</code> holding a <code>Bool</code> and the false arm leaves a <code>Number</code>. The checker reports <code>branch-state</code>. Writing <code>false</code> to <code>x</code> in the other arm, then yielding unit there too, makes the post-match type <code>Bool</code>.</p>
+<p>Availability has its own join rule. If one arm moves a value out, the continuation cannot assume the place is full. Refill it on every path before reading again. A borrowed place must also be restored on every path that ends its loan.</p></section>
+<section id="dual"><h2>Dual mode</h2><p>A file with <code>// laminar: dual</code> on its first nonblank line opts into shared immutable bindings alongside exclusive ones. Lens endpoints still work the same way. What changes is which bindings allow another read, a move, or a borrow.</p>
+<div class="scroll"><table><thead><tr><th>Binding</th><th>Reading it</th><th>Taking a lens</th></tr></thead><tbody><tr><td>Pure <code>let x</code></td><td>Moves the value</td><td>Allowed</td></tr><tr><td>Dual <code>let x</code></td><td>Shares an immutable value</td><td>Rejected</td></tr><tr><td>Dual <code>let mut x</code></td><td>Moves the value</td><td>Allowed</td></tr></tbody></table></div>
+<pre><code>// laminar: dual
+{
+    let p = (1, 2)
+    let mut q = dup(p)
+    fst(~q) := true
+    (p, q)
+}</code></pre>
+<p>The result is <code>((1, 2), (true, 2))</code>. <code>dup(p)</code> gives the shared pair an independent, owned copy. For an exclusive binding use <code>dup(~q)</code> to copy its contents while keeping it full. Going the other direction, <code>let p = q</code> moves a shareable value out of exclusive storage and freezes it.</p>
+<h3>When dropping a value is an error</h3><p><code>mut</code> describes access to storage. <code>linear</code> describes an obligation attached to a type. A <code>mut Number</code> may go unused. A value of a declared linear type must be consumed on each path and cannot be duplicated or frozen into a plain binding.</p>
+<pre><code>type linear Conn {
+    Conn(Number)
+}
+fn finish(mut c) {
+    match c { Conn(fd) -&gt; fd }
+}</code></pre>
+<p>An owned match consumes the wrapper. A borrowed match can inspect its fields, leaving the obligation with its owner. Returning a linear value or handing it to a consuming function transfers that obligation.</p>
+<details><summary>Closures and owned lenses</summary><p>Capturing an exclusive value moves it when the closure is created. An ordinary closure cannot borrow an outer local because the call may happen after the local’s scope ends. Capturing a borrowed focus’s <em>contents</em> is a move and the original focus still needs refilling.</p><p>Dual mode also supports owned lenses. A lens-returning producer with no borrowed lens parameter can supply a focus with its own cleanup. Passing it to <code>~x</code> reborrows it. Passing it to <code>mut ~x</code> transfers the focus and its restoration obligation. The call-site spelling is <code>~place</code> in both cases. A closure that captures an owned lens or linear value is itself linear and must be consumed.</p></details>
+</section></div></div></main><footer><span>Laminar · Type system</span><a href="#top">Back to top ↑</a></footer>
+<script>
+const scenarios = [
+  {
+    lines: ['let x = 1', 'let old = x := true', '(old, x)'],
+    steps: [
+      [0,'Number · 1','—','The binding owns the number 1. A write can exchange it for a value of another type.'],
+      [1,'Bool · true','Number · 1','The right-hand side leaves x full. The swap installs true and binds old to the displaced number.'],
+      [2,'Empty','(1, true)','The tuple moves both values out. Its type is (Number, Bool).']
+    ]
+  },
+  {
+    lines: ['let x = 1', 'let old = x := x + 1', '(old, x)'],
+    steps: [
+      [0,'Number · 1','—','The binding owns the number 1. Follow the right-hand side before the write.'],
+      [1,'Empty','—','Reading x for the addition moves out 1. The addition produces 2 while the destination is empty.'],
+      [1,'Number · 2','Unit · ()','The write refills x. There was no value left to displace, so old receives unit.'],
+      [2,'Empty','((), 2)','Both bindings move into the result. Its type is ((), Number).']
+    ]
+  },
+  {
+    lines: ['let x = 1', 'let old = x := dup(~x) + 1', '(old, x)'],
+    steps: [
+      [0,'Number · 1','—','The binding owns the number 1. This time the addition will use a copy.'],
+      [1,'Number · 1','—','dup borrows x and leaves it full. The addition uses the copy to produce 2.'],
+      [1,'Number · 2','Number · 1','The swap displaces the original 1 and binds it to old.'],
+      [2,'Empty','(1, 2)','Both bindings move into the tuple. Its type is (Number, Number).']
+    ]
+  }
+];
+const el = id => document.getElementById(id);
+let step = 0;
+function render() {
+  const {lines, steps} = scenarios[el('scenario').selectedIndex];
+  const [active, place, result, why] = steps[step];
+  el('program').replaceChildren(...lines.map((line, i) => {
+    const span = document.createElement('span');
+    span.className = i === active ? 'line active' : 'line';
+    span.textContent = line;
+    return span;
+  }));
+  el('place').textContent = place;
+  el('result').textContent = result;
+  el('resultLabel').textContent = active === 2 ? 'Block result' : 'Swap result';
+  el('why').textContent = why;
+  el('count').textContent = 'Step ' + (step + 1) + ' of ' + steps.length;
+  el('prev').disabled = step === 0;
+  el('next').disabled = step === steps.length - 1;
+}
+el('scenario').addEventListener('change', () => { step = 0; render(); });
+el('prev').addEventListener('click', () => { step--; render(); });
+el('next').addEventListener('click', () => { step++; render(); });
+render();
+const sections = Array.from(document.querySelectorAll('section[id]'));
+function showSection() {
+  const current = sections.filter(s => s.getBoundingClientRect().top <= window.innerHeight * .35).pop() || sections[0];
+  for (const link of document.querySelectorAll('.toc a')) {
+    if (link.hash === '#' + current.id) link.setAttribute('aria-current','location');
+    else link.removeAttribute('aria-current');
+  }
+}
+window.addEventListener('scroll', showSection, {passive:true});
+showSection();
+</script></body></html>

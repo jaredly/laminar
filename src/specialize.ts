@@ -1,3 +1,4 @@
+import { comparableUnions, linearUnions, requirements } from './constraints.ts';
 import { createHash } from 'node:crypto';
 import { freezeTree, type SemanticType } from './elaborated.ts';
 import { BackendDiagnostic, targetConfig, targetKey, type TargetConfig } from './backend/target.ts';
@@ -10,6 +11,8 @@ import {
     type TypedProgram,
 } from './typed-ir.ts';
 import { verifyTypedProgram } from './verify-ir.ts';
+import { eraseRecordForms } from './erase-records.ts';
+import { lowerImportNeeds, lowerNeeds } from './lower-needs.ts';
 
 export type SpecializationRoot = { unit: string; arguments: SemanticType[] };
 export type SemanticSpecialization = {
@@ -60,13 +63,44 @@ function rewrite<T>(
         if (Array.isArray(value)) return value.map(visit);
         if (!value || typeof value !== 'object') return value;
         const object = value as Record<string, unknown>;
-        if (['variable', 'con', 'tuple', 'fn'].includes(String(object.tag)))
+        if (['variable', 'con', 'tuple', 'record', 'fn'].includes(String(object.tag)))
             return type(value as SemanticType);
         if (instance && 'definition' in object && 'arguments' in object && 'type' in object)
             return instance(value as Instance);
         return Object.fromEntries(Object.entries(object).map(([k, v]) => [k, visit(v)]));
     };
     return visit(input) as T;
+}
+
+/** The quantified variables of a scheme that stand for rows of dependencies. */
+export function needsParameters(scheme: { type: SemanticType }): Set<string> {
+    const found = new Set<string>();
+    const row = (t: SemanticType | undefined) => {
+        const rest = t?.tag === 'needs' ? t.rest : t;
+        if (rest?.tag === 'variable') found.add(rest.id);
+    };
+    const visit = (value: unknown): void => {
+        if (!value || typeof value !== 'object') return;
+        const t = value as SemanticType;
+        if (t.tag === 'fn') row(t.needs);
+        Object.values(value).forEach(visit);
+    };
+    visit(scheme.type);
+    return found;
+}
+
+/**
+ * Type arguments for a root, which may leave out those that are rows of dependencies: nothing
+ * outside the program can supply any, so they are empty.
+ */
+export function withEmptyNeeds(
+    scheme: { quantified: string[]; type: SemanticType },
+    args: SemanticType[],
+): SemanticType[] {
+    const rows = needsParameters(scheme);
+    if (args.length !== scheme.quantified.length - rows.size) return args;
+    const given = [...args];
+    return scheme.quantified.map((p) => (rows.has(p) ? unitType : given.shift()!));
 }
 
 /** Reachable semantic specialization. Representation arguments and concrete ABIs are a later pass. */
@@ -76,8 +110,14 @@ export function specializeProgram(
     roots: readonly SpecializationRoot[],
     options: { maxInstances?: number } = {},
 ): SpecializedProgram {
-    const generic = freezeTree(eraseRecords(structuredClone(input)));
-    verifyTypedProgram(generic);
+    const detached = structuredClone(input);
+    // Layouts are derived from these, so they must say what the specialized program does.
+    const generic = freezeTree(
+        eraseRecords({ ...detached, imports: lowerImportNeeds(detached.imports) }),
+    );
+    verifyTypedProgram(input);
+    const nominal = comparableUnions(input.imports);
+    const linear = linearUnions(input.imports);
     const config = targetConfig(target),
         targetIdentity = targetKey(config);
     const limit = options.maxInstances ?? 256;
@@ -91,11 +131,12 @@ export function specializeProgram(
             'invalid-specialization-root',
             'Explicit entry roots are required',
         );
-    const units = new Map(generic.units.map((u) => [u.id, u]));
+    // Records stay until a unit's rows are substituted, so each instance has its own layout.
+    const units = new Map(input.units.map((u) => [u.id, u]));
     const definitions = new Map(
-        generic.units.filter((u) => u.definition).map((u) => [u.definition!, u]),
+        input.units.filter((u) => u.definition).map((u) => [u.definition!, u]),
     );
-    const imports = new Map(generic.imports.map((s) => [s.definition, s]));
+    const imports = new Map(input.imports.map((s) => [s.definition, s]));
     const cache = new Map<string, SemanticSpecialization>();
     const emitted: IRUnit[] = [],
         usedImports = new Set<string>();
@@ -118,12 +159,33 @@ export function specializeProgram(
         // unsolved body variables are. Definition roots still need explicit arguments.
         if (root && unit && !unit.definition && !args.length)
             args = scheme.quantified.map(() => unitType);
+        // An entry stands alone: a row of dependencies it is generic in is empty.
+        if (root) args = withEmptyNeeds(scheme, args);
         if (scheme.quantified.length !== args.length)
             throw new BackendDiagnostic(
                 'invalid-specialization-arguments',
                 `Wrong type argument count for ${source}`,
             );
         args = args.map(concrete);
+        for (const b of scheme.bounds ?? []) {
+            if (!requirements(b.predicate, args[b.parameter]!, nominal, (name) => linear.has(name)))
+                throw new BackendDiagnostic(
+                    'unsatisfied-constraint',
+                    `Parameter ${b.parameter + 1} of ${source} requires ${b.predicate}`,
+                );
+        }
+        for (const r of scheme.rows ?? []) {
+            const row = args[r.parameter]!;
+            const empty = row.tag === 'tuple' && !row.items.length;
+            if (
+                !empty &&
+                (row.tag !== 'record' || row.fields.some((f) => r.lacks.includes(f.name)))
+            )
+                throw new BackendDiagnostic(
+                    'unsatisfied-constraint',
+                    `Parameter ${r.parameter + 1} of ${source} must be a record without ${r.lacks.join(', ') || 'other constraints'}`,
+                );
+        }
         const identity = unit?.definition ?? unit?.id ?? source;
         const key = JSON.stringify([
             'semantic-specialization',
@@ -165,6 +227,8 @@ export function specializeProgram(
         copy.id = record.id;
         if (copy.definition) copy.definition = record.id;
         copy.signature.quantified = [];
+        delete copy.signature.bounds;
+        delete copy.signature.rows;
         // Global binding schemes are provenance only, and remain in `generic`.
         copy.bindings = copy.bindings.filter((b) => b.kind !== 'global');
         const specialized = rewrite(copy, substitute, (i) => {
@@ -195,11 +259,16 @@ export function specializeProgram(
         return record;
     };
     const rootIds = roots.map((r) => request(r.unit, r.arguments, [], true).id);
-    const program: TypedProgram = {
-        schemaVersion: 1,
-        imports: generic.imports.filter((i) => usedImports.has(i.definition)),
-        units: emitted,
-    };
+    const program: TypedProgram = eraseRecordForms(
+        lowerNeeds(
+            {
+                schemaVersion: 1,
+                imports: input.imports.filter((i) => usedImports.has(i.definition)),
+                units: emitted,
+            },
+            input.imports,
+        ),
+    );
     // Self recursion is visible before verification of a unit; dependencies precede consumers.
     verifyTypedProgram(program);
     return freezeTree({
@@ -208,6 +277,14 @@ export function specializeProgram(
         generic,
         program,
         roots: rootIds,
-        instances: [...cache.values()].sort((a, b) => a.id.localeCompare(b.id)),
+        instances: eraseRecords(
+            [...cache.values()]
+                .sort((a, b) => a.id.localeCompare(b.id))
+                .map((i) => ({
+                    ...i,
+                    type: lowerImportNeeds([{ definition: i.id, quantified: [], type: i.type }])[0]!
+                        .type,
+                })),
+        ),
     });
 }

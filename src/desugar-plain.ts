@@ -31,7 +31,7 @@ const ids = (pat: Pat): Id[] => {
         case 'constructor':
             return pat.args.flatMap(ids);
         case 'record':
-            return pat.fields.flatMap((f) => ids(f.pat));
+            return pat.fields.flatMap((f) => ids(f.pat)).concat(pat.rest ? ids(pat.rest) : []);
         case 'lens':
             return ids(pat.inner);
         default:
@@ -139,6 +139,17 @@ export function desugarPlain(source: Linear): PlainResult {
                     ...n,
                     fields: n.fields.map((f) => ({ ...f, value: linear(f.value, scope) })),
                 };
+            case 'update':
+                return {
+                    ...n,
+                    items: n.items.map((i) =>
+                        i.value ? { ...i, value: linear(i.value, scope) } : i,
+                    ),
+                };
+            case 'need':
+                return n;
+            case 'inject':
+                return { ...n, value: linear(n.value, scope), body: linear(n.body, scope) };
             case 'assign':
                 place(n.lens, scope);
                 return { ...n, lens: lens(n.lens, scope), value: linear(n.value, scope) };
@@ -221,6 +232,39 @@ export function desugarPlain(source: Linear): PlainResult {
         };
     };
 
+    /**
+     * The receiver of a message owns it, so a plain binding that is sent goes as a real copy:
+     * the two tasks must not share anything either could change.
+     */
+    const unshared = (n: Term): Term => {
+        switch (n.type) {
+            case 'apply': {
+                if (!n.share) return n;
+                const { share: _, ...copy } = n;
+                return copy;
+            }
+            case 'tuple':
+            case 'vector':
+                return { ...n, items: n.items.map((v) => unshared(v) as Linear) };
+            case 'record':
+                return {
+                    ...n,
+                    fields: n.fields.map((f) => ({ ...f, value: unshared(f.value) as Linear })),
+                };
+            case 'update':
+                return {
+                    ...n,
+                    items: n.items.map((i) =>
+                        i.value ? { ...i, value: unshared(i.value) as Linear } : i,
+                    ),
+                };
+            case 'constructor':
+                return { ...n, args: n.args.map((v) => unshared(v) as Linear) };
+            default:
+                return n;
+        }
+    };
+
     const application = <T extends Linear | Lens>(n: T & { type: 'apply' }, scope: Scope): T => {
         if (
             n.type === 'apply' &&
@@ -231,9 +275,13 @@ export function desugarPlain(source: Linear): PlainResult {
             n.args[0].type !== 'lens'
         )
             return dupValue(n as Linear & { type: 'apply' }, scope) as T;
-        // A callee is consumed, not copied: closures are affine and cannot be duplicated.
-        const fn = n.fn.type === 'id' ? n.fn : linear(n.fn, scope);
-        return { ...n, fn, args: n.args.map((a) => term(a, scope)) };
+        // Calling a plain binding reads it like any other use, so it can be called again. A
+        // plain binding can always be copied: a function that cannot be needs a `mut` one.
+        const fn = linear(n.fn, scope);
+        const args = n.args.map((a) => term(a, scope));
+        if (fn.type === 'id' && fn.text === 'chanSend' && !scope.has('chanSend') && args[1])
+            args[1] = unshared(args[1]);
+        return { ...n, fn, args };
     };
 
     const closure = (n: Linear & { type: 'fn' }, scope: Scope): Linear => {
@@ -243,9 +291,10 @@ export function desugarPlain(source: Linear): PlainResult {
         const bound = new Set(n.args.flatMap((a) => names(a.pat)));
         const { values } = captureUses(n.body, bound);
         const captured = [...values].filter((name) => scope.get(name) === 'plain');
-        const args = n.args.map(({ mut: _, ...a }, i) => ({
+        const args = n.args.map(({ mut, ...a }, i) => ({
             ...a,
             shared: argMode(n.args[i]) === 'plain',
+            ...(mut && a.pat.type === 'lens' ? { ownedLens: true } : {}),
         }));
         let body = term(n.body, inner);
         const loc = n.loc;

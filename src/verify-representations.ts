@@ -1,5 +1,5 @@
 import { layoutSchemaKey, scatterVariants } from './layout-definitions.ts';
-import { mapSemantic, type Instance } from './typed-ir.ts';
+import { mapSemantic, type Instance, type IRFunction, positions } from './typed-ir.ts';
 import { createHash } from 'node:crypto';
 import type { SemanticType, SemanticFlow } from './elaborated.ts';
 import { BackendDiagnostic, targetKey } from './backend/target.ts';
@@ -28,6 +28,7 @@ import {
 export function verifyRepresentations(
     source: SpecializedProgram,
     analysis: RepresentationAnalysis,
+    // createHash: (input: string) => string = CH,
 ): void {
     const fail = (message: string): never => {
         throw new BackendDiagnostic('invalid-representation-analysis', message);
@@ -148,6 +149,8 @@ export function verifyRepresentations(
             ['Number', 'Bool', 'String'].includes(t.name)
         )
             return;
+        // A channel is a handle: what it carries has no storage in it.
+        if (t.tag === 'con' && t.name === 'Chan' && t.args.length === 1) return;
         if (t.tag === 'con') {
             const d = schemas.find((d) => d.name === t.name);
             if (d && d.parameters.length === t.args.length) {
@@ -171,6 +174,7 @@ export function verifyRepresentations(
                             : l.type.name === 'Bool'
                               ? 'bool'
                               : 'string';
+                else if (l.type.name === 'Chan') storage = 'f64';
                 else {
                     const t = l.type,
                         d = schemas.find((d) => d.name === t.name)!;
@@ -316,6 +320,8 @@ export function verifyRepresentations(
     };
     const containsCallable = (t: SemanticType): boolean =>
         t.tag === 'fn' || (t.tag === 'tuple' && t.items.some(containsCallable));
+    const captureFlow = (c: IRFunction['captures'][number]): SemanticFlow =>
+        c.lens ? { tag: 'flow', read: c.type, write: c.lens.write } : irPlain(c.type);
     function fitMember(m: CallableMember, t: SemanticType): void {
         if (!m || typeof m !== 'object' || t.tag !== 'fn') return fail('Invalid callable member');
         if (m.kind === 'native') {
@@ -327,7 +333,7 @@ export function verifyRepresentations(
         const fn = fnFor(m.unit, m.function);
         typeEqual(fn.type, t);
         if (fn.captures.length !== m.captures.length) fail('Callable capture arity mismatch');
-        fn.captures.forEach((c, i) => fit(m.captures[i]!, irPlain(c.type)));
+        fn.captures.forEach((c, i) => fit(m.captures[i]!, captureFlow(c)));
     }
     function fit(v: ValueRepresentation, t: SemanticFlow): void {
         if (!v || typeof v !== 'object') return fail('Missing value representation');
@@ -487,12 +493,11 @@ export function verifyRepresentations(
                         s.knownPlaces.delete(i.slot.place);
                         const base = s.lenses.get(i.slot.place);
                         if (base) {
-                            const projected = projectedShape(base, i.slot.path);
+                            const projected = projectedShape(base, positions(i.slot.path));
                             // A scattered lens's place can be acquired as an empty or refilled thin slot.
                             if (!(projected.kind === 'sum' && lens(v).kind === 'thin'))
                                 topology(projected, lens(v));
-                        }
-                        else if (lens(v).kind !== 'thin')
+                        } else if (lens(v).kind !== 'thin')
                             fail('Owned local must expose a thin lens');
                         break;
                     }
@@ -501,10 +506,15 @@ export function verifyRepresentations(
                         if (lens(v).kind !== 'thin') fail('Temporary lens must have owned storage');
                         block(i.cleanup, clone(s));
                         break;
+                    case 'give':
+                        if (lens(v).kind !== 'thin') fail('A moved lens must be one lens');
+                        break;
                     case 'lens-construct':
                         s.knownPlaces.clear();
                         if (i.out.type.tag !== 'flow' || lens(v).kind !== resultKind(i.out.type))
-                            fail('Constructor lens must have its canonical scattered or thin shape');
+                            fail(
+                                'Constructor lens must have its canonical scattered or thin shape',
+                            );
                         i.items.forEach((id) => lens(get(s, id)));
                         break;
                     case 'lens-tuple': {
@@ -776,7 +786,9 @@ export function verifyRepresentations(
             else bind(p.pattern, a, state);
         });
         v.captures.forEach((c, i) => {
-            fit(c, irPlain(fn.captures[i]!.type));
+            const capture = fn.captures[i]!;
+            fit(c, captureFlow(capture));
+            if (capture.lens) state.lenses.set(capture.place, lens(c));
         });
         fit(v.result, fn.type.result);
         requireEqual(

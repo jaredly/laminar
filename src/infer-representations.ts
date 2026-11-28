@@ -13,7 +13,7 @@ import {
     type Backing,
 } from './representations.ts';
 import type { SpecializedProgram } from './specialize.ts';
-import type { IRUnit, IRBlock } from './typed-ir.ts';
+import { type IRUnit, type IRBlock, positions } from './typed-ir.ts';
 import { typeKey } from './typed-ir.ts';
 import { verifyTypedProgram } from './verify-ir.ts';
 import { memberKey, representationKey } from './representation-key.ts';
@@ -421,6 +421,9 @@ export function inferRepresentations(
             fn.parameters.forEach((p, i) => {
                 if (p.lensPlace) state.lenses.set(p.lensPlace, shape(args[i]!));
             });
+            fn.captures.forEach((c, i) => {
+                if (c.lens) state.lenses.set(c.place, shape(callee.captures[i]!));
+            });
             variant.values = [];
             variant.calls = [];
             const result = block(unit, fn.body, state, variant, []);
@@ -454,6 +457,13 @@ export function inferRepresentations(
             }
             let out: ValueRepresentation;
             switch (i.op) {
+                case 'record':
+                    return fail('Specialization erases records');
+                case 'need':
+                case 'inject':
+                case 'supply':
+                case 'widen':
+                    return fail('Specialization passes dependencies as arguments');
                 case 'constant':
                 case 'string':
                 case 'construct':
@@ -474,7 +484,9 @@ export function inferRepresentations(
                     s.knownPlaces.delete(i.slot.place);
                     if (i.out.type.tag !== 'flow') return fail('Acquire produced data');
                     let base = s.lenses.get(i.slot.place);
-                    if (base) for (const index of i.slot.path) base = reps.project(base, index);
+                    if (base)
+                        for (const index of positions(i.slot.path))
+                            base = reps.project(base, index);
                     out = {
                         kind: 'lens',
                         shape: base
@@ -491,6 +503,11 @@ export function inferRepresentations(
                         shape: reps.thin(i.out.type.read, i.out.type.write),
                     };
                     block(unit, i.cleanup, clone(s), record, chain);
+                    break;
+                case 'give':
+                    // It travels as one lens struct, whose restore field carries its cleanup.
+                    if (i.out.type.tag !== 'flow') return fail('Moved lens produced data');
+                    out = { kind: 'lens', shape: reps.thin(i.out.type.read, i.out.type.write) };
                     break;
                 case 'lens-tuple':
                     out = {

@@ -3,7 +3,7 @@
 This is the user-facing summary of the compiler as of phase 7 of the
 [C code generation plan](c-codegen-plan.md). The design notes live in
 [the C backend](c-backend.md), [typed IR](typed-ir.md) and
-[ABI-keyed callable representations](abi-callable-representations.md).
+[ABI-keyed callable representations](done/abi-callable-representations.md).
 
 ## Running the compiler
 

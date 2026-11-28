@@ -9,8 +9,18 @@ export type Pat = (
     | { type: 'drop'; loc: Loc }
     | { type: 'tuple'; items: Pat[]; loc: Loc }
     | { type: 'constructor'; name: string; args: Pat[]; loc: Loc }
-    /** Exhaustive record pattern; field order is source order, never significant. */
-    | { type: 'record'; fields: { name: string; pat: Pat; loc: Loc }[]; loc: Loc }
+    /**
+     * A record with at least these fields; field order is never significant. `rest` binds the
+     * others; without it an owned pattern drops them. `exact` is set by `normalizeBorrowed`,
+     * which rebuilds the record from the fields the pattern names.
+     */
+    | {
+          type: 'record';
+          fields: { name: string; pat: Pat; loc: Loc }[];
+          rest?: Pat;
+          exact?: boolean;
+          loc: Loc;
+      }
     | { type: 'string'; text: string; loc: Loc }
     // | { type: 'list'; items: Pat[]; tail?: Pat; loc: Loc }
     | { type: 'lens'; inner: Pat; loc: Loc }
@@ -26,11 +36,22 @@ export type Type =
      * `~A` is `A/A`; `=A` is `A/=A`. `replaceable: false` marks a lens whose whole value
      * cannot be replaced (a constructor of borrowed fields); absent means replaceable.
      */
-    | { type: 'lens'; left: Type; right?: Type; replaceable?: boolean }
+    | { type: 'lens'; left: Type; right?: Type; replaceable?: boolean; owned?: boolean }
     | { type: 'constr'; name: Id; args?: Type[]; loc: Loc }
+    /** `mut T`, a parameter of a function type that its callee takes ownership of. */
+    | { type: 'mut'; value: Type; loc: Loc }
     | { type: 'tuple'; items: Type[] }
-    | { type: 'record'; fields: { name: string; type: Type; loc: Loc }[]; loc: Loc }
-    | { type: 'fn'; args: Type[]; body: Type };
+    /** `rest` names the row of other fields; `_` is an anonymous one. */
+    | { type: 'record'; fields: { name: string; type: Type; loc: Loc }[]; rest?: Id; loc: Loc }
+    /**
+     * `needs` absent means inferred; empty means the function needs nothing. `kind` absent
+     * means reusable; `once` is a closure with state, and `linear` one that must be called.
+     */
+    | { type: 'fn'; args: Type[]; needs?: NeedsItem[]; body: Type; kind?: FunctionKind };
+export type FunctionKind = 'once' | 'linear';
+/** One part of `={...}>`: a field, `...row`, or a record alias or row variable by name. */
+export type NeedsItem = TypeField | { include: Type; loc: Loc };
+export type Needs = NeedsItem[];
 
 export type TypeDecl =
     | { type: 'type-alias'; name: Id; alias: Type; loc: Loc; args?: Id[]; linear?: boolean }
@@ -68,7 +89,7 @@ export type Lens =
     | { type: 'tuple'; items: Lens[]; loc: Loc }
     /**
      * A constructor of lenses. Not a lens to a stored value: over a multi-constructor
-     * type it is not replaceable as a whole (see docs/scattered-constructor-lenses.md).
+     * type it is not replaceable as a whole (see docs/done/scattered-constructor-lenses.md).
      */
     | { type: 'constructor'; name: string; args: Lens[]; loc: Loc }
     | { type: 'case'; value: Term; cases: { pat: Pat; body: Lens; mut?: boolean }[]; loc: Loc };
@@ -96,7 +117,14 @@ export type Op = { type: 'op'; text: string; loc: Loc };
  * `shared` is set by the dual-mode desugar on a plain parameter, whose value is shared and
  * immutable. A pure parameter is never shared.
  */
-export type FnArg = { pat: Pat; typ?: Type; mut?: boolean; shared?: boolean };
+export type FnArg = {
+    pat: Pat;
+    typ?: Type;
+    mut?: boolean;
+    shared?: boolean;
+    /** `mut ~x`: the function receives the lens and its restore obligation. */
+    ownedLens?: boolean;
+};
 export type LinearInterp = { value: Linear; tail: string };
 
 export type Linear =
@@ -146,8 +174,22 @@ export type Linear =
     | { type: 'tuple'; items: Linear[]; loc: Loc }
     | { type: 'vector'; items: Linear[]; loc: Loc }
     | { type: 'record'; fields: { name: string; value: Linear; loc: Loc }[]; loc: Loc }
+    /** `#name`: the entry `name` of what the enclosing function needs. */
+    | { type: 'need'; name: string; loc: Loc }
+    /** `inject name = value`: `body` runs with that entry added or replaced. */
+    | { type: 'inject'; name: string; value: Linear; body: Linear; loc: Loc }
+    /** A record built from spreads and field operations, applied left to right. */
+    | { type: 'update'; items: RecordItem[]; loc: Loc }
     | { type: 'constructor'; name: string; args: Linear[]; loc: Loc }
     | { type: 'case'; value: Term; cases: { pat: Pat; body: Linear; mut?: boolean }[]; loc: Loc };
+
+export type RecordOp = 'extend' | 'update' | 'remove' | 'replace';
+export type RecordItem =
+    | { kind: 'spread'; value: Linear; loc: Loc }
+    /** `remove` is the only operation without a value. */
+    | { kind: 'field'; op: RecordOp; name: string; value?: Linear; loc: Loc };
+export const itemValues = (items: readonly RecordItem[]): Linear[] =>
+    items.flatMap((i) => (i.value ? [i.value] : []));
 
 export const names = (pat: Pat): string[] => {
     switch (pat.type) {
@@ -165,7 +207,9 @@ export const names = (pat: Pat): string[] => {
         case 'constructor':
             return pat.args.flatMap(names);
         case 'record':
-            return pat.fields.flatMap((f) => names(f.pat));
+            return pat.fields
+                .flatMap((f) => names(f.pat))
+                .concat(pat.rest ? names(pat.rest) : []);
         case 'lens':
             return names(pat.inner);
     }
@@ -237,6 +281,12 @@ export const free = (expr: Term | Lens): string[] => {
         }
         case 'record':
             return expr.fields.flatMap((f) => free(f.value));
+        case 'update':
+            return itemValues(expr.items).flatMap(free);
+        case 'need':
+            return [];
+        case 'inject':
+            return free(expr.value).concat(free(expr.body));
         case 'assign': {
             return free(expr.value).concat(free(expr.lens));
         }
@@ -324,6 +374,15 @@ export const getFree = (
         case 'record':
             expr.fields.forEach((f) => getFree(bound, f.value, ref, deref));
             return;
+        case 'update':
+            itemValues(expr.items).forEach((v) => getFree(bound, v, ref, deref));
+            return;
+        case 'need':
+            return;
+        case 'inject':
+            getFree(bound, expr.value, ref, deref);
+            getFree(bound, expr.body, ref, deref);
+            return;
         case 'assign': {
             getFree(bound, expr.value, ref, deref);
             getFree(bound, expr.lens, deref, new Set());
@@ -332,9 +391,14 @@ export const getFree = (
     }
 };
 
-export type TypeField = { name: string; type: Type; loc: Loc };
-export type PatField = { name: string; pat: Pat; loc: Loc };
-export type RecordField = { name: string; value: Linear; loc: Loc };
+export type TypeEntry = { name: string; type: Type; loc: Loc };
+export type PatEntry = { name: string; pat: Pat; loc: Loc };
+/** A part of a record type or pattern while parsing: a field, or the `...rest` that ends it. */
+export type TypeField = TypeEntry | { rest: Id; loc: Loc };
+export type PatField = PatEntry | { rest: Pat; loc: Loc };
+export type RecordExtend = { kind: 'field'; op: 'extend'; name: string; value: Linear; loc: Loc };
+export type RecordField = RecordExtend;
+export type SoleRecordItem = RecordItem;
 
 /** A token of `if c then a else b`: the keywords, operators and operands in source order. */
 export type IfPart =

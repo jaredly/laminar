@@ -1,11 +1,14 @@
+import { comparableUnions, type Capture } from './constraints.ts';
 import {
     ElaborationBuilder,
     type Elaboration,
     type ElaborationContext,
     type BindingRecord,
     type RawState,
+    type Step,
 } from './elaborated.ts';
 import { captureUses } from './captures.ts';
+import { isLinear } from './linear.ts';
 import {
     free,
     names,
@@ -17,6 +20,8 @@ import {
     type Decl,
     type Id,
     type TypeDecl,
+    type RecordItem,
+    type NeedsItem,
 } from './ast.ts';
 import {
     Solver,
@@ -25,37 +30,69 @@ import {
     tuple,
     record,
     fn,
+    fn as fnType,
     plain,
     flow,
     mono,
     mapFlow,
+    printType,
     FIXED,
     OWNED,
+    BORROWED_LENS,
+    OWNED_LENS,
     REPLACEABLE,
     SHARED,
+    CHANNEL,
+    kindRank,
     reads,
     mapType,
+    needs,
+    NO_NEEDS,
+    type Need,
     type Ty,
     type FlowTy,
     type Scheme,
+    type RecordTy,
 } from './types.ts';
 
-type Borrow = { path: number[]; parent?: Borrow; id: string };
+/** Whether a written type lists needs anywhere. */
+const statesNeeds = (type: unknown): boolean =>
+    !!type &&
+    typeof type === 'object' &&
+    ((type as { needs?: unknown }).needs !== undefined || Object.values(type).some(statesNeeds));
+type Borrow = { path: Step[]; parent?: Borrow; id: string };
+type OnceParameters = readonly number[] | undefined;
+const commonOnceParameters = (a: OnceParameters, b: OnceParameters): OnceParameters =>
+    a && b && a.filter((i) => b.includes(i));
 type Root = {
+    /** Evidence for the function value currently occupying this whole place. */
+    callsOnce?: OnceParameters;
     /** Provenance retained while this computed focus owns deferred restoration. */
     owners?: Binding[];
     // Exclusive protection is independent of permission to retain owned backing.
     protectedOwners?: Binding[];
     place?: string;
     type: Ty;
-    empty: number[][];
+    empty: Step[][];
+    /**
+     * The type each emptied path held when it was last moved out; a move leaves unit behind.
+     * Only read for a path that is empty now.
+     */
+    vacated?: Map<string, Ty>;
     borrows: Set<Borrow>;
     revisions: Map<string, number>;
+    /**
+     * Set when this place is an owned lens. `permit` is the one its own binding holds: a
+     * reborrow has a different one, so only the whole, original binding can move.
+     */
+    ownedLens?: { permit?: Borrow };
+    /** The owned lens left for another holder, which also ends it. */
+    moved?: boolean;
 };
 type Binding = {
     id?: string;
     root: Root;
-    path: number[];
+    path: Step[];
     scheme?: Scheme;
     permit?: Borrow;
     /**
@@ -67,10 +104,12 @@ type Binding = {
     replaceable?: Ty;
 };
 type Env = Map<string, Binding>;
+/** A spread's value: what it holds now, what it held before any moves, and the emptied fields. */
+type SpreadValue = { current: Ty; original: Ty; holes: Set<string> };
 type View = {
     /** Stage final focus contents now; the returned action completes restoration. */
     provenance?: Binding[];
-    empty?: number[][];
+    empty?: Step[][];
     read: Ty;
     put: (type: Ty) => void;
     targets: Binding[];
@@ -79,6 +118,25 @@ type View = {
      * constructor of lenses over a multi-constructor type is `FIXED`.
      */
     replaceable?: Ty;
+    /** Whether this lens may move to another holder; absent means borrowed. */
+    owned?: Ty;
+    /** The binding that loses the lens if it moves; absent for a temporary. */
+    holder?: Binding;
+};
+/** One lens argument of a call, from its setup until the call returns it or takes it. */
+type LensArgument = {
+    source: Lens;
+    view: View;
+    /** The targets' revisions just after setup. */
+    revisions: number[];
+    replacement: Ty;
+    /** Unknown until the callee is: its signature says whether this call borrows or moves. */
+    owned: Ty;
+};
+export type InferOptions = {
+    /** Linear types exist, so a closure may take an owned lens or become linear. */
+    linearTypes?: boolean;
+    plainBinders?: ReadonlySet<number>;
 };
 export type TypeEnvironment = ReadonlyMap<string, Scheme>;
 /** User-declared type names. Unions are nominal; aliases expand at each use. */
@@ -93,6 +151,7 @@ const builtinTypeArity: Record<string, number> = {
     String: 0,
     World: 0,
     Handle: 0,
+    Chan: 1,
     List: 1,
     Vector: 1,
 };
@@ -103,7 +162,22 @@ export type Inference = {
     types: ReadonlyMap<object, FlowTy>;
     bindings: ReadonlyMap<object, BindingRecord>;
     elaboration: Elaboration;
+    /** Parameters that are only ever called, once on every path, so they take linear closures. */
+    acceptsLinear: ReadonlySet<number>;
 };
+
+/** A function whose kind cannot be shared or copied, so every position of it is owned. */
+const isKinded = (t: Ty): boolean => t.tag === 'fn' && !!t.capture;
+/** Whether a written type has a function type anywhere in it. */
+const writesFunction = (type: unknown): boolean =>
+    !!type &&
+    typeof type === 'object' &&
+    ((type as { type?: unknown }).type === 'fn' || Object.values(type).some(writesFunction));
+/** The expressions that yield a function themselves, rather than passing one along. */
+const makesFunctionValue = (n: Linear, self: string | undefined): boolean =>
+    n.type === 'op' || n.type === 'id'
+        ? n.text !== self
+        : n.type === 'fn' || n.type === 'field' || n.type === 'need' || n.type === 'apply';
 
 /** One solver per checked expression/definition; environments contain finalized schemes. */
 export class Inferencer {
@@ -115,6 +189,17 @@ export class Inferencer {
     private bindings = new Map<object, Binding>();
     private builder: ElaborationBuilder;
     private current?: object;
+    /** Variable reads that consume a closure exactly once: calls, and accepting arguments. */
+    private consumingUses = new Set<string>();
+    private rootFunction?: object;
+    private rootDeclaration?: Decl;
+    private callsOnce = new WeakMap<object, OnceParameters>();
+    private valueTypes = new WeakMap<object, Ty>();
+    /**
+     * Checks that need every type known. A function can turn out to be one-use after a call
+     * that passed it has been checked, when a channel carries it further on.
+     */
+    private deferred: (() => void)[] = [];
     private globalParameters = new Map<string, { local: number; parameter: string }[]>();
     private constructors: Map<string, Scheme>;
     constructor(
@@ -122,8 +207,11 @@ export class Inferencer {
         constructors: TypeEnvironment = new Map(),
         context: ElaborationContext = { id: 'unit/expression' },
         private typeDefinitions: TypeDefinitions = new Map(),
+        private options: InferOptions = {},
     ) {
         this.builder = new ElaborationBuilder(context);
+        this.solver.plainEntries = !!options.linearTypes;
+        this.solver.singleUseFunctions = !options.linearTypes;
         // Re-home externally supplied variables so solver IDs never collide.
         const imports = (table: TypeEnvironment, constructor = false) =>
             new Map(
@@ -148,7 +236,7 @@ export class Inferencer {
                         (constructor ? 'constructor:' : 'value:') + name,
                         quantified.map((local, i) => ({ local, parameter: `${definition}/q${i}` })),
                     );
-                    return [name, { body, quantified }];
+                    return [name, { ...scheme, body, quantified }];
                 }),
             );
         this.globals = imports(globals);
@@ -167,11 +255,19 @@ export class Inferencer {
             case 'record':
                 return record(
                     t.fields.map((f) => ({ name: f.name, type: this.replace(f.type, vars) })),
+                    t.rest && this.replace(t.rest, vars),
                 );
             case 'fn':
                 return fn(
                     t.args.map((v) => mapFlow(v, (t) => this.replace(t, vars))),
                     mapFlow(t.result, (t) => this.replace(t, vars)),
+                    t.capture,
+                    t.needs && this.replace(t.needs, vars),
+                );
+            case 'needs':
+                return needs(
+                    t.entries.map((e) => ({ ...e, type: this.replace(e.type, vars) })),
+                    t.rest && this.replace(t.rest, vars),
                 );
         }
     }
@@ -200,6 +296,13 @@ export class Inferencer {
         kind: BindingRecord['kind'],
         definition?: string,
     ): void {
+        const initialType = this.get(b, 0);
+        const loc = (node as { loc?: number } | undefined)?.loc;
+        if (kind === 'local' && loc !== undefined && this.options.plainBinders?.has(loc))
+            this.solver.require('Copyable', initialType, loc, [
+                'linear-plain',
+                `${name} holds a linear value, so it must be declared \`mut\``,
+            ]);
         b.id = this.builder.binding({
             name,
             declaration: node ? this.builder.node(node) : undefined,
@@ -208,7 +311,7 @@ export class Inferencer {
             path: [...b.path],
             kind,
             borrow: b.permit?.id,
-            initialType: this.get(b, 0),
+            initialType,
         });
     }
     private state(root: Root): RawState {
@@ -238,12 +341,36 @@ export class Inferencer {
                 after: this.state(b.root),
             });
     }
+    private replaceAt(type: Ty, path: Step[], value: Ty, loc: number): Ty {
+        const [step, ...rest] = path;
+        if (step === undefined) return value;
+        const p = this.solver.prune(type);
+        if (typeof step === 'string') {
+            if (p.tag !== 'record' || !p.fields.some((f) => f.name === step))
+                return this.error('alias-shape', loc, 'Aliased record shape changed');
+            return record(
+                p.fields.map((f) =>
+                    f.name === step ? { ...f, type: this.replaceAt(f.type, rest, value, loc) } : f,
+                ),
+                p.rest,
+            );
+        }
+        if (p.tag !== 'tuple' || step >= p.items.length)
+            return this.error('alias-shape', loc, 'Aliased tuple shape changed');
+        return tuple(
+            ...p.items.map((v, i) => (i === step ? this.replaceAt(v, rest, value, loc) : v)),
+        );
+    }
     private use(node: object, b: Binding, mode: 'value' | 'lens'): void {
         this.bindings.set(node, b);
         this.builder.uses.push({ node: this.builder.node(node), binding: b.id!, mode });
     }
     private instantiate(name: string, scheme: Scheme, node: object, constructor = false): Ty {
-        const result = this.solver.instantiateWithArguments(scheme);
+        const result = this.solver.instantiateWithArguments(
+            scheme,
+            false,
+            (node as { loc: number }).loc,
+        );
         const recursive = !constructor && name === this.selfName;
         const parameters = recursive
             ? []
@@ -264,10 +391,28 @@ export class Inferencer {
         return result.type;
     }
     private selfName?: string;
+    private sharedPattern = false;
+    /** The expression being called, which is not used as a value of its own. */
+    private callee?: object;
+    /** The row of dependencies the code being checked may use. */
+    private ambient: Ty = NO_NEEDS;
+    /** A closed list the definition declares for its body, and the open row of its type. */
+    private limit?: { body: Ty; type: Ty };
+    private conversions: {
+        mode: Ty;
+        from: 'owned' | 'shared';
+        parameter: boolean;
+        value: Ty;
+        loc: number;
+    }[] = [];
+    /** Whether an arrow that says nothing about needs has them inferred. */
+    private inferOmitted = true;
+    /** Collects the rows made for such arrows while a signature is read. */
+    private omitted?: number[];
     private lookup(env: Env, name: string, loc: number): Binding {
         return env.get(name) ?? this.error('unbound-name', loc, `Unbound name ${name}`);
     }
-    private overlaps(a: number[], b: number[]): boolean {
+    private overlaps(a: Step[], b: Step[]): boolean {
         return a.slice(0, Math.min(a.length, b.length)).every((v, i) => v === b[i]);
     }
     // A computed focus depends on its logical path, including ancestor and
@@ -287,6 +432,12 @@ export class Inferencer {
         );
     }
     private accessible(b: Binding, loc: number): void {
+        if (b.root.moved)
+            this.error(
+                'use-after-move',
+                loc,
+                'This owned lens has moved to another holder, which now ends it',
+            );
         const permits = new Set<Borrow>();
         for (let p = b.permit; p; p = p.parent) permits.add(p);
         for (const borrow of b.root.borrows) {
@@ -303,20 +454,19 @@ export class Inferencer {
     }
     private get(b: Binding, loc: number): Ty {
         this.accessible(b, loc);
-        let t = b.root.type;
-        for (const i of b.path) {
+        return this.at(b.root.type, b.path, loc);
+    }
+    private at(type: Ty, path: Step[], loc: number): Ty {
+        let t = type;
+        for (const step of path) {
             const p = this.solver.prune(t);
-            const items =
-                p.tag === 'tuple'
-                    ? p.items
-                    : p.tag === 'record'
-                      ? p.fields.map((f) => f.type)
-                      : this.error(
-                            'alias-shape',
-                            loc,
-                            'Aliased tuple no longer has its original shape',
-                        );
-            t = items[i] ?? this.error('alias-shape', loc, 'Aliased tuple component is missing');
+            if (typeof step === 'string' ? p.tag !== 'record' : p.tag !== 'tuple')
+                this.error('alias-shape', loc, 'Aliased value no longer has its original shape');
+            t =
+                (typeof step === 'string'
+                    ? (p as RecordTy).fields.find((f) => f.name === step)?.type
+                    : (p as Ty & { tag: 'tuple' }).items[step]) ??
+                this.error('alias-shape', loc, 'Aliased component is missing');
         }
         return t;
     }
@@ -325,21 +475,8 @@ export class Inferencer {
         this.accessible(b, loc);
         if (b.scheme)
             this.error('immutable-definition', loc, 'Reusable definitions cannot be lens targets');
-        const update = (t: Ty, path: number[]): Ty => {
-            if (!path.length) return value;
-            const p = this.solver.prune(t);
-            if (p.tag === 'record' && path[0] < p.fields.length)
-                return {
-                    tag: 'record',
-                    fields: p.fields.map((f, i) =>
-                        i === path[0] ? { ...f, type: update(f.type, path.slice(1)) } : f,
-                    ),
-                };
-            if (p.tag !== 'tuple' || path[0] >= p.items.length)
-                return this.error('alias-shape', loc, 'Aliased tuple shape changed');
-            return tuple(...p.items.map((v, i) => (i === path[0] ? update(v, path.slice(1)) : v)));
-        };
-        b.root.type = update(b.root.type, b.path);
+        b.root.callsOnce = undefined;
+        b.root.type = this.replaceAt(b.root.type, b.path, value, loc);
         const revisionPath = JSON.stringify(b.path);
         b.root.revisions.set(revisionPath, (b.root.revisions.get(revisionPath) ?? 0) + 1);
         b.root.empty = b.root.empty.filter((path) => !this.overlaps(path, b.path));
@@ -350,11 +487,15 @@ export class Inferencer {
         const type = this.get(b, loc);
         if (!this.available(b))
             this.error('use-after-move', loc, 'Value has already been consumed');
+        this.vacate(b, type, loc);
+        return type;
+    }
+    private vacate(b: Binding, type: Ty, loc: number): void {
         const before = this.state(b.root);
         this.put(b, tuple(), loc, false);
         b.root.empty.push(b.path);
+        (b.root.vacated ??= new Map()).set(JSON.stringify(b.path), type);
         this.transition('move', b, before);
-        return type;
     }
     private restored(b: Binding, loc: number): void {
         this.accessible(b, loc);
@@ -365,6 +506,25 @@ export class Inferencer {
                 'Lens must contain a value at the end of its lifetime',
             );
     }
+    private isOwnedLens(b: Binding): boolean {
+        return !!b.root.ownedLens && !b.path.length && b.permit === b.root.ownedLens.permit;
+    }
+    /** The final contents of a lens that is ending, or that already left for another holder. */
+    private ending(b: Binding, loc: number): Ty {
+        if (b.root.moved) return b.root.type;
+        this.restored(b, loc);
+        return this.get(b, loc);
+    }
+    /** An owned lens takes its restore with it, so it must have a value to restore from. */
+    private movable(b: Binding, loc: number): void {
+        this.accessible(b, loc);
+        if (!this.available(b))
+            this.error('unrestored-lens', loc, 'An owned lens must hold a value when it moves');
+    }
+    private declaredLinear = (name: string): boolean => {
+        const definition = this.typeDefinitions.get(name);
+        return definition?.kind === 'union' && !!definition.linear;
+    };
     private freshBinding(type: Ty): Binding {
         return {
             root: {
@@ -404,6 +564,7 @@ export class Inferencer {
         if (node.type === 'type-alias') {
             // The alias is not yet registered, so a self-reference is an unknown type.
             this.annotation(node.alias, params, true);
+            this.refuseLinearResults(constructors);
             return {
                 definition: { kind: 'alias', params: [...params.keys()], body: node.alias },
                 constructors,
@@ -418,6 +579,8 @@ export class Inferencer {
         // Unions are nominal, so constructors may refer to the union itself.
         const previous = this.typeDefinitions;
         this.typeDefinitions = new Map(previous).set(name, definition);
+        // A constructor has nothing to infer needs from, so a bare arrow needs nothing.
+        this.inferOmitted = false;
         try {
             for (const item of node.items) {
                 const constructor = item.name.text;
@@ -427,15 +590,44 @@ export class Inferencer {
                         item.loc,
                         `Constructor ${constructor} already exists`,
                     );
-                const args = (item.args ?? []).map((t) =>
-                    reads(this.valueAnnotation(t, params, true)),
-                );
+                const types = (item.args ?? []).map((t) => this.valueAnnotation(t, params, true));
+                const args = types.map((t) => reads(t));
+                for (const type of types)
+                    mapType(type, (t) => {
+                        if (t.tag === 'record' && t.rest)
+                            this.error(
+                                'open-record-in-union',
+                                item.loc,
+                                'A union constructor cannot hold an open record yet; make the whole record a type parameter',
+                            );
+                        return undefined;
+                    });
                 constructors.set(constructor, this.solver.generalize(fn(args, result), []));
             }
+            this.refuseLinearResults(constructors);
         } finally {
             this.typeDefinitions = previous;
+            this.inferOmitted = true;
         }
         return { definition, constructors };
+    }
+
+    /**
+     * Check what the written types of a declaration require, which nothing else will. A type
+     * parameter is checked where a value of it is made.
+     */
+    private refuseLinearResults(declared: Map<string, Scheme>): void {
+        this.solver.finishBounds(
+            { quantified: [], body: tuple() },
+            new Map(),
+            comparableUnions(
+                [...this.constructors, ...declared].map(([name, s]) => ({
+                    definition: `constructor/${name}`,
+                    type: s.body,
+                })),
+            ),
+            this.declaredLinear,
+        );
     }
 
     infer(ast: Linear, declaration?: Decl): Inference {
@@ -444,6 +636,30 @@ export class Inferencer {
         declaration = prepared.declaration;
         const env = this.env();
         const bodyVariables = new Map<number, Ty>();
+        // Evaluating a top-level item can use no dependency but those it injects itself.
+        const root = (this.ambient = this.solver.fresh());
+        this.limit = undefined;
+        if (
+            declaration?.ann.type === 'fn' &&
+            declaration.ann.needs?.every((item) => this.isClosedNeed(item)) &&
+            ast.type === 'fn'
+        ) {
+            const stated = this.annotation(declaration.ann, new Map());
+            const body =
+                stated.tag === 'plain' && stated.value.tag === 'fn'
+                    ? (stated.value.needs ?? NO_NEEDS)
+                    : NO_NEEDS;
+            // The list limits the body. The function's type is open, so a caller may hold more.
+            const rest = this.solver.fresh() as Ty & { tag: 'meta' };
+            this.solver.frozen.add(rest.id);
+            const row = this.solver.prune(body);
+            const entries = row.tag === 'needs' ? row.entries : [];
+            if (!entries.length) this.solver.frozen.delete(rest.id);
+            this.limit = {
+                body,
+                type: entries.length ? needs(entries, rest) : NO_NEEDS,
+            };
+        }
         let self: Ty | undefined;
         if (ast.type === 'fn' && ast.name) {
             self = this.solver.fresh();
@@ -452,34 +668,74 @@ export class Inferencer {
             const binding = { ...this.freshBinding(self), scheme: mono(self) };
             this.declare(binding, ast.name, ast, 'global', this.builder.context.id);
             env.set(ast.name, binding);
+            this.seedOwnership(ast, self);
         }
+        this.rootFunction = ast;
+        this.rootDeclaration = declaration;
         const type = this.linear(ast, env);
         if (self) this.solver.unify(self, type, ast.loc);
+        this.deferred.forEach((check) => check());
+        this.requireNoNeeds(root, ast.loc);
+        this.closeOwnNeeds(type);
+        const omitted: number[] = (this.omitted = []);
+        const declared = declaration && this.annotation(declaration.ann, new Map());
+        this.omitted = undefined;
+        if (declared?.tag === 'plain') this.statedModes(declared.value, type);
+        this.settleConversions();
+        this.findAbandoned();
+        this.solver.settleOpenKinds();
         let scheme = this.solver.generalize(type, [...this.globals.values()]);
-        if (declaration) {
+        if (declaration && declared) {
             if (ast.type !== 'fn' || ast.name !== declaration.name.text)
                 this.error(
                     'declaration-name',
                     declaration.loc,
                     'Declaration must name its implementation',
                 );
-            const declared = this.annotation(declaration.ann, new Map());
-            if (declared.tag !== 'plain')
-                this.error(
-                    'annotation-mismatch',
-                    declaration.loc,
-                    'Definition signature must be a value type',
-                );
-            const contract = this.solver.generalize(declared.value, []);
+            const signature =
+                declared.tag === 'plain'
+                    ? declared.value
+                    : this.error(
+                          'annotation-mismatch',
+                          declaration.loc,
+                          'Definition signature must be a value type',
+                      );
+            const stated =
+                this.limit && signature.tag === 'fn'
+                    ? { ...signature, needs: this.limit.type }
+                    : signature;
             const inferredInstance = this.solver.instantiateWithArguments(scheme);
-            const contractInstance = this.solver.instantiateWithArguments(contract, true);
-            this.solver.unify(inferredInstance.type, contractInstance.type, declaration.loc);
-            const contractVariables = new Map(
-                [...contractInstance.arguments].map(([id, t]) => [
-                    (t as Ty & { tag: 'rigid' }).id,
-                    { tag: 'meta' as const, id },
-                ]),
+            const written = this.solver.generalize(stated, []);
+            // Needs the signature does not state are inferred, so they stay open.
+            const contractInstance = this.solver.instantiateWithArguments(
+                written,
+                true,
+                declaration.loc,
+                new Set(omitted),
             );
+            this.solver.unify(
+                this.asDeclared(inferredInstance.type, stated, type, declaration.loc),
+                contractInstance.type,
+                declaration.loc,
+            );
+            const rigid = [...contractInstance.arguments].flatMap(([id, t]) =>
+                t.tag === 'rigid' ? [[t.id, id] as const] : [],
+            );
+            const contractVariables = new Map(
+                rigid.map(([from, id]) => [from, { tag: 'meta' as const, id }]),
+            );
+            const named = (t: Ty) =>
+                mapType(this.solver.resolve(t), (v) =>
+                    v.tag === 'rigid' ? contractVariables.get(v.id) : undefined,
+                );
+            // What the body needs a row to lack is part of the contract, as its bounds are.
+            for (const [from, id] of rigid)
+                for (const label of this.solver.rowLacks(from) ?? [])
+                    this.solver.requireLacks({ tag: 'meta', id }, label, declaration.loc);
+            for (const [from, id] of rigid)
+                if (this.solver.rowLacks(from)) this.solver.markRow({ tag: 'meta', id });
+            this.solver.frozen.clear();
+            const contract = this.solver.generalize(named(contractInstance.type), []);
             for (const [id, instance] of inferredInstance.arguments) {
                 bodyVariables.set(
                     id,
@@ -490,6 +746,19 @@ export class Inferencer {
             }
             scheme = contract;
         }
+        this.solver.finishBounds(
+            scheme,
+            bodyVariables,
+            comparableUnions(
+                [...this.constructors].map(([name, s]) => ({
+                    definition: `constructor/${name}`,
+                    type: s.body,
+                })),
+            ),
+            this.declaredLinear,
+        );
+        const callsOnce = this.callsOnce.get(ast);
+        if (callsOnce?.length) scheme.callsOnce = callsOnce;
         const elaboration = this.builder.finish(
             ast,
             declaration,
@@ -501,6 +770,7 @@ export class Inferencer {
         const bindingRecords = new Map(elaboration.bindings.map((b) => [b.id, b]));
         return {
             elaboration,
+            acceptsLinear: new Set(callsOnce),
             type: this.solver.resolve(type),
             scheme,
             types: new Map(
@@ -513,6 +783,38 @@ export class Inferencer {
                 ]),
             ),
         };
+    }
+    /**
+     * A self-call sees only a type variable while the body is checked, and an unknown callee
+     * borrows. Where the signature says otherwise, give the recursion that shape up front.
+     */
+    private seedOwnership(n: Linear & { type: 'fn' }, self: Ty): void {
+        const owns = n.args.some((a) => a.ownedLens);
+        const produces = n.body.type === 'lens' && this.resultOwnership(n) === OWNED_LENS;
+        if (!owns && !produces) return;
+        const lens = (owned: Ty) =>
+            flow(this.solver.fresh(), this.solver.fresh(), this.solver.fresh(), owned);
+        const value = () => plain(this.solver.fresh(), this.solver.freshMode());
+        this.solver.unify(
+            self,
+            fn(
+                n.args.map((a) =>
+                    a.pat.type === 'lens'
+                        ? lens(a.ownedLens ? OWNED_LENS : BORROWED_LENS)
+                        : value(),
+                ),
+                n.body.type === 'lens' ? lens(this.resultOwnership(n)) : value(),
+                undefined,
+                this.limit?.type ?? this.solver.fresh(),
+            ),
+            n.loc,
+        );
+    }
+    /** A lens a function returns is owned exactly when the function borrows no lens. */
+    private resultOwnership(n: Linear & { type: 'fn' }): Ty {
+        return n.args.some((a) => a.pat.type === 'lens' && !a.ownedLens)
+            ? BORROWED_LENS
+            : OWNED_LENS;
     }
     /**
      * Resolve a named type. Builtins and declared types win over type variables; in a
@@ -529,12 +831,12 @@ export class Inferencer {
         };
         if (isBuiltinTypeName(id.text)) {
             arity(builtinTypeArity[id.text]);
-            return plain(
-                con(
-                    id.text === 'Int' ? 'Number' : id.text,
-                    ...args.map((t) => this.valueAnnotation(t, vars, closed)),
-                ),
+            const named = con(
+                id.text === 'Int' ? 'Number' : id.text,
+                ...args.map((t) => this.valueAnnotation(t, vars, closed)),
             );
+            this.solver.channels(named);
+            return plain(named);
         }
         const definition = this.typeDefinitions.get(id.text);
         if (definition) {
@@ -564,6 +866,7 @@ export class Inferencer {
                     a,
                     t.right ? this.valueAnnotation(t.right, vars, closed) : a,
                     t.replaceable === false ? FIXED : REPLACEABLE,
+                    t.owned ? OWNED_LENS : BORROWED_LENS,
                 );
             }
             case 'constr': {
@@ -571,23 +874,142 @@ export class Inferencer {
             }
             case 'tuple':
                 return plain(tuple(...t.items.map((v) => this.valueAnnotation(v, vars, closed))));
-            case 'record':
-                return plain(
-                    record(
-                        this.uniqueFields(t.fields, t.loc).map((f) => ({
-                            name: f.name,
-                            type: this.valueAnnotation(f.type, vars, closed),
-                        })),
-                    ),
+            case 'record': {
+                const fields = this.uniqueFields(t.fields, t.loc).map((f) => ({
+                    name: f.name,
+                    type: this.valueAnnotation(f.type, vars, closed),
+                }));
+                const rest = !t.rest
+                    ? undefined
+                    : t.rest.text === '_' && !closed
+                      ? this.solver.fresh()
+                      : this.valueAnnotation(t.rest, vars, closed);
+                return plain(this.solver.row(fields, rest, t.loc));
+            }
+            case 'mut':
+                this.error(
+                    'invalid-mut',
+                    t.loc,
+                    '`mut` marks a parameter in a function type, as in `(mut a) => b`',
                 );
-            case 'fn':
-                return plain(
-                    fn(
-                        t.args.map((v) => this.annotation(v, vars, closed)),
-                        this.annotation(t.body, vars, closed),
-                    ),
-                );
+            case 'fn': {
+                const args = t.args.map((v) => this.parameterType(v, vars, closed));
+                let needed: Ty | undefined;
+                if (t.needs) needed = this.needsAnnotation(t.needs, vars, closed);
+                else if (this.inferOmitted) {
+                    needed = this.solver.fresh();
+                    this.omitted?.push((needed as Ty & { tag: 'meta' }).id);
+                }
+                const result = this.resultType(t.body, args, vars, closed);
+                if (t.kind && !this.options.linearTypes)
+                    this.error('dual-only', 0, `\`${t.kind}\` needs dual mode`);
+                const capture: Capture | undefined =
+                    t.kind === 'once' ? 'state' : t.kind ? 'linear' : undefined;
+                return plain(fn(args, result, capture, needed));
+            }
         }
+    }
+    /**
+     * A parameter of a written function type. In dual mode, as in a definition, an unmarked one
+     * only reads its argument and a `mut` one takes ownership of it. A lens says so itself.
+     */
+    private parameterType(t: Type, vars: Map<string, Ty>, closed: boolean): FlowTy {
+        const dual = this.options.linearTypes;
+        if (t.type === 'mut') {
+            if (!dual) this.error('dual-only', t.loc, '`mut` needs dual mode');
+            return plain(this.valueAnnotation(t.value, vars, closed), OWNED);
+        }
+        const a = this.annotation(t, vars, closed);
+        if (!dual || a.tag !== 'plain') return a;
+        return plain(a.value, isKinded(a.value) ? OWNED : SHARED);
+    }
+    /**
+     * The result of a written function type. In dual mode an unmarked one is shared, so it
+     * cannot be linear, and a `mut` one is the caller's. A lens says its own ownership, which
+     * has to be the one its parameters give it.
+     */
+    private resultType(t: Type, args: FlowTy[], vars: Map<string, Ty>, closed: boolean): FlowTy {
+        const dual = this.options.linearTypes;
+        const loc = 'loc' in t ? t.loc : 0;
+        if (t.type === 'mut') {
+            if (!dual) this.error('dual-only', loc, '`mut` needs dual mode');
+            return plain(this.valueAnnotation(t.value, vars, closed), OWNED);
+        }
+        const result = this.annotation(t, vars, closed);
+        if (result.tag === 'flow') {
+            const borrows = args.some(
+                (a) => a.tag === 'flow' && this.solver.lensOwnership(a.owned) !== 'owned',
+            );
+            const owned = this.solver.lensOwnership(result.owned) === 'owned';
+            if (owned === borrows)
+                this.error(
+                    'lens-ownership-mismatch',
+                    loc,
+                    borrows
+                        ? 'This function borrows a lens, so the lens it returns is borrowed: write it without `mut`'
+                        : 'This function borrows no lens, so the lens it returns is owned: write it `mut ~A`',
+                );
+            return result;
+        }
+        if (!dual) return result;
+        // A kind that cannot be shared says the result is owned by itself.
+        if (isKinded(result.value)) return result;
+        this.sharedResult(result.value, loc);
+        return plain(result.value, SHARED);
+    }
+    private sharedResult(type: Ty, loc: number): void {
+        this.solver.require('Copyable', type, loc, [
+            'linear-plain',
+            'A result not written `mut` is shared, so it cannot be linear; write `=> mut T`',
+        ]);
+    }
+    /** Whether an item of `={...}>` names particular entries, rather than a row variable. */
+    private isClosedNeed(item: NeedsItem): boolean {
+        if ('rest' in item) return false;
+        return 'name' in item || !this.isRowName(item.include);
+    }
+    private isRowName(type: Type): type is Id {
+        return (
+            type.type === 'id' &&
+            /^[a-z]/.test(type.text) &&
+            !isBuiltinTypeName(type.text) &&
+            !this.typeDefinitions.has(type.text)
+        );
+    }
+    /** `={...}>`: record aliases and fields, merged, and at most one row variable. */
+    private needsAnnotation(items: NeedsItem[], vars: Map<string, Ty>, closed: boolean): Ty {
+        const entries: Need[] = [];
+        let rest: Ty | undefined;
+        const add = (name: string, type: Ty, loc: number) => {
+            if (entries.some((e) => e.name === name))
+                this.error('duplicate-dependency', loc, `The dependency ${name} is listed twice`);
+            this.solver.selfContained(type, loc);
+            entries.push({ name, type, from: loc });
+        };
+        const remainder = (id: Id) => {
+            if (rest) this.error('invalid-needs', id.loc, 'At most one row variable can be listed');
+            rest =
+                id.text === '_' && !closed
+                    ? this.solver.fresh()
+                    : this.valueAnnotation(id, vars, closed);
+        };
+        for (const item of items) {
+            if ('rest' in item) remainder(item.rest);
+            else if ('name' in item)
+                add(item.name, this.valueAnnotation(item.type, vars, closed), item.loc);
+            else if (this.isRowName(item.include)) remainder(item.include);
+            else {
+                const type = this.solver.prune(this.valueAnnotation(item.include, vars, closed));
+                if (type.tag !== 'record' || type.rest)
+                    this.error(
+                        'invalid-needs',
+                        item.loc,
+                        'A list of needs names closed record types, fields and one row variable',
+                    );
+                else type.fields.forEach((f) => add(f.name, f.type, item.loc));
+            }
+        }
+        return needs(entries, rest);
     }
     private valueAnnotation(t: Type, vars: Map<string, Ty>, closed = false): Ty {
         const a = this.annotation(t, vars, closed);
@@ -650,28 +1072,49 @@ export class Inferencer {
                 return;
             }
             case 'record': {
-                // Patterns are exhaustive: every field is matched, `_` drops the ones not wanted.
+                if (source && p.rest)
+                    this.error(
+                        'unsupported-lens-rest',
+                        p.rest.loc,
+                        'A lens pattern cannot bind `...rest`; name the fields it focuses',
+                    );
+                if (p.rest && p.rest.type !== 'id' && p.rest.type !== 'drop')
+                    this.error('invalid-rest', p.rest.loc, '`...` takes a name or `_`');
                 const fields = this.uniqueFields(p.fields, p.loc).map((f) => ({
                     ...f,
                     type: this.solver.fresh(),
                 }));
-                this.solver.unify(
-                    type,
-                    record(fields.map((f) => ({ name: f.name, type: f.type }))),
-                    p.loc,
-                );
-                const order = [...fields].sort((a, b) => (a.name < b.name ? -1 : 1));
+                const types = fields.map((f) => ({ name: f.name, type: f.type }));
+                // The fields the pattern does not name.
+                const tail = p.exact ? undefined : this.solver.fresh();
+                const matched = this.solver.row(types, tail, p.loc);
+                try {
+                    this.solver.unify(type, matched, p.loc);
+                } catch (e) {
+                    if (p.exact && e instanceof TypeDiagnostic && e.code === 'type-mismatch')
+                        this.error(
+                            'type-mismatch',
+                            p.loc,
+                            `${e.message}. A borrowed match with constructors rebuilds its records, so a record pattern in it must list every field`,
+                        );
+                    throw e;
+                }
                 fields.forEach((f) =>
                     this.pattern(
                         f.pat,
                         f.type,
                         env,
-                        source
-                            ? { ...source, path: [...source.path, order.indexOf(f)] }
-                            : undefined,
+                        source ? { ...source, path: [...source.path, f.name] } : undefined,
                         seen,
                     ),
                 );
+                if (p.rest) this.pattern(p.rest, tail!, env, undefined, seen);
+                else if (tail && !source && !this.sharedPattern)
+                    this.dropped(
+                        tail,
+                        p.loc,
+                        'This pattern drops the fields it does not name, so they cannot be linear',
+                    );
                 return;
             }
             case 'constructor': {
@@ -694,14 +1137,27 @@ export class Inferencer {
                 );
         }
     }
+    /** A value of this type is discarded here. */
+    private dropped(type: Ty, loc: number, message: string): void {
+        if (this.options.linearTypes)
+            this.solver.require('Droppable', type, loc, ['linear-unconsumed', message]);
+    }
     private constructorType(name: string, args: Ty[], result: Ty, loc: number, node: object): void {
         const scheme =
             this.constructors.get(name) ??
             this.error('unknown-constructor', loc, `Unknown constructor ${name}`);
+        const instance = this.instantiate(name, scheme, node, true);
+        const made = this.solver.prune(instance);
         this.solver.unify(
-            this.instantiate(name, scheme, node, true),
+            instance,
             fn(
-                args.map((a) => plain(a, this.solver.freshMode())),
+                args.map((a, i) => {
+                    const field = made.tag === 'fn' ? made.args[i] : undefined;
+                    return plain(
+                        field?.tag === 'plain' ? this.fitKind(a, field.value) : a,
+                        this.solver.freshMode(),
+                    );
+                }),
                 plain(result),
             ),
             loc,
@@ -721,8 +1177,15 @@ export class Inferencer {
     }
     /** A value is shared when it is a plain read, or an aggregate or branch that holds one. */
     private expressionMode(n: Linear): Ty {
-        const join = (parts: object[]): Ty =>
-            parts.some((p) => this.solver.modeOf(this.modeOf(p)) === 'shared') ? SHARED : OWNED;
+        const join = (parts: object[]): Ty => {
+            const modes = parts.map((p) => this.modeOf(p));
+            if (modes.some((m) => this.solver.modeOf(m) === 'shared')) return SHARED;
+            // While a part is undecided so is the whole, and they decide together: what
+            // writes to the whole must not find later that a part was shared.
+            const [first, ...rest] = modes.filter((m) => this.solver.modeOf(m) === 'unknown');
+            for (const m of rest) this.solver.unifyMode(first!, m, n.loc);
+            return first ?? OWNED;
+        };
         switch (n.type) {
             case 'apply':
                 return this.resultModes.get(n) ?? OWNED;
@@ -733,8 +1196,14 @@ export class Inferencer {
                 return join(n.args);
             case 'record':
                 return join(n.fields.map((f) => f.value));
+            case 'update':
+                return join(n.items.flatMap((i) => (i.value ? [i.value] : [])));
             case 'let':
+            case 'inject':
                 return this.modeOf(n.body);
+            case 'need':
+                // A plain binding's reads are shared; a dependency is read the same way.
+                return this.options.linearTypes ? SHARED : OWNED;
             case 'case':
                 return join(n.cases.map((c) => c.body));
             default:
@@ -744,10 +1213,21 @@ export class Inferencer {
     private linear(n: Linear, env: Env): Ty {
         const previous = this.current;
         this.current = n;
+        // What is called is used as it is; any other use may be as another type of function.
+        const called = n === this.callee;
         try {
-            const t = this.linearInner(n, env);
+            const found = this.linearInner(n, env);
+            // The definition being checked is published as it is, not used.
+            const t =
+                !called && n !== this.rootFunction && makesFunctionValue(n, this.selfName)
+                    ? this.convert(found, n.loc)
+                    : found;
+            if (n.type === 'let') this.callsOnce.set(n, this.callsOnce.get(n.body));
+            if (n.type === 'tuple' && n.items.length === 1)
+                this.callsOnce.set(n, this.callsOnce.get(n.items[0]!));
             const mode = this.expressionMode(n);
             this.modes.set(n, mode);
+            this.valueTypes.set(n, t);
             this.record(n, plain(t, mode));
             return t;
         } finally {
@@ -760,14 +1240,24 @@ export class Inferencer {
             case 'op': {
                 const b = this.lookup(env, n.text, n.loc);
                 this.use(n, b, 'value');
-                return b.scheme ? this.instantiate(n.text, b.scheme, n) : this.consume(b, n.loc);
+                this.callsOnce.set(
+                    n,
+                    b.scheme?.callsOnce ?? (!b.path.length ? b.root.callsOnce : undefined),
+                );
+                if (!b.scheme) return this.consume(b, n.loc);
+                const instance = this.instantiate(n.text, b.scheme, n);
+                return n === this.callee || n.text === this.selfName
+                    ? instance
+                    : this.widen(instance);
             }
             case 'number':
                 return con('Number');
             case 'bool':
                 return con('Bool');
             case 'string':
-                n.interp.forEach((v) => this.linear(v.value, env));
+                n.interp.forEach(({ value }) =>
+                    this.solver.require('Display', this.linear(value, env), value.loc),
+                );
                 return con('String');
             case 'tuple':
                 return n.items.length === 1
@@ -779,6 +1269,27 @@ export class Inferencer {
                 return record(
                     n.fields.map((f) => ({ name: f.name, type: this.linear(f.value, env) })),
                 );
+            }
+            case 'update':
+                return this.update(n, env);
+            case 'need': {
+                const type = this.solver.requireEntry(this.ambient, n.name, n.loc);
+                this.copyableDependency(type, n.loc);
+                return type;
+            }
+            case 'inject': {
+                const entry = this.bindNeeds(this.linear(n.value, env), n.value.loc);
+                this.solver.selfContained(entry, n.value.loc);
+                if (this.options.linearTypes) this.copyableDependency(entry, n.value.loc);
+                else this.onlyTopLevelFunctions(n.value, entry, env);
+                const outer = this.ambient;
+                // In front of any outer entry of the same name, which it hides.
+                this.ambient = needs([{ name: n.name, type: entry }], outer);
+                try {
+                    return this.linear(n.body, env);
+                } finally {
+                    this.ambient = outer;
+                }
             }
             case 'constructor': {
                 const args = n.args.map((v) => this.linear(v, env)),
@@ -826,7 +1337,12 @@ export class Inferencer {
                         'Assignment RHS changes the owner of an active computed lens',
                     );
                 const previous = view.read;
+                const target =
+                    n.lens.type === 'id' ? this.lookup(env, n.lens.text, n.loc) : undefined;
+                if (target && !target.path.length) this.callsOnce.set(n, target.root.callsOnce);
                 view.put(value);
+                if (target && !target.path.length)
+                    target.root.callsOnce = this.callsOnce.get(n.value);
                 return previous;
             }
             case 'let':
@@ -837,26 +1353,531 @@ export class Inferencer {
                 return this.caseBody(n, env);
         }
     }
+    /**
+     * Pure mode: `#name` copies an entry each time, and a function value is never copied. A
+     * top-level function is the exception, since it can always be used again. So the only
+     * functions in an entry are ones named at the `inject`, alone or in data built there;
+     * whatever else goes in must hold no function.
+     */
+    private onlyTopLevelFunctions(n: Linear, type: Ty, env: Env): void {
+        if ((n.type === 'id' || n.type === 'op') && this.lookup(env, n.text, n.loc).scheme) return;
+        const parts =
+            n.type === 'tuple' || n.type === 'vector'
+                ? n.items
+                : n.type === 'record'
+                  ? n.fields.map((f) => f.value)
+                  : n.type === 'constructor'
+                    ? n.args
+                    : undefined;
+        if (parts) {
+            for (const part of parts)
+                this.onlyTopLevelFunctions(part, this.valueTypes.get(part)!, env);
+            return;
+        }
+        this.solver.require('Copyable', type, n.loc, [
+            'local-function-dependency',
+            'In pure mode the only functions a dependency can hold are top-level ones, named at the `inject`',
+        ]);
+    }
+    private copyableDependency(type: Ty, loc: number): void {
+        if (this.options.linearTypes)
+            this.solver.require('Copyable', type, loc, [
+                'linear-dependency',
+                'A dependency is read any number of times, so it cannot be linear',
+            ]);
+    }
+    /**
+     * `inject` supplies what an injected function needs, there and then: the function stored
+     * needs nothing. What is not known to be needed by now never will be.
+     */
+    private bindNeeds(value: Ty, loc: number): Ty {
+        const type = this.solver.prune(value);
+        if (type.tag !== 'fn' || !type.needs) return value;
+        let row = this.solver.prune(type.needs);
+        if (row.tag === 'meta') this.solver.unify(row, NO_NEEDS, loc);
+        else if (row.tag === 'needs' && row.rest) this.solver.unify(row.rest, NO_NEEDS, loc);
+        row = this.solver.prune(type.needs);
+        if (row.tag === 'needs' && row.entries.length) {
+            if (type.args.some((a) => a.tag === 'flow'))
+                this.error(
+                    'unsupported-dependency',
+                    loc,
+                    'A function with dependencies cannot be injected if it takes a lens',
+                );
+            this.requireEntries(row.entries, loc);
+        }
+        return fn(type.args, type.result, type.capture);
+    }
+    /** The surrounding code must hold the first entry of each name, at these types. */
+    private requireEntries(entries: Need[], loc: number): void {
+        const seen = new Set<string>();
+        for (const e of entries) {
+            if (seen.has(e.name)) continue;
+            seen.add(e.name);
+            this.solver.unify(
+                this.solver.requireEntry(this.ambient, e.name, loc, e.from ?? loc),
+                e.type,
+                loc,
+            );
+        }
+    }
+    /**
+     * What a call's callee needs. A callee whose needs are a closed list takes just those from
+     * the caller; otherwise the two rows are one, and the caller's record is passed on.
+     */
+    private calleeNeeds(callee: Ty, self: boolean, loc: number): Ty | undefined {
+        if (this.solver.isDependency(callee)) return undefined;
+        // A recursive call is held to the declared list.
+        if (self && this.limit) {
+            const row = this.solver.prune(this.limit.body);
+            if (row.tag === 'needs') this.requireEntries(row.entries, loc);
+            return this.limit.type;
+        }
+        const known = this.solver.prune(callee);
+        if (known.tag !== 'fn') return this.ambient;
+        if (!known.needs) return undefined;
+        const row = this.solver.prune(known.needs);
+        if (row.tag === 'needs' && !row.rest) {
+            this.requireEntries(row.entries, loc);
+            return row;
+        }
+        const ambient = this.solver.prune(this.ambient);
+        // Report an entry a closed list lacks by name.
+        if (ambient.tag === 'needs' && !ambient.rest && row.tag === 'needs')
+            this.requireEntries(row.entries, loc);
+        this.solver.unify(row, this.ambient, loc);
+        return this.ambient;
+    }
+    /**
+     * A function whose own needs nothing else mentions needs nothing. It can still go where a
+     * function with needs is expected: see `widen`.
+     */
+    private closeOwnNeeds(type: Ty): void {
+        const t = this.solver.prune(type);
+        const row = t.tag === 'fn' && t.needs && this.solver.prune(t.needs);
+        if (!row || row.tag !== 'meta' || this.solver.frozen.has(row.id)) return;
+        let uses = 0;
+        mapType(this.solver.resolve(t), (v) => {
+            if (v.tag === 'meta' && v.id === row.id) uses++;
+            return undefined;
+        });
+        if (uses === 1) this.solver.unify(row, NO_NEEDS, 0);
+    }
+    /**
+     * A function value may be used where a function of other ownership is expected: one that
+     * only reads a parameter takes ownership of it just as well, and an owned result can be
+     * shared. So each position that may change gets a mode that is open until the item is
+     * checked, and is what it was unless the use says otherwise. Only a type already known
+     * here converts.
+     */
+    private convert(type: Ty, loc: number): Ty {
+        const t = this.solver.prune(type);
+        return t.tag === 'fn' ? this.openOwnership(t, false, loc) : type;
+    }
+    /** `supplied` inside a parameter, where the slot provides the function: all reverses. */
+    private openOwnership(t: Ty & { tag: 'fn' }, supplied: boolean, loc: number): Ty {
+        let changed = false;
+        const position = (p: FlowTy, parameter: boolean): FlowTy => {
+            if (p.tag !== 'plain') return p;
+            const held = this.solver.prune(p.value);
+            const value =
+                held.tag === 'fn'
+                    ? this.openOwnership(held, parameter ? !supplied : supplied, loc)
+                    : held;
+            if (value !== held) changed = true;
+            const from = parameter !== supplied ? 'shared' : 'owned';
+            this.solver.settleOpenMode(p.mode);
+            if (this.solver.modeOf(p.mode) !== from) return plain(value, p.mode);
+            changed = true;
+            const mode = this.solver.openMode(from === 'shared' ? SHARED : OWNED);
+            this.conversions.push({ mode, from, parameter, value, loc });
+            return plain(value, mode);
+        };
+        const args = t.args.map((a) => position(a, true)),
+            result = position(t.result, false);
+        return changed ? this.solver.alike(fn(args, result, t.capture, t.needs), t) : t;
+    }
+    /** What a conversion that happened requires of the values it passes. */
+    private settleConversions(): void {
+        this.solver.settleOpenModes();
+        for (const { mode, from, parameter, value, loc } of this.conversions) {
+            if (!this.options.linearTypes || this.solver.modeOf(mode) === from) continue;
+            if (!parameter) this.sharedResult(value, loc);
+            else {
+                // Whoever receives it may only read it, so may neither consume it nor object
+                // to its being kept.
+                const refusal: [string, string] = [
+                    'linear-plain',
+                    'A function that only reads this parameter cannot be given ownership of a linear value',
+                ];
+                this.solver.require('Copyable', value, loc, refusal);
+                this.solver.require('Droppable', value, loc, refusal);
+            }
+        }
+        this.conversions = [];
+    }
+    /**
+     * A definition or import that needs nothing, used as a value, may stand for a function with
+     * any needs: it ignores them. Lowering adds the adapter where one turns out to have some.
+     */
+    private widen(type: Ty): Ty {
+        const t = this.solver.prune(type);
+        return t.tag === 'fn' && !t.needs && t.args.every((a) => a.tag === 'plain')
+            ? { ...t, needs: this.solver.fresh() }
+            : type;
+    }
+    /**
+     * A call of a parameter says nothing about who owns its arguments or its result, so a
+     * signature may: whatever it states settles the modes the body left open, before they
+     * default.
+     */
+    private statedModes(said: Ty, found: Ty): void {
+        const a = this.solver.prune(said),
+            b = this.solver.prune(found);
+        const each = (left: Ty[], right: Ty[]) =>
+            left.forEach((t, i) => right[i] && this.statedModes(t, right[i]!));
+        if (a.tag === 'fn' && b.tag === 'fn') {
+            if (b.open) this.solver.stateKind(b.open, a.capture);
+            const position = (x: FlowTy, y: FlowTy | undefined) => {
+                if (x.tag !== 'plain' || y?.tag !== 'plain') return;
+                if (this.solver.modeOf(y.mode) === 'unknown')
+                    this.solver.unifyMode(y.mode, x.mode, 0);
+                this.statedModes(x.value, y.value);
+            };
+            // Parameters first: a result may be one of theirs.
+            a.args.forEach((x, i) => position(x, b.args[i]));
+            position(a.result, b.result);
+        }
+        else if (a.tag === 'tuple' && b.tag === 'tuple') each(a.items, b.items);
+        else if (a.tag === 'con' && b.tag === 'con') each(a.args, b.args);
+        else if (a.tag === 'record' && b.tag === 'record')
+            for (const f of a.fields) {
+                const match = b.fields.find((g) => g.name === f.name);
+                if (match) this.statedModes(f.type, match.type);
+            }
+    }
+    /**
+     * The definition as its signature may publish it. Parameters must agree exactly. An owned
+     * result may be published as shared, which freezes it, but never the other way round.
+     * `body` is the definition's own type, which the requirement of a frozen result is on.
+     */
+    private asDeclared(inferred: Ty, said: Ty, body: Ty, loc: number): Ty {
+        const found = this.solver.prune(inferred),
+            written = this.solver.prune(said),
+            own = this.solver.prune(body);
+        if (
+            !this.options.linearTypes ||
+            found.tag !== 'fn' ||
+            written.tag !== 'fn' ||
+            own.tag !== 'fn' ||
+            found.result.tag !== 'plain' ||
+            written.result.tag !== 'plain' ||
+            own.result.tag !== 'plain'
+        )
+            return inferred;
+        const is = this.solver.modeOf(found.result.mode),
+            wanted = this.solver.modeOf(written.result.mode);
+        if (wanted === 'owned' && is === 'shared')
+            this.error(
+                'shared-into-mut',
+                loc,
+                'The signature says the result is `mut`, but the definition returns a shared value; `dup` it',
+            );
+        if (wanted !== 'shared') return inferred;
+        this.sharedResult(own.result.value, loc);
+        return { ...found, result: plain(found.result.value, SHARED) };
+    }
+    /**
+     * Values left behind by a scope, by a branch that kept what another consumed, or by a
+     * function that never consumed its own parameter. Whether that is allowed is checked once
+     * the item is done; an open kind has to hear of it before it is chosen.
+     */
+    private findAbandoned(): void {
+        const left = (state: RawState) => !state.empty.some((path) => !path.length);
+        for (const scope of this.builder.scopes) {
+            const own = new Set(
+                this.builder.bindings
+                    .filter(
+                        (b) => scope.bindings.includes(b.id) && b.kind === 'local' && !b.path.length,
+                    )
+                    .map((b) => b.place),
+            );
+            for (const state of scope.exit)
+                if (own.has(state.place) && left(state)) this.solver.abandoned(state.type);
+        }
+        for (const branch of this.builder.branches)
+            for (const after of branch.output)
+                for (const arm of branch.arms) {
+                    const state = arm.output.find((s) => s.place === after.place);
+                    for (const path of after.empty) {
+                        if (!state || state.empty.some((p) => p.every((v, i) => path[i] === v)))
+                            continue;
+                        const part = this.partAt(state.type, path);
+                        if (part) this.solver.abandoned(part);
+                    }
+                }
+        for (const f of this.builder.functions) {
+            const own = new Set(f.parameterPlaces.filter((_, i) => f.ownedParameters[i]).flat());
+            for (const state of f.exit)
+                if (own.has(state.place) && left(state)) this.solver.abandoned(state.type);
+        }
+    }
+    private partAt(type: Ty, path: readonly Step[]): Ty | undefined {
+        let at: Ty | undefined = type;
+        for (const step of path) {
+            if (!at) return undefined;
+            const t: Ty = this.solver.prune(at);
+            at =
+                typeof step === 'number'
+                    ? t.tag === 'tuple'
+                        ? t.items[step]
+                        : undefined
+                    : t.tag === 'record'
+                      ? t.fields.find((f) => f.name === step)?.type
+                      : undefined;
+        }
+        return at;
+    }
+    /** The item itself must need nothing: nothing supplies it. */
+    private requireNoNeeds(root: Ty, loc: number): void {
+        let row = this.solver.prune(root);
+        if (row.tag === 'needs' && row.entries.length) {
+            const listed = [...new Set(row.entries.map((e) => e.name))];
+            this.error(
+                'missing-dependency',
+                row.entries[0]!.from ?? loc,
+                `Nothing provides ${listed.join(', ')}, needed here; \`inject\` ${listed.length > 1 ? 'them' : 'it'} before this is reached`,
+            );
+        }
+        if (row.tag === 'needs' && row.rest) row = this.solver.prune(row.rest);
+        if (row.tag === 'meta') this.solver.unify(row, NO_NEEDS, loc);
+    }
+    /** `r` or `r.a.b` naming storage, as opposed to an expression that makes a new value. */
+    private isPlace(n: Linear, env: Env): boolean {
+        if (n.type === 'field') return this.isPlace(n.target, env);
+        if (n.type !== 'id') return false;
+        const b = env.get(n.text);
+        return !!b && !b.scheme;
+    }
+    /**
+     * Move a record out of a spread place. Fields may already be empty; the caller requires an
+     * operation to remove or replace each of those.
+     */
+    private takeSpread(n: Linear, env: Env): SpreadValue {
+        const b =
+            n.type === 'field' ? this.fieldPlace(n, env) : this.lookup(env, (n as Id).text, n.loc);
+        this.accessible(b, n.loc);
+        const within = (path: Step[]) =>
+            path.length > b.path.length && b.path.every((step, i) => path[i] === step);
+        if (b.root.empty.some((path) => !within(path) && this.overlaps(path, b.path)))
+            this.error('use-after-move', n.loc, 'Value has already been consumed');
+        if (!b.path.length && b.replaceable) this.requireFlag(b.replaceable, n.loc, 'move it out');
+        const current = this.get(b, n.loc);
+        const holes = b.root.empty.filter(within);
+        // Restore the moved parts' types, outermost first, to see what the record held.
+        let original = current;
+        for (const path of [...holes].sort((x, y) => x.length - y.length))
+            original = this.replaceAt(
+                original,
+                path.slice(b.path.length),
+                b.root.vacated?.get(JSON.stringify(path)) ?? tuple(),
+                n.loc,
+            );
+        this.use(n, b, 'value');
+        this.record(n, plain(current, OWNED));
+        this.modes.set(n, OWNED);
+        this.vacate(b, current, n.loc);
+        return {
+            current,
+            original,
+            holes: new Set(holes.map((path) => path[b.path.length] as string)),
+        };
+    }
+    /**
+     * `{...a, x: e, y = e, -z, -w = e}`: the items apply left to right to an empty record.
+     * Operands run first, then the spreads that are places are taken, so an operand can move
+     * a field out of a record that is about to be spread, if an operation replaces it.
+     */
+    private update(n: Linear & { type: 'update' }, env: Env): Ty {
+        if (!n.items.some((i) => i.kind === 'spread'))
+            this.error(
+                'record-literal-op',
+                n.loc,
+                'A record without a spread can only add fields, written `name: value`',
+            );
+        const values = new Map<RecordItem, SpreadValue>(),
+            operands = new Map<RecordItem, Ty>();
+        for (const item of n.items) {
+            if (item.kind === 'field') {
+                if (item.value) operands.set(item, this.linear(item.value, env));
+            } else if (!this.isPlace(item.value, env)) {
+                const type = this.linear(item.value, env);
+                values.set(item, { current: type, original: type, holes: new Set() });
+            }
+        }
+        for (const item of n.items)
+            if (item.kind === 'spread' && !values.has(item))
+                values.set(item, this.takeSpread(item.value, env));
+        const spreads = [...values.keys()];
+        const unknown = spreads.filter((item) => {
+            const t = this.solver.prune(values.get(item)!.original);
+            return t.tag === 'meta' || t.tag === 'rigid' || (t.tag === 'record' && !!t.rest);
+        });
+        if (spreads.length > 1 && unknown.length > 1)
+            this.error(
+                'unknown-spread',
+                unknown[1]!.loc,
+                'Records can be merged only when at most one of them has unknown fields at this point',
+            );
+        type Field = { type: Ty; current: Ty; hole: boolean };
+        const fields = new Map<string, Field>();
+        let rest: Ty | undefined;
+        const add = (name: string, field: Field, loc: number) => {
+            if (fields.has(name))
+                this.error('duplicate-field', loc, `Duplicate record field ${name}`);
+            if (rest) this.solver.requireLacks(rest, name, loc);
+            fields.set(name, field);
+        };
+        /** Move fields that unification has revealed out of the remainder. */
+        const settle = () => {
+            const t = rest && this.solver.prune(rest);
+            if (t?.tag !== 'record') return;
+            for (const f of t.fields)
+                fields.set(f.name, { type: f.type, current: f.type, hole: false });
+            rest = t.rest;
+        };
+        const require = (name: string, loc: number): Field => {
+            settle();
+            if (!fields.has(name)) {
+                const tail = rest && this.solver.prune(rest);
+                if (tail?.tag !== 'meta')
+                    this.error('unknown-field', loc, `Record has no field ${name}`);
+                this.requireField(tail!, name, loc);
+                settle();
+            }
+            return fields.get(name)!;
+        };
+        const drop = (field: Field, loc: number) =>
+            this.dropped(
+                field.current,
+                loc,
+                'This operation drops the old field value, so it cannot be linear',
+            );
+        for (const item of n.items) {
+            settle();
+            if (item.kind === 'spread') {
+                const value = values.get(item)!;
+                const t = this.solver.prune(value.original);
+                if (t.tag === 'record') {
+                    const current = this.solver.prune(value.current) as RecordTy;
+                    for (const f of t.fields)
+                        add(
+                            f.name,
+                            {
+                                type: f.type,
+                                current: current.fields.find((g) => g.name === f.name)!.type,
+                                hole: value.holes.has(f.name),
+                            },
+                            item.loc,
+                        );
+                }
+                const tail = t.tag === 'record' ? t.rest : t;
+                if (tail) {
+                    // Only one spread has unknown fields, so there is no remainder yet.
+                    const row = this.solver.prune(tail);
+                    if (row.tag !== 'meta' && row.tag !== 'rigid')
+                        this.error(
+                            'type-mismatch',
+                            item.loc,
+                            `Only a record can be spread, found ${printType(this.solver.resolve(row), undefined, this.options.linearTypes)}`,
+                        );
+                    this.solver.markRow(row as Ty & { tag: 'meta' | 'rigid' });
+                    for (const name of fields.keys()) this.solver.requireLacks(row, name, item.loc);
+                    rest = row;
+                }
+                continue;
+            }
+            const type = operands.get(item)!;
+            if (item.op === 'extend') {
+                add(item.name, { type, current: type, hole: false }, item.loc);
+                continue;
+            }
+            const old = require(item.name, item.loc);
+            if (item.op === 'update') this.solver.unify(old.type, type, item.loc);
+            drop(old, item.loc);
+            if (item.op === 'remove') fields.delete(item.name);
+            else fields.set(item.name, { type, current: type, hole: false });
+        }
+        settle();
+        for (const [name, field] of fields)
+            if (field.hole)
+                this.error(
+                    'use-after-move',
+                    n.loc,
+                    `Field ${name} was moved out, so the spread must remove or replace it`,
+                );
+        return this.solver.row(
+            [...fields].map(([name, f]) => ({ name, type: f.type })),
+            rest,
+            n.loc,
+        );
+    }
     private lambda(n: Linear & { type: 'fn' }, env: Env): Ty {
         const bound = new Set(n.args.flatMap((a) => names(a.pat)));
         const { values: captures, lenses: borrowed } = captureUses(n.body, bound);
         const sub = new Map(env),
             vars = new Map<string, Ty>();
         const captureRoots: Root[] = [];
+        const lensCaptures = new Map<string, Binding>();
         for (const name of borrowed) {
             const b = this.lookup(env, name, n.loc);
-            if (!b.scheme)
+            if (b.scheme) continue;
+            if (!this.options.linearTypes || !this.isOwnedLens(b))
                 this.error(
                     'borrowed-capture',
                     n.loc,
                     `Closure cannot borrow outer binding ${name}`,
                 );
+            lensCaptures.set(name, b);
+        }
+        const captureTypes: Ty[] = [];
+        // Captured `mut` values, which the closure holds on to and may change.
+        const stateTypes: Ty[] = [];
+        // An owned lens is captured whole, by move: the closure now ends it.
+        const lensEnds: { captured: Binding; final: Ty }[] = [];
+        for (const [name, b] of lensCaptures) {
+            this.movable(b, n.loc);
+            const type = this.get(b, n.loc),
+                final = this.solver.fresh(),
+                captured = this.freshBinding(type);
+            // Whatever ends the lens in the body is what the producer's cleanup receives.
+            this.put(b, final, n.loc);
+            b.root.moved = true;
+            captured.root.ownedLens = {};
+            this.declare(captured, name, n, 'capture');
+            this.builder.captures.push({
+                node: this.builder.node(n),
+                from: b.id!,
+                to: captured.id!,
+                type,
+            });
+            this.builder.lensMoves.push({
+                node: this.builder.node(n),
+                binding: b.id!,
+                write: final,
+            });
+            sub.set(name, captured);
+            captureRoots.push(captured.root);
+            lensEnds.push({ captured, final });
         }
         for (const name of captures) {
+            if (lensCaptures.has(name)) continue;
             const b = this.lookup(env, name, n.loc);
             if (!b.scheme) {
+                const once = !b.path.length ? b.root.callsOnce : undefined;
                 const type = this.consume(b, n.loc),
                     captured = this.freshBinding(type);
+                captured.root.callsOnce = once;
                 this.declare(captured, name, n, 'capture');
                 this.builder.captures.push({
                     node: this.builder.node(n),
@@ -866,8 +1887,15 @@ export class Inferencer {
                 });
                 sub.set(name, captured);
                 captureRoots.push(captured.root);
+                captureTypes.push(type);
+                // The dual rewrite's own copy of a plain capture is plain again in the body.
+                if (!name.startsWith('$plain')) stateTypes.push(type);
             }
         }
+        const surrounding = this.ambient;
+        const limited = n === this.rootFunction ? this.limit : undefined;
+        // Creating a closure needs nothing: its caller supplies what its body uses.
+        const needed = (this.ambient = limited?.body ?? this.solver.fresh());
         const exits: { root: Binding; read: Ty; write: Ty }[] = [];
         const seen = new Set<string>();
         const parameters: string[][] = [],
@@ -876,15 +1904,17 @@ export class Inferencer {
             const read = this.solver.fresh();
             let type: FlowTy;
             if (a.pat.type === 'lens') {
-                if (i !== n.args.length - 1)
-                    this.error('lens-position', a.pat.loc, 'Lens argument must be last');
                 const root = this.freshBinding(read),
                     write = this.solver.fresh();
+                if (a.ownedLens) root.root.ownedLens = {};
                 this.pattern(a.pat.inner, read, sub, root, seen);
                 exits.push({ root, read, write });
-                type = flow(read, write);
+                type = flow(read, write, REPLACEABLE, a.ownedLens ? OWNED_LENS : BORROWED_LENS);
             } else {
+                // A plain parameter's value is not the function's to drop.
+                this.sharedPattern = !!a.shared;
                 this.pattern(a.pat, read, sub, undefined, seen);
+                this.sharedPattern = false;
                 type = plain(
                     read,
                     a.shared === undefined ? this.solver.freshMode() : a.shared ? SHARED : OWNED,
@@ -897,6 +1927,23 @@ export class Inferencer {
                     : [...new Set(names(a.pat).map((name) => sub.get(name)!.root.place!))],
             );
             if (a.typ) this.solver.unifyFlow(type, this.annotation(a.typ, vars), a.pat.loc, false);
+            // A call of a parameter takes its modes from the call unless its type is known, and
+            // a declaration is otherwise only compared after the body. So it speaks first.
+            const written =
+                n === this.rootFunction && this.rootDeclaration?.ann.type === 'fn'
+                    ? this.rootDeclaration.ann.args[i]
+                    : undefined;
+            const declared = written?.type === 'mut' ? written.value : written;
+            if (
+                declared &&
+                ((this.options.linearTypes && writesFunction(declared)) ||
+                    (declared.type === 'fn' &&
+                        (declared.args.some(
+                            (t) => t.type === 'mut' || (t.type === 'lens' && t.owned),
+                        ) ||
+                            statesNeeds(declared))))
+            )
+                this.solver.unifyFlow(type, this.annotation(declared, vars), a.pat.loc, false);
             return type;
         });
         const parameterIds = new Set(parameters.flat());
@@ -908,7 +1955,8 @@ export class Inferencer {
             ]),
         ];
         const functionEntry = functionRoots.map((r) => this.state(r));
-        const bodyStart = this.builder.transitions.length;
+        const bodyStart = this.builder.transitions.length,
+            branchStart = this.builder.branches.length;
         let result: FlowTy;
         if (n.body.type === 'lens') {
             const view = this.lens(n.body.lens, sub),
@@ -923,15 +1971,13 @@ export class Inferencer {
                 this.error('escaping-lens', n.loc, 'Returned lens must refer to a lens parameter');
             const read = view.read;
             view.put(write);
-            result = flow(read, write, view.replaceable);
+            result = flow(read, write, view.replaceable, this.resultOwnership(n));
         } else {
             const value = this.linear(n.body, sub);
             result = plain(value, this.modeOf(n.body));
         }
-        exits.forEach((v) => {
-            this.restored(v.root, n.loc);
-            this.solver.unify(v.write, this.get(v.root, n.loc), n.loc);
-        });
+        exits.forEach((v) => this.solver.unify(v.write, this.ending(v.root, n.loc), n.loc));
+        lensEnds.forEach((v) => this.solver.unify(v.final, this.ending(v.captured, n.loc), n.loc));
         if (n.ann) this.solver.unifyFlow(result, this.annotation(n.ann, vars), n.loc, false);
         this.builder.functions.push({
             node: this.builder.node(n),
@@ -943,11 +1989,93 @@ export class Inferencer {
             entry: functionEntry,
             exit: functionRoots.map((r) => this.state(r)),
         });
-        return fn(args, result);
+        if (this.options.linearTypes)
+            this.callsOnce.set(n, this.acceptingParameters(n, args, parameters, sub, branchStart));
+        const capture: Capture | undefined = !this.options.linearTypes
+            ? undefined
+            : lensEnds.length > 0 ||
+                captureTypes.some((t) => isLinear(this.solver.resolve(t), this.declaredLinear))
+              ? 'linear'
+              : stateTypes.some((t) => this.mayChange(this.solver.resolve(t)))
+                ? 'state'
+                : undefined;
+        this.ambient = surrounding;
+        return fn(args, result, capture, limited?.type ?? needed);
+    }
+    /**
+     * Whether a value of this type might be changed by whoever holds it, so that two holders
+     * must not reach the same one. Anything not yet known might be.
+     */
+    private mayChange(t: Ty): boolean {
+        switch (t.tag) {
+            case 'con':
+                // A channel is a handle, shared between tasks, whatever it carries.
+                return !['Number', 'String', 'Bool', 'Chan'].includes(t.name);
+            case 'tuple':
+                return t.items.some((v) => this.mayChange(v));
+            case 'record':
+                return !!t.rest || t.fields.some((f) => this.mayChange(f.type));
+            case 'fn':
+                return !!t.capture;
+            default:
+                return true;
+        }
+    }
+    /**
+     * A function parameter takes a restricted closure when the body can be seen to consume it:
+     * every use calls it or passes it to a parameter that does, and every path has a use.
+     */
+    private acceptingParameters(
+        n: Linear & { type: 'fn' },
+        args: FlowTy[],
+        parameters: string[][],
+        sub: Env,
+        branchStart: number,
+    ): number[] {
+        const accepted: number[] = [];
+        n.args.forEach((a, i) => {
+            const type = args[i];
+            if (a.pat.type !== 'id' || a.shared !== false || type.tag !== 'plain') return;
+            if (this.solver.prune(type.value).tag !== 'fn') return;
+            const id = parameters[i][0],
+                root = sub.get(a.pat.text)!.root;
+            const consumed = (s: RawState) => s.empty.some((path) => !path.length);
+            if (
+                consumed(this.state(root)) &&
+                !this.builder.captures.some((c) => c.from === id) &&
+                this.builder.uses
+                    .filter((u) => u.binding === id)
+                    .every((u) => u.mode === 'value' && this.consumingUses.has(u.node)) &&
+                this.builder.branches.slice(branchStart).every((branch) => {
+                    const agrees = (joined: RawState[], arms: RawState[][]) => {
+                        const after = joined.find((s) => s.place === root.place);
+                        return (
+                            !after ||
+                            !consumed(after) ||
+                            arms.every((arm) => consumed(arm.find((s) => s.place === root.place)!))
+                        );
+                    };
+                    // A lens branch also runs a cleanup per arm, after its setup.
+                    return (
+                        agrees(
+                            branch.output,
+                            branch.arms.map((arm) => arm.output),
+                        ) &&
+                        (!branch.restored ||
+                            agrees(
+                                branch.restored,
+                                branch.arms.map((arm) => arm.restored!),
+                            ))
+                    );
+                })
+            )
+                accepted.push(i);
+        });
+        return accepted;
     }
     /**
      * Resolve `r.a.b` (a variable followed by field names) to a binding at the field's
-     * path. Fields are projected by position, so the record's type must already be known.
+     * path. A value of unknown type becomes a record with at least that field.
      */
     private fieldPlace(n: (Linear | Lens) & { type: 'field' }, env: Env): Binding {
         const target = n.target;
@@ -967,23 +2095,35 @@ export class Inferencer {
                 n.loc,
                 'Reusable definitions cannot be field-accessed',
             );
-        const type = this.solver.prune(this.get(base, n.loc));
-        if (type.tag !== 'record')
-            return this.error(
-                'unknown-record',
-                n.loc,
-                `Cannot access field ${n.name} on a value whose record type is not yet known`,
-            );
-        const index = type.fields.findIndex((f) => f.name === n.name);
-        if (index < 0)
-            return this.error(
-                'unknown-field',
-                n.loc,
-                `Record has no field ${n.name} (it has ${type.fields.map((f) => f.name).join(', ')})`,
-            );
-        const place: Binding = { ...base, id: undefined, path: [...base.path, index] };
+        this.requireField(this.get(base, n.loc), n.name, n.loc);
+        const place: Binding = { ...base, id: undefined, path: [...base.path, n.name] };
         this.declare(place, n.name, n, 'projection');
         return place;
+    }
+    /** Refine `type`, a record or an unknown, until it shows a field `name`. */
+    private requireField(type: Ty, name: string, loc: number): void {
+        const t = this.solver.prune(type);
+        const add = (row: Ty) =>
+            this.solver.unify(
+                row,
+                this.solver.row([{ name, type: this.solver.fresh() }], this.solver.fresh(), loc),
+                loc,
+            );
+        if (t.tag === 'meta') return add(t);
+        if (t.tag !== 'record')
+            return this.error(
+                'unknown-record',
+                loc,
+                `Cannot access field ${name} on ${printType(this.solver.resolve(t), undefined, this.options.linearTypes)}, which is not a record`,
+            );
+        if (t.fields.some((f) => f.name === name)) return;
+        const rest = t.rest && this.solver.prune(t.rest);
+        if (rest?.tag === 'meta') return add(rest);
+        this.error(
+            'unknown-field',
+            loc,
+            `Record has no field ${name} (it has ${t.fields.map((f) => f.name).join(', ') || 'none'})`,
+        );
     }
     private alias(n: Lens, env: Env): Binding {
         if (n.type === 'field') return this.fieldPlace(n, env);
@@ -1049,6 +2189,8 @@ export class Inferencer {
                 const view = this.lens(n.body as Lens, sub);
                 return {
                     ...view,
+                    owned: undefined,
+                    holder: undefined,
                     put: (t) => {
                         view.put(t);
                         close();
@@ -1067,6 +2209,7 @@ export class Inferencer {
                 'A plain (shared) value cannot initialize a `mut` binding; `dup(x)` it first',
             );
         this.pattern(p, type, sub);
+        if (p.type === 'id') sub.get(p.text)!.root.callsOnce = this.callsOnce.get(n.value);
         // First-class functions are affine monotypes; only top-level definitions are reusable schemes.
         const close = () =>
             this.builder.scopes.push({
@@ -1078,6 +2221,8 @@ export class Inferencer {
             const view = this.lens(n.body as Lens, sub);
             return {
                 ...view,
+                owned: undefined,
+                holder: undefined,
                 put: (t) => {
                     view.put(t);
                     close();
@@ -1107,6 +2252,8 @@ export class Inferencer {
         focus.root.protectedOwners = view.targets;
         focus.root.empty = view.empty?.map((p) => [...p]) ?? [];
         const loan: Borrow = { path: [], id: this.builder.borrow() };
+        if (view.owned && this.solver.lensOwnership(view.owned) === 'owned' && !n.borrowedOwner)
+            focus.root.ownedLens = { permit: loan };
         const protections = view.targets.map((target) => {
             this.accessible(target, n.loc);
             const borrow: Borrow = { path: target.path, parent: target.permit, id: loan.id };
@@ -1128,9 +2275,10 @@ export class Inferencer {
         this.pattern(p, read, sub, { ...focus, permit: loan });
         const close = () => {
             focus.root.borrows.delete(loan);
-            this.restored(focus, n.loc);
+            const final = this.ending(focus, n.loc);
             protections.forEach(({ target, borrow }) => target.root.borrows.delete(borrow));
-            view.put(this.get(focus, n.loc));
+            // The producer's cleanup is checked here wherever the lens ends.
+            view.put(final);
             this.builder.scopes.push({
                 node: this.builder.node(n),
                 bindings: names(p).map((name) => sub.get(name)!.id!),
@@ -1141,6 +2289,8 @@ export class Inferencer {
             const result = this.lens(n.body as Lens, sub);
             return {
                 ...result,
+                owned: undefined,
+                holder: undefined,
                 put: (type) => {
                     result.put(type);
                     close();
@@ -1161,6 +2311,8 @@ export class Inferencer {
                 return v.read;
             },
             replaceable: v.replaceable,
+            owned: v.owned,
+            holder: v.holder,
             get empty() {
                 return v.empty;
             },
@@ -1178,6 +2330,7 @@ export class Inferencer {
             case 'field':
             case 'id': {
                 const b = this.alias(n, env);
+                this.accessible(b, n.loc);
                 this.use(n, b, 'lens');
                 const self = this;
                 return {
@@ -1192,6 +2345,7 @@ export class Inferencer {
                     put: (t) => this.put(b, t, n.loc),
                     targets: [b],
                     replaceable: b.path.length ? undefined : b.replaceable,
+                    ...(this.isOwnedLens(b) ? { owned: OWNED_LENS, holder: b } : {}),
                 };
             }
             case 'tuple': {
@@ -1299,9 +2453,10 @@ export class Inferencer {
         for (const s of this.constructors.values()) if (resultName(s) === target) count++;
         return count;
     }
-    private disjoint(targets: Binding[], loc: number): void {
+    /** No two targets may overlap; with `others`, no target may overlap one of those. */
+    private disjoint(targets: Binding[], loc: number, others?: Binding[]): void {
         targets.forEach((a, i) =>
-            targets.slice(i + 1).forEach((b) => {
+            (others ?? targets.slice(i + 1)).forEach((b) => {
                 if (
                     a.root === b.root &&
                     a.path
@@ -1313,42 +2468,108 @@ export class Inferencer {
         );
     }
     private call(n: (Linear | Lens) & { type: 'apply' }, env: Env, lensResult: boolean): View {
-        const last = n.args[n.args.length - 1];
-        if (n.args.slice(0, -1).some((a) => a.type === 'lens'))
-            this.error('lens-position', n.loc, 'Lens argument must be last');
-        // Match decomposition: final lens setup is hoisted before callee/ordinary arguments.
-        const view = last?.type === 'lens' ? this.lens(last.lens, env) : undefined;
-        const states = view?.targets.map((b) => this.revision(b));
+        // Match decomposition: lenses are set up before the callee and the ordinary
+        // arguments, wherever they are written, in the order they are written.
+        const lenses = new Map<number, LensArgument>();
+        n.args.forEach((a, i) => {
+            if (a.type !== 'lens') return;
+            const view = this.lens(a.lens, env);
+            for (const earlier of lenses.values())
+                this.disjoint(view.targets, n.loc, earlier.view.targets);
+            lenses.set(i, {
+                source: a.lens,
+                view,
+                revisions: view.targets.map((b) => this.revision(b)),
+                replacement: this.solver.fresh(),
+                owned: this.solver.fresh(),
+            });
+        });
+        this.callee = n.fn;
         const callee = this.linear(n.fn, env);
-        const replacement = this.solver.fresh();
-        const args = n.args.map((a) =>
-            a.type === 'lens'
-                ? flow(view!.read, replacement, view!.replaceable)
-                : plain(this.linear(a, env), this.solver.freshMode()),
-        );
-        if (
-            view &&
-            last?.type === 'lens' &&
-            last.lens.type !== 'id' &&
-            last.lens.type !== 'field' &&
-            last.lens.type !== 'tuple' &&
-            view.targets.some((b, i) => this.revision(b) !== states![i])
-        )
-            this.error(
-                'alias-conflict',
-                n.loc,
-                'Arguments change the owner of an active computed lens',
-            );
+        const signature = this.solver.prune(callee);
+        for (const [i, { view }] of lenses) {
+            const parameter = signature.tag === 'fn' ? signature.args[i] : undefined;
+            if (
+                view.holder &&
+                parameter?.tag === 'flow' &&
+                this.solver.lensOwnership(parameter.owned) === 'owned'
+            )
+                this.movable(view.holder, n.loc);
+        }
+        if (n.fn.type === 'id') this.consumingUses.add(this.builder.node(n.fn));
+        const global =
+            n.fn.type === 'id' && this.bindings.get(n.fn)?.scheme ? n.fn.text : undefined;
+        const recursive = global !== undefined && global === this.selfName;
+        const accepts = this.callsOnce.get(n.fn);
+        // A copy of a callable has the same callback contract as its source.
+        const copied = global === 'dup' ? lenses.get(0)?.source : undefined;
+        const copy = copied?.type === 'id' ? this.lookup(env, copied.text, n.loc) : undefined;
+        const copiedOnce = copy && !copy.path.length ? copy.root.callsOnce : undefined;
+        /** What the channel being sent on carries, as far as it is known. */
+        let carriedBy: Ty | undefined;
+        const args = n.args.map((a, i) => {
+            if (a.type === 'lens') {
+                const { view, replacement, owned } = lenses.get(i)!;
+                return flow(view.read, replacement, view.replaceable, owned);
+            }
+            const value = this.linear(a, env);
+            if (global === 'chanSend' && i === 0) {
+                const channel = this.solver.prune(value);
+                if (channel.tag === 'con' && channel.name === CHANNEL) carriedBy = channel.args[0];
+            }
+            if (accepts?.includes(i) && a.type === 'id')
+                this.consumingUses.add(this.builder.node(a));
+            this.recheckArgument(callee, i, value, accepts, a);
+            const passed =
+                global === 'chanSend' && i === 1
+                    ? this.sent(value, carriedBy)
+                    : this.argumentType(callee, i, value, accepts, a);
+            return plain(passed, this.solver.freshMode());
+        });
+        for (const { source, view, revisions } of lenses.values())
+            if (
+                source.type !== 'id' &&
+                source.type !== 'field' &&
+                source.type !== 'tuple' &&
+                view.targets.some((b, i) => this.revision(b) !== revisions[i])
+            )
+                this.error(
+                    'alias-conflict',
+                    n.loc,
+                    'Arguments change the owner of an active computed lens',
+                );
         const read = this.solver.fresh(),
             write = this.solver.fresh(),
             // Unknown until the callee's result is known (a self-call resolves it from the body).
             replaceable = this.solver.fresh(),
-            resultMode = this.solver.freshMode();
-        this.solver.unify(
-            callee,
-            fn(args, lensResult ? flow(read, write, replaceable) : plain(read, resultMode)),
-            n.loc,
-        );
+            resultMode = this.solver.freshMode(),
+            resultOwned = this.solver.fresh();
+        const needed = this.calleeNeeds(callee, recursive, n.loc);
+        const known = this.solver.prune(callee);
+        const used = fn(
+            args,
+            lensResult ? flow(read, write, replaceable, resultOwned) : plain(read, resultMode),
+            known.tag === 'fn' ? known.capture : undefined,
+            needed,
+        ) as Ty & { tag: 'fn' };
+        // A call says nothing about the kind of what it calls.
+        if (known.tag === 'fn') this.solver.alike(used, known);
+        else used.unstated = true;
+        this.solver.unify(callee, used, n.loc);
+        // A callee that says nothing borrows.
+        for (const flag of [
+            ...[...lenses.values()].map((l) => l.owned),
+            ...(lensResult ? [resultOwned] : []),
+        ])
+            if (this.solver.lensOwnership(flag) === 'unknown')
+                this.solver.unify(flag, BORROWED_LENS, n.loc);
+        const borrowed: LensArgument[] = [];
+        for (const argument of lenses.values())
+            if (this.solver.lensOwnership(argument.owned) === 'owned')
+                this.moveLens(n, argument.source, argument.view, argument.replacement);
+            else borrowed.push(argument);
+        // Lenses end like nested scopes: the last one set up is restored first.
+        const restore = () => [...borrowed].reverse().forEach((l) => l.view.put(l.replacement));
         this.resultModes.set(n, (n as { share?: boolean }).share ? SHARED : resultMode);
         n.args.forEach((a, i) => {
             const param = args[i];
@@ -1365,19 +2586,178 @@ export class Inferencer {
                 );
         });
         if (!lensResult) {
-            view?.put(replacement);
+            restore();
+            if (copy && !copy.path.length) {
+                copy.root.callsOnce = copiedOnce;
+                this.callsOnce.set(n, copiedOnce);
+            }
             return { read, put: () => {}, targets: [] };
         }
+        // A moved lens is the callee's now, so the result does not hang off the caller's storage.
         return {
             read,
-            targets: view?.targets ?? [],
-            provenance: view?.provenance,
+            targets: borrowed.flatMap((l) => l.view.targets),
+            provenance: borrowed.flatMap((l) => l.view.provenance ?? l.view.targets),
             replaceable,
+            owned: resultOwned,
             put: (t) => {
                 this.solver.unify(write, t, n.loc);
-                view?.put(replacement);
+                restore();
             },
         };
+    }
+    private moveLens(n: Linear | Lens, source: Lens, view: View, replacement: Ty): void {
+        const loc = (n as { loc: number }).loc;
+        if (!view.owned || this.solver.lensOwnership(view.owned) !== 'owned')
+            this.error(
+                'borrowed-lens-move',
+                loc,
+                'This lens is borrowed, so it cannot move into a `mut ~` parameter. A lens is owned when it comes from a function that borrows no lens, or is itself a `mut ~` parameter',
+            );
+        if (view.holder) this.movable(view.holder, loc);
+        view.put(replacement);
+        if (view.holder) {
+            view.holder.root.moved = true;
+            this.builder.lensMoves.push({
+                node: this.builder.node(source),
+                binding: view.holder.id!,
+            });
+        }
+    }
+    /**
+     * What goes onto a channel carrying `expected`. Sending does not decide what kind of
+     * function the channel carries: one of any kind may go where it is must-call.
+     */
+    private sent(value: Ty, expected: Ty | undefined): Ty {
+        const t = this.solver.prune(value),
+            e = expected && this.solver.prune(expected);
+        if (t.tag === 'fn') {
+            if (t.open) return value;
+            if (e?.tag === 'fn' && !e.open) return this.fitKind(t, e);
+            const copy = fn(t.args, t.result, 'linear', t.needs) as Ty & { tag: 'fn' };
+            if (!e || e.tag !== 'fn') {
+                this.solver.openKind(copy, kindRank(t.capture));
+                return copy;
+            }
+            e.open!.floor = Math.max(e.open!.floor, kindRank(t.capture));
+            return this.solver.alike(copy, e);
+        }
+        return this.withParts(value, e, (v, w) => this.sent(v, w));
+    }
+    /**
+     * A function that restricts its holder less than the expected kind may go there: it can
+     * always be held to more.
+     */
+    private fitKind(value: Ty, expected: Ty | undefined): Ty {
+        const t = this.solver.prune(value),
+            e = expected && this.solver.prune(expected);
+        if (t.tag === 'fn')
+            return e?.tag === 'fn' &&
+                !t.open &&
+                !e.open &&
+                kindRank(t.capture) < kindRank(e.capture)
+                ? fn(t.args, t.result, e.capture, t.needs)
+                : value;
+        return e ? this.withParts(value, e, (v, w) => this.fitKind(v, w)) : value;
+    }
+    /** `value` with each part replaced, alongside the matching part of `expected`. */
+    private withParts(
+        value: Ty,
+        expected: Ty | undefined,
+        part: (value: Ty, expected: Ty | undefined) => Ty,
+    ): Ty {
+        const t = this.solver.prune(value),
+            e = expected;
+        let changed = false;
+        const each = (v: Ty, w: Ty | undefined) => {
+            const next = part(v, w);
+            if (next !== v) changed = true;
+            return next;
+        };
+        let result = value;
+        if (t.tag === 'tuple') {
+            const items = t.items.map((v, i) =>
+                each(v, e?.tag === 'tuple' ? e.items[i] : undefined),
+            );
+            result = tuple(...items);
+        } else if (t.tag === 'record') {
+            const fields = t.fields.map((f) => ({
+                name: f.name,
+                type: each(
+                    f.type,
+                    e?.tag === 'record' ? e.fields.find((g) => g.name === f.name)?.type : undefined,
+                ),
+            }));
+            result = record(fields, t.rest);
+        } else if (t.tag === 'con' && t.name !== CHANNEL) {
+            const args = t.args.map((v, i) => each(v, e?.tag === 'con' ? e.args[i] : undefined));
+            result = con(t.name, ...args);
+        }
+        return changed ? result : value;
+    }
+    private recheckArgument(
+        callee: Ty,
+        index: number,
+        value: Ty,
+        accepts: OnceParameters,
+        node: Linear,
+    ): void {
+        const known = this.solver.prune(callee);
+        if (known.tag !== 'fn' || accepts?.includes(index)) return;
+        const parameter = known.args[index];
+        if (parameter?.tag !== 'plain') return;
+        const expected = this.solver.prune(parameter.value);
+        if (expected.tag !== 'fn' || expected.capture === 'linear') return;
+        // What the parameter takes now: the types may yet change, if one is sent on a channel.
+        const taken = expected.capture;
+        this.deferred.push(() => {
+            const argument = this.solver.prune(value);
+            if (argument.tag === 'fn' && argument.capture && argument.capture !== taken)
+                this.unaccepted(node, argument.capture);
+        });
+    }
+    private unaccepted(node: Linear, capture: Capture): never {
+        return this.error(
+            capture === 'linear' ? 'linear-unconsumed' : 'shared-closure',
+            (node as { loc: number }).loc,
+            capture === 'linear'
+                ? 'This closure must be called exactly once, and the function may drop or reuse it. Take it as a `mut` parameter and call it exactly once on every path'
+                : 'This closure captured a `mut` value, so it cannot be shared, and the function may share or reuse it. Take it as a `mut` parameter and call it exactly once on every path',
+        );
+    }
+    /**
+     * Unification keeps restricted closures apart from ordinary ones. One may still go to a
+     * function parameter that is known to call it exactly once.
+     */
+    private argumentType(
+        callee: Ty,
+        index: number,
+        value: Ty,
+        accepts: OnceParameters,
+        node: Linear,
+    ): Ty {
+        const argument = this.solver.prune(value);
+        if (argument.tag !== 'fn') return value;
+        const known = this.solver.prune(callee);
+        if (known.tag !== 'fn') return value;
+        const parameter = known.args[index];
+        if (parameter?.tag !== 'plain') return value;
+        const expected = this.solver.prune(parameter.value);
+        // A type variable takes the closure as it is; the definition's drop and copy bounds apply.
+        if (expected.tag !== 'fn') return value;
+        if (argument.open) return value;
+        const as = (capture: Capture | undefined) =>
+            fn(argument.args, argument.result, capture, argument.needs);
+        if (expected.open) {
+            expected.open.floor = Math.max(expected.open.floor, kindRank(argument.capture));
+            return this.solver.alike(as(expected.capture), expected);
+        }
+        if (argument.capture === expected.capture) return value;
+        // Calling a function once is always allowed, so a less restricted one may go where a
+        // more restricted one is expected.
+        if (expected.capture === 'linear' || !argument.capture) return as(expected.capture);
+        if (!accepts?.includes(index)) this.unaccepted(node, argument.capture);
+        return as(expected.capture);
     }
     private aslens(n: Lens & { type: 'aslens' }, env: Env): View {
         const read = this.linear(n.value, env);
@@ -1409,7 +2789,22 @@ export class Inferencer {
             const final = this.consume(temporary, n.loc);
             const sub = new Map(env);
             this.pattern(n.pat, final, sub);
-            this.linear(n.body, sub);
+            // A cleanup runs when its lens ends, perhaps outside the block that created it.
+            const surrounding = this.ambient;
+            this.ambient = NO_NEEDS;
+            try {
+                this.linear(n.body, sub);
+            } catch (e) {
+                if (e instanceof TypeDiagnostic && e.code === 'missing-dependency')
+                    this.error(
+                        'dependency-in-cleanup',
+                        e.loc,
+                        'The cleanup of a lens cannot use a dependency yet; read it into a binding before the lens',
+                    );
+                throw e;
+            } finally {
+                this.ambient = surrounding;
+            }
             const locals = names(n.pat).map((name) => sub.get(name)!);
             this.builder.scopes.push({
                 node: this.builder.node(n),
@@ -1439,9 +2834,11 @@ export class Inferencer {
         const roots = [...new Set([...env.values()].map((b) => b.root))];
         type Snapshot = {
             type: Ty;
-            empty: number[][];
+            empty: Step[][];
             borrows: Set<Borrow>;
             revisions: Map<string, number>;
+            moved?: boolean;
+            callsOnce?: OnceParameters;
         }[];
         const snapshot = (): Snapshot =>
             roots.map((r) => ({
@@ -1449,6 +2846,8 @@ export class Inferencer {
                 empty: r.empty.map((p) => [...p]),
                 borrows: new Set(r.borrows),
                 revisions: new Map(r.revisions),
+                moved: r.moved,
+                callsOnce: r.callsOnce,
             }));
         const restore = (states: Snapshot) =>
             roots.forEach((r, i) =>
@@ -1490,9 +2889,17 @@ export class Inferencer {
                         throw e;
                     }
                 }
+                if (states.some((s) => !s[i].moved !== !states[0][i].moved))
+                    this.error(
+                        'branch-state',
+                        n.loc,
+                        'Every branch of a lens must move the same owned lenses',
+                    );
                 return {
                     type,
                     empty,
+                    moved: states[0][i].moved,
+                    callsOnce: states.map((s) => s[i].callsOnce).reduce(commonOnceParameters),
                     borrows: new Set(initial[i].borrows),
                     revisions: this.joinRevisions(states.map((s) => s[i].revisions)),
                 };
@@ -1603,18 +3010,44 @@ export class Inferencer {
             type: r.type,
             empty: [...r.empty],
             revisions: new Map(r.revisions),
+            moved: r.moved,
+            callsOnce: r.callsOnce,
         }));
-        let joined: { type: Ty; empty: number[][]; revisions: Map<string, number> }[] | undefined;
+        // Per outer place: whether some arm moved it, and whether some arm left it unrestorable.
+        const moved = roots.map(() => false),
+            unrestorable = roots.map(() => false);
+        let joined:
+            | {
+                  type: Ty;
+                  empty: Step[][];
+                  revisions: Map<string, number>;
+                  callsOnce: OnceParameters;
+              }[]
+            | undefined;
         for (const branch of n.cases) {
             roots.forEach((r, i) => {
                 r.type = initial[i].type;
                 r.empty = [...initial[i].empty];
                 r.revisions = new Map(initial[i].revisions);
+                r.moved = initial[i].moved;
+                r.callsOnce = initial[i].callsOnce;
             });
             const sub = new Map(env);
             this.pattern(branch.pat, scrutinee, sub);
             const firstTransition = this.builder.transitions.length;
             this.solver.unify(result, this.linear(branch.body, sub), branch.body.loc);
+            // An arm is the scope of what its pattern binds.
+            const bound = names(branch.pat).map((name) => sub.get(name)!);
+            if (bound.length)
+                this.builder.scopes.push({
+                    node: this.builder.node(branch.body),
+                    bindings: bound.map((b) => b.id!),
+                    exit: bound.map((b) => this.state(b.root)),
+                });
+            roots.forEach((r, i) => {
+                if (r.moved) moved[i] = true;
+                else if (r.empty.length) unrestorable[i] = true;
+            });
             branchRecord.arms.push({
                 node: this.builder.node(branch.body),
                 output: this.states(env),
@@ -1623,6 +3056,7 @@ export class Inferencer {
             if (!joined)
                 joined = roots.map((r) => ({
                     type: r.type,
+                    callsOnce: r.callsOnce,
                     empty: [...r.empty],
                     revisions: new Map(r.revisions),
                 }));
@@ -1651,6 +3085,7 @@ export class Inferencer {
                         const type = erase(joined![i].type);
                         this.solver.unify(type, erase(r.type), n.loc);
                         joined![i] = {
+                            callsOnce: commonOnceParameters(joined![i].callsOnce, r.callsOnce),
                             type,
                             empty,
                             revisions: this.joinRevisions([joined![i].revisions, r.revisions]),
@@ -1668,11 +3103,24 @@ export class Inferencer {
         }
         roots.forEach((r, i) => {
             r.type = joined![i].type;
+            r.callsOnce = joined![i].callsOnce;
             r.empty = joined![i].empty;
             r.revisions = new Map(joined![i].revisions);
+            // Moved on one path is moved afterwards; the other paths end it at the branch edge.
+            if (moved[i] && unrestorable[i])
+                this.error(
+                    'unrestored-lens',
+                    n.loc,
+                    'An owned lens that one branch moves must hold a value in the others',
+                );
+            r.moved = moved[i] || initial[i].moved;
         });
         branchRecord.output = this.states(env);
         this.builder.branches.push(branchRecord);
+        this.callsOnce.set(
+            n,
+            n.cases.map((arm) => this.callsOnce.get(arm.body)).reduce(commonOnceParameters),
+        );
         return result;
     }
 }

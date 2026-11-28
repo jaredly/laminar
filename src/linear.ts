@@ -1,7 +1,7 @@
 /**
  * Linear types (dual mode): values that cannot be copied. A type is linear when it is declared
  * `type linear`, or when it contains a linear type as a type argument, tuple item or record field.
- * Closures are not yet considered.
+ * A closure is linear when it captured a linear value or an owned lens (docs/owned-lenses.md).
  */
 type Shape = {
     tag: string;
@@ -9,6 +9,8 @@ type Shape = {
     args?: Shape[];
     items?: Shape[];
     fields?: { type: Shape }[];
+    rest?: Shape;
+    capture?: string;
 };
 
 /** `isDeclaredLinear` says whether a named union was declared `type linear`. */
@@ -17,11 +19,18 @@ export function isLinear(type: Shape, isDeclaredLinear: (name: string) => boolea
         (types ?? []).some((t) => isLinear(t, isDeclaredLinear));
     switch (type.tag) {
         case 'con':
+            // A channel is a handle, shared between tasks, whatever it carries.
+            if (type.name === 'Chan') return false;
             return isDeclaredLinear(type.name!) || any(type.args);
         case 'tuple':
             return any(type.items);
         case 'record':
-            return any(type.fields?.map((f) => f.type));
+            return (
+                any(type.fields?.map((f) => f.type)) ||
+                (!!type.rest && isLinear(type.rest, isDeclaredLinear))
+            );
+        case 'fn':
+            return type.capture === 'linear';
         default:
             return false;
     }

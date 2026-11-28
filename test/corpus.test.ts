@@ -114,18 +114,6 @@ describe('negative checker results', () => {
  */
 const backendRestrictions = [
     {
-        name: 'non-scalar interpolation',
-        source: '"${(1, 2)}"',
-        c: 'unsupported-c',
-        go: 'unsupported-go',
-    },
-    {
-        name: 'variant interpolation',
-        source: '"${Some(1)}"',
-        c: 'unsupported-c',
-        go: 'unsupported-go',
-    },
-    {
         name: 'callable entry result',
         source: 'fn (x) {x + 1}',
         c: 'unsupported-representation',

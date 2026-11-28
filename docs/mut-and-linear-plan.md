@@ -190,7 +190,8 @@ Status: designed, not started. Open: whether a result's mode is inferred or writ
 Today a plain read is rewritten to `dup(~x)`, so nothing is shared and the backends see only
 owned data. Real sharing needs four pieces, in this order:
 
-- **5a. `mut` in function types.** Shared is just plain: what a non-`mut` binding holds. A
+- **5a. `mut` in function types.** (Parameters: written syntax added, as `(mut Pair) => Pair`.
+  `mut` on a result is not built.) Shared is just plain: what a non-`mut` binding holds. A
   function type records the mode of each parameter and of its result, written with the same
   keyword: `(Number) -> mut Number`, `(mut Pair) -> Pair`. A plain result is shared, so it needs
   `dup` before it enters `mut` storage. A `mut` result is owned and can go anywhere. A plain
@@ -205,7 +206,8 @@ owned data. Real sharing needs four pieces, in this order:
     decided defaults to owned when a definition is generalized. Annotations say nothing about
     modes. Modes are invariant inside function types, which is strict for higher-order code; a
     coercion can come later. `share` is still a `dup` in every backend. Shared positions print as
-    `&T` in function types (`printType`).
+    `&T` in function types (`printType`). Later changed: see
+    [ownership in function types](function-ownership-plan.md).
   - Stage 3 (done): the errors. A shared value for a `mut` parameter or a `let mut` is
     `shared-into-mut`. Natives' and constructors' parameters only read, so they accept either mode
     (`reads`, and fresh modes at constructor sites). A pure lambda's parameter mode is left open so

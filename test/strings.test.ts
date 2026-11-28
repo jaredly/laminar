@@ -51,16 +51,6 @@ it('builds interpolation in source order and consumes string parts', () => {
     );
 });
 
-it('restricts interpolation to String, Number and Bool parts', () => {
-    for (const source of ['"${(1, 2)}"', '"${[1]}"'])
-        expect(() => emitC(compile(source))).toThrow(
-            'String interpolation supports String, Number and Bool parts',
-        );
-    expect(() => emitGo(compile('"${(1, 2)}"', goTarget('test')))).toThrow(
-        'String interpolation supports String, Number and Bool parts',
-    );
-});
-
 it('compares string literal patterns by content and drops the matched string', () => {
     const c = emitC(compile('match "ab" {"a" -> 1; _ -> 2}'));
     expect(c).toMatch(/string_equals\(v\d+, "a", 1\)/);

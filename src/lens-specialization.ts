@@ -1,4 +1,4 @@
-import { typeKey, type IRBlock } from './typed-ir.ts';
+import { typeKey, type IRBlock, positions } from './typed-ir.ts';
 import type { SemanticType } from './elaborated.ts';
 import type { SpecializedProgram } from './specialize.ts';
 import type { CallableMember, LensTopology } from './infer-representations.ts';
@@ -62,6 +62,8 @@ export function canonicalLensPolicies(source: SpecializedProgram): CanonicalLens
                 const base = canonicalLensTopology(type.read, type.write);
                 const opaque = args.get(n) ?? new Set<string>();
                 args.set(n, opaque);
+                // An owned lens travels as one struct: only that has a restore to hand over.
+                if (type.owned) opaque.add('');
                 const constrain = (
                     topology: LensTopology,
                     r: SemanticType,
@@ -90,11 +92,16 @@ export function canonicalLensPolicies(source: SpecializedProgram): CanonicalLens
                             i.out.type.tag === 'flow'
                         ) {
                             let node = base;
-                            for (const index of i.slot.path) {
+                            for (const index of positions(i.slot.path)) {
                                 if (node.kind === 'thin') break;
                                 node = node.items[index]!;
                             }
-                            constrain(node, i.out.type.read, i.out.type.write, i.slot.path);
+                            constrain(
+                                node,
+                                i.out.type.read,
+                                i.out.type.write,
+                                positions(i.slot.path),
+                            );
                         }
                         if (i.op === 'scope') scan(i.body);
                         if (i.op === 'aslens') scan(i.cleanup);

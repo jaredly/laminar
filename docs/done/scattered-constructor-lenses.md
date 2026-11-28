@@ -151,7 +151,7 @@ to one by matching (`case-focus`). The reverse never works.
 
 ## The type
 
-Add one boolean to the lens form of `FlowTy` ([src/types.ts:8](../src/types.ts)):
+Add one boolean to the lens form of `FlowTy` ([src/types.ts:8](../../src/types.ts)):
 
 ```
 flow(read, write, replaceable)       replaceable : a unifiable boolean
@@ -199,7 +199,7 @@ of the whole lens. Passing the result to a `~Option<A>` parameter fails the same
 at the parameter's own unification.
 
 **Return.** A function whose body is a lens expression gets `flow(read, write,
-replaceable)` taken from the body's view ([src/infer.ts:760](../src/infer.ts)).
+replaceable)` taken from the body's view ([src/infer.ts:760](../../src/infer.ts)).
 
 **Explicit conversion from a stored value.** `match ~o { Some(x) -> Some(x), None ->
 None }` produces a non-replaceable lens from a stored one. There is no implicit
@@ -272,7 +272,7 @@ New pieces:
 ## Typed IR and verifier
 
 After inference, the typed IR needs a lens value that is a tag plus field lenses. The
-verifier's `Cap` union ([src/verify-ir.ts:22](../src/verify-ir.ts)) already has `tuple`
+verifier's `Cap` union ([src/verify-ir.ts:22](../../src/verify-ir.ts)) already has `tuple`
 (scattered) and `choice` (a join of per-arm lenses). A constructor lens is a third
 scattered form: `{ kind: 'constructor', ctor, items: Cap[] }`, with `choice` joining
 branches as today. `tuple` can become its single-constructor instance.
@@ -282,7 +282,7 @@ The verifier re-derives the same rule independently, as it does for the escape c
 replacement and move-out of a multi-constructor constructor `Cap` are invalid. This is
 a second check, not the first.
 
-`case-focus` ([focus-spec.md](focus-spec.md)) takes an owner lens and enters a focus in
+`case-focus` ([focus-spec.md](../focus-spec.md)) takes an owner lens and enters a focus in
 place. A constructor `Cap` has no owner place, so matching one dispatches on the stored
 tag and binds the component lenses directly. Whether that is a second owner form of
 `case-focus` or a separate instruction is open.

@@ -1,0 +1,11 @@
+
+fn main() {
+    let person = {name: "Lam", age: 5}
+    {
+        let {name, age} = ~person
+        name := "Yes"
+    }
+    person
+}
+
+main()

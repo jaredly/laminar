@@ -28,7 +28,7 @@ const compiled = checkFile(file);
 - First-order unification with occurs checks, rank-1 top-level schemes, fresh instantiation, and stable type printing.
 - Literals, tuples, homogeneous lists, registered constructors, pattern destructuring, functions, higher-order calls, monomorphic recursion, ordinary cases, and branch state joins.
 - Declared signatures checked with rigid variables. A narrower declaration controls the exported scheme. Argument/return annotation syntax is supported; `Int` aliases JavaScript-style `Number`, and `~A` means `A/A`.
-- Distinct value/lens modes and n-ary arity checks. Lens arguments must be final.
+- Distinct value/lens modes and n-ary arity checks. Functions and calls take any number of lens arguments, in any position. Two arguments of one call may not borrow overlapping storage; elements of one vector count as overlapping.
 - Type-changing swaps, variable aliases, tuple aliases, tuple lenses, lens-returning functions, and computed lens assignments. Swaps return the previous value's type. Inference follows decomposition's lens setup order.
 - Top-level definitions are reusable polymorphic schemes. All local values, including function literals and local copies of top-level functions, are affine monotypes: they may be unused, but each stored value may be consumed at most once. Writing a new value replenishes the storage.
 - Persistent aliases exclusively borrow their owner until scope exit. Nested aliases suspend access through the parent alias. Lens contents may be consumed, but every borrowed focus and lens parameter must hold a value when its lifetime ends.
@@ -44,7 +44,138 @@ Scoped restoration is supported for the documented forms. `aslens` accepts ident
 
 Assignment returns the value currently in its target when the swap happens. If the RHS has already consumed that value, the empty slot has unit type: `fn inc(~x) { x := x + 1 }` therefore returns unit. Swapping a full slot, as in `fn take(~x) { x := () }`, returns its old type. This distinction is tracked separately from whether a slot contains an actual unit value. Existing unchecked snapshots remain available for evaluator coverage.
 
-Run `bun test test/infer.test.ts` for inference/checked integration tests, `bun test` for the full suite, and `bunx tsc --noEmit` for TypeScript checking. The design background and remaining restoration work are described in [the research note](type-inference-research.md).
+Run `bun test test/infer.test.ts` for inference/checked integration tests, `bun test` for the full suite, and `bunx tsc --noEmit` for TypeScript checking. The design background and remaining restoration work are described in [the research note](done/type-inference-research.md).
+
+## Records
+
+Records are structural and order-independent, with unique field names. There is no width
+subtyping: `{x: Number}` and `{x: Number, y: Bool}` are different types. A row variable stands for
+the fields a type does not list, so definitions can work on any record that has, or lacks, certain
+fields.
+
+| Expression | Needs of `m` | Result |
+| --- | --- | --- |
+| `{...m, name: v}` | no `name` | adds `name` |
+| `{...m, name = v}` | `name` of the type of `v` | replaces its value |
+| `{...m, -name}` | `name` | removes it |
+| `{...m, -name = v}` | `name` | replaces value and type |
+| `m.name`, `~m.name` | `name` | the field |
+
+- `fn setName(m) { {...m, name = "Yes"} }` has scheme
+  `({name: String, ...a}) => {name: String, ...a}`. Only top-level definitions are polymorphic.
+- Items apply left to right. With several spreads, at most one may have unknown fields at that
+  point (`unknown-spread`), and no two may share a field.
+- Operands, and spreads that are not places, run first in source order. Spreads that are places
+  (`m`, `m.inner`) are taken afterwards. So `{...m, -old, new: m.old}` moves one field to another
+  name. A field emptied this way must be removed or replaced by the update.
+- `name = v` keeps the field's type, including the type it had before being moved out.
+- A dropped field needs `Droppable` (dual mode). So does the unknown remainder of a record when a
+  pattern or function drops it.
+- A pattern `{x, y: p}` matches a record with at least those fields. `{x, ...rest}` binds the
+  others. A lens pattern leaves unnamed fields in place and cannot use `...rest`. A borrowed match
+  with constructors still has to name every field of the records in it.
+- Signatures write `{name: String, ...r}`, `{...r}` or `{x: Number, ..._}`, and type aliases can
+  splice a parameter: `type Named(r) = {name: String, ...r}`. Labels a row must lack are not
+  written. Those the types do not show print as `where a lacks tmp`, and a declared signature
+  keeps whatever the body needs.
+- Union constructors cannot hold open records yet.
+
+Backends never see rows. Specialization substitutes them, then stores each record as the tuple of
+its fields in name order, so one definition can get a different layout at each use. Natively an
+empty record prints as unit does. The legacy decomposition supports only closed records with
+complete patterns. See [the plan](done/row-polymorphic-records-plan.md).
+
+## Ownership in function types
+
+In dual mode a written function type says what a definition would: an unmarked position is shared,
+and `mut` makes it owned. This holds in signatures, union fields, record aliases and dependency
+types. Pure mode has no `mut`, and every position there is owned.
+
+```
+(String) => String            // reads its argument, returns a shared string
+(String) => mut String        // returns a string the caller owns
+mut (a) => mut b              // an owned function value
+(mut ~a) => mut ~a            // takes an owned lens and hands one back
+```
+
+- A lens states its ownership in a result too: `~T` is borrowed and `mut ~T` is owned. It has to
+  agree with the parameters ([owned lenses](owned-lenses.md)).
+- A result that is not `mut` is shared, so it cannot be linear.
+- A signature must agree with its definition about `mut` on parameters. It may publish an owned
+  result as shared, which freezes it, but not the reverse (`shared-into-mut`).
+- Parentheses around one type only group it, and `(a) => (b) => c` returns a function.
+- Printed types use the same spelling. `printScheme` and `printType` have to be told when the mode
+  has marks. `where` clauses and rigid variables (`!a`) do not parse.
+
+### Kinds
+
+| Written | A holder may | Where it comes from |
+| --- | --- | --- |
+| `(A) => B` | call, copy and drop it | definitions, and closures that capture nothing they could change |
+| `once (A) => B` | call it once, or drop it | a closure that captured a `mut` value it could change |
+| `linear (A) => B` | call it, which it must | a closure that captured a linear value or an owned lens |
+
+`once` and `linear` cannot be shared, so each implies `mut`. A function that restricts its holder
+less may go where a more restricted kind is expected, when that kind is already known: in a
+parameter, a union field or a channel.
+
+### Using one function type as another
+
+A function value whose type is already known where it is used may be taken as another type:
+
+| Position | The function has | The slot expects | Fits |
+| --- | --- | --- | --- |
+| parameter | shared | `mut` | yes |
+| parameter | `mut` | shared | no |
+| result | `mut` | shared | yes, if the result can be shared |
+| result | shared | `mut` | no |
+
+Inside a parameter the directions reverse. Only function types convert: a vector, record, union or
+channel that already holds functions keeps its exact type. A conversion adds no code. A parameter
+whose type is still being inferred keeps exact modes. A parameter that takes ownership this way
+cannot be given a linear value.
+
+`typeKey` ignores ownership inside function types, so the typed IR verifier compares it separately
+(`ownershipFits`) on the program the checker produced. Specialized programs are not compared: one
+instance may serve types that differ only in this.
+
+Without a written type, a call decides the modes: a parameter is `mut` if every call passes an
+owned value, and a result is owned unless something requires otherwise.
+
+## Dependencies
+
+A function type says which dependencies a call needs. `#name` reads one, and `inject name = value`
+adds or replaces one for the rest of a block.
+
+```
+fn greet(who) { "${#now()} ${who}" }    // needs now
+fn main() {
+    inject now = fn () { "noon" }
+    greet("Lam")
+}
+```
+
+- Needs are inferred. A function's needs include those of everything it calls, so callbacks and
+  their caller share one set. Schemes print them as `(a) ={now: () => b, ...c}> d`. An arrow stays
+  `=>` when the function needs nothing, or when its needs are a row nothing else mentions.
+- A closure's needs come from whoever calls it, not from where it was created.
+- Nothing supplies a top-level expression, so it must need nothing (`missing-dependency`, reported
+  at the `#name`).
+- Entries are read any number of times, so they cannot be linear. A function stored in one cannot
+  need dependencies itself. Injecting a function that has needs supplies them there and then.
+  In pure mode the only functions that can be injected are top-level ones
+  ([details](owned-lenses.md)).
+- Signatures: `=>` is inferred, `={}>` needs nothing, `={Http, Clock}>` merges record aliases,
+  `={log: (String) => (), ...e}>` lists fields and a row, and `={e}>` is exactly a row. On a
+  definition, a closed list limits the body, and callers may hold more. Calling a value with a
+  closed list passes just those entries. In a union declaration `=>` means no needs, and a union
+  parameter can stand for a row: `type Job(e) { Job(() ={e}> ()) }`.
+- Recursion is not polymorphic, so a function that recurses under an `inject` needs a declared
+  closed list.
+- Compiled code passes what a function needs as a hidden first parameter, a record. Functions that
+  need nothing have none.
+
+See [the plan](done/dependency-injection-plan.md), including its list of current limits.
 
 ## Vectors
 
@@ -61,7 +192,7 @@ snapshot, elaboration and typed IR contain only ordinary calls. `v[i]` becomes
 `[:push:]([:push:]([::](), a), b)`, evaluating items left to right. These import
 names are not source identifiers, so definitions cannot shadow them. Because the
 index lens reads and writes the element type, elements cannot change type or be
-left empty, and the vector stays whole. As for any final lens argument, the vector
+left empty, and the vector stays whole. As for any lens argument, the vector
 lens is set up before the index is evaluated.
 
 ## Backend elaboration
@@ -127,3 +258,30 @@ borrowed-match subset. List/variant physical layout restrictions remain separate
 Compiler-generated reconstruction preserves the original owner's escape provenance.
 Returning a field of an owned local list or tuple remains rejected. The detached
 verifier enforces the same rule independently through reconstruction-owner capabilities.
+
+## Inferred constraints
+
+A top-level scheme can carry built-in predicates on its quantified parameters. Each
+use instantiates the predicates along with the parameter types. This also applies
+when a definition is used as a value, passed to a higher-order function, or
+exported with a narrower declaration. `printScheme` renders inferred bounds
+with `where`. There is no new annotation syntax.
+
+| Predicate | Operation requiring it |
+| --- | --- |
+| `Display(a)` | Interpolating an expression of type `a` |
+| `Comparable(a)` | Comparing two values with `==` or `!=` |
+| `Copyable(a)` | Copying a value or binding it as shared in dual mode |
+| `Droppable(a)` | Leaving an owned value unconsumed on a path in dual mode |
+
+`fn label(x) { "${x}" }` has pure-mode scheme `(a) => String where Display(a)`.
+String, Number, Bool, and tuples of displayable elements support interpolation.
+Unit displays as `()`. For example, interpolating `(1, ("hi", true))` produces
+`(1, ("hi", true))`, including the quotes. Nested strings escape quotes,
+backslashes, interpolation openers and the control sequences understood by the
+lexer. Interpolating a string directly preserves its contents. An interpolation
+hole evaluates its expression once, with the ordinary ownership rules.
+
+Equality inspects the payloads of every constructor in a union. A function
+payload makes the union ineligible, including through recursive definitions.
+A type parameter used only as a phantom imposes no comparison requirement.
