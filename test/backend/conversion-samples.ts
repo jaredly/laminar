@@ -107,6 +107,22 @@ export const conversionSamples: { name: string; source: string; expected: unknow
         expected: [['a'], ['!']],
     },
     {
+        name: 'a plain closure holding heap data is called again, then passed on',
+        source: main(
+            'let g = greeter([:"a", "b":])\n let a = g("1")\n let b = g("2")\n (a, b, reads(g))',
+            'fn greeter(names) { fn (s) { "${names[1]} ${s}" } }\n',
+        ),
+        expected: ['b 1', 'b 2', 'b r'],
+    },
+    {
+        name: 'a function parameter is called again',
+        source: main(
+            'twice(greeter([:"a", "b":]))',
+            'fn greeter(names) { fn (s) { "${names[0]} ${s}" } }\nfn twice(g) { (g("1"), g("2"), reads(g)) }\n',
+        ),
+        expected: ['a 1', 'a 2', 'a r'],
+    },
+    {
         name: 'pure: a built-in that reads goes where a callback is inferred',
         source: 'fn ap(f) { f(2.5) }\nap(round)',
         expected: 3,

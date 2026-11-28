@@ -403,8 +403,9 @@ Each phase leaves the targeted tests passing.
   not convert in annotated bindings, branches or literals.
 - **The annotation crash** was in `normalize-borrowed.ts`, which took a written function type for
   a lambda.
-- **Found and not fixed:** calling a plain local function twice is `use-after-move`, even when it
-  is a top-level definition. This predates the plan.
+- **Found and fixed afterwards:** in dual mode, calling a plain binding used it up, so a second
+  call or any later use failed. A call now reads it, like any other use
+  ([`desugar-plain.ts`](../src/desugar-plain.ts)). This predated the plan.
 
 ## Not in this plan
 

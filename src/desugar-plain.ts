@@ -275,8 +275,9 @@ export function desugarPlain(source: Linear): PlainResult {
             n.args[0].type !== 'lens'
         )
             return dupValue(n as Linear & { type: 'apply' }, scope) as T;
-        // A callee is consumed, not copied: closures are affine and cannot be duplicated.
-        const fn = n.fn.type === 'id' ? n.fn : linear(n.fn, scope);
+        // Calling a plain binding reads it like any other use, so it can be called again. A
+        // plain binding can always be copied: a function that cannot be needs a `mut` one.
+        const fn = linear(n.fn, scope);
         const args = n.args.map((a) => term(a, scope));
         if (fn.type === 'id' && fn.text === 'chanSend' && !scope.has('chanSend') && args[1])
             args[1] = unshared(args[1]);

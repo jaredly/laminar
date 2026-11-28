@@ -339,3 +339,39 @@ reads(take)`;
         );
     });
 });
+
+describe('calling a plain binding', () => {
+    const top = 'fn two() { 2 }\nfn run(f) { f() }\n';
+    const main = (body: string) => `${top}fn go() {\n ${body}\n }\ngo()`;
+
+    it.each([
+        ['twice', main('let g = two\n (g(), g())')],
+        ['a lambda, twice', main('let g = fn () { 2 }\n (g(), g())')],
+        ['a record field, twice', main('let r = {f: two}\n match r { {f: g} -> (g(), g()) }')],
+        ['a parameter, twice', `${top}fn use(g) { (g(), g()) }\nuse(two)`],
+        ['and then passing it', main('let g = two\n let a = g()\n (a, run(g))')],
+        // An inferred parameter used after a call of it used to be a confusing `type-mismatch`.
+        [
+            'an inferred parameter, then passing it',
+            'fn sink(f) { f([:2:]) }\nfn through(h) {\n let a = h([:1:])\n (a, sink(h))\n }\n0',
+        ],
+    ])('leaves it to be used again: %s', (_, source) => {
+        expect(code(source)).toBe('accepted');
+    });
+
+    it.each([
+        ['a `mut` binding', main('let mut g = two\n (g(), g())'), 'use-after-move'],
+        ['a `mut` parameter', `${top}fn use(mut g) { (g(), g()) }\nuse(two)`, 'use-after-move'],
+        [
+            'a closure with state, which cannot be plain',
+            'fn go() {\n let mut v = [:0:]\n let g = fn () {\n  let mut w = v\n  w[0] := 1\n  w\n }\n (g(), g())\n }\ngo()',
+            'shared-closure',
+        ],
+    ])('is still once for %s', (_, source, expected) => {
+        expect(code(source)).toBe(expected);
+    });
+
+    it('does not change pure mode, where every binding is used once', () => {
+        expect(code(main('let g = two\n (g(), g())'), 'pure')).toBe('use-after-move');
+    });
+});

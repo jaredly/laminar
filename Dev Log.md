@@ -80,7 +80,7 @@ For the effects, let's actually just start with dependency injection, so no need
 - [x] can we pass in multiple lenses?
 - [ ] rearrange files to make it better
 - [ ] make a web playground, w/ examples and such (incl playable snake game pls)
-- [ ] can we do .attributes on lenses yet?
+- [x] can we do .attributes on lenses yet?
 - [ ] destructure record in Pat?
 - [ ] let {x,y} = ~pos?
 - [ ] HOW do we deal with differnet numbers? int vs float?

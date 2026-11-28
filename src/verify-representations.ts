@@ -1,6 +1,6 @@
 import { layoutSchemaKey, scatterVariants } from './layout-definitions.ts';
 import { mapSemantic, type Instance, type IRFunction, positions } from './typed-ir.ts';
-import { createHash as CH } from 'node:crypto';
+import { createHash } from 'node:crypto';
 import type { SemanticType, SemanticFlow } from './elaborated.ts';
 import { BackendDiagnostic, targetKey } from './backend/target.ts';
 import { typeKey, irPlain, type IRBlock, type IRUnit, type IRPattern } from './typed-ir.ts';
