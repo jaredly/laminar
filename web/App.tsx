@@ -1,29 +1,19 @@
 import React from "react";
 import rsce from "react-simple-code-editor";
 
-import { checkSource } from "../src/compiler.ts";
-import { executeTypedProgram } from "../src/eval-typed.ts";
+import { useProgram } from "./useProgram.ts";
 
 const Editor = rsce.default;
 export function App() {
     const [code, setCode] = React.useState(`{ 2 + 3 }`);
-    const [output, setOutput] = React.useState("");
+    const [line, setLine] = React.useState("");
+    const { output, result, status, start, stop, sendLine, sendKey } = useProgram();
+    const screen = React.useRef<HTMLPreElement>(null);
 
+    // Keys go to the output, so that typing in the editor never reaches the program.
     React.useEffect(() => {
-        const logs = [];
-        const result = executeTypedProgram(
-            checkSource(code, { mode: "dual" }),
-            {
-                stdout: (text) => {
-                    logs.push(text);
-                },
-                stdin: () => {
-                    return "No Stdin";
-                },
-            },
-        );
-        setOutput(logs.join("\n") + "\n\n" + JSON.stringify(result));
-    }, [code]);
+        if (status === "key") screen.current?.focus();
+    }, [status]);
 
     return (
         <div>
@@ -39,7 +29,44 @@ export function App() {
                     fontSize: 12,
                 }}
             />
-            <pre>{output}</pre>
+            <button onClick={() => start(code)}>Run</button>
+            <button onClick={stop} disabled={status === "idle"}>
+                Stop
+            </button>
+            {status === "key" && <span> Press keys with the output focused.</span>}
+            <pre
+                ref={screen}
+                tabIndex={0}
+                aria-label="Program output"
+                onKeyDown={(event) => {
+                    if (status === "idle" || event.metaKey || event.ctrlKey || event.altKey) return;
+                    const key = event.key === "Enter" ? "\n" : event.key;
+                    // `waitKey` reads one byte, so only ASCII keys count.
+                    if (key.length !== 1 || key.charCodeAt(0) > 127) return;
+                    event.preventDefault();
+                    sendKey(key);
+                }}
+            >
+                {output}
+            </pre>
+            {status === "input" && (
+                <form
+                    onSubmit={(event) => {
+                        event.preventDefault();
+                        sendLine(line);
+                        setLine("");
+                    }}
+                >
+                    <input
+                        autoFocus
+                        aria-label="Program input"
+                        value={line}
+                        onChange={(event) => setLine(event.target.value)}
+                    />
+                    <button type="submit">Send</button>
+                </form>
+            )}
+            {result && <pre>{result}</pre>}
         </div>
     );
 }

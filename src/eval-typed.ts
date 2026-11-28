@@ -14,9 +14,14 @@ import type {
     Instruction,
 } from './typed-ir.ts';
 import { verifyTypedProgram } from './verify-ir.ts';
-import { channel, enter, schedule, type Channel, type Run } from './eval-tasks.ts';
-import createPrompt from 'prompt-sync';
-import { readSync, writeFileSync } from 'node:fs';
+import {
+    channel,
+    enter,
+    schedule,
+    type Channel,
+    type HostRequest,
+    type Run,
+} from './eval-tasks.ts';
 import { requireImport } from './runtime-imports.ts';
 
 const EMPTY = Symbol('empty-place');
@@ -88,15 +93,18 @@ export type ReferenceOptions = {
     onDisposeClosure?: () => void;
     /** Deterministic test guard, not a semantic recursion restriction. */
     maxSteps?: number;
-    /** Host stdout for `print` and `getInput` prompts; defaults to the process stdout. */
+    // The evaluator is platform-neutral, so it has no I/O of its own: using a missing
+    // service is a runtime error. `node-host.ts` supplies them all under Node and Bun.
+    /** Host stdout for `write`, `print` and `getInput` prompts. */
     stdout?: (text: string) => void;
-    /** Host line input for `getInput`, without its newline; defaults to an interactive prompt. */
+    /** Host line input for `getInput`, without its newline. */
     stdin?: () => string;
     /** Host key input for `waitKey`: one byte as a string, or "" at a timeout or end of input. */
     key?: (milliseconds: number) => string;
-    /** Seed for `random` (read as an unsigned integer); defaults to LAMINAR_SEED, else the clock. */
+    /** Seed for `random` (read as an unsigned integer); defaults to the clock. */
     seed?: number;
-    writeFileSync?: (name: string, contents: string) => void;
+    /** Host file output for `writeFile`. */
+    writeFileSync?: (name: string, contents: Uint8Array) => void;
 };
 
 const nothing = function* (): Run<void> {};
@@ -119,21 +127,44 @@ const mapItems = (items: Data[], f: (v: Data, i: number) => Data): Data[] => {
 const position = (v: Data[], step: Step): number =>
     typeof step === 'string' ? (fieldNames.get(v)?.indexOf(step) ?? -1) : step;
 
-/** One byte of stdin as a string, "" at end of input. Blocks: the timeout is ignored. */
-const readKey = (): string => {
-    const byte = Buffer.alloc(1);
-    try {
-        return readSync(0, byte, 0, 1, null) === 1 ? String.fromCharCode(byte[0]!) : '';
-    } catch {
-        return '';
-    }
-};
+export type { HostRequest } from './eval-tasks.ts';
 
-/** Executes only typed IR. It does not call source inference, AST lowering, or the old evaluator. */
+/** A paused or running program. Pass `next` the answer to the request it last yielded. */
+export type Execution = Generator<HostRequest, ReferenceValue, string>;
+
+/** Run to completion, answering input requests immediately from `stdin` and `key`. */
 export function executeTypedProgram(
     program: TypedProgram,
     options: ReferenceOptions = {},
 ): ReferenceValue {
+    const execution = startTypedProgram(program, options);
+    let step = execution.next();
+    while (!step.done) {
+        const request = step.value;
+        const missing = (service: string): never => {
+            throw new BackendDiagnostic(
+                'reference-runtime',
+                `The host does not provide \`${service}\``,
+            );
+        };
+        step = execution.next(
+            request.op === 'input'
+                ? (options.stdin ?? (() => missing('stdin')))()
+                : (options.key ?? (() => missing('key')))(request.milliseconds),
+        );
+    }
+    return step.value;
+}
+
+/**
+ * Executes only typed IR. It does not call source inference, AST lowering, or the old evaluator.
+ * Nothing runs until the first `next`. The program pauses at each input request, so a host that
+ * cannot block can answer later; to stop a paused program, drop it.
+ */
+export function* startTypedProgram(
+    program: TypedProgram,
+    options: Omit<ReferenceOptions, 'stdin' | 'key'> = {},
+): Execution {
     let rng = 0;
     program = freezeTree(structuredClone(program));
     // Validate the entire compilation unit before executing any effects.
@@ -157,6 +188,10 @@ export function executeTypedProgram(
     const error = (message: string, origin?: string): never => {
         throw new BackendDiagnostic('reference-runtime', message, origin);
     };
+    const host = <K extends 'stdout' | 'writeFileSync'>(
+        service: K,
+    ): NonNullable<ReferenceOptions[K]> =>
+        options[service] ?? error(`The host does not provide \`${service}\``);
     const isLens = (v: Argument): v is Lens =>
         !!v && typeof v === 'object' && !Array.isArray(v) && 'kind' in v && v.kind === 'lens';
     const data = (v: Argument): Data => (isLens(v) ? error('Expected an owned value') : v);
@@ -548,8 +583,8 @@ export function executeTypedProgram(
         v && typeof v === 'object' && !Array.isArray(v) && v.kind === 'vector'
             ? v
             : error('Expected a vector');
-    /** The natives that may have to wait for another task. */
-    const waits = new Set(['chanSend', 'chanRecv', 'sleep']);
+    /** The natives that may have to wait for another task or for the host. */
+    const waits = new Set(['chanSend', 'chanRecv', 'sleep', 'getInput', 'waitKey']);
     const wait = function* (name: string, args: Argument[]): Run<Argument> {
         const number = (n: number) => data(args[n]) as number;
         switch (name) {
@@ -558,6 +593,11 @@ export function executeTypedProgram(
                 return null;
             case 'chanRecv':
                 return (yield { op: 'receive', channel: channelAt(number(0)) }) as Data;
+            case 'getInput':
+                host('stdout')(data(args[0]!) as string);
+                return (yield { op: 'input' }) as string;
+            case 'waitKey':
+                return (yield { op: 'key', milliseconds: number(0) }) as string;
             default:
                 yield { op: 'sleep', milliseconds: number(0) };
                 return null;
@@ -623,14 +663,8 @@ export function executeTypedProgram(
                 channels.set(handle, channel());
                 return handle;
             }
-            case 'getInput': {
-                const prompt = data(args[0]) as string;
-                if (!options.stdin) return createPrompt()(prompt) ?? '';
-                (options.stdout ?? ((text) => process.stdout.write(text)))(prompt);
-                return options.stdin();
-            }
             case 'write': {
-                (options.stdout ?? ((text) => process.stdout.write(text)))(data(args[0]) as string);
+                host('stdout')(data(args[0]) as string);
                 return null;
             }
             case 'writeFile': {
@@ -640,23 +674,15 @@ export function executeTypedProgram(
                         ? b
                         : error('writeFile bytes must be integers in [0, 255]');
                 });
-                // if (!options.writeFileSync) return error(`options.writeFileSync not provided`);
-                (options.writeFileSync ?? writeFileSync)(
-                    data(args[0]) as string,
-                    Uint8Array.from(bytes),
-                );
+                host('writeFileSync')(data(args[0]) as string, Uint8Array.from(bytes));
                 return null;
             }
-            case 'waitKey':
-                // if (!options.key) return error(`Cannot waitKey, not implemented`);
-                return (options.key ?? readKey)(number(0));
             case 'random': {
                 const bound = number(0);
                 if (!Number.isInteger(bound) || bound < 1 || bound >= 2 ** 32)
                     return error('random bound must be an integer in [1, 2^32)');
                 if (rng === 0) {
-                    const seed = options.seed ?? process.env.LAMINAR_SEED;
-                    rng = (seed === undefined ? Date.now() : Number(seed)) >>> 0 || 2463534242;
+                    rng = (options.seed ?? Date.now()) >>> 0 || 2463534242;
                 }
                 rng = (rng ^ (rng << 13)) >>> 0;
                 rng = (rng ^ (rng >>> 17)) >>> 0;
@@ -664,9 +690,7 @@ export function executeTypedProgram(
                 return rng % bound;
             }
             case 'print': {
-                (options.stdout ?? ((text) => process.stdout.write(text)))(
-                    `${data(args[0]) as string}\n`,
-                );
+                host('stdout')(`${data(args[0]) as string}\n`);
                 return null;
             }
             case 'fst': {
@@ -1085,7 +1109,7 @@ export function executeTypedProgram(
         }
         return result;
     };
-    const result = schedule(main(), () => {
+    const result = yield* schedule(main(), () => {
         throw new BackendDiagnostic(
             'reference-deadlock',
             'Every task is blocked, so none can ever continue',

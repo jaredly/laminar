@@ -2,6 +2,7 @@ import { readFileSync } from 'fs';
 import { typedProgram } from '../test/backend/typed-program.ts';
 import { locLines, readFile, readLines } from '../src/lexer.ts';
 import { executeTypedProgram } from '../src/eval-typed.ts';
+import { nodeHost } from '../src/node-host.ts';
 import { TypedProgram } from '../src/typed-ir.ts';
 import { checkFile } from '../src/check.ts';
 import { grammar } from '../src/laminar-parser.ts';
@@ -28,7 +29,7 @@ try {
 }
 console.timeEnd('Type');
 
-const result = executeTypedProgram(p);
+const result = executeTypedProgram(p, nodeHost());
 console.log(result);
 process.exit(0);
 

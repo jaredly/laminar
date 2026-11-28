@@ -28,6 +28,7 @@ import { detectTarget, targetNames, type TargetName } from '../src/backend/host.
 import { BackendDiagnostic } from '../src/backend/target.ts';
 import { modes, type Mode } from '../src/mode.ts';
 import { executeTypedProgram } from '../src/eval-typed.ts';
+import { nodeHost } from '../src/node-host.ts';
 import { printConcreteProgram } from '../src/print-concrete.ts';
 
 const usage = `usage: laminar check <file>
@@ -114,7 +115,7 @@ async function main(argv: string[]): Promise<number> {
         }
         if (args.command === 'run' && args.target === 'reference') {
             const result = executeTypedProgram(checkSource(source, { mode: args.mode }), {
-                stdout: (text) => process.stdout.write(text),
+                ...nodeHost(),
                 stdin: readLine,
             });
             process.stdout.write(JSON.stringify(result) + '\n');
