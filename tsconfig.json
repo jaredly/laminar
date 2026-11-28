@@ -10,6 +10,7 @@
     "module": "nodenext",
     "target": "esnext",
     "types": ["node", "bun"],
+    "rootDirs": ["src", "web"],
     // For nodejs:
     // "lib": ["esnext"],
     // "types": ["node"],

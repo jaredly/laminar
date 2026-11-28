@@ -1,6 +1,6 @@
 import { layoutSchemaKey, scatterVariants } from './layout-definitions.ts';
 import { mapSemantic, type Instance, type IRFunction, positions } from './typed-ir.ts';
-import { createHash } from 'node:crypto';
+import { createHash as CH } from 'node:crypto';
 import type { SemanticType, SemanticFlow } from './elaborated.ts';
 import { BackendDiagnostic, targetKey } from './backend/target.ts';
 import { typeKey, irPlain, type IRBlock, type IRUnit, type IRPattern } from './typed-ir.ts';
@@ -28,6 +28,7 @@ import {
 export function verifyRepresentations(
     source: SpecializedProgram,
     analysis: RepresentationAnalysis,
+    // createHash: (input: string) => string = CH,
 ): void {
     const fail = (message: string): never => {
         throw new BackendDiagnostic('invalid-representation-analysis', message);
@@ -496,8 +497,7 @@ export function verifyRepresentations(
                             // A scattered lens's place can be acquired as an empty or refilled thin slot.
                             if (!(projected.kind === 'sum' && lens(v).kind === 'thin'))
                                 topology(projected, lens(v));
-                        }
-                        else if (lens(v).kind !== 'thin')
+                        } else if (lens(v).kind !== 'thin')
                             fail('Owned local must expose a thin lens');
                         break;
                     }
@@ -512,7 +512,9 @@ export function verifyRepresentations(
                     case 'lens-construct':
                         s.knownPlaces.clear();
                         if (i.out.type.tag !== 'flow' || lens(v).kind !== resultKind(i.out.type))
-                            fail('Constructor lens must have its canonical scattered or thin shape');
+                            fail(
+                                'Constructor lens must have its canonical scattered or thin shape',
+                            );
                         i.items.forEach((id) => lens(get(s, id)));
                         break;
                     case 'lens-tuple': {

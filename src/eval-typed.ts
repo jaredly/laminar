@@ -96,6 +96,7 @@ export type ReferenceOptions = {
     key?: (milliseconds: number) => string;
     /** Seed for `random` (read as an unsigned integer); defaults to LAMINAR_SEED, else the clock. */
     seed?: number;
+    writeFileSync?: (name: string, contents: string) => void;
 };
 
 const nothing = function* (): Run<void> {};
@@ -639,10 +640,15 @@ export function executeTypedProgram(
                         ? b
                         : error('writeFile bytes must be integers in [0, 255]');
                 });
-                writeFileSync(data(args[0]) as string, Uint8Array.from(bytes));
+                // if (!options.writeFileSync) return error(`options.writeFileSync not provided`);
+                (options.writeFileSync ?? writeFileSync)(
+                    data(args[0]) as string,
+                    Uint8Array.from(bytes),
+                );
                 return null;
             }
             case 'waitKey':
+                // if (!options.key) return error(`Cannot waitKey, not implemented`);
                 return (options.key ?? readKey)(number(0));
             case 'random': {
                 const bound = number(0);
