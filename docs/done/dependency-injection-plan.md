@@ -1,7 +1,7 @@
 # Plan: dependency injection
 
 Status: implemented, apart from the differences listed under [As built](#as-built). This replaces the effects half of
-[row-polymorphism-and-effects.md](row-polymorphism-and-effects.md) for now. There is no `resume`.
+[row-polymorphism-and-effects.md](../row-polymorphism-and-effects.md) for now. There is no `resume`.
 Abort and checked exceptions are wanted later and are not planned here. It builds on
 [row-polymorphic records](row-polymorphic-records-plan.md).
 
@@ -280,20 +280,13 @@ These differ from the text above, or were found while building it.
   wrap an outer entry in one, need dual mode or a top-level function.
 - **A lens cleanup cannot use a dependency** (`dependency-in-cleanup`). It runs when the lens ends,
   perhaps outside the block that created it. Read the entry into a binding before the lens.
-- **An injected function that has needs takes only plain parameters.**
-- **The step that writes dependencies out is** [`lower-needs.ts`](../src/lower-needs.ts). The typed
+- **An injected function that has needs cannot take a lens.** `mut` parameters are allowed.
+- **The step that writes dependencies out is** [`lower-needs.ts`](../../src/lower-needs.ts). The typed
   IR has a fourth operation, `widen`, beside reading, injecting and supplying.
 - **`#a.b` copies the whole entry** and then reads the field from the copy.
-- **Changed later:** written function types can now say `mut`. In dual mode an unmarked parameter
-  in one only reads its argument, wherever it is written, so entry types need no rule of their own
-  and an entry may take `mut` parameters. An injected function that has needs still may not. A
-  signature must agree with its definition about `mut`; only the result's ownership comes from the
-  body.
-- **Limits that remain.** In pure mode an import that only reads, such as `round`, cannot be passed
-  where a function type is written or inferred from a call. In dual mode, a parameter's ownership
-  that is inferred only from calls still comes out `mut` when the call passes a temporary. A
-  written result type means an owned result, so a function that returns its argument does not
-  match one.
+- **Changed later:** written function types say who owns each position, and a function can be
+  used as another type of function ([ownership](../type-inference.md#ownership-in-function-types)).
+  So an entry may take `mut` parameters, and a signature may publish an owned result as shared.
 - Infix expressions, `if` and `fn` after `name:` in a record still need parentheses.
 
 ## Not in this plan

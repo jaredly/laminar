@@ -13,7 +13,7 @@ The `@(...)` syntax and the `manual` operation have been removed. Source
 The instruction owns backing, transfers the final value into cleanup, and
 releases backing when cleanup completes. Rebuild serialized artifacts that
 contain the removed operation. The migration history below describes the
-previous backend. See [owned temporary lenses](aslens-core-ir.md).
+previous backend. See [owned temporary lenses](../aslens-core-ir.md).
 
 ## Where things stand
 

@@ -5,7 +5,7 @@ Each item names the workaround the example uses today.
 
 ## 1. Turn a plain value into an owned one
 
-Done: `dup(x)` on a plain value (see `dual-wishlist-plan.md`). Original notes:
+Done: `dup(x)` on a plain value (see [the plan](done/dual-wishlist-plan.md)). Original notes:
 
 - `board[square] := player` fails with `shared-into-mut`, and so does `let mut mark = player`.
   The implicit dup for `let mut x = <plain>` only seems to work for literals and call results.

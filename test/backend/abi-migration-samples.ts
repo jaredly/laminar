@@ -1,5 +1,5 @@
 /**
- * Programs the ABI-keyed callable migration (docs/abi-callable-representations.md)
+ * Programs the ABI-keyed callable migration (docs/done/abi-callable-representations.md)
  * must accept. Each records the milestone that enables it; until then the current
  * identity-precise analysis rejects it and the test is skipped. Enabled samples join
  * the behavioral corpus and run on typed IR, the legacy reference and native/Wasm C.

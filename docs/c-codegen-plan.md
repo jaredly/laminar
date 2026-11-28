@@ -4,7 +4,7 @@ Status: phases 0–6 are complete for the checked subset (phase 6 closed
 2026-11-20). Phases 0–3 are implemented through the concrete-IR exit gate; phases
 4–5 execute the documented scalar/tuple native C and Emscripten/Node subset. Phase 6
 executes affine closures, typed indirect calls and representation joins through
-[ABI-keyed, type-determined callable representations](abi-callable-representations.md);
+[ABI-keyed, type-determined callable representations](done/abi-callable-representations.md);
 see [*Phase 6 completion*](#phase-6-completion-2026-11-20). Phase 7 runtime and host
 integration is complete locally: its exit gate passes on this machine, and the CI
 workflow that enforces it has not yet run remotely (see
@@ -12,7 +12,7 @@ workflow that enforces it has not yet run remotely (see
 The user guide is [the compiler](compiler.md).
 
 The scoped lens extensions are complete as of `707521c`; see the
-[completion record and follow-up mapping](checker-completeness-handoff.md).
+[completion record and follow-up mapping](done/checker-completeness-handoff.md).
 Latest local verification (phase 6 close): **2072 pass / 1303 skip / 0 failures
 across 48 files**, all 38 snapshots passing; TypeScript and diff checks pass. The
 native/Wasm corpus passes 1262 cases and the Go tests 662, without retries. Remote
@@ -23,7 +23,7 @@ and preserve checked and unchecked execution paths.
 
 > **Direction change (2026-11-20):** phase 6 moved callables to ABI-keyed,
 > type-determined representations. See
-> [ABI-keyed callable representations](abi-callable-representations.md). The
+> [ABI-keyed callable representations](done/abi-callable-representations.md). The
 > identity-precise callable machinery recorded in the historical phase-6 sections
 > below (focus endpoints, demands, dispatch and join adapters, recursion hypotheses)
 > was removed by that migration; the shared execution samples remain the
@@ -392,7 +392,7 @@ intrinsic alternatives, different returned callable environments, and normalized
 lens results. Owned callable tuple storage executes; callable focus storage/replacement remains. Continue with that
 phase-6 adapter or
 phase-7 runtime/host integration,
-using the [scoped completion record](checker-completeness-handoff.md#separate-broader-work-and-c-codegen-plan-mapping)
+using the [scoped completion record](done/checker-completeness-handoff.md#separate-broader-work-and-c-codegen-plan-mapping)
 to distinguish completed restoration support from remaining backend work.
 Callable focus storage/replacement needs an explicit adapter slice spanning the
 phase-5 storage and phase-6 closure contracts; general closure storage in phase 6
@@ -1303,7 +1303,7 @@ cases in 468.82 seconds without retries. TypeScript checks pass. Remote CI was n
 
 Phase 6 is closed. The sections above starting at *Phase 6 next boundary* are a
 historical record of the identity-precise model; the
-[ABI migration](abi-callable-representations.md) (M0–M5, with M6 measured and
+[ABI migration](done/abi-callable-representations.md) (M0–M5, with M6 measured and
 closed) replaced it. The two boundaries the last section left open, scattered
 dispatch arguments with differing contracts and recursion with alternating inputs,
 compile and execute under that model.

@@ -1,7 +1,7 @@
 # Plan: row-polymorphic records
 
 Status: implemented, apart from the differences listed under [As built](#as-built). This plans the record half of
-[row-polymorphism-and-effects.md](row-polymorphism-and-effects.md). Effects are out of scope and get
+[row-polymorphism-and-effects.md](../row-polymorphism-and-effects.md). Effects are out of scope and get
 their own design later. Where this plan and that spec disagree, this plan wins.
 
 ## What we are building
@@ -38,7 +38,7 @@ Checked by running the parser and checker unless marked "read".
   Dual mode copies reads of plain bindings.
 - (read) A field is identified by its position in the name-sorted record, in checker paths, in IR
   `SlotRef.path`, and in the reference evaluator. Positions are unstable once a row can grow.
-- (read) [`specializeProgram`](../src/specialize.ts) turns records into tuples *before* it
+- (read) [`specializeProgram`](../../src/specialize.ts) turns records into tuples *before* it
   substitutes type arguments.
 
 ## Semantics
@@ -94,7 +94,7 @@ desugar copies it. That first version copies fields it then removes, and require
 This changes behavior: `let {x} = {x: 1, y: 2}` is a type error today and becomes legal. A pattern
 naming a field the record lacks is still an error.
 
-**Borrowed constructor patterns need care.** (read) [`normalizeBorrowed`](../src/normalize-borrowed.ts)
+**Borrowed constructor patterns need care.** (read) [`normalizeBorrowed`](../../src/normalize-borrowed.ts)
 takes a borrowed record apart and rebuilds it from only the fields the pattern names. With subset
 patterns that would silently delete the others. The expansion must add a hidden `...$rest` to the
 owned pattern and rebuild as `{...$rest, x: x1, y: y1}`. This lands in the same change as subset
@@ -231,7 +231,7 @@ These differ from the text above.
   `Box(a)` used at `{x: Number}`.
 - **The legacy decomposition rejects open patterns,** which includes any unannotated record pattern
   on a parameter. Two corpus samples that did this are now `legacy: false`.
-- **Specialization verifies with names, then erases** ([`erase-records.ts`](../src/erase-records.ts)).
+- **Specialization verifies with names, then erases** ([`erase-records.ts`](../../src/erase-records.ts)).
   The IR verifier reports each named path's position where it is used, since assignment can change
   the shape of a place.
 - **Fixed along the way:** a borrowed constructor pattern with record fields out of name order failed

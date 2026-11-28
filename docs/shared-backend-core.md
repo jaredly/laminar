@@ -2,7 +2,7 @@
 
 Status: steps 1–4 implemented, with follow-up slices in progress before step 5. Related:
 [readable compiler output](compiler-output-readability.md),
-[C backend](c-backend.md), [Go plan](go-codegen-plan.md),
+[C backend](c-backend.md), [Go plan](done/go-codegen-plan.md),
 [Zig plan](zig-codegen-plan.md).
 
 ## Problem

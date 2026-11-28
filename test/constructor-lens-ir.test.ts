@@ -7,7 +7,7 @@ import { specializeProgram } from '../src/specialize.ts';
 import { inferRepresentations } from '../src/infer-representations.ts';
 import { wasm32Emscripten } from '../src/backend/target.ts';
 
-// Step 4 of docs/scattered-constructor-lenses.md: constructor lenses lower to typed IR
+// Step 4 of docs/done/scattered-constructor-lenses.md: constructor lenses lower to typed IR
 // (`lens-construct`), the reference evaluator runs them, and the independent verifier
 // checks them. Concrete (C/Go/Wasm) representations are later work.
 

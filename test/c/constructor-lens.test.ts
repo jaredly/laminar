@@ -1,5 +1,5 @@
 /**
- * Constructor lenses in C (docs/scattered-constructor-lenses.md). A constructor lens is
+ * Constructor lenses in C (docs/done/scattered-constructor-lenses.md). A constructor lens is
  * a thin lens over a temporary that holds the value built from its field lenses; the
  * restoration callback checks the tag and writes each payload field back. Execution
  * cases run natively (ASan/UBSan at -O0, and -O2) when LAMINAR_EXEC is set.

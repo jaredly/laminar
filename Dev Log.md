@@ -1,13 +1,75 @@
 
+---
+
+We need to organize our docs/ folder. Move everything that has been completed to docs/done/.
+
+---
+
+Ok my good people,
+let's do exception handling now.
+we're going to go with 'checked exceptions', with return-value wrapping under the hood.
+
+What's our syntax?
+Types need a syntax.
+We've already got `(arg, arg, arg) ={Effect, Effect}> result`
+Are we gonna glom exceptions into the effect morass?
+so what if `record type = DI, union type = error`?
+hmmm
+
+```lm
+type HttpError {
+    NotFound(Number)
+    Unauthorized(String)
+}
+
+somFn :: () ={HttpError}> Number
+fn someFn(input) {
+    if input < 12 {
+        throw NotFound(23)
+    }
+    15
+}
+
+try {
+    someFn(5)
+} catch {
+    NotFound(value) -> 10
+    Unauthorized(value) -> 14
+}
+```
+
+And we'd need to ... ensure that errors dont share names.
+Can we be polymorphic in error kinds? sure why not.
+
+- a `catch` must handle all elements .. hmm... Ok maybe I want polymorphic unions as welllll so that you can eliminate & include individual error constructors.
+
+---
+
+ooh what if i target ocaml lol
+or maybe BEAMVM?
+
+---
+
+We also gotta get int and float and char and stuff sorted out.
+
+---
+
+So, pure mode should have a 'lower the typed IR to value-passing-style', so we
+can look at it, and gain some intuition for "this really is linear".
+
+---
+
 DI not effects ideas
 
 For the effects, let's actually just start with dependency injection, so no need for resume or abort.
 
 3. can we resolve the non-spread elements before the spread? I would assume that record spread is most useful for dual mode shared values; but mut / plain values should definitely be supported too.
 4. yeah that sounds right
-5. again we'll be doing a very limited form of effects (just value map, no continuation magic)
 6. yes please. also for record patterns, you should be able to only specify a subset of fields (the others being dropped if this is operating on a non-shared non-lens), and a ...rest form makes sense as well.
-7. yeah withName would be a top-level fn. {}​ for empty record (not empty block) works for me.
+7. yeah withName would be a top-level fn. `{}` for empty record (not empty block) works for me.
+
+
+5. again we'll be doing a very limited form of effects (just value map, no continuation magic)
 8. leaving out the effect should mean 'inferred'. (a) ={}> c​ means pure, no effects. (a) ={Http, Fs}> c​ means the union of the Http and Fs record types, for example type Http = {get: (string) => string, put: (string, string) => string}; type Fs = {readFile: (string) => string}​. A union constructor can have a type variable that shows up in the effect position for the fn. print, input, sockets, channels, spawn, yeah those are all good candidates. we'll leave traps out of it for now.
 
 
