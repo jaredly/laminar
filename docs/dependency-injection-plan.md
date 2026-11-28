@@ -271,7 +271,10 @@ These differ from the text above, or were found while building it.
   but does not compile** (`unsupported-needs-in-union`): union layouts are derived before
   specialization. A union with a row parameter compiles when every use of it needs nothing.
 - **A closed list also covers the callbacks the body calls.** Under `={}>`, calling a callback
-  parameter makes that callback need nothing.
+  parameter makes that callback need nothing. This is intended, and applies only to callbacks that
+  are called: one the body ignores, stores or returns may need anything. A call in one branch
+  counts, as does a call through a helper or through a closure the body runs. A call inside a
+  closure the body never runs does not. Under an `inject`, the callback may need what was injected.
 - **The only functions in pure mode entries are top-level ones,** named at the `inject`. Reading an
   entry copies it, and pure mode copies no other function. Examples here that inject a lambda, or
   wrap an outer entry in one, need dual mode or a top-level function.
