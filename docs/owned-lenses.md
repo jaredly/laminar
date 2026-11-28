@@ -256,8 +256,8 @@ A function type is ordinary, `state` or `linear`, and this is not inferred throu
   a type not yet known counts. It may be dropped, but it cannot be shared or copied
   (`shared-closure`): not bound plain, passed to a plain parameter, duplicated or injected. Two such
   closures can meet in one branch; one cannot yet be mixed with a function that can be called again
-  (`stateful-closure-mismatch`), and a written function type means such a function. Schemes print it
-  as `once (…) => …`. Tests are in `test/stateful-closures.test.ts`.
+  (`stateful-closure-mismatch`). It is written and printed as `once (…) => …`, and an unmarked
+  written type means a reusable function. Tests are in `test/stateful-closures.test.ts`.
 - Pure mode is simpler: every function value is used once, whatever it captured. `dup` and `array`
   refuse a function, and any value that holds one (`function-copy`), including a union with a
   function field. The one exception is a dependency, which every `#name` read copies. The only

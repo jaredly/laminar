@@ -1,7 +1,8 @@
 # Plan: ownership in function types
 
-Status: proposed. Nothing here is built, apart from what "Where we are" lists and the rules for
-sharing and copying functions.
+Status: implemented. [As built](#as-built) lists where it differs from the text below, which is
+kept as the plan was written. The current rules are in
+[type inference](type-inference.md#ownership-in-function-types).
 
 This finishes phase 5a of [the mut and linear plan](mut-and-linear-plan.md). Everything here is
 about dual mode unless it says otherwise.
@@ -366,16 +367,44 @@ Each phase leaves the targeted tests passing.
 ## Decisions
 
 - Closures with their own state cannot be shared. This is built.
-- A closure with state is written `once (A) => B`. `once` and `linear` imply `mut`. Not built.
-- A lens result states its ownership with `mut ~T`. Not built.
+- A closure with state is written `once (A) => B`. `once` and `linear` imply `mut`. Built.
+- A lens result states its ownership with `mut ~T`. Built.
 - A channel's type states the kind of function it carries. Where inference has nothing to go on,
-  it is must-call if the body allows that. Not built.
+  it is must-call if the body allows that. Built.
 - A callback result inferred only from calls is owned. A written type can accept a shared one too.
   Not changing.
-- Conversion reverses inside parameters. Not built.
-- Syntax for exactly-once promises, `Copyable` and `Droppable` requirements and generic
-  replaceability is decided in phase 6, once kinds can be written. Until each one has syntax or
-  stops being printed, not every printed type parses again.
+- Conversion reverses inside parameters. Built.
+- Exactly-once promises, `Copyable` and `Droppable` requirements and generic replaceability get
+  no syntax yet (decided in phase 6). The first stays inferred. Bounds still print as `where`
+  clauses, so those printed types do not parse again.
+
+## As built
+
+- **All seven phases are in.** The new tests are `test/function-type-syntax.test.ts`,
+  `test/function-ownership.test.ts`, `test/function-ownership-ir.test.ts` and
+  `test/function-conversion-execution.test.ts`.
+- **Kinds.** `mut once (a) => b` is accepted, with a redundant `mut`. A kind on a definition's
+  parameter annotation, as in `fn f(g: once () => a)`, makes the parameter `mut`.
+- **Exactly-once promises are still needed.** A parameter written `once () => a` is given a
+  must-call closure only when the definition also calls it exactly once on every path.
+- **Grammar.** One general rule per form replaced the rules for each combination: `mut`, `once`,
+  `linear` and arrows each take the rest of the type. Type aliases can now name a function type
+  without parentheses.
+- **A join of undecided modes stays undecided,** and its parts decide together. It used to count
+  as owned without saying so. A later constraint could then make a part shared after something had
+  written to the whole, and compiled code changed a value the caller still held.
+- **Conversion settles a binding's open modes** before converting a use of it, so `let g = show`
+  can be used both ways.
+- **The verifier check runs on the generic program only.** Specialization merges instances whose
+  types differ only in ownership.
+- **Two places dropped `shared` marks** from the typed IR: `mapSemanticFlow` and the conversion of
+  import signatures. Both keep them now.
+- **Kinds convert where the expected kind is known:** arguments, union fields and sends. They do
+  not convert in annotated bindings, branches or literals.
+- **The annotation crash** was in `normalize-borrowed.ts`, which took a written function type for
+  a lambda.
+- **Found and not fixed:** calling a plain local function twice is `use-after-move`, even when it
+  is a top-level definition. This predates the plan.
 
 ## Not in this plan
 

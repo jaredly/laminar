@@ -43,6 +43,7 @@ import {
     REPLACEABLE,
     SHARED,
     CHANNEL,
+    kindRank,
     reads,
     mapType,
     needs,
@@ -164,6 +165,19 @@ export type Inference = {
     /** Parameters that are only ever called, once on every path, so they take linear closures. */
     acceptsLinear: ReadonlySet<number>;
 };
+
+/** A function whose kind cannot be shared or copied, so every position of it is owned. */
+const isKinded = (t: Ty): boolean => t.tag === 'fn' && !!t.capture;
+/** Whether a written type has a function type anywhere in it. */
+const writesFunction = (type: unknown): boolean =>
+    !!type &&
+    typeof type === 'object' &&
+    ((type as { type?: unknown }).type === 'fn' || Object.values(type).some(writesFunction));
+/** The expressions that yield a function themselves, rather than passing one along. */
+const makesFunctionValue = (n: Linear, self: string | undefined): boolean =>
+    n.type === 'op' || n.type === 'id'
+        ? n.text !== self
+        : n.type === 'fn' || n.type === 'field' || n.type === 'need' || n.type === 'apply';
 
 /** One solver per checked expression/definition; environments contain finalized schemes. */
 export class Inferencer {
@@ -384,6 +398,13 @@ export class Inferencer {
     private ambient: Ty = NO_NEEDS;
     /** A closed list the definition declares for its body, and the open row of its type. */
     private limit?: { body: Ty; type: Ty };
+    private conversions: {
+        mode: Ty;
+        from: 'owned' | 'shared';
+        parameter: boolean;
+        value: Ty;
+        loc: number;
+    }[] = [];
     /** Whether an arrow that says nothing about needs has them inferred. */
     private inferOmitted = true;
     /** Collects the rows made for such arrows while a signature is read. */
@@ -543,6 +564,7 @@ export class Inferencer {
         if (node.type === 'type-alias') {
             // The alias is not yet registered, so a self-reference is an unknown type.
             this.annotation(node.alias, params, true);
+            this.refuseLinearResults(constructors);
             return {
                 definition: { kind: 'alias', params: [...params.keys()], body: node.alias },
                 constructors,
@@ -582,11 +604,30 @@ export class Inferencer {
                     });
                 constructors.set(constructor, this.solver.generalize(fn(args, result), []));
             }
+            this.refuseLinearResults(constructors);
         } finally {
             this.typeDefinitions = previous;
             this.inferOmitted = true;
         }
         return { definition, constructors };
+    }
+
+    /**
+     * Check what the written types of a declaration require, which nothing else will. A type
+     * parameter is checked where a value of it is made.
+     */
+    private refuseLinearResults(declared: Map<string, Scheme>): void {
+        this.solver.finishBounds(
+            { quantified: [], body: tuple() },
+            new Map(),
+            comparableUnions(
+                [...this.constructors, ...declared].map(([name, s]) => ({
+                    definition: `constructor/${name}`,
+                    type: s.body,
+                })),
+            ),
+            this.declaredLinear,
+        );
     }
 
     infer(ast: Linear, declaration?: Decl): Inference {
@@ -640,6 +681,9 @@ export class Inferencer {
         const declared = declaration && this.annotation(declaration.ann, new Map());
         this.omitted = undefined;
         if (declared?.tag === 'plain') this.statedModes(declared.value, type);
+        this.settleConversions();
+        this.findAbandoned();
+        this.solver.settleOpenKinds();
         let scheme = this.solver.generalize(type, [...this.globals.values()]);
         if (declaration && declared) {
             if (ast.type !== 'fn' || ast.name !== declaration.name.text)
@@ -661,22 +705,7 @@ export class Inferencer {
                     ? { ...signature, needs: this.limit.type }
                     : signature;
             const inferredInstance = this.solver.instantiateWithArguments(scheme);
-            // A signature says which of the definition's own parameters are `mut`. Nothing
-            // says who owns its result, so that comes from the body.
-            const body = this.solver.prune(inferredInstance.type);
-            const owned = (said: FlowTy, found: FlowTy): FlowTy =>
-                said.tag === 'plain' && found.tag === 'plain'
-                    ? plain(said.value, found.mode)
-                    : said;
-            const written = this.solver.generalize(
-                stated.tag === 'fn' && body.tag === 'fn' && stated.args.length === body.args.length
-                    ? {
-                          ...stated,
-                          result: owned(stated.result, body.result),
-                      }
-                    : stated,
-                [],
-            );
+            const written = this.solver.generalize(stated, []);
             // Needs the signature does not state are inferred, so they stay open.
             const contractInstance = this.solver.instantiateWithArguments(
                 written,
@@ -684,7 +713,11 @@ export class Inferencer {
                 declaration.loc,
                 new Set(omitted),
             );
-            this.solver.unify(inferredInstance.type, contractInstance.type, declaration.loc);
+            this.solver.unify(
+                this.asDeclared(inferredInstance.type, stated, type, declaration.loc),
+                contractInstance.type,
+                declaration.loc,
+            );
             const rigid = [...contractInstance.arguments].flatMap(([id, t]) =>
                 t.tag === 'rigid' ? [[t.id, id] as const] : [],
             );
@@ -867,15 +900,12 @@ export class Inferencer {
                     needed = this.solver.fresh();
                     this.omitted?.push((needed as Ty & { tag: 'meta' }).id);
                 }
-                let result = this.annotation(t.body, vars, closed);
-                if (result.tag === 'flow') {
-                    const borrows = args.some(
-                        (a) => a.tag === 'flow' && this.solver.lensOwnership(a.owned) !== 'owned',
-                    );
-                    // The signature decides it, so a result is only ever written `~A`.
-                    result = { ...result, owned: borrows ? BORROWED_LENS : OWNED_LENS };
-                }
-                return plain(fn(args, result, undefined, needed));
+                const result = this.resultType(t.body, args, vars, closed);
+                if (t.kind && !this.options.linearTypes)
+                    this.error('dual-only', 0, `\`${t.kind}\` needs dual mode`);
+                const capture: Capture | undefined =
+                    t.kind === 'once' ? 'state' : t.kind ? 'linear' : undefined;
+                return plain(fn(args, result, capture, needed));
             }
         }
     }
@@ -890,7 +920,48 @@ export class Inferencer {
             return plain(this.valueAnnotation(t.value, vars, closed), OWNED);
         }
         const a = this.annotation(t, vars, closed);
-        return dual && a.tag === 'plain' ? plain(a.value, SHARED) : a;
+        if (!dual || a.tag !== 'plain') return a;
+        return plain(a.value, isKinded(a.value) ? OWNED : SHARED);
+    }
+    /**
+     * The result of a written function type. In dual mode an unmarked one is shared, so it
+     * cannot be linear, and a `mut` one is the caller's. A lens says its own ownership, which
+     * has to be the one its parameters give it.
+     */
+    private resultType(t: Type, args: FlowTy[], vars: Map<string, Ty>, closed: boolean): FlowTy {
+        const dual = this.options.linearTypes;
+        const loc = 'loc' in t ? t.loc : 0;
+        if (t.type === 'mut') {
+            if (!dual) this.error('dual-only', loc, '`mut` needs dual mode');
+            return plain(this.valueAnnotation(t.value, vars, closed), OWNED);
+        }
+        const result = this.annotation(t, vars, closed);
+        if (result.tag === 'flow') {
+            const borrows = args.some(
+                (a) => a.tag === 'flow' && this.solver.lensOwnership(a.owned) !== 'owned',
+            );
+            const owned = this.solver.lensOwnership(result.owned) === 'owned';
+            if (owned === borrows)
+                this.error(
+                    'lens-ownership-mismatch',
+                    loc,
+                    borrows
+                        ? 'This function borrows a lens, so the lens it returns is borrowed: write it without `mut`'
+                        : 'This function borrows no lens, so the lens it returns is owned: write it `mut ~A`',
+                );
+            return result;
+        }
+        if (!dual) return result;
+        // A kind that cannot be shared says the result is owned by itself.
+        if (isKinded(result.value)) return result;
+        this.sharedResult(result.value, loc);
+        return plain(result.value, SHARED);
+    }
+    private sharedResult(type: Ty, loc: number): void {
+        this.solver.require('Copyable', type, loc, [
+            'linear-plain',
+            'A result not written `mut` is shared, so it cannot be linear; write `=> mut T`',
+        ]);
     }
     /** Whether an item of `={...}>` names particular entries, rather than a row variable. */
     private isClosedNeed(item: NeedsItem): boolean {
@@ -1075,10 +1146,18 @@ export class Inferencer {
         const scheme =
             this.constructors.get(name) ??
             this.error('unknown-constructor', loc, `Unknown constructor ${name}`);
+        const instance = this.instantiate(name, scheme, node, true);
+        const made = this.solver.prune(instance);
         this.solver.unify(
-            this.instantiate(name, scheme, node, true),
+            instance,
             fn(
-                args.map((a) => plain(a, this.solver.freshMode())),
+                args.map((a, i) => {
+                    const field = made.tag === 'fn' ? made.args[i] : undefined;
+                    return plain(
+                        field?.tag === 'plain' ? this.fitKind(a, field.value) : a,
+                        this.solver.freshMode(),
+                    );
+                }),
                 plain(result),
             ),
             loc,
@@ -1098,8 +1177,15 @@ export class Inferencer {
     }
     /** A value is shared when it is a plain read, or an aggregate or branch that holds one. */
     private expressionMode(n: Linear): Ty {
-        const join = (parts: object[]): Ty =>
-            parts.some((p) => this.solver.modeOf(this.modeOf(p)) === 'shared') ? SHARED : OWNED;
+        const join = (parts: object[]): Ty => {
+            const modes = parts.map((p) => this.modeOf(p));
+            if (modes.some((m) => this.solver.modeOf(m) === 'shared')) return SHARED;
+            // While a part is undecided so is the whole, and they decide together: what
+            // writes to the whole must not find later that a part was shared.
+            const [first, ...rest] = modes.filter((m) => this.solver.modeOf(m) === 'unknown');
+            for (const m of rest) this.solver.unifyMode(first!, m, n.loc);
+            return first ?? OWNED;
+        };
         switch (n.type) {
             case 'apply':
                 return this.resultModes.get(n) ?? OWNED;
@@ -1127,8 +1213,15 @@ export class Inferencer {
     private linear(n: Linear, env: Env): Ty {
         const previous = this.current;
         this.current = n;
+        // What is called is used as it is; any other use may be as another type of function.
+        const called = n === this.callee;
         try {
-            const t = this.linearInner(n, env);
+            const found = this.linearInner(n, env);
+            // The definition being checked is published as it is, not used.
+            const t =
+                !called && n !== this.rootFunction && makesFunctionValue(n, this.selfName)
+                    ? this.convert(found, n.loc)
+                    : found;
             if (n.type === 'let') this.callsOnce.set(n, this.callsOnce.get(n.body));
             if (n.type === 'tuple' && n.items.length === 1)
                 this.callsOnce.set(n, this.callsOnce.get(n.items[0]!));
@@ -1305,14 +1398,11 @@ export class Inferencer {
         else if (row.tag === 'needs' && row.rest) this.solver.unify(row.rest, NO_NEEDS, loc);
         row = this.solver.prune(type.needs);
         if (row.tag === 'needs' && row.entries.length) {
-            if (
-                type.args.some((a) => a.tag === 'flow' || this.solver.ownership(a) === 'owned') &&
-                (this.options.linearTypes || type.args.some((a) => a.tag === 'flow'))
-            )
+            if (type.args.some((a) => a.tag === 'flow'))
                 this.error(
                     'unsupported-dependency',
                     loc,
-                    'A function with dependencies can only be injected if its parameters are plain',
+                    'A function with dependencies cannot be injected if it takes a lens',
                 );
             this.requireEntries(row.entries, loc);
         }
@@ -1374,6 +1464,59 @@ export class Inferencer {
         if (uses === 1) this.solver.unify(row, NO_NEEDS, 0);
     }
     /**
+     * A function value may be used where a function of other ownership is expected: one that
+     * only reads a parameter takes ownership of it just as well, and an owned result can be
+     * shared. So each position that may change gets a mode that is open until the item is
+     * checked, and is what it was unless the use says otherwise. Only a type already known
+     * here converts.
+     */
+    private convert(type: Ty, loc: number): Ty {
+        const t = this.solver.prune(type);
+        return t.tag === 'fn' ? this.openOwnership(t, false, loc) : type;
+    }
+    /** `supplied` inside a parameter, where the slot provides the function: all reverses. */
+    private openOwnership(t: Ty & { tag: 'fn' }, supplied: boolean, loc: number): Ty {
+        let changed = false;
+        const position = (p: FlowTy, parameter: boolean): FlowTy => {
+            if (p.tag !== 'plain') return p;
+            const held = this.solver.prune(p.value);
+            const value =
+                held.tag === 'fn'
+                    ? this.openOwnership(held, parameter ? !supplied : supplied, loc)
+                    : held;
+            if (value !== held) changed = true;
+            const from = parameter !== supplied ? 'shared' : 'owned';
+            this.solver.settleOpenMode(p.mode);
+            if (this.solver.modeOf(p.mode) !== from) return plain(value, p.mode);
+            changed = true;
+            const mode = this.solver.openMode(from === 'shared' ? SHARED : OWNED);
+            this.conversions.push({ mode, from, parameter, value, loc });
+            return plain(value, mode);
+        };
+        const args = t.args.map((a) => position(a, true)),
+            result = position(t.result, false);
+        return changed ? this.solver.alike(fn(args, result, t.capture, t.needs), t) : t;
+    }
+    /** What a conversion that happened requires of the values it passes. */
+    private settleConversions(): void {
+        this.solver.settleOpenModes();
+        for (const { mode, from, parameter, value, loc } of this.conversions) {
+            if (!this.options.linearTypes || this.solver.modeOf(mode) === from) continue;
+            if (!parameter) this.sharedResult(value, loc);
+            else {
+                // Whoever receives it may only read it, so may neither consume it nor object
+                // to its being kept.
+                const refusal: [string, string] = [
+                    'linear-plain',
+                    'A function that only reads this parameter cannot be given ownership of a linear value',
+                ];
+                this.solver.require('Copyable', value, loc, refusal);
+                this.solver.require('Droppable', value, loc, refusal);
+            }
+        }
+        this.conversions = [];
+    }
+    /**
      * A definition or import that needs nothing, used as a value, may stand for a function with
      * any needs: it ignores them. Lowering adds the adapter where one turns out to have some.
      */
@@ -1384,22 +1527,27 @@ export class Inferencer {
             : type;
     }
     /**
-     * A call of a parameter says nothing about whether it takes ownership, so a signature may:
-     * whatever it states settles the parameter modes the body left open, before they default.
+     * A call of a parameter says nothing about who owns its arguments or its result, so a
+     * signature may: whatever it states settles the modes the body left open, before they
+     * default.
      */
     private statedModes(said: Ty, found: Ty): void {
         const a = this.solver.prune(said),
             b = this.solver.prune(found);
         const each = (left: Ty[], right: Ty[]) =>
             left.forEach((t, i) => right[i] && this.statedModes(t, right[i]!));
-        if (a.tag === 'fn' && b.tag === 'fn')
-            a.args.forEach((x, i) => {
-                const y = b.args[i];
+        if (a.tag === 'fn' && b.tag === 'fn') {
+            if (b.open) this.solver.stateKind(b.open, a.capture);
+            const position = (x: FlowTy, y: FlowTy | undefined) => {
                 if (x.tag !== 'plain' || y?.tag !== 'plain') return;
                 if (this.solver.modeOf(y.mode) === 'unknown')
                     this.solver.unifyMode(y.mode, x.mode, 0);
                 this.statedModes(x.value, y.value);
-            });
+            };
+            // Parameters first: a result may be one of theirs.
+            a.args.forEach((x, i) => position(x, b.args[i]));
+            position(a.result, b.result);
+        }
         else if (a.tag === 'tuple' && b.tag === 'tuple') each(a.items, b.items);
         else if (a.tag === 'con' && b.tag === 'con') each(a.args, b.args);
         else if (a.tag === 'record' && b.tag === 'record')
@@ -1407,6 +1555,88 @@ export class Inferencer {
                 const match = b.fields.find((g) => g.name === f.name);
                 if (match) this.statedModes(f.type, match.type);
             }
+    }
+    /**
+     * The definition as its signature may publish it. Parameters must agree exactly. An owned
+     * result may be published as shared, which freezes it, but never the other way round.
+     * `body` is the definition's own type, which the requirement of a frozen result is on.
+     */
+    private asDeclared(inferred: Ty, said: Ty, body: Ty, loc: number): Ty {
+        const found = this.solver.prune(inferred),
+            written = this.solver.prune(said),
+            own = this.solver.prune(body);
+        if (
+            !this.options.linearTypes ||
+            found.tag !== 'fn' ||
+            written.tag !== 'fn' ||
+            own.tag !== 'fn' ||
+            found.result.tag !== 'plain' ||
+            written.result.tag !== 'plain' ||
+            own.result.tag !== 'plain'
+        )
+            return inferred;
+        const is = this.solver.modeOf(found.result.mode),
+            wanted = this.solver.modeOf(written.result.mode);
+        if (wanted === 'owned' && is === 'shared')
+            this.error(
+                'shared-into-mut',
+                loc,
+                'The signature says the result is `mut`, but the definition returns a shared value; `dup` it',
+            );
+        if (wanted !== 'shared') return inferred;
+        this.sharedResult(own.result.value, loc);
+        return { ...found, result: plain(found.result.value, SHARED) };
+    }
+    /**
+     * Values left behind by a scope, by a branch that kept what another consumed, or by a
+     * function that never consumed its own parameter. Whether that is allowed is checked once
+     * the item is done; an open kind has to hear of it before it is chosen.
+     */
+    private findAbandoned(): void {
+        const left = (state: RawState) => !state.empty.some((path) => !path.length);
+        for (const scope of this.builder.scopes) {
+            const own = new Set(
+                this.builder.bindings
+                    .filter(
+                        (b) => scope.bindings.includes(b.id) && b.kind === 'local' && !b.path.length,
+                    )
+                    .map((b) => b.place),
+            );
+            for (const state of scope.exit)
+                if (own.has(state.place) && left(state)) this.solver.abandoned(state.type);
+        }
+        for (const branch of this.builder.branches)
+            for (const after of branch.output)
+                for (const arm of branch.arms) {
+                    const state = arm.output.find((s) => s.place === after.place);
+                    for (const path of after.empty) {
+                        if (!state || state.empty.some((p) => p.every((v, i) => path[i] === v)))
+                            continue;
+                        const part = this.partAt(state.type, path);
+                        if (part) this.solver.abandoned(part);
+                    }
+                }
+        for (const f of this.builder.functions) {
+            const own = new Set(f.parameterPlaces.filter((_, i) => f.ownedParameters[i]).flat());
+            for (const state of f.exit)
+                if (own.has(state.place) && left(state)) this.solver.abandoned(state.type);
+        }
+    }
+    private partAt(type: Ty, path: readonly Step[]): Ty | undefined {
+        let at: Ty | undefined = type;
+        for (const step of path) {
+            if (!at) return undefined;
+            const t: Ty = this.solver.prune(at);
+            at =
+                typeof step === 'number'
+                    ? t.tag === 'tuple'
+                        ? t.items[step]
+                        : undefined
+                    : t.tag === 'record'
+                      ? t.fields.find((f) => f.name === step)?.type
+                      : undefined;
+        }
+        return at;
     }
     /** The item itself must need nothing: nothing supplies it. */
     private requireNoNeeds(root: Ty, loc: number): void {
@@ -1559,7 +1789,7 @@ export class Inferencer {
                         this.error(
                             'type-mismatch',
                             item.loc,
-                            `Only a record can be spread, found ${printType(this.solver.resolve(row))}`,
+                            `Only a record can be spread, found ${printType(this.solver.resolve(row), undefined, this.options.linearTypes)}`,
                         );
                     this.solver.markRow(row as Ty & { tag: 'meta' | 'rigid' });
                     for (const name of fields.keys()) this.solver.requireLacks(row, name, item.loc);
@@ -1697,17 +1927,21 @@ export class Inferencer {
                     : [...new Set(names(a.pat).map((name) => sub.get(name)!.root.place!))],
             );
             if (a.typ) this.solver.unifyFlow(type, this.annotation(a.typ, vars), a.pat.loc, false);
-            // A call to a parameter borrows unless its type is known, and a declaration is
-            // otherwise only compared after the body. So it speaks first about owned lenses.
+            // A call of a parameter takes its modes from the call unless its type is known, and
+            // a declaration is otherwise only compared after the body. So it speaks first.
             const written =
                 n === this.rootFunction && this.rootDeclaration?.ann.type === 'fn'
                     ? this.rootDeclaration.ann.args[i]
                     : undefined;
             const declared = written?.type === 'mut' ? written.value : written;
             if (
-                declared?.type === 'fn' &&
-                (declared.args.some((t) => t.type === 'mut' || (t.type === 'lens' && t.owned)) ||
-                    statesNeeds(declared))
+                declared &&
+                ((this.options.linearTypes && writesFunction(declared)) ||
+                    (declared.type === 'fn' &&
+                        (declared.args.some(
+                            (t) => t.type === 'mut' || (t.type === 'lens' && t.owned),
+                        ) ||
+                            statesNeeds(declared))))
             )
                 this.solver.unifyFlow(type, this.annotation(declared, vars), a.pat.loc, false);
             return type;
@@ -1880,7 +2114,7 @@ export class Inferencer {
             return this.error(
                 'unknown-record',
                 loc,
-                `Cannot access field ${name} on ${printType(this.solver.resolve(t))}, which is not a record`,
+                `Cannot access field ${name} on ${printType(this.solver.resolve(t), undefined, this.options.linearTypes)}, which is not a record`,
             );
         if (t.fields.some((f) => f.name === name)) return;
         const rest = t.rest && this.solver.prune(t.rest);
@@ -2271,18 +2505,24 @@ export class Inferencer {
         const copied = global === 'dup' ? lenses.get(0)?.source : undefined;
         const copy = copied?.type === 'id' ? this.lookup(env, copied.text, n.loc) : undefined;
         const copiedOnce = copy && !copy.path.length ? copy.root.callsOnce : undefined;
+        /** What the channel being sent on carries, as far as it is known. */
+        let carriedBy: Ty | undefined;
         const args = n.args.map((a, i) => {
             if (a.type === 'lens') {
                 const { view, replacement, owned } = lenses.get(i)!;
                 return flow(view.read, replacement, view.replaceable, owned);
             }
             const value = this.linear(a, env);
+            if (global === 'chanSend' && i === 0) {
+                const channel = this.solver.prune(value);
+                if (channel.tag === 'con' && channel.name === CHANNEL) carriedBy = channel.args[0];
+            }
             if (accepts?.includes(i) && a.type === 'id')
                 this.consumingUses.add(this.builder.node(a));
             this.recheckArgument(callee, i, value, accepts, a);
             const passed =
                 global === 'chanSend' && i === 1
-                    ? this.sent(value)
+                    ? this.sent(value, carriedBy)
                     : this.argumentType(callee, i, value, accepts, a);
             return plain(passed, this.solver.freshMode());
         });
@@ -2306,16 +2546,16 @@ export class Inferencer {
             resultOwned = this.solver.fresh();
         const needed = this.calleeNeeds(callee, recursive, n.loc);
         const known = this.solver.prune(callee);
-        this.solver.unify(
-            callee,
-            fn(
-                args,
-                lensResult ? flow(read, write, replaceable, resultOwned) : plain(read, resultMode),
-                known.tag === 'fn' ? known.capture : undefined,
-                needed,
-            ),
-            n.loc,
-        );
+        const used = fn(
+            args,
+            lensResult ? flow(read, write, replaceable, resultOwned) : plain(read, resultMode),
+            known.tag === 'fn' ? known.capture : undefined,
+            needed,
+        ) as Ty & { tag: 'fn' };
+        // A call says nothing about the kind of what it calls.
+        if (known.tag === 'fn') this.solver.alike(used, known);
+        else used.unstated = true;
+        this.solver.unify(callee, used, n.loc);
         // A callee that says nothing borrows.
         for (const flag of [
             ...[...lenses.values()].map((l) => l.owned),
@@ -2384,24 +2624,77 @@ export class Inferencer {
             });
         }
     }
-    /** What goes onto a channel: every function in it becomes one-use on the way. */
-    private sent(value: Ty): Ty {
-        const t = this.solver.prune(value);
-        if (t.tag === 'fn') return fn(t.args, t.result, 'linear', t.needs);
-        if (t.tag === 'tuple') return tuple(...t.items.map((v) => this.sent(v)));
-        if (t.tag === 'record')
-            return record(
-                t.fields.map((f) => ({ name: f.name, type: this.sent(f.type) })),
-                t.rest,
-            );
-        if (t.tag === 'con' && t.name !== CHANNEL)
-            return con(t.name, ...t.args.map((v) => this.sent(v)));
-        return value;
+    /**
+     * What goes onto a channel carrying `expected`. Sending does not decide what kind of
+     * function the channel carries: one of any kind may go where it is must-call.
+     */
+    private sent(value: Ty, expected: Ty | undefined): Ty {
+        const t = this.solver.prune(value),
+            e = expected && this.solver.prune(expected);
+        if (t.tag === 'fn') {
+            if (t.open) return value;
+            if (e?.tag === 'fn' && !e.open) return this.fitKind(t, e);
+            const copy = fn(t.args, t.result, 'linear', t.needs) as Ty & { tag: 'fn' };
+            if (!e || e.tag !== 'fn') {
+                this.solver.openKind(copy, kindRank(t.capture));
+                return copy;
+            }
+            e.open!.floor = Math.max(e.open!.floor, kindRank(t.capture));
+            return this.solver.alike(copy, e);
+        }
+        return this.withParts(value, e, (v, w) => this.sent(v, w));
     }
     /**
-     * Once everything is inferred, a function that turned out to be linear must still not
-     * have been passed where it could be dropped or reused.
+     * A function that restricts its holder less than the expected kind may go there: it can
+     * always be held to more.
      */
+    private fitKind(value: Ty, expected: Ty | undefined): Ty {
+        const t = this.solver.prune(value),
+            e = expected && this.solver.prune(expected);
+        if (t.tag === 'fn')
+            return e?.tag === 'fn' &&
+                !t.open &&
+                !e.open &&
+                kindRank(t.capture) < kindRank(e.capture)
+                ? fn(t.args, t.result, e.capture, t.needs)
+                : value;
+        return e ? this.withParts(value, e, (v, w) => this.fitKind(v, w)) : value;
+    }
+    /** `value` with each part replaced, alongside the matching part of `expected`. */
+    private withParts(
+        value: Ty,
+        expected: Ty | undefined,
+        part: (value: Ty, expected: Ty | undefined) => Ty,
+    ): Ty {
+        const t = this.solver.prune(value),
+            e = expected;
+        let changed = false;
+        const each = (v: Ty, w: Ty | undefined) => {
+            const next = part(v, w);
+            if (next !== v) changed = true;
+            return next;
+        };
+        let result = value;
+        if (t.tag === 'tuple') {
+            const items = t.items.map((v, i) =>
+                each(v, e?.tag === 'tuple' ? e.items[i] : undefined),
+            );
+            result = tuple(...items);
+        } else if (t.tag === 'record') {
+            const fields = t.fields.map((f) => ({
+                name: f.name,
+                type: each(
+                    f.type,
+                    e?.tag === 'record' ? e.fields.find((g) => g.name === f.name)?.type : undefined,
+                ),
+            }));
+            result = record(fields, t.rest);
+        } else if (t.tag === 'con' && t.name !== CHANNEL) {
+            const args = t.args.map((v, i) => each(v, e?.tag === 'con' ? e.args[i] : undefined));
+            result = con(t.name, ...args);
+        }
+        return changed ? result : value;
+    }
     private recheckArgument(
         callee: Ty,
         index: number,
@@ -2452,9 +2745,14 @@ export class Inferencer {
         const expected = this.solver.prune(parameter.value);
         // A type variable takes the closure as it is; the definition's drop and copy bounds apply.
         if (expected.tag !== 'fn') return value;
-        if (argument.capture === expected.capture) return value;
+        if (argument.open) return value;
         const as = (capture: Capture | undefined) =>
             fn(argument.args, argument.result, capture, argument.needs);
+        if (expected.open) {
+            expected.open.floor = Math.max(expected.open.floor, kindRank(argument.capture));
+            return this.solver.alike(as(expected.capture), expected);
+        }
+        if (argument.capture === expected.capture) return value;
         // Calling a function once is always allowed, so a less restricted one may go where a
         // more restricted one is expected.
         if (expected.capture === 'linear' || !argument.capture) return as(expected.capture);

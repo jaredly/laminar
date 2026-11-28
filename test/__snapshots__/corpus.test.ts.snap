@@ -19,11 +19,10 @@ exports[`negative checker results classifies the snapshot corpus 1`] = `
     ],
   },
   {
-    "accepted": 27,
+    "accepted": 28,
     "file": "test/flow.test.lm",
     "rejectedCases": [
       "test/flow.test.lm:157 unbound-name",
-      "test/flow.test.lm:424 unbound-name",
       "test/flow.test.lm:644 unbound-name",
       "test/flow.test.lm:654 unbound-name",
       "test/flow.test.lm:710 unbound-name",
@@ -36,7 +35,6 @@ exports[`negative checker results classifies the snapshot corpus 1`] = `
     "rejectedDefinitions": [
       "test/flow.test.lm:26 duplicate-definition",
       "test/flow.test.lm:137 unbound-name",
-      "test/flow.test.lm:410 type-mismatch",
       "test/flow.test.lm:565 unbound-name",
       "test/flow.test.lm:629 unbound-name",
       "test/flow.test.lm:691 unbound-name",

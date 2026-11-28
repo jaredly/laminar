@@ -73,8 +73,8 @@ describe('unification', () => {
 describe('AST inference', () => {
     it('infers literals, tuples, strings, operators and homogeneous lists', () => {
         expect(type('(1, true, "yes")')).toBe('(Number, Bool, String)');
-        expect(type('[1, 2 + 3]')).toBe('List<Number>');
-        expect(type('[]')).toBe('List<a>');
+        expect(type('[1, 2 + 3]')).toBe('List(Number)');
+        expect(type('[]')).toBe('List(a)');
         rejects('[1, true]', 'type-mismatch');
         rejects('1 + true', 'type-mismatch');
         rejects('Missing(1)', 'unknown-constructor');
@@ -335,8 +335,8 @@ describe('AST inference', () => {
         expect(type('fn (~x) {x := ()}')).toBe('(a/()) => a');
         expect(type('fn (~(x, y)) ~x')).toBe('((a, b)/(c, b)) => a/c');
         expect(type('fn (f, ~x) {x := f(x)}')).toBe('((a) ={b}> c, a/c) ={b}> ()');
-        expect(type('fn (~x, y) y')).toBe('(a/a, b) => b');
-        expect(type('fn (~x, ~y) ()')).toBe('(a/a, b/b) => ()');
+        expect(type('fn (~x, y) y')).toBe('(~a, b) => b');
+        expect(type('fn (~x, ~y) ()')).toBe('(~a, ~b) => ()');
         rejects('round(~x)', 'unbound-name');
     });
     it('instantiates higher-order flow functions and updates their arguments', () => {
@@ -599,7 +599,7 @@ pick(2)`,
     Node(tree(a), a, tree(a))
 }`;
         expect(definition(`${tree}\nfn single(x) Node(Leaf, x, Leaf)`, 'single')).toBe(
-            '(a) => tree<a>',
+            '(a) => tree(a)',
         );
         rejectsFile(`${tree}\nNode(Leaf, 1, Node(Leaf, "a", Leaf))`, 'type-mismatch');
     });
@@ -619,7 +619,7 @@ inc :: (counter) => ()
 fn inc(~x) {x := x + 1}`,
                 'inc',
             ),
-        ).toBe('(Number/Number) => ()');
+        ).toBe('(~Number) => ()');
     });
     it('rejects malformed declarations and uses', () => {
         rejectsFile('type t = (a, Number)', 'unknown-type');
@@ -638,29 +638,29 @@ fn inc(~x) {x := x + 1}`,
 
 describe('vectors', () => {
     it('infers homogeneous vector literals', () => {
-        expect(type('[:1, 2 + 3:]')).toBe('Vector<Number>');
-        expect(type('[::]')).toBe('Vector<a>');
-        expect(type('[:[:true:]:]')).toBe('Vector<Vector<Bool>>');
+        expect(type('[:1, 2 + 3:]')).toBe('Vector(Number)');
+        expect(type('[::]')).toBe('Vector(a)');
+        expect(type('[:[:true:]:]')).toBe('Vector(Vector(Bool))');
         rejects('[:1, true:]', 'type-mismatch');
     });
     it('focuses elements through index lenses', () => {
-        expect(type('fn (~v) dup(~v[0])')).toBe('(Vector<a>/Vector<a>) => a');
+        expect(type('fn (~v) dup(~v[0])')).toBe('(~Vector(a)) => a');
         expect(type('fn (i, ~v) {v[i] := true}')).toBe(
-            '(Number, Vector<Bool>/Vector<Bool>) => Bool',
+            '(Number, ~Vector(Bool)) => Bool',
         );
-        expect(type('fn (~v) dup(~v[0][1])')).toBe('(Vector<Vector<a>>/Vector<Vector<a>>) => a');
+        expect(type('fn (~v) dup(~v[0][1])')).toBe('(~Vector(Vector(a))) => a');
         expect(
             type(`fn (~v) {
             let x = ~v[1]
             x := 3
         }`),
-        ).toBe('(Vector<Number>/Vector<Number>) => Number');
+        ).toBe('(~Vector(Number)) => Number');
         rejects('{let v = [:1:]\nlet x = ~v[0]\nv}', 'use-while-borrowed');
-        expect(type('array(3, "x")')).toBe('Vector<String>');
+        expect(type('array(3, "x")')).toBe('Vector(String)');
         expect(type('fn (~v) {v[dup(~v[0])] := 1}')).toBe(
-            '(Vector<Number>/Vector<Number>) => Number',
+            '(~Vector(Number)) => Number',
         );
-        expect(type('fn (~v) size(~v)')).toBe('(Vector<a>/Vector<a>) => Number');
+        expect(type('fn (~v) size(~v)')).toBe('(~Vector(a)) => Number');
     });
     it('keeps elements full and of the element type', () => {
         rejects('fn (v) v[0]', 'index-value');
@@ -693,9 +693,9 @@ range(10)`) as Linear[];
             return printType(checked.type);
         });
         expect(types).toEqual([
-            '(Number, Number, Vector<Number>/Vector<Number>) => ()',
-            '(Number) => Vector<Number>',
+            '(Number, Number, ~Vector(Number)) => ()',
+            '(Number) => Vector(Number)',
         ]);
-        expect(printType(checker.check(call).type)).toBe('Vector<Number>');
+        expect(printType(checker.check(call).type)).toBe('Vector(Number)');
     });
 });

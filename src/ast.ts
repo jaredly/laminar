@@ -43,8 +43,12 @@ export type Type =
     | { type: 'tuple'; items: Type[] }
     /** `rest` names the row of other fields; `_` is an anonymous one. */
     | { type: 'record'; fields: { name: string; type: Type; loc: Loc }[]; rest?: Id; loc: Loc }
-    /** `needs` absent means inferred; empty means the function needs nothing. */
-    | { type: 'fn'; args: Type[]; needs?: NeedsItem[]; body: Type };
+    /**
+     * `needs` absent means inferred; empty means the function needs nothing. `kind` absent
+     * means reusable; `once` is a closure with state, and `linear` one that must be called.
+     */
+    | { type: 'fn'; args: Type[]; needs?: NeedsItem[]; body: Type; kind?: FunctionKind };
+export type FunctionKind = 'once' | 'linear';
 /** One part of `={...}>`: a field, `...row`, or a record alias or row variable by name. */
 export type NeedsItem = TypeField | { include: Type; loc: Loc };
 export type Needs = NeedsItem[];
@@ -85,7 +89,7 @@ export type Lens =
     | { type: 'tuple'; items: Lens[]; loc: Loc }
     /**
      * A constructor of lenses. Not a lens to a stored value: over a multi-constructor
-     * type it is not replaceable as a whole (see docs/scattered-constructor-lenses.md).
+     * type it is not replaceable as a whole (see docs/done/scattered-constructor-lenses.md).
      */
     | { type: 'constructor'; name: string; args: Lens[]; loc: Loc }
     | { type: 'case'; value: Term; cases: { pat: Pat; body: Lens; mut?: boolean }[]; loc: Loc };

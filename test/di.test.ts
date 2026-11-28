@@ -33,7 +33,7 @@ const scheme = (source: string, mode: Mode = 'pure') => {
         else {
             const checked = checker.check(item, declaration);
             declaration = undefined;
-            last = printScheme(checked.scheme);
+            last = printScheme(checked.scheme, mode === 'dual');
             if (item.type === 'fn' && item.name) checker.publish(checked);
         }
     }
@@ -110,7 +110,7 @@ describe('dependencies: rejections', () => {
         ['fn loop(n) {\n inject depth = n\n loop(1)\n }', 'infinite-type', 'pure'],
         ['fn c() ~{\n lens x <- 1\n print("${#a}")\n }', 'dependency-in-cleanup', 'pure'],
         [
-            'fn bump(mut x) { x := x + #k\n dup(~x) }\n{\n inject k = 1\n inject f = bump\n 1\n }',
+            'fn bump(~x) { x := x + #k }\n{\n inject k = 1\n inject f = bump\n 1\n }',
             'unsupported-dependency',
             'dual',
         ],
@@ -207,7 +207,8 @@ describe('`mut` in written function types', () => {
         [ap('(String) => String') + 'ap(fn (s) { "x ${s}" })', 'accepted'],
         [ap('(mut String) => String') + takes + 'ap(take)', 'accepted'],
         [ap('(String) => String') + takes + 'ap(take)', 'mode-mismatch'],
-        [ap('(mut String) => String') + reads + 'ap(show)', 'mode-mismatch'],
+        // A function that only reads fits where one that takes ownership is expected.
+        [ap('(mut String) => String') + reads + 'ap(show)', 'accepted'],
         ['type Op {\n Op((String) => String)\n }\n' + reads + 'Op(show)', 'accepted'],
         ['type Op {\n Op((mut String) => String)\n }\n' + takes + 'Op(take)', 'accepted'],
         [
@@ -221,11 +222,10 @@ describe('`mut` in written function types', () => {
         ['f :: (String) => String\nfn f(x) { x }\n1', 'accepted'],
         [
             'f :: (mut Number) => Number\nfn f(mut x) { x }\nx :: (mut Number) => mut Number\nfn x(mut n) { n }\n1',
-            'syntax',
+            'accepted',
         ],
     ])('%s', (source, expected) => {
-        if (expected === 'syntax') expect(() => dual(source)).toThrow();
-        else expect(dual(source)).toBe(expected);
+        expect(dual(source)).toBe(expected);
     });
     it('needs dual mode', () => {
         expect(code('f :: (mut Number) => Number\nfn f(x) { x }\n1')).toBe('dual-only');

@@ -44,7 +44,7 @@ Scoped restoration is supported for the documented forms. `aslens` accepts ident
 
 Assignment returns the value currently in its target when the swap happens. If the RHS has already consumed that value, the empty slot has unit type: `fn inc(~x) { x := x + 1 }` therefore returns unit. Swapping a full slot, as in `fn take(~x) { x := () }`, returns its old type. This distinction is tracked separately from whether a slot contains an actual unit value. Existing unchecked snapshots remain available for evaluator coverage.
 
-Run `bun test test/infer.test.ts` for inference/checked integration tests, `bun test` for the full suite, and `bunx tsc --noEmit` for TypeScript checking. The design background and remaining restoration work are described in [the research note](type-inference-research.md).
+Run `bun test test/infer.test.ts` for inference/checked integration tests, `bun test` for the full suite, and `bunx tsc --noEmit` for TypeScript checking. The design background and remaining restoration work are described in [the research note](done/type-inference-research.md).
 
 ## Records
 
@@ -83,21 +83,64 @@ fields.
 Backends never see rows. Specialization substitutes them, then stores each record as the tuple of
 its fields in name order, so one definition can get a different layout at each use. Natively an
 empty record prints as unit does. The legacy decomposition supports only closed records with
-complete patterns. See [the plan](row-polymorphic-records-plan.md).
+complete patterns. See [the plan](done/row-polymorphic-records-plan.md).
 
 ## Ownership in function types
 
-In dual mode a written function type says what a definition would: an unmarked parameter only reads
-its argument, and `mut` takes ownership of it, as in `(mut String) => String` or
-`(mut (a) => b, c) => d`. This holds in signatures, union fields, record aliases and dependency
-types. A signature must agree with its definition about which parameters are `mut`. Pure mode has
-no `mut`.
+In dual mode a written function type says what a definition would: an unmarked position is shared,
+and `mut` makes it owned. This holds in signatures, union fields, record aliases and dependency
+types. Pure mode has no `mut`, and every position there is owned.
 
-- A result cannot be marked. A written result is owned, except that a definition's own result takes
-  its ownership from the body.
-- Printed schemes show it the other way round: `&T` is a parameter that only reads, and an unmarked
-  one is `mut`.
-- Without a written type, calling a parameter decides: passing it a temporary makes it `mut`.
+```
+(String) => String            // reads its argument, returns a shared string
+(String) => mut String        // returns a string the caller owns
+mut (a) => mut b              // an owned function value
+(mut ~a) => mut ~a            // takes an owned lens and hands one back
+```
+
+- A lens states its ownership in a result too: `~T` is borrowed and `mut ~T` is owned. It has to
+  agree with the parameters ([owned lenses](owned-lenses.md)).
+- A result that is not `mut` is shared, so it cannot be linear.
+- A signature must agree with its definition about `mut` on parameters. It may publish an owned
+  result as shared, which freezes it, but not the reverse (`shared-into-mut`).
+- Parentheses around one type only group it, and `(a) => (b) => c` returns a function.
+- Printed types use the same spelling. `printScheme` and `printType` have to be told when the mode
+  has marks. `where` clauses and rigid variables (`!a`) do not parse.
+
+### Kinds
+
+| Written | A holder may | Where it comes from |
+| --- | --- | --- |
+| `(A) => B` | call, copy and drop it | definitions, and closures that capture nothing they could change |
+| `once (A) => B` | call it once, or drop it | a closure that captured a `mut` value it could change |
+| `linear (A) => B` | call it, which it must | a closure that captured a linear value or an owned lens |
+
+`once` and `linear` cannot be shared, so each implies `mut`. A function that restricts its holder
+less may go where a more restricted kind is expected, when that kind is already known: in a
+parameter, a union field or a channel.
+
+### Using one function type as another
+
+A function value whose type is already known where it is used may be taken as another type:
+
+| Position | The function has | The slot expects | Fits |
+| --- | --- | --- | --- |
+| parameter | shared | `mut` | yes |
+| parameter | `mut` | shared | no |
+| result | `mut` | shared | yes, if the result can be shared |
+| result | shared | `mut` | no |
+
+Inside a parameter the directions reverse. Only function types convert: a vector, record, union or
+channel that already holds functions keeps its exact type. A conversion adds no code. A parameter
+whose type is still being inferred keeps exact modes. A parameter that takes ownership this way
+cannot be given a linear value.
+
+`typeKey` ignores ownership inside function types, so the typed IR verifier compares it separately
+(`ownershipFits`) on the program the checker produced. Specialized programs are not compared: one
+instance may serve types that differ only in this.
+
+Without a written type, a call decides the modes: a parameter is `mut` if every call passes an
+owned value, and a result is owned unless something requires otherwise.
 
 ## Dependencies
 
@@ -132,7 +175,7 @@ fn main() {
 - Compiled code passes what a function needs as a hidden first parameter, a record. Functions that
   need nothing have none.
 
-See [the plan](dependency-injection-plan.md), including its list of current limits.
+See [the plan](done/dependency-injection-plan.md), including its list of current limits.
 
 ## Vectors
 

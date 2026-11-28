@@ -206,7 +206,8 @@ owned data. Real sharing needs four pieces, in this order:
     decided defaults to owned when a definition is generalized. Annotations say nothing about
     modes. Modes are invariant inside function types, which is strict for higher-order code; a
     coercion can come later. `share` is still a `dup` in every backend. Shared positions print as
-    `&T` in function types (`printType`).
+    `&T` in function types (`printType`). Later changed: see
+    [ownership in function types](function-ownership-plan.md).
   - Stage 3 (done): the errors. A shared value for a `mut` parameter or a `let mut` is
     `shared-into-mut`. Natives' and constructors' parameters only read, so they accept either mode
     (`reads`, and fresh modes at constructor sites). A pure lambda's parameter mode is left open so

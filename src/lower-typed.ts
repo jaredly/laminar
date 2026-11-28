@@ -72,7 +72,11 @@ export function importScheme(definition: string, scheme: Scheme): IRScheme {
     };
     const flow = (f: import('./types.ts').FlowTy): SemanticFlow =>
         f.tag === 'plain'
-            ? irPlain(type(f.value))
+            ? {
+                  tag: 'plain',
+                  value: type(f.value),
+                  ...(new Solver().ownership(f) === 'shared' ? { mode: 'shared' as const } : {}),
+              }
             : {
                   tag: 'flow',
                   read: type(f.read),

@@ -14,12 +14,12 @@ FileItem {
 }
 
 TypeDecl {
-    [" " "type" name:id "=" alias:Type] -> ({type: "type-alias", name, alias, loc: node.loc})
-    [" " "type" ["" name:id ["(," ...args:id]] "=" alias:Type] -> ({type: "type-alias", name, args, alias, loc: node.loc})
+    [" " "type" name:id "=" ...alias:*Type] -> ({type: "type-alias", name, alias, loc: node.loc})
+    [" " "type" ["" name:id ["(," ...args:id]] "=" ...alias:*Type] -> ({type: "type-alias", name, args, alias, loc: node.loc})
     [" " "type" name:id ["{\n" ...items:TypeConstr]] -> ({type: "union", name, items, loc: node.loc})
     [" " "type" ["" name:id ["(," ...args:id]] ["{\n" ...items:TypeConstr]] -> ({type: "union", name, args, items, loc: node.loc})
-    [" " "type" "linear" name:id "=" alias:Type] -> ({type: "type-alias", name, alias, linear: true, loc: node.loc})
-    [" " "type" "linear" ["" name:id ["(," ...args:id]] "=" alias:Type] -> ({type: "type-alias", name, args, alias, linear: true, loc: node.loc})
+    [" " "type" "linear" name:id "=" ...alias:*Type] -> ({type: "type-alias", name, alias, linear: true, loc: node.loc})
+    [" " "type" "linear" ["" name:id ["(," ...args:id]] "=" ...alias:*Type] -> ({type: "type-alias", name, args, alias, linear: true, loc: node.loc})
     [" " "type" "linear" name:id ["{\n" ...items:TypeConstr]] -> ({type: "union", name, items, linear: true, loc: node.loc})
     [" " "type" "linear" ["" name:id ["(," ...args:id]] ["{\n" ...items:TypeConstr]] -> ({type: "union", name, args, items, linear: true, loc: node.loc})
 }
@@ -71,8 +71,12 @@ Pat {
 
 TypeField {
     // `{f: (a) => b}` lexes with `:` binding first, so the arrow holds the field.
-    [" " [":" name:id ["(," ...args:Type]] "=>" body:Type] -> ({name: name.text, type: {type: "fn", args, body} as Type, loc: node.loc})
-    [" " [":" name:id ["(," ...args:Type]] ["" "=" needs:Needs ">"] body:Type] -> ({name: name.text, type: {type: "fn", args, needs, body} as Type, loc: node.loc})
+    [" " [":" name:id ["(," ...args:Type]] "=>" ...body:*Type] -> ({name: name.text, type: {type: "fn", args, body} as Type, loc: node.loc})
+    [" " [":" name:id ["(," ...args:Type]] ["" "=" needs:Needs ">"] ...body:*Type] -> ({name: name.text, type: {type: "fn", args, needs, body} as Type, loc: node.loc})
+    // Likewise `{f: mut a}` lexes with `mut` next to the name.
+    [" " [":" name:id "once"] ...value:*Type] -> ({name: name.text, type: kinded(value, "once"), loc: node.loc})
+    [" " [":" name:id "linear"] ...value:*Type] -> ({name: name.text, type: kinded(value, "linear"), loc: node.loc})
+    [" " [":" name:id "mut"] ...value:*Type] -> ({name: name.text, type: mutType(value, node.loc), loc: node.loc})
     ["" "..." "_"] -> ({rest: {type: "id", text: "_", loc: node.loc} as Id, loc: node.loc})
     ["" "..." rest:id] -> ({rest, loc: node.loc})
     [":" name:id type:Type] -> ({name: name.text, type, loc: node.loc})
@@ -88,6 +92,16 @@ Needs {
 NeedsItem {
     field:TypeField -> field
     type:Type -> ({include: type, loc: node.loc})
+}
+
+// `mut ~A` and `mut A/B` are owned lenses; `mut` on anything else says who owns a value.
+function mutType(value: Type, loc: number): Type {
+    return value.type === "lens" && !value.owned ? {...value, owned: true} : {type: "mut", value, loc}
+}
+
+function kinded(value: Type, kind: "once" | "linear"): Type {
+    if (value.type !== "fn" || value.kind) throw new Error("`" + kind + "` is written before a function type, as in `" + kind + " () => a`")
+    return {...value, kind}
 }
 
 function trecord(items: TypeField[], loc: number): Type {
@@ -144,21 +158,22 @@ function erecord(items: RecordItem[], loc: number): Linear {
 Type {
     text:id -> ({type: "id", text: text.text, loc: node.loc})
     ["" "~" left:Type] -> ({type: "lens", left})
-    [" " "mut" ["" "~" left:Type]] -> ({type: "lens", left, owned: true})
-    // `mut (a) => b` lexes with `mut` binding first, so the arrow holds it.
-    [" " "mut" ["(," ...args:Type] "=>" body:Type] -> ({type: "mut", value: {type: "fn", args, body}, loc: node.loc} as Type)
-    [" " "mut" ["(," ...args:Type] ["" "=" needs:Needs ">"] body:Type] -> ({type: "mut", value: {type: "fn", args, needs, body}, loc: node.loc} as Type)
-    [" " "mut" value:Type] -> ({type: "mut", value, loc: node.loc})
     ["" "=" left:Type] -> ({type: "lens", left, replaceable: false})
     ["" left:Type "/" right:Type] -> ({type: "lens", left, right})
     ["" left:Type "/=" right:Type] -> ({type: "lens", left, right, replaceable: false})
     ["" name:id ["(," ...args:Type]] -> ({type: "constr", name, args, loc: node.loc})
-    ["(," ...items:Type] -> ({type: "tuple", items})
+    // Parentheses around one type only group it.
+    ["(," ...items:Type] -> items.length === 1 ? items[0] : ({type: "tuple", items} as Type)
     ["{," ...fields:TypeField] -> trecord(fields, node.loc)
     ["{" one:TypeField] -> trecord([one], node.loc)
     ["("] -> ({type: "tuple", items: []})
-    [" " ["(," ...args:Type] "=>" body:Type] -> ({type: "fn", args, body})
-    [" " ["(," ...args:Type] ["" "=" needs:Needs ">"] body:Type] -> ({type: "fn", args, needs, body})
+    // Spaced types lex as one flat list, so each of these takes the rest of it.
+    [" " "mut" ...value:*Type] -> mutType(value, node.loc)
+    [" " "once" ...value:*Type] -> kinded(value, "once")
+    [" " "linear" ...value:*Type] -> kinded(value, "linear")
+    [" " ["(," ...args:Type] "=>" ...body:*Type] -> ({type: "fn", args, body})
+    [" " ["(," ...args:Type] ["" "=" needs:Needs ">"] ...body:*Type] -> ({type: "fn", args, needs, body})
+    [" " one:Type] -> one
 }
 
 Term {
@@ -315,6 +330,16 @@ FnArg {
     [":" pat:Pat typ:Type] -> ({pat, typ})
     [" " "mut" pat:Pat] -> ({pat, mut: true})
     [":" [" " "mut" pat:Pat] typ:Type] -> ({pat, typ, mut: true})
+    // A kind lexes next to the parameter's name, and implies `mut`.
+    [" " [":" pat:Pat "once"] ...value:*Type] -> ({pat, typ: kinded(value, "once"), mut: true})
+    [" " [":" pat:Pat "linear"] ...value:*Type] -> ({pat, typ: kinded(value, "linear"), mut: true})
+    [" " "mut" [":" pat:Pat "once"] ...value:*Type] -> ({pat, typ: kinded(value, "once"), mut: true})
+    [" " "mut" [":" pat:Pat "linear"] ...value:*Type] -> ({pat, typ: kinded(value, "linear"), mut: true})
+    // A function type holds the parameter it annotates, as in a record field.
+    [" " [":" pat:Pat ["(," ...args:Type]] "=>" ...body:*Type] -> ({pat, typ: {type: "fn", args, body} as Type})
+    [" " [":" pat:Pat ["(," ...args:Type]] ["" "=" needs:Needs ">"] ...body:*Type] -> ({pat, typ: {type: "fn", args, needs, body} as Type})
+    [" " "mut" [":" pat:Pat ["(," ...args:Type]] "=>" ...body:*Type] -> ({pat, typ: {type: "fn", args, body} as Type, mut: true})
+    [" " "mut" [":" pat:Pat ["(," ...args:Type]] ["" "=" needs:Needs ">"] ...body:*Type] -> ({pat, typ: {type: "fn", args, needs, body} as Type, mut: true})
 }
 
 LinearCase {

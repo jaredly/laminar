@@ -159,7 +159,10 @@ export function normalizeBorrowed(source: Linear): Linear {
         if (!n || typeof n !== 'object') return n;
         if (Array.isArray(n)) return n.map(visit);
         // Normalize children before expansion; generated core nodes need no second pass.
-        const c: any = Object.fromEntries(Object.entries(n).map(([k, v]) => [k, visit(v)]));
+        // Written types are not terms, though they too have nodes called `fn`.
+        const c: any = Object.fromEntries(
+            Object.entries(n).map(([k, v]) => [k, k === 'typ' || k === 'ann' ? v : visit(v)]),
+        );
         if (c.type === 'fn') {
             const matched = c.args.flatMap((a: any, i: number) =>
                 a.pat.type === 'lens' && hasConstructor(a.pat.inner) ? [i] : [],

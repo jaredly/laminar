@@ -30,7 +30,7 @@ const scheme = (source: string, mode: Mode = 'pure') => {
         else {
             const checked = checker.check(item, declaration);
             declaration = undefined;
-            last = printScheme(checked.scheme);
+            last = printScheme(checked.scheme, mode === 'dual');
             if (item.type === 'fn' && item.name) checker.publish(checked);
         }
     }
@@ -154,13 +154,13 @@ const closeH = 'type linear H {\n H(Number)\n}\nfn close(H(n)) { n }\n';
 const holder = 'fn go() { f({h: H(1), a: 2}) }';
 
 describe('row records: functions hidden in a row', () => {
-    const worker = (body: string) => `// laminar: dual
-fn worker(ch) {
+    const worker = (body: string, job = 'fn () { 2 }', top = '') => `// laminar: dual
+${top}fn worker(ch) {
     ${body}
 }
 {
     let ch = chanNew()
-    spawn(fn () { chanSend(ch, {tag: 1, job: (fn () { 2 })}) })
+    spawn(fn () { chanSend(ch, {tag: 1, job: (${job})}) })
     worker(ch)
 }`;
     const result = (source: string) => {
@@ -170,12 +170,21 @@ fn worker(ch) {
             return (e as { code: string }).code;
         }
     };
-    it('must still be called once after a channel', () => {
+    const dropping = [
+        'let mut m = chanRecv(ch)\n    m.tag',
+        'let mut {tag, ..._} = chanRecv(ch)\n    tag',
+    ];
+    it('lets a receiver that drops one take any that can be dropped', () => {
         expect(result(worker('let mut {tag, job} = chanRecv(ch)\n    job() + tag'))).toBe(3);
-        expect(result(worker('let mut m = chanRecv(ch)\n    m.tag'))).toBe('linear-unconsumed');
-        expect(result(worker('let mut {tag, ..._} = chanRecv(ch)\n    tag'))).toBe(
-            'linear-unconsumed',
-        );
+        for (const body of dropping) expect(result(worker(body))).toBe(1);
+    });
+    it('must still be called when the sender needs that', () => {
+        const owning = 'fn () { close(h) }';
+        const spends = 'type linear H {\n H(Number)\n}\nfn close(mut h) { match h { mut H(n) -> n } }\n';
+        const send = (body: string) =>
+            worker(body, owning, spends).replace('spawn(', 'let mut h = H(2)\n    spawn(');
+        expect(result(send('let mut {tag, job} = chanRecv(ch)\n    job() + tag'))).toBe(3);
+        for (const body of dropping) expect(result(send(body))).toBe('linear-unconsumed');
     });
 });
 

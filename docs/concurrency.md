@@ -70,23 +70,26 @@ reference evaluator.
 - **A send moves.** `chanSend(ch, x)` uses up a `mut` value. A plain binding is sent as a real
   copy, because the receiver owns what it gets and the two tasks must share nothing that either
   could change. So a plain binding of a linear value cannot be sent.
-- **A function received from a channel must be called exactly once.** It may have captured
-  anything, including a connection, so it is linear wherever it came from. A worker that drops a
-  job, copies it, or calls it on only some paths does not compile. Sending an ordinary function
-  makes it one-use on the way. The same holds for a function inside a tuple, record or generic
-  data that is sent.
+- **A channel's type says what kind of function it carries**: `Chan(() => a)` reusable ones,
+  `Chan(once () => a)` closures with state, and `Chan(linear () => a)` ones the receiver must call.
+  The three types never convert into each other, since a channel is both written and read. Any
+  function can be sent into a must-call channel.
+- **Where nothing says, a channel is must-call if the receiver allows it.** A job may have captured
+  anything, including a connection. A receiver that only calls what it gets, on every path, takes
+  must-call jobs. One that may drop a job gets a `once` channel, and one that copies it a reusable
+  channel. A send in the same definition forces nothing, so a caller with a reusable channel has to
+  annotate such a receiver. The same holds for a function inside a tuple, record or generic data.
+- **Reusable functions may be copied across tasks.** What they capture cannot change, and a test
+  runs this under Go's race detector (`test/function-conversion-execution.test.ts`).
 - **Linear data** (`type linear`) sent over a channel must likewise be consumed by the receiver.
 
-How the checker does it: a function type that becomes part of what a channel carries is marked
-linear there, even if all it has seen is the receiver calling it. Because that can happen after
-a call that passed the function on, those calls are checked again at the end of the definition.
+How the checker does it: a function type that a call worked out, and that becomes part of what a
+channel carries, has its kind left open. After the item is checked, the kind is chosen from what
+the item does with such values. A written type, a lambda or a definition keeps its own kind.
 
 Where it is stricter than it needs to be, or does not reach:
 
 - A local function cannot take a job; only a top-level function that consumes it can.
-- Order can matter. A parameter sent in one branch and then, in a later branch, passed to a
-  function that might drop it is refused. The other order is accepted, and the definition then
-  takes only ordinary functions. Both are safe.
 - When a generic worker loses what it receives, the error points at where it is used with a
   linear type, not at the line that loses it.
 - A channel is unbuffered, so it holds nothing. But a task still waiting to send when the program

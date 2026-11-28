@@ -8,6 +8,8 @@ import { semanticRecord, semanticNeeds, type SemanticFlow, type SemanticType, ty
 import { BackendDiagnostic } from './backend/target.ts';
 import {
     typeKey,
+    ownershipKey,
+    ownershipFits,
     valueKey,
     irPlain,
     irCon,
@@ -203,16 +205,39 @@ export function verifyTypedProgram(program: TypedProgram, observe?: PositionObse
             validType(t.write);
         } else fail('Invalid semantic mode');
     };
+    // `typeKey` ignores who owns what inside a function type, because the compiled code does
+    // not depend on it. Safety does, so it is checked on what the checker produced. A
+    // specialized program may share one instance between types that differ only in this.
+    const checksOwnership = !program.units.some((u) => u.id.startsWith('spec_'));
     const eq = (a: SemanticType, b: SemanticType, origin?: string) => {
         validType(a);
         validType(b);
         if (typeKey(a) !== typeKey(b))
             fail(`Type mismatch: ${typeKey(a)} versus ${typeKey(b)}`, origin);
+        if (checksOwnership && ownershipKey(a) !== ownershipKey(b))
+            fail(`Function ownership mismatch: ${ownershipKey(a)} versus ${ownershipKey(b)}`, origin);
     };
     const feq = (a: SemanticFlow, b: SemanticFlow, origin?: string) => {
         validFlow(a);
         validFlow(b);
         if (valueKey(a) !== valueKey(b)) fail('Value/lens type mismatch', origin);
+        if (checksOwnership && a.tag === 'plain' && b.tag === 'plain') eq(a.value, b.value, origin);
+    };
+    /** A value of type `from` goes where `into` is expected: see `ownershipFits`. */
+    const fits = (from: SemanticFlow, into: SemanticFlow, origin?: string) => {
+        validFlow(from);
+        validFlow(into);
+        if (valueKey(from) !== valueKey(into)) fail('Value/lens type mismatch', origin);
+        if (
+            checksOwnership &&
+            from.tag === 'plain' &&
+            into.tag === 'plain' &&
+            !ownershipFits(from.value, into.value)
+        )
+            fail(
+                `A function is used with the wrong ownership: ${ownershipKey(from.value)} as ${ownershipKey(into.value)}`,
+                origin,
+            );
     };
     const prefix = (a: Step[], b: Step[]) =>
         a.length <= b.length && a.every((v, i) => v === b[i]);
@@ -1179,12 +1204,12 @@ export function verifyTypedProgram(program: TypedProgram, observe?: PositionObse
                     case 'global':
                         if (i.instance.definition.startsWith('constructor/'))
                             fail('Constructor signature used as a global value');
-                        feq(i.out.type, irPlain(instantiate(i.instance)));
+                        fits(irPlain(instantiate(i.instance)), i.out.type);
                         break;
                     case 'move': {
                         if (!backingTransfers.has(i)) lexicalPlace(i.slot.place);
                         if (!full(s, i.slot)) fail('Use after move', i.origin);
-                        feq(i.out.type, irPlain(focus(s, i.slot)));
+                        fits(irPlain(focus(s, i.slot)), i.out.type);
                         write(s, i.slot, irUnit(), true);
                         break;
                     }
@@ -1337,7 +1362,7 @@ export function verifyTypedProgram(program: TypedProgram, observe?: PositionObse
                                 } else effects.push({ cap: c, type: v.type.write });
                             }
                         });
-                        feq(i.out.type, f.result);
+                        fits(f.result, i.out.type);
                         // Restorations apply like nested scopes, the last argument first.
                         effects.reverse();
                         if (f.result.tag === 'plain')
@@ -1360,7 +1385,7 @@ export function verifyTypedProgram(program: TypedProgram, observe?: PositionObse
                     }
                     case 'closure': {
                         const f = fs.get(i.function) ?? fail('Unknown closure function');
-                        feq(i.out.type, irPlain(f.type));
+                        fits(irPlain(f.type), i.out.type);
                         if (f.captures.length !== i.captures.length)
                             fail('Closure environment mismatch');
                         i.captures.forEach((c, n) => {
@@ -1474,7 +1499,7 @@ export function verifyTypedProgram(program: TypedProgram, observe?: PositionObse
                     case 'need': {
                         const held = visible(ambient).entries.get(i.name);
                         if (!held) fail(`Dependency ${i.name} is not available`, i.origin);
-                        feq(i.out.type, irPlain(held!));
+                        fits(irPlain(held!), i.out.type);
                         break;
                     }
                     case 'supply': {
@@ -1489,7 +1514,7 @@ export function verifyTypedProgram(program: TypedProgram, observe?: PositionObse
                         const out = functionType(valueType(i.out.type));
                         if (value.needs) fail('Only a function that needs nothing can be widened');
                         const { needs: _, ...ignoring } = out;
-                        eq(ignoring, value);
+                        fits(irPlain(value), irPlain(ignoring));
                         break;
                     }
                     case 'inject': {
@@ -1722,7 +1747,8 @@ export function verifyTypedProgram(program: TypedProgram, observe?: PositionObse
         ambient = irUnit();
         const state = fresh(),
             entry = verifyBlock(u.entry, state);
-        feq(entry.type, irPlain(u.signature.type));
+        // A signature may publish an owned result as shared.
+        fits(entry.type, irPlain(u.signature.type));
         if (state.loans.size || state.values.size || state.slots.size)
             fail('Entry leaks owned slots, loans, or temporaries');
     }

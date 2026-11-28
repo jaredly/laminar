@@ -5,7 +5,7 @@ import type { Decl, FileItem } from '../src/ast.ts';
 import { Checker } from '../src/check.ts';
 import { TypeDiagnostic, printType } from '../src/types.ts';
 
-// Step 3 of docs/scattered-constructor-lenses.md: constructor lenses are typed, and a
+// Step 3 of docs/done/scattered-constructor-lenses.md: constructor lenses are typed, and a
 // constructor of lenses over a multi-constructor type is not replaceable as a whole.
 // These tests check types and diagnostics only; lowering and execution are step 4.
 
@@ -64,19 +64,19 @@ ${body}
 
 describe('constructor lens types', () => {
     it('types a constructor of lenses as a non-replaceable lens', () => {
-        expect(typeOf('fn pick(~a) ~{Some(a)}')).toBe('(a/b) => Option<a>/=Option<b>');
+        expect(typeOf('fn pick(~a) ~{Some(a)}')).toBe('(a/b) => Option(a)/=Option(b)');
     });
     it('types a nullary constructor with independent endpoints', () => {
-        expect(typeOf('fn pick(~a) ~{None}')).toBe('(a/a) => Option<b>/=Option<c>');
+        expect(typeOf('fn pick(~a) ~{None}')).toBe('(~a) => Option(b)/=Option(c)');
     });
     it('infers the recursive search through branches and a self-call', () => {
         expect(typeOf(find)).toBe(
-            '(a, List<a>/List<a>) => Option<a>/=Option<a>', // `==` compares any type
+            '(a, ~List(a)) => =Option(a)', // `==` compares any type
         );
     });
     it('leaves a single-constructor type replaceable', () => {
         const box = 'type Box(a) {\n    Box(a)\n}\nfn bx(~a) ~{Box(a)}\n';
-        expect(typeOf(box)).toBe('(a/b) => Box<a>/Box<b>');
+        expect(typeOf(box)).toBe('(a/b) => Box(a)/Box(b)');
         expect(typeOf(`${box}{\n    let x = 1\n    bx(~x) := Box(5)\n    x\n}`)).toBe('Number');
     });
     it('leaves ordinary lens functions unchanged', () => {
@@ -96,7 +96,7 @@ describe('matching a constructor lens', () => {
         None -> ()
     }`),
             ),
-        ).toBe('List<Number>');
+        ).toBe('List(Number)');
     });
     it('rejects writing a different type through the field lens', () => {
         expect(
@@ -143,7 +143,7 @@ describe('what a constructor lens cannot do', () => {
         let r = ~find(2, ~x)
 ${inner}
     }`);
-        expect(typeOf(scoped('        ()'))).toBe('List<Number>');
+        expect(typeOf(scoped('        ()'))).toBe('List(Number)');
         expect(code(scoped('        r := None'))).toBe('not-replaceable');
         expect(code(scoped('        let y = r\n        ()'))).toBe('not-replaceable');
         expect(code(scoped('        dup(~r)'))).toBe('replaceable-mismatch');
@@ -164,7 +164,7 @@ ${inner}
         }
     }`),
             ),
-        ).toBe('List<Number>');
+        ).toBe('List(Number)');
     });
     it('keeps the owner borrowed while the binding is live', () => {
         expect(code(using('    let r = ~find(2, ~x)'))).toBe('use-while-borrowed');
@@ -207,13 +207,13 @@ ${inner}
         }
     }
 }`),
-        ).toBe('(Bool, a/a) => Option<a>/=Option<a>');
+        ).toBe('(Bool, ~a) => =Option(a)');
     });
 });
 
 describe('non-replaceable lens annotations', () => {
     it('rejects a result annotated as non-replaceable when the body is a stored lens', () => {
-        expect(code('r :: (Number/Number) => Number/=Number\nfn r(~x) ~x')).toBe(
+        expect(code('r :: (~Number) => =Number\nfn r(~x) ~x')).toBe(
             'replaceable-mismatch',
         );
     });

@@ -367,7 +367,14 @@ it('reads a declared result as owned exactly when no lens is borrowed', () => {
     expect(code(`through :: (~Number) => ~Number\n${through}\n0`)).toBe('ok');
     const made = 'fn made(mut x) ~{lens v <- x\n let _ = v\n () }';
     const moved = '{let h = ~made(1)\n handle("a", ~h)\n 0}';
-    expect(code(`${net}made :: (mut Number) => ~Number\n${made}\n${moved}`)).toBe('ok');
+    expect(code(`${net}made :: (mut Number) => mut ~Number\n${made}\n${moved}`)).toBe('ok');
+    // The written ownership has to be the one the parameters give.
+    expect(code(`${net}made :: (mut Number) => ~Number\n${made}\n0`)).toBe(
+        'lens-ownership-mismatch',
+    );
+    expect(code(`through :: (~Number) => mut ~Number\n${through}\n0`)).toBe(
+        'lens-ownership-mismatch',
+    );
 });
 
 it('moves owned lenses through recursion and nested producers', () => {

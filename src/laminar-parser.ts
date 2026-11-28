@@ -98,7 +98,7 @@ grammar.add('FileItem', [
 grammar.add('TypeDecl', [
     // TypeDecl:1
     option(
-        list(' ', lit('type'), b('name', 'id'), lit('='), b('alias', 'Type')),
+        list(' ', lit('type'), b('name', 'id'), lit('='), rest('alias', 'Type', false)),
         ({ name, alias, node }: { name: Id; alias: Type; node: Node }): TypeDecl => ({
             type: 'type-alias',
             name,
@@ -113,7 +113,7 @@ grammar.add('TypeDecl', [
             lit('type'),
             list('', b('name', 'id'), wrapper('(', list(',', many('args', 'id')))),
             lit('='),
-            b('alias', 'Type'),
+            rest('alias', 'Type', false),
         ),
         ({
             name,
@@ -170,7 +170,14 @@ grammar.add('TypeDecl', [
     ),
     // TypeDecl:5
     option(
-        list(' ', lit('type'), lit('linear'), b('name', 'id'), lit('='), b('alias', 'Type')),
+        list(
+            ' ',
+            lit('type'),
+            lit('linear'),
+            b('name', 'id'),
+            lit('='),
+            rest('alias', 'Type', false),
+        ),
         ({ name, alias, node }: { name: Id; alias: Type; node: Node }): TypeDecl => ({
             type: 'type-alias',
             name,
@@ -187,7 +194,7 @@ grammar.add('TypeDecl', [
             lit('linear'),
             list('', b('name', 'id'), wrapper('(', list(',', many('args', 'id')))),
             lit('='),
-            b('alias', 'Type'),
+            rest('alias', 'Type', false),
         ),
         ({
             name,
@@ -432,7 +439,7 @@ grammar.add('TypeField', [
             ' ',
             list(':', b('name', 'id'), wrapper('(', list(',', many('args', 'Type')))),
             lit('=>'),
-            b('body', 'Type'),
+            rest('body', 'Type', false),
         ),
         ({
             name,
@@ -456,7 +463,7 @@ grammar.add('TypeField', [
             ' ',
             list(':', b('name', 'id'), wrapper('(', list(',', many('args', 'Type')))),
             list('', lit('='), b('needs', 'Needs'), lit('>')),
-            b('body', 'Type'),
+            rest('body', 'Type', false),
         ),
         ({
             name,
@@ -477,16 +484,43 @@ grammar.add('TypeField', [
         }),
     ),
     // TypeField:3
+    option(
+        list(' ', list(':', b('name', 'id'), lit('once')), rest('value', 'Type', false)),
+        ({ name, value, node }: { name: Id; value: Type; node: Node }): TypeField => ({
+            name: name.text,
+            type: kinded(value, 'once'),
+            loc: node.loc,
+        }),
+    ),
+    // TypeField:4
+    option(
+        list(' ', list(':', b('name', 'id'), lit('linear')), rest('value', 'Type', false)),
+        ({ name, value, node }: { name: Id; value: Type; node: Node }): TypeField => ({
+            name: name.text,
+            type: kinded(value, 'linear'),
+            loc: node.loc,
+        }),
+    ),
+    // TypeField:5
+    option(
+        list(' ', list(':', b('name', 'id'), lit('mut')), rest('value', 'Type', false)),
+        ({ name, value, node }: { name: Id; value: Type; node: Node }): TypeField => ({
+            name: name.text,
+            type: mutType(value, node.loc),
+            loc: node.loc,
+        }),
+    ),
+    // TypeField:6
     option(list('', lit('...'), lit('_')), ({ node }: { node: Node }): TypeField => ({
         rest: { type: 'id', text: '_', loc: node.loc } as Id,
         loc: node.loc,
     })),
-    // TypeField:4
+    // TypeField:7
     option(
         list('', lit('...'), b('rest', 'id')),
         ({ rest, node }: { rest: Id; node: Node }): TypeField => ({ rest, loc: node.loc }),
     ),
-    // TypeField:5
+    // TypeField:8
     option(
         list(':', b('name', 'id'), b('type', 'Type')),
         ({ name, type, node }: { name: Id; type: Type; node: Node }): TypeField => ({
@@ -524,6 +558,20 @@ grammar.add('NeedsItem', [
         loc: node.loc,
     })),
 ]);
+
+function mutType(value: Type, loc: number): Type {
+    return value.type === 'lens' && !value.owned
+        ? { ...value, owned: true }
+        : { type: 'mut', value, loc };
+}
+
+function kinded(value: Type, kind: 'once' | 'linear'): Type {
+    if (value.type !== 'fn' || value.kind)
+        throw new Error(
+            '`' + kind + '` is written before a function type, as in `' + kind + ' () => a`',
+        );
+    return { ...value, kind };
+}
 
 function trecord(items: TypeField[], loc: number): Type {
     const last = items[items.length - 1];
@@ -699,62 +747,6 @@ grammar.add('Type', [
     ),
     // Type:3
     option(
-        list(' ', lit('mut'), list('', lit('~'), b('left', 'Type'))),
-        ({ left, node }: { left: Type; node: Node }): Type => ({ type: 'lens', left, owned: true }),
-    ),
-    // Type:4
-    option(
-        list(
-            ' ',
-            lit('mut'),
-            wrapper('(', list(',', many('args', 'Type'))),
-            lit('=>'),
-            b('body', 'Type'),
-        ),
-        ({ args, body, node }: { args: Type[]; body: Type; node: Node }): Type =>
-            ({
-                type: 'mut',
-                value: { type: 'fn', args, body },
-                loc: node.loc,
-            }) as Type,
-    ),
-    // Type:5
-    option(
-        list(
-            ' ',
-            lit('mut'),
-            wrapper('(', list(',', many('args', 'Type'))),
-            list('', lit('='), b('needs', 'Needs'), lit('>')),
-            b('body', 'Type'),
-        ),
-        ({
-            args,
-            needs,
-            body,
-            node,
-        }: {
-            args: Type[];
-            needs: Needs;
-            body: Type;
-            node: Node;
-        }): Type =>
-            ({
-                type: 'mut',
-                value: { type: 'fn', args, needs, body },
-                loc: node.loc,
-            }) as Type,
-    ),
-    // Type:6
-    option(
-        list(' ', lit('mut'), b('value', 'Type')),
-        ({ value, node }: { value: Type; node: Node }): Type => ({
-            type: 'mut',
-            value,
-            loc: node.loc,
-        }),
-    ),
-    // Type:7
-    option(
         list('', lit('='), b('left', 'Type')),
         ({ left, node }: { left: Type; node: Node }): Type => ({
             type: 'lens',
@@ -762,7 +754,7 @@ grammar.add('Type', [
             replaceable: false,
         }),
     ),
-    // Type:8
+    // Type:4
     option(
         list('', b('left', 'Type'), lit('/'), b('right', 'Type')),
         ({ left, right, node }: { left: Type; right: Type; node: Node }): Type => ({
@@ -771,7 +763,7 @@ grammar.add('Type', [
             right,
         }),
     ),
-    // Type:9
+    // Type:5
     option(
         list('', b('left', 'Type'), lit('/='), b('right', 'Type')),
         ({ left, right, node }: { left: Type; right: Type; node: Node }): Type => ({
@@ -781,7 +773,7 @@ grammar.add('Type', [
             replaceable: false,
         }),
     ),
-    // Type:10
+    // Type:6
     option(
         list('', b('name', 'id'), wrapper('(', list(',', many('args', 'Type')))),
         ({ name, args, node }: { name: Id; args: Type[]; node: Node }): Type => ({
@@ -791,39 +783,60 @@ grammar.add('Type', [
             loc: node.loc,
         }),
     ),
-    // Type:11
+    // Type:7
     option(
         wrapper('(', list(',', many('items', 'Type'))),
-        ({ items, node }: { items: Type[]; node: Node }): Type => ({ type: 'tuple', items }),
+        ({ items, node }: { items: Type[]; node: Node }): Type =>
+            items.length === 1 ? items[0] : ({ type: 'tuple', items } as Type),
     ),
-    // Type:12
+    // Type:8
     option(
         wrapper('{', list(',', many('fields', 'TypeField'))),
         ({ fields, node }: { fields: TypeField[]; node: Node }): Type => trecord(fields, node.loc),
     ),
-    // Type:13
+    // Type:9
     option(
         wrapper('{', b('one', 'TypeField')),
         ({ one, node }: { one: TypeField; node: Node }): Type => trecord([one], node.loc),
     ),
-    // Type:14
+    // Type:10
     option(wrapper('(', null), ({ node }: { node: Node }): Type => ({ type: 'tuple', items: [] })),
-    // Type:15
+    // Type:11
     option(
-        list(' ', wrapper('(', list(',', many('args', 'Type'))), lit('=>'), b('body', 'Type')),
+        list(' ', lit('mut'), rest('value', 'Type', false)),
+        ({ value, node }: { value: Type; node: Node }): Type => mutType(value, node.loc),
+    ),
+    // Type:12
+    option(
+        list(' ', lit('once'), rest('value', 'Type', false)),
+        ({ value, node }: { value: Type; node: Node }): Type => kinded(value, 'once'),
+    ),
+    // Type:13
+    option(
+        list(' ', lit('linear'), rest('value', 'Type', false)),
+        ({ value, node }: { value: Type; node: Node }): Type => kinded(value, 'linear'),
+    ),
+    // Type:14
+    option(
+        list(
+            ' ',
+            wrapper('(', list(',', many('args', 'Type'))),
+            lit('=>'),
+            rest('body', 'Type', false),
+        ),
         ({ args, body, node }: { args: Type[]; body: Type; node: Node }): Type => ({
             type: 'fn',
             args,
             body,
         }),
     ),
-    // Type:16
+    // Type:15
     option(
         list(
             ' ',
             wrapper('(', list(',', many('args', 'Type'))),
             list('', lit('='), b('needs', 'Needs'), lit('>')),
-            b('body', 'Type'),
+            rest('body', 'Type', false),
         ),
         ({
             args,
@@ -837,6 +850,8 @@ grammar.add('Type', [
             node: Node;
         }): Type => ({ type: 'fn', args, needs, body }),
     ),
+    // Type:16
+    option(list(' ', b('one', 'Type')), ({ one, node }: { one: Type; node: Node }): Type => one),
 ]);
 
 grammar.add('Term', [
@@ -1738,6 +1753,129 @@ grammar.add('FnArg', [
         ({ pat, typ, node }: { pat: Pat; typ: Type; node: Node }): FnArg => ({
             pat,
             typ,
+            mut: true,
+        }),
+    ),
+    // FnArg:5
+    option(
+        list(' ', list(':', b('pat', 'Pat'), lit('once')), rest('value', 'Type', false)),
+        ({ pat, value, node }: { pat: Pat; value: Type; node: Node }): FnArg => ({
+            pat,
+            typ: kinded(value, 'once'),
+            mut: true,
+        }),
+    ),
+    // FnArg:6
+    option(
+        list(' ', list(':', b('pat', 'Pat'), lit('linear')), rest('value', 'Type', false)),
+        ({ pat, value, node }: { pat: Pat; value: Type; node: Node }): FnArg => ({
+            pat,
+            typ: kinded(value, 'linear'),
+            mut: true,
+        }),
+    ),
+    // FnArg:7
+    option(
+        list(
+            ' ',
+            lit('mut'),
+            list(':', b('pat', 'Pat'), lit('once')),
+            rest('value', 'Type', false),
+        ),
+        ({ pat, value, node }: { pat: Pat; value: Type; node: Node }): FnArg => ({
+            pat,
+            typ: kinded(value, 'once'),
+            mut: true,
+        }),
+    ),
+    // FnArg:8
+    option(
+        list(
+            ' ',
+            lit('mut'),
+            list(':', b('pat', 'Pat'), lit('linear')),
+            rest('value', 'Type', false),
+        ),
+        ({ pat, value, node }: { pat: Pat; value: Type; node: Node }): FnArg => ({
+            pat,
+            typ: kinded(value, 'linear'),
+            mut: true,
+        }),
+    ),
+    // FnArg:9
+    option(
+        list(
+            ' ',
+            list(':', b('pat', 'Pat'), wrapper('(', list(',', many('args', 'Type')))),
+            lit('=>'),
+            rest('body', 'Type', false),
+        ),
+        ({ pat, args, body, node }: { pat: Pat; args: Type[]; body: Type; node: Node }): FnArg => ({
+            pat,
+            typ: { type: 'fn', args, body } as Type,
+        }),
+    ),
+    // FnArg:10
+    option(
+        list(
+            ' ',
+            list(':', b('pat', 'Pat'), wrapper('(', list(',', many('args', 'Type')))),
+            list('', lit('='), b('needs', 'Needs'), lit('>')),
+            rest('body', 'Type', false),
+        ),
+        ({
+            pat,
+            args,
+            needs,
+            body,
+            node,
+        }: {
+            pat: Pat;
+            args: Type[];
+            needs: Needs;
+            body: Type;
+            node: Node;
+        }): FnArg => ({ pat, typ: { type: 'fn', args, needs, body } as Type }),
+    ),
+    // FnArg:11
+    option(
+        list(
+            ' ',
+            lit('mut'),
+            list(':', b('pat', 'Pat'), wrapper('(', list(',', many('args', 'Type')))),
+            lit('=>'),
+            rest('body', 'Type', false),
+        ),
+        ({ pat, args, body, node }: { pat: Pat; args: Type[]; body: Type; node: Node }): FnArg => ({
+            pat,
+            typ: { type: 'fn', args, body } as Type,
+            mut: true,
+        }),
+    ),
+    // FnArg:12
+    option(
+        list(
+            ' ',
+            lit('mut'),
+            list(':', b('pat', 'Pat'), wrapper('(', list(',', many('args', 'Type')))),
+            list('', lit('='), b('needs', 'Needs'), lit('>')),
+            rest('body', 'Type', false),
+        ),
+        ({
+            pat,
+            args,
+            needs,
+            body,
+            node,
+        }: {
+            pat: Pat;
+            args: Type[];
+            needs: Needs;
+            body: Type;
+            node: Node;
+        }): FnArg => ({
+            pat,
+            typ: { type: 'fn', args, needs, body } as Type,
             mut: true,
         }),
     ),

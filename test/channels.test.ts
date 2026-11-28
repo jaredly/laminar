@@ -2,8 +2,9 @@ import { expect, it } from 'bun:test';
 import { CompileError, checkSource } from '../src/compiler.ts';
 
 /**
- * What typed channels accept. A function received from a channel must be called exactly once,
- * so most of these try to lose, copy or reuse one.
+ * What typed channels accept. A channel's type says what kind of function it carries. Where
+ * only the receiver's code says, it carries must-call functions if that code allows it, so
+ * most of these try to lose, copy or reuse one.
  */
 const check = (source: string) => {
     try {
@@ -81,8 +82,9 @@ const cases: [name: string, expected: string, body: string][] = [
         `fn work(jobs) { let job = chanRecv(jobs)\n (job, job) }\n${queued('work(jobs)')}`,
     ],
     [
+        // It may drop a job, so its channel carries no job that must be called.
         'worker that calls it only sometimes',
-        'linear-unconsumed',
+        'linear-closure-mismatch',
         `fn work(jobs, run) { let mut job = chanRecv(jobs)\n if run then job() else () }\n${queued('work(jobs, false)')}`,
     ],
     [
@@ -136,23 +138,23 @@ const cases: [name: string, expected: string, body: string][] = [
     ],
     [
         '...and one received from a channel',
-        'linear-unconsumed',
+        'linear-closure-mismatch',
         'fn maybe(mut t) { if false then t() else () }\nfn g(c, jobs, mut task) { if c then maybe(task) else chanSend(jobs, task) }\n' +
             queued('let mut job = chanRecv(jobs)\n g(true, jobs, job)'),
     ],
     [
         'sent, then maybe-dropped',
-        'linear-unconsumed',
+        'ok',
         'fn maybe(mut t) { if false then t() else () }\nfn g(c, jobs, mut task) { if c then chanSend(jobs, task) else maybe(task) }\n0',
     ],
     [
         'maybe-dropped, parameter received later',
-        'linear-unconsumed',
+        'ok',
         'fn maybe(mut t) { if false then t() else () }\nfn g(jobs, c) { let mut job = chanRecv(jobs)\n maybe(job)\n if c then chanSend(jobs, fn () { () }) else () }\n0',
     ],
     [
         'received, then handed to a known function that drops it',
-        'linear-unconsumed',
+        'linear-closure-mismatch',
         'fn maybe(mut t) { if false then t() else () }\n' +
             queued('let mut job = chanRecv(jobs)\n maybe(job)'),
     ],
@@ -257,7 +259,7 @@ const cases: [name: string, expected: string, body: string][] = [
     [
         '...and a job from it dropped',
         'linear-unconsumed',
-        'type Pool {\n    Pool(Chan(() => ()))\n}\nfn lose(mut p) {match p {Pool(jobs) -> {let mut job = chanRecv(jobs)\n ()}}}\n0',
+        'type Pool {\n    Pool(Chan(linear () => ()))\n}\nfn lose(mut p) {match p {Pool(jobs) -> {let mut job = chanRecv(jobs)\n ()}}}\n0',
     ],
     [
         'channel of jobs in a signature',

@@ -226,7 +226,7 @@ export function mapSemanticFlow(
     variable: (id: string) => SemanticType | undefined,
 ): SemanticFlow {
     return type.tag === 'plain'
-        ? irPlain(mapSemantic(type.value, variable))
+        ? { ...type, value: mapSemantic(type.value, variable) }
         : {
               tag: 'flow',
               read: mapSemantic(type.read, variable),
@@ -269,6 +269,56 @@ export const flowKey = (type: SemanticFlow): string =>
     type.tag === 'plain'
         ? `value:${typeKey(type.value)}`
         : `lens${type.replaceable === false ? '!' : ''}${type.owned ? 'own' : ''}:${typeKey(type.read)}:${typeKey(type.write)}`;
+/** `typeKey`, but telling apart which positions inside function types are shared. */
+export function ownershipKey(type: SemanticType): string {
+    const flows = (f: SemanticFlow) =>
+        f.tag === 'plain'
+            ? `${f.mode ?? 'owned'}:${ownershipKey(f.value)}`
+            : `lens:${ownershipKey(f.read)}:${ownershipKey(f.write)}`;
+    switch (type.tag) {
+        case 'variable':
+            return '_';
+        case 'con':
+            return `(${type.args.map(ownershipKey).join()})`;
+        case 'tuple':
+            return `[${type.items.map(ownershipKey).join()}]`;
+        case 'record':
+            return `{${type.fields.map((f) => `${f.name}:${ownershipKey(f.type)}`).join()}${type.rest ? ownershipKey(type.rest) : ''}}`;
+        case 'fn':
+            return `fn(${type.args.map(flows).join()})${flows(type.result)}${type.needs ? ownershipKey(type.needs) : ''}`;
+        case 'needs':
+            return `<${type.entries.map((e) => `${e.name}:${ownershipKey(e.type)}`).join()}${type.rest ? ownershipKey(type.rest) : ''}>`;
+    }
+}
+/**
+ * Whether a value of function type `from` may go where `into` is expected, the two having one
+ * `typeKey`. Its owned result may be taken as shared, and a parameter it only reads may be
+ * given something owned. Inside a parameter the directions reverse. Nothing but a function
+ * type converts, so a container of functions must match exactly.
+ */
+export function ownershipFits(from: SemanticType, into: SemanticType): boolean {
+    if (from.tag !== 'fn' || into.tag !== 'fn') return ownershipKey(from) === ownershipKey(into);
+    const same = (a: SemanticFlow, b: SemanticFlow) =>
+        a.tag === 'flow' &&
+        b.tag === 'flow' &&
+        ownershipKey(a.read) === ownershipKey(b.read) &&
+        ownershipKey(a.write) === ownershipKey(b.write);
+    const parameter = (f: SemanticFlow, i: SemanticFlow) =>
+        f.tag === 'plain' && i.tag === 'plain'
+            ? (f.mode === i.mode || (f.mode === 'shared' && !i.mode)) &&
+              ownershipFits(i.value, f.value)
+            : same(f, i);
+    const result = (f: SemanticFlow, i: SemanticFlow) =>
+        f.tag === 'plain' && i.tag === 'plain'
+            ? (f.mode === i.mode || (!f.mode && i.mode === 'shared')) &&
+              ownershipFits(f.value, i.value)
+            : same(f, i);
+    return (
+        from.args.every((a, n) => parameter(a, into.args[n]!)) &&
+        result(from.result, into.result) &&
+        (!from.needs || !into.needs || ownershipKey(from.needs) === ownershipKey(into.needs))
+    );
+}
 /** A lens value against the position it fills: ownership belongs to the position alone. */
 export const valueKey = (type: SemanticFlow): string =>
     flowKey(type.tag === 'flow' ? { ...type, owned: undefined } : type);

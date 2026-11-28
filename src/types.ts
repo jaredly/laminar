@@ -23,21 +23,43 @@ export type Ty =
      * where the closure is written, never inferred.
      * `needs` is the row of dependencies a call supplies; absent means the function needs none.
      */
-    | { tag: 'fn'; args: FlowTy[]; result: FlowTy; capture?: Capture; needs?: Ty }
+    | {
+          tag: 'fn';
+          args: FlowTy[];
+          result: FlowTy;
+          capture?: Capture;
+          needs?: Ty;
+          /** Worked out from a call, so nothing yet says what kind of function it is. */
+          unstated?: true;
+          /** Carried by a channel with no stated kind: the whole item decides: see `OpenKind`. */
+          open?: OpenKind;
+      }
     /**
-     * A row of dependencies (docs/dependency-injection-plan.md). Unlike a record's fields, a
+     * A row of dependencies (docs/done/dependency-injection-plan.md). Unlike a record's fields, a
      * name may repeat: the first entry hides the later ones. Sorted by name, keeping the order
      * of equal names. `rest` is a row variable; a row that is only its remainder is written as
      * the variable.
      */
     | { tag: 'needs'; entries: Need[]; rest?: Ty };
+/** The function types that must turn out to be of one kind, not yet chosen. */
+export type OpenKind = {
+    /** The most restricted kind of function sent where this one is expected. */
+    floor: number;
+    /** A path leaves one behind, which only a function that may be dropped allows. */
+    abandoned?: true;
+    members: (Ty & { tag: 'fn' })[];
+};
+/** A kind restricts its holder more than the ones ranked below it. */
+export const kindRank = (capture: Capture | undefined): number =>
+    capture === 'linear' ? 2 : capture === 'state' ? 1 : 0;
+const kinds = [undefined, 'state', 'linear'] as const;
 /** `from` is the offset of the `#name` that first required an entry, for diagnostics. */
 export type Need = { name: string; type: Ty; from?: number };
 /**
  * `replaceable` says whether the whole value of the lens can be replaced (`:=`, move-out,
  * a stored-lens argument). It is a `Ty` so that it unifies, generalizes and instantiates
  * with the existing machinery: `REPLACEABLE`, `FIXED` or a meta (see
- * docs/scattered-constructor-lenses.md). Every lens built before constructor lenses
+ * docs/done/scattered-constructor-lenses.md). Every lens built before constructor lenses
  * exist is `REPLACEABLE`.
  *
  * `owned` says who ends a lens (docs/owned-lenses.md): `OWNED_LENS` moves with its holder,
@@ -125,6 +147,8 @@ const STATEFUL_CLOSURE =
     'A closure that captured a `mut` value may change it, so it is called once and cannot be shared or copied. Keep it `mut`, and pass it to a `mut` parameter that calls it exactly once on every path';
 
 export class TypeDiagnostic extends Error {
+    /** The message already says which part of a function type it is about. */
+    positioned?: true | boolean;
     constructor(
         public code: string,
         public loc: number,
@@ -234,6 +258,8 @@ export class Solver {
     }
     private substitutions = new Map<number, Ty>();
     private modeMetas = new Set<number>();
+    /** Modes that fall back to something other than owned: see `openMode`. */
+    private modeDefaults = new Map<number, Ty>();
     /** Row variables, metas and rigids alike, with the labels each must lack. */
     private lacks = new Map<number, Set<string>>();
     /** Variables that may not be bound while a body is checked against a limit on its needs. */
@@ -256,16 +282,16 @@ export class Solver {
         return { tag: 'rigid', id: this.next++ };
     }
     /**
-     * `value` is carried by a channel (docs/concurrency.md). A function sent over one may own
-     * anything, so whoever receives it must call it exactly once: it is linear, even where the
-     * receiver's code is all that has been seen of it. This marks the function's own type
-     * object, so every reference to it agrees.
+     * `value` is carried by a channel (docs/concurrency.md). A channel's type says what kind of
+     * function it carries. Where nothing does, because only a call has been seen, the kind
+     * stays open until the whole item shows what it does with one.
      */
     private carried(value: Ty): void {
         const t = this.prune(value);
         if (t.tag === 'meta') this.carriedMetas.add(t.id);
-        else if (t.tag === 'fn') t.capture = 'linear';
-        else if (t.tag === 'tuple') t.items.forEach((v) => this.carried(v));
+        else if (t.tag === 'fn') {
+            if (t.unstated && !t.open) this.openKind(t, 0);
+        } else if (t.tag === 'tuple') t.items.forEach((v) => this.carried(v));
         else if (t.tag === 'record') {
             t.fields.forEach((f) => this.carried(f.type));
             if (t.rest) this.carried(t.rest);
@@ -294,7 +320,7 @@ export class Solver {
                     }
                 if (this.plainEntries)
                     for (const a of p.args)
-                        if (a.tag === 'plain' && this.modeOf(a.mode) === 'unknown')
+                        if (a.tag === 'plain' && this.isUndecided(a.mode))
                             this.unifyMode(a.mode, SHARED, loc);
                 return;
             case 'tuple':
@@ -413,6 +439,88 @@ export class Solver {
         this.unify(l, needs(onlyRight, tail), loc);
         this.unify(r, needs(onlyLeft, tail), loc);
     }
+    private openKinds = new Set<OpenKind>();
+    /** Leave the kind of `t` open. Until it is chosen it is treated as must-call. */
+    openKind(t: Ty & { tag: 'fn' }, floor: number): void {
+        const open: OpenKind = { floor, members: [] };
+        this.openKinds.add(open);
+        this.join(open, t);
+    }
+    private join(open: OpenKind, t: Ty & { tag: 'fn' }): void {
+        open.members.push(t);
+        t.open = open;
+        t.capture = 'linear';
+        delete t.unstated;
+    }
+    /** A copy of a function type is of the same kind, stated or not, as the original. */
+    alike(copy: Ty, original: Ty): Ty {
+        if (copy.tag === 'fn' && original.tag === 'fn' && copy !== original) {
+            if (original.open) this.join(original.open, copy);
+            else if (original.unstated) copy.unstated = true;
+        }
+        return copy;
+    }
+    /** Choose an open kind. Nothing below what has been sent where it is expected will do. */
+    stateKind(open: OpenKind, capture: Capture | undefined): void {
+        if (kindRank(capture) < open.floor) return;
+        this.openKinds.delete(open);
+        for (const member of open.members) {
+            delete member.open;
+            if (capture) member.capture = capture;
+            else delete member.capture;
+        }
+    }
+    private unifyKinds(a: Ty & { tag: 'fn' }, b: Ty & { tag: 'fn' }): void {
+        if (a.open && b.open) {
+            if (a.open === b.open) return;
+            const gone = b.open;
+            a.open.floor = Math.max(a.open.floor, gone.floor);
+            if (gone.abandoned) a.open.abandoned = true;
+            this.openKinds.delete(gone);
+            for (const member of gone.members) this.join(a.open, member);
+        } else if (a.open || b.open) {
+            const [open, other] = a.open ? [a.open, b] : [b.open!, a];
+            if (other.unstated) this.join(open, other);
+            else this.stateKind(open, other.capture);
+        } else if (a.unstated !== b.unstated) {
+            delete a.unstated;
+            delete b.unstated;
+        }
+    }
+    /** A value of type `t` is left behind somewhere without having been consumed. */
+    abandoned(t: Ty): void {
+        const p = this.prune(t);
+        if (p.tag === 'fn') {
+            if (p.open) p.open.abandoned = true;
+        } else if (p.tag === 'tuple') p.items.forEach((v) => this.abandoned(v));
+        else if (p.tag === 'record') p.fields.forEach((f) => this.abandoned(f.type));
+        else if (p.tag === 'con' && p.name !== CHANNEL) p.args.forEach((v) => this.abandoned(v));
+    }
+    /**
+     * Each open kind becomes the one that accepts the most senders among those the item's
+     * uses allow: must-call if every use only calls, a closure with state if one may drop
+     * it, and a reusable function if one copies it.
+     */
+    settleOpenKinds(): void {
+        const holds = (t: Ty, open: OpenKind): boolean => {
+            const p = this.prune(t);
+            if (p.tag === 'fn') return p.open === open;
+            if (p.tag === 'tuple') return p.items.some((v) => holds(v, open));
+            if (p.tag === 'record') return p.fields.some((f) => holds(f.type, open));
+            return p.tag === 'con' && p.name !== CHANNEL && p.args.some((v) => holds(v, open));
+        };
+        for (const open of [...this.openKinds]) {
+            let allowed = open.abandoned ? 1 : 2;
+            for (const { predicate, type } of this.obligations)
+                if (
+                    (predicate === 'Copyable' || predicate === 'Droppable') &&
+                    holds(type, open)
+                )
+                    allowed = Math.min(allowed, predicate === 'Copyable' ? 0 : 1);
+            // A sender that needs more than the uses allow is reported where the uses are.
+            this.stateKind(open, kinds[Math.max(allowed, open.floor)]);
+        }
+    }
     /** Apply `carried` to what every channel type within `t` carries. */
     channels(t: Ty): void {
         mapType(t, (v) => {
@@ -459,7 +567,7 @@ export class Solver {
             throw new TypeDiagnostic(
                 'type-mismatch',
                 loc,
-                `Expected a record, found ${printType(this.resolve(t))}`,
+                `Expected a record, found ${printType(this.resolve(t), undefined, !this.singleUseFunctions)}`,
             );
     }
     /** Record that a variable stands for the fields of a record. */
@@ -477,7 +585,7 @@ export class Solver {
             throw new TypeDiagnostic(
                 'type-mismatch',
                 loc,
-                `Expected a record, found ${printType(this.resolve(tail))}`,
+                `Expected a record, found ${printType(this.resolve(tail), undefined, !this.singleUseFunctions)}`,
             );
         for (const f of fields) this.requireLacks(tail, f.name, loc);
         return record(fields, tail);
@@ -487,7 +595,7 @@ export class Solver {
             throw new TypeDiagnostic(
                 'type-mismatch',
                 loc,
-                `Cannot unify ${printType(this.resolve(a))} with ${printType(this.resolve(b))}`,
+                `Cannot unify ${this.printed(a)} with ${this.printed(b)}`,
             );
         };
         const left = this.prune(a),
@@ -606,9 +714,11 @@ export class Solver {
                 [...this.free(s.body)].filter((id) => !s.quantified.includes(id)),
             ),
         );
-        // A mode nothing decided is owned, and it is not a type parameter.
+        // A mode nothing decided is owned, unless it says otherwise, and it is not a type
+        // parameter.
         for (const id of this.free(t))
-            if (this.modeMetas.has(id) && !excluded.has(id)) this.substitutions.set(id, OWNED);
+            if (this.modeMetas.has(id) && !excluded.has(id))
+                this.substitutions.set(id, this.modeDefaults.get(id) ?? OWNED);
         const quantified = [...this.free(t)].filter((id) => !excluded.has(id));
         const rows = this.rowConstraints(quantified);
         return { body: this.resolve(t), quantified, ...(rows.length ? { rows } : {}) };
@@ -634,6 +744,34 @@ export class Solver {
         this.modeMetas.add((mode as Ty & { tag: 'meta' }).id);
         return mode;
     }
+    /** A mode that may still change, and is `fallback` if nothing changes it. */
+    openMode(fallback: Ty): Ty {
+        const mode = this.freshMode();
+        this.modeDefaults.set((mode as Ty & { tag: 'meta' }).id, fallback);
+        return mode;
+    }
+    /** Nothing says yet what this mode is, not even what it would fall back to. */
+    private isUndecided(mode: Ty): boolean {
+        const r = this.prune(mode);
+        return r.tag === 'meta' && !this.modeDefaults.has(r.id);
+    }
+    /**
+     * A value that was converted where it was made is now being used itself: it is what it
+     * was unless something has already said otherwise, and this use converts from there.
+     */
+    settleOpenMode(mode: Ty): void {
+        const r = this.prune(mode);
+        const fallback = r.tag === 'meta' ? this.modeDefaults.get(r.id) : undefined;
+        if (r.tag === 'meta' && fallback) this.substitutions.set(r.id, fallback);
+    }
+    /** Give every open mode nothing changed its fallback, wherever it appears. */
+    settleOpenModes(): void {
+        for (const [id, fallback] of this.modeDefaults) {
+            const mode = this.prune({ tag: 'meta', id });
+            if (mode.tag === 'meta') this.substitutions.set(mode.id, fallback);
+        }
+        this.modeDefaults.clear();
+    }
     /** `unknown` while the mode is still a meta. */
     ownership(t: FlowTy & { tag: 'plain' }): 'owned' | 'shared' | 'unknown' {
         return this.modeOf(t.mode);
@@ -645,6 +783,33 @@ export class Solver {
             : r.tag === 'con' && r.name === OWNED_NAME
               ? 'owned'
               : 'unknown';
+    }
+    /** An ownership mismatch between two function types names where they differ. */
+    private unifyPosition(a: Ty, b: Ty, what: string, loc: number, unify: () => void): void {
+        try {
+            unify();
+        } catch (e) {
+            // The innermost function types say the most.
+            if (e instanceof TypeDiagnostic && e.code === 'mode-mismatch' && !e.positioned) {
+                const located = new TypeDiagnostic(
+                    'mode-mismatch',
+                    loc,
+                    `${this.printed(a)} and ${this.printed(b)} differ in who owns ${what}: it is \`mut\` in one and shared in the other, and neither fits where the other is expected`,
+                );
+                located.positioned = true;
+                throw located;
+            }
+            throw e;
+        }
+    }
+    private printed(t: Ty): string {
+        // A mode nothing has decided yet prints as what it would become.
+        const settled = mapType(this.resolve(t), (v) =>
+            v.tag === 'meta' && this.modeMetas.has(v.id)
+                ? (this.modeDefaults.get(v.id) ?? OWNED)
+                : undefined,
+        );
+        return printType(settled, undefined, !this.singleUseFunctions);
     }
     unifyMode(a: Ty, b: Ty, loc: number): void {
         try {
@@ -737,11 +902,14 @@ export class Solver {
                     throw new TypeDiagnostic(
                         'type-mismatch',
                         loc,
-                        `Expected a record, found ${printType(this.resolve(value))}`,
+                        `Expected a record, found ${printType(this.resolve(value), undefined, !this.singleUseFunctions)}`,
                     );
                 required.forEach((label) => this.requireLacks(value, label, loc));
             }
             this.substitutions.set(variable.id, value);
+            const fallback = this.modeDefaults.get(variable.id);
+            if (fallback && value.tag === 'meta' && !this.modeDefaults.has(value.id))
+                this.modeDefaults.set(value.id, fallback);
             if (this.entryMetas.has(variable.id)) this.selfContained(value, loc);
             if (this.carriedMetas.has(variable.id)) this.carried(value);
             if (value.tag === 'con' && value.name === CHANNEL) this.channels(value);
@@ -773,6 +941,7 @@ export class Solver {
                     loc,
                     `Expected ${a.args.length} arguments, found ${b.args.length}`,
                 );
+            this.unifyKinds(a, b);
             if (a.capture !== b.capture)
                 throw a.capture === 'linear' || b.capture === 'linear'
                     ? new TypeDiagnostic(
@@ -785,15 +954,22 @@ export class Solver {
                           loc,
                           'One of these functions captured a `mut` value, so it is called only once, and the other can be called again. They cannot be mixed yet',
                       );
-            a.args.forEach((v, i) => this.unifyFlow(v, b.args[i], loc));
-            this.unifyFlow(a.result, b.result, loc);
+            const [first, second] = [a, b];
+            a.args.forEach((v, i) =>
+                this.unifyPosition(first, second, `parameter ${i + 1}`, loc, () =>
+                    this.unifyFlow(v, second.args[i]!, loc),
+                ),
+            );
+            this.unifyPosition(first, second, 'the result', loc, () =>
+                this.unifyFlow(first.result, second.result, loc),
+            );
             this.unify(a.needs ?? NO_NEEDS, b.needs ?? NO_NEEDS, loc);
             return;
         }
         throw new TypeDiagnostic(
             'type-mismatch',
             loc,
-            `Cannot unify ${printType(this.resolve(a))} with ${printType(this.resolve(b))}`,
+            `Cannot unify ${this.printed(a)} with ${this.printed(b)}`,
         );
     }
 }
@@ -803,11 +979,15 @@ const printNeeds = (row: Ty): string =>
     row.tag === 'needs'
         ? `{${[...row.entries.map((e) => e.name), ...(row.rest ? ['...'] : [])].join(', ')}}`
         : '{...}';
-export function printScheme(scheme: Scheme): string {
-    return printType(scheme.body, scheme);
+/**
+ * Types print as they are written. `marks` is dual mode's, where `mut` says a position is
+ * owned and an unmarked one is shared; pure mode writes no marks, every position being owned.
+ */
+export function printScheme(scheme: Scheme, marks = false): string {
+    return printType(scheme.body, scheme, marks);
 }
 
-export function printType(t: Ty, scheme?: Scheme): string {
+export function printType(t: Ty, scheme?: Scheme, marks = false): string {
     const names = new Map<number, string>();
     /** Row parameters print as the records they stand for; labels a record shows are implied. */
     const rows = new Map(
@@ -848,7 +1028,7 @@ export function printType(t: Ty, scheme?: Scheme): string {
                 return !asRest && rows.has(t.id) ? `{...${name}}` : name;
             }
             case 'con':
-                return t.name + (t.args.length ? `<${t.args.map((a) => show(a)).join(', ')}>` : '');
+                return t.name + (t.args.length ? `(${t.args.map((a) => show(a)).join(', ')})` : '');
             case 'tuple':
                 return `(${t.items.map((a) => show(a)).join(', ')})`;
             case 'record': {
@@ -874,10 +1054,25 @@ export function printType(t: Ty, scheme?: Scheme): string {
                 return showNeeds(t);
         }
     };
-    const sf = (t: FlowTy): string =>
-        t.tag === 'plain'
-            ? (t.mode.tag === 'con' && t.mode.name === SHARED_NAME ? '&' : '') + show(t.value)
-            : `${t.owned.tag === 'con' && t.owned.name === OWNED_LENS_NAME ? 'mut ' : ''}${show(t.read)}/${t.replaceable.tag === 'con' && t.replaceable.name === FIXED_NAME ? '=' : ''}${show(t.write)}`;
+    const sf = (t: FlowTy): string => {
+        if (t.tag === 'plain') {
+            // A kind that cannot be shared says the position is owned by itself.
+            const kinded = t.value.tag === 'fn' && !!t.value.capture;
+            const owned = t.mode.tag === 'con' && t.mode.name === OWNED_NAME;
+            return (marks && owned && !kinded ? 'mut ' : '') + show(t.value);
+        }
+        const fixed = t.replaceable.tag === 'con' && t.replaceable.name === FIXED_NAME;
+        const owned = t.owned.tag === 'con' && t.owned.name === OWNED_LENS_NAME;
+        // Next to `~`, `=` or `/`, a function type needs its parentheses.
+        const side = (v: Ty) => (v.tag === 'fn' ? `(${show(v)})` : show(v));
+        const read = side(t.read),
+            write = side(t.write);
+        const lens =
+            read === write
+                ? `${fixed ? '=' : '~'}${read}`
+                : `${read}${fixed ? '/=' : '/'}${write}`;
+        return (owned ? 'mut ' : '') + lens;
+    };
     const body = show(t);
     const parameter = (id: number) => show({ tag: 'meta', id }, true);
     const where = (scheme?.bounds ?? []).map(

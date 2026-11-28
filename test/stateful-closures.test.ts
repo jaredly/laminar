@@ -95,7 +95,8 @@ describe('stateful closures cannot be shared', () => {
     });
     it('stays one-use through a channel', () => {
         const body = `${counter}let ch = chanNew()\n chanSend(ch, m)\n let p = chanRecv(ch)\n 0`;
-        expect(code(go(body))).toBe('linear-plain');
+        // A plain binding copies, so the channel would have to carry reusable functions.
+        expect(code(go(body))).toBe('shared-closure');
     });
     it.each([
         ['a definition', `${counter}let mut r = if true then m else nine\n r()`],
